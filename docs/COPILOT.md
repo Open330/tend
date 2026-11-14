@@ -31,7 +31,7 @@ missing or incomplete file when Copilot is installed.
 | `postToolUse`, `postToolUseFailure` | tool finished (or failed) |
 | `notification` with `permission_prompt` | waiting on you, with Copilot's message |
 | `agentStop` | idle, with the turn's answer |
-| `errorOccurred` | error |
+| `errorOccurred` | a warning while Copilot retries (`recoverable: true`), else error |
 | `sessionEnd` | stopped |
 
 `tend hook copilot` prints nothing and always exits 0, whatever it receives:
@@ -73,3 +73,17 @@ tendd's keeps the hooks-only behaviour.
 
 On 1.0.110, Esc on a permission prompt settled the row within two seconds;
 the next prompt then worked as usual.
+
+## A turn Copilot gives up on
+
+When a model call fails, Copilot retries it and fires a recoverable
+`errorOccurred` for each attempt (observed on 1.0.110 with the connection cut
+mid-answer: five, all `recoverable: true`). tend shows those as warnings and
+leaves the row working. When the retries run out, Copilot fires no further
+hook: no last `errorOccurred`, no `agentStop`. It logs `session.error`
+("Failed to get response from the AI model; retried 5 times"). The same
+session-log read as for Esc settles that turn: the row goes to error with
+Copilot's message, dated at the record.
+
+A failure before the turn starts (model routing, a model that is not
+available) fires only `sessionStart`, so the row never leaves idle.
