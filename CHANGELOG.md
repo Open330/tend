@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The Mac app's Home lists open review items on other Fleet hosts and can
+  accept, send back or withdraw them, through the same checks as the web
+  "Needs you" page (`review_dispose_remote_v1`). tendd takes this request
+  only from the signed Tend app. It checks the code that connected, by the
+  socket's audit token, against the app's code-signing requirement, so an
+  agent cannot use the request to accept its own result. Every attempt is
+  in the decision audit as `app:mac`.
 - Web dashboard Explore: the Mac's four orders (Topology, Latest activity, My latest prompt, Agent latest update; kept per browser under `tend.explore.sort`) and its filter, matching host, session, window name, pane id, command, path, agent alias, agent title and session id in any case, with "No matching panes" and "No panes detected" states and a shown/all count.
 - The web Review sheet has the Mac's three modes: Digest (by project, the
   default), Cards (one result at a time) and Inbox (a list and the selected
