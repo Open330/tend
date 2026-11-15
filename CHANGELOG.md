@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   toasts for new questions and results on every Fleet host, start with
   Windows. It sends the dashboard token only to a server that proved it
   knows it and never hands it to the page. See docs/WINDOWS.md.
+- `GET /api/proof?nonce=N` on the dashboard: an HMAC of the nonce, this
+  host's node id and the dashboard's address under the dashboard token,
+  answered without a credential. A client (the Windows
+  app) checks it before sending the token, so a process that took the
+  loopback port while tendd was down cannot collect it.
 - Dashboard: **paired devices**. A phone can pair with the dashboard and
   get its own credential that only reads and answers what needs you
   (`/api/decisions*`), on every host the dashboard covers. The phone asks,

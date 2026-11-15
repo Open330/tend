@@ -171,6 +171,9 @@ pub struct AppState {
     pub(in crate::dashboard) reviews: crate::review::ReviewStore,
     /// Where decisions made from the web are audited, one JSON line each.
     pub(in crate::dashboard) decision_audit: Option<PathBuf>,
+    /// The node id `/api/proof` binds its answer to. `None` reads this
+    /// host's `host-id` file (tests set one so they never touch it).
+    pub(in crate::dashboard) proof_node: Option<String>,
     /// Paired devices, whose tokens may only decide.
     pub(in crate::dashboard) devices: Arc<super::devices::Devices>,
 }
@@ -220,6 +223,7 @@ impl AppState {
             stats_config: StatsConfig::default(),
             fleet: None,
             decision_audit: None,
+            proof_node: None,
             devices: super::devices::Devices::memory(),
             reviews: crate::review::ReviewStore::unavailable("review items are served by tendd"),
             work_store: Arc::new(tokio::sync::Mutex::new(WorkStore::memory())),
@@ -251,6 +255,13 @@ impl AppState {
     #[must_use]
     pub fn with_decision_audit(mut self, path: Option<PathBuf>) -> Self {
         self.decision_audit = path;
+        self
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub(in crate::dashboard) fn with_proof_node(mut self, node: &str) -> Self {
+        self.proof_node = Some(node.to_owned());
         self
     }
 
@@ -435,7 +446,14 @@ pub fn router(state: AppState) -> Router {
     // guard, by contrast, wraps *everything* (API + assets). The
     // `TraceLayer` sits outermost so even rejected requests are traced —
     // with a token-scrubbed URI (see `make_request_span`).
-    api.merge(assets::router::<()>())
+    // The server proof answers before any credential is sent, so it sits
+    // outside the auth layers (inside the host guard).
+    let proof = Router::new()
+        .route("/api/proof", get(proof_handler))
+        .layer(middleware::map_response(no_store))
+        .with_state(state.clone());
+    api.merge(proof)
+        .merge(assets::router::<()>())
         .route("/needs", get(super::decisions::page_handler))
         .layer(host_layer)
         .layer(TraceLayer::new_for_http().make_span_with(make_request_span::<Body>))
@@ -819,6 +837,44 @@ async fn access_handler(State(state): State<AppState>, headers: HeaderMap) -> im
         },
         login: login_status(&state, &headers),
     })
+}
+
+#[derive(Debug, Deserialize)]
+struct ProofQuery {
+    nonce: String,
+}
+
+/// `GET /api/proof?nonce=N`: prove this server knows the dashboard token
+/// without the client sending it (see [`super::auth::server_proof`]). Not
+/// found when no token is configured or auth is off: there is nothing to
+/// prove then, and no client should be handing that server a token.
+async fn proof_handler(State(state): State<AppState>, Query(query): Query<ProofQuery>) -> Response {
+    let token = state
+        .config
+        .token
+        .as_deref()
+        .filter(|token| !token.is_empty() && state.config.auth != DashboardAuthMode::None);
+    let Some(token) = token else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if !super::auth::valid_proof_nonce(&query.nonce) {
+        return (StatusCode::BAD_REQUEST, "nonce must be 32-128 hex digits").into_response();
+    }
+    let node = match state.proof_node.clone() {
+        Some(node) => node,
+        None => match crate::paths::default_node_id_file()
+            .map(|path| crate::fleet::load_or_create_node_id(&path))
+        {
+            Some(Ok(node)) => node.to_string(),
+            _ => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        },
+    };
+    let bind = state.config.bind.to_string();
+    Json(json!({
+        "version": 1,
+        "proof": super::auth::server_proof(token, &node, &bind, &query.nonce),
+    }))
+    .into_response()
 }
 
 async fn health_handler() -> impl IntoResponse {
@@ -4614,6 +4670,57 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(reversed.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn the_server_proof_answers_without_a_credential_only_where_a_token_exists() {
+        let get = |app: Router, uri: String| async move {
+            app.oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap()
+        };
+        let nonce = "0123456789abcdef0123456789abcdef";
+        for app in [
+            router(state_with_token("s3cret").with_proof_node("node-1")),
+            router(public_read_state("s3cret").with_proof_node("node-1")),
+        ] {
+            let response = get(app.clone(), format!("/api/proof?nonce={nonce}")).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+            let body = body_json(response).await;
+            assert_eq!(body["version"], 1);
+            assert_eq!(
+                body["proof"],
+                super::super::auth::server_proof(
+                    "s3cret",
+                    "node-1",
+                    &DashboardConfig::loopback_default().bind.to_string(),
+                    nonce
+                )
+            );
+            assert!(!body.to_string().contains("s3cret"));
+            for bad in [
+                "/api/proof?nonce=short",
+                "/api/proof?nonce=not-hex-not-hex-not-hex-not-hex-xx",
+            ] {
+                assert_eq!(
+                    get(app.clone(), bad.into()).await.status(),
+                    StatusCode::BAD_REQUEST,
+                    "{bad}"
+                );
+            }
+        }
+        let mut off = DashboardConfig::loopback_default();
+        off.auth = DashboardAuthMode::None;
+        assert_eq!(
+            get(
+                router(state_from(off).with_proof_node("node-1")),
+                format!("/api/proof?nonce={nonce}")
+            )
+            .await
+            .status(),
+            StatusCode::NOT_FOUND
+        );
     }
 
     #[tokio::test]
