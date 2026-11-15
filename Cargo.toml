@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/tend",
     "crates/tend-aas",
+    "crates/tend-app",
     "crates/tend-cli",
     "crates/tend-work",
     "crates/tendd",
