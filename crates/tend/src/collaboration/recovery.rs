@@ -372,6 +372,7 @@ impl CollaborationStore {
                     .iter()
                     .any(|u| u.at >= info.observed_at && addresses(&parent.from, &u.author));
                 let overdue = now - info.observed_at >= time::Duration::minutes(2) && !acknowledged;
+                let mut reask = false;
                 // A managed item that ended without an answer no longer
                 // holds this request when `system_asks` closed it (unless
                 // as stale, and nobody is there yet to act), or when it was
@@ -406,6 +407,9 @@ impl CollaborationStore {
                     })
                 {
                     info.action_request_id = None;
+                    // The person was already asked about this episode;
+                    // the earlier grace and acknowledgments are spent.
+                    reask = true;
                 }
                 if info.action_request_id.is_none() {
                     info.action_request_id = snapshot
@@ -419,7 +423,8 @@ impl CollaborationStore {
                 if info.action_request_id.is_none()
                     && (matches!(current_reason, "approval_required" | "input_required")
                         || coordinator_unavailable
-                        || overdue)
+                        || overdue
+                        || reask)
                 {
                     let key = (
                         subject_room(&parent.from.room),

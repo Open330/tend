@@ -122,6 +122,9 @@ pub(super) async fn decision_response(
             )
         }
         RequestBody::SystemAskCleanup { apply, origin } => {
+            // Declared, not authenticated (see the request's docs): the
+            // safety is in what the rules may close, and the ledger names
+            // the observed caller.
             if let Some(refused) = operator_only(origin.as_ref()) {
                 return ("system_ask_cleanup", Response::err(refused.to_string()));
             }

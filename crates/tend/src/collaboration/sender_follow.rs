@@ -669,6 +669,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_reply_that_joined_an_old_item_gets_its_own_full_grace() {
+        let store = CollaborationStore::in_memory(CollaborationOptions::default());
+        let lead = participant("lead-1", "%1", None);
+        let old = replied(&store, &lead).await;
+        {
+            let mut requests = store.requests.write().await;
+            requests.get_mut(&old).unwrap().reply.as_mut().unwrap().at -= time::Duration::days(30);
+        }
+        let action = store.report_gone_sender(&old).await.unwrap().unwrap();
+        {
+            let mut requests = store.requests.write().await;
+            requests.get_mut(&action.id).unwrap().created_at -= time::Duration::days(30);
+        }
+        let fresh = replied(&store, &lead).await;
+        {
+            let mut requests = store.requests.write().await;
+            requests.get_mut(&fresh).unwrap().reply.as_mut().unwrap().at -= SENDER_GONE_GRACE;
+        }
+        assert_eq!(
+            store.report_gone_sender(&fresh).await.unwrap().unwrap().id,
+            action.id
+        );
+        // The old reply is read; the fresh one still needs telling.
+        store
+            .requests
+            .write()
+            .await
+            .get_mut(&old)
+            .unwrap()
+            .mark_reply_read(OffsetDateTime::now_utc());
+        let cleanup = store.cleanup_system_asks(&[], true).await.unwrap();
+        assert!(cleanup.closed.is_empty(), "{cleanup:?}");
+        {
+            let mut requests = store.requests.write().await;
+            requests.get_mut(&fresh).unwrap().reply.as_mut().unwrap().at -= time::Duration::days(8);
+        }
+        let cleanup = store.cleanup_system_asks(&[], true).await.unwrap();
+        assert_eq!(cleanup.closed.len(), 1, "{cleanup:?}");
+    }
+
+    #[tokio::test]
     async fn answering_the_gone_sender_item_owes_no_further_wake() {
         let store = CollaborationStore::in_memory(CollaborationOptions::default());
         let lead = participant("lead-1", "%1", None);

@@ -238,6 +238,16 @@ pub(super) fn still_waiting(
     }
 }
 
+/// When `parent`'s own condition began: its interruption episode, or the
+/// reply that found its sender gone. A request that joined an older item
+/// gets the full grace from here, not from the item's age.
+fn waiting_since(kind: SystemAskKind, parent: &CollaborationRequest) -> Option<OffsetDateTime> {
+    match kind {
+        SystemAskKind::Recovery => parent.interruption.as_ref().map(|info| info.observed_at),
+        SystemAskKind::ReplyWake => parent.reply.as_ref().map(|reply| reply.at),
+    }
+}
+
 /// The session an unmarked (backlog) ask is about.
 fn legacy_subject(kind: SystemAskKind, parent: &CollaborationRequest) -> String {
     match kind {
@@ -337,8 +347,11 @@ pub(super) fn settle(
             Some(SystemAskCloseReason::ParentClosed)
         } else if now - ask.created_at >= SYSTEM_ASK_STALE_AFTER
             && ask.waiting.iter().all(|id| {
-                view.get(id)
-                    .is_some_and(|parent| abandoned(ask.kind, parent, agents))
+                view.get(id).is_some_and(|parent| {
+                    abandoned(ask.kind, parent, agents)
+                        && waiting_since(ask.kind, parent)
+                            .is_none_or(|since| now - since >= SYSTEM_ASK_STALE_AFTER)
+                })
             })
         {
             Some(SystemAskCloseReason::Stale)
@@ -779,11 +792,18 @@ mod tests {
             .await
             .unwrap();
         let item = open_system(&store).await.remove(0);
+        // The coordinator said it was handling it, then went away too.
+        store
+            .update_request(&sender, &parent.id, "handling it".into())
+            .await
+            .unwrap();
         // Both sessions are gone, but only for a while: not yet stale.
         age(&store, &item.id, 6).await;
+        episode_age(&store, &parent.id, 6).await;
         store.reconcile_peer_interruptions(&[]).await.unwrap();
         assert_eq!(open_system(&store).await.len(), 1);
         age(&store, &item.id, 2).await;
+        episode_age(&store, &parent.id, 2).await;
         store.reconcile_peer_interruptions(&[]).await.unwrap();
         assert!(open_system(&store).await.is_empty());
         let closed = row(&store, &item.id).await;
@@ -801,16 +821,67 @@ mod tests {
             open_system(&store).await.is_empty(),
             "no reopening while nobody is there"
         );
-        // The recipient comes back still failing: someone can act again,
-        // and once the usual two minutes pass unacknowledged the person is
-        // asked anew.
-        let mut held = row(&store, &parent.id).await;
-        held.interruption.as_mut().unwrap().observed_at -= time::Duration::minutes(3);
-        put(&store, &[held]).await;
+        // The recipient comes back still failing while the coordinator
+        // stays gone: the person is asked again at once, whatever the old
+        // acknowledgment said.
         store.reconcile_peer_interruptions(&[peer]).await.unwrap();
         let reopened = open_system(&store).await;
         assert_eq!(reopened.len(), 1);
         assert_ne!(reopened[0].id, item.id);
+    }
+
+    async fn episode_age(store: &CollaborationStore, id: &str, days: i64) {
+        let mut aged = row(store, id).await;
+        aged.interruption.as_mut().unwrap().observed_at -= time::Duration::days(days);
+        put(store, &[aged]).await;
+    }
+
+    #[tokio::test]
+    async fn a_request_that_joined_an_old_item_gets_its_own_full_grace() {
+        let store = CollaborationStore::in_memory(CollaborationOptions::default());
+        let (sender, coordinator) = actor("%1", "coord", AgentState::Error).await;
+        let (recipient, peer) = actor("%2", "peer", AgentState::Error).await;
+        let old = claimed(&store, &sender, &recipient, "old").await;
+        let agents = [coordinator.clone(), peer.clone()];
+        store.reconcile_peer_interruptions(&agents).await.unwrap();
+        let item = open_system(&store).await.remove(0);
+        age(&store, &item.id, 30).await;
+        episode_age(&store, &old.id, 30).await;
+        // Today a second request to the same recipient is interrupted and
+        // joins the month-old item; then the old request finishes.
+        let fresh = claimed(&store, &sender, &recipient, "fresh").await;
+        store.reconcile_peer_interruptions(&agents).await.unwrap();
+        assert_eq!(
+            action_of(&row(&store, &fresh.id).await).as_deref(),
+            Some(item.id.as_str())
+        );
+        store
+            .reply(
+                &recipient,
+                &old.id,
+                RequestStatus::Completed,
+                "done".into(),
+                vec![],
+            )
+            .await
+            .unwrap();
+        // Everyone disappears: the fresh request's grace has not run.
+        store.reconcile_peer_interruptions(&[]).await.unwrap();
+        assert!(store
+            .cleanup_system_asks(&[], true)
+            .await
+            .unwrap()
+            .closed
+            .is_empty());
+        let open = open_system(&store).await;
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0].id, item.id);
+        episode_age(&store, &fresh.id, 8).await;
+        store.reconcile_peer_interruptions(&[]).await.unwrap();
+        assert!(
+            open_system(&store).await.is_empty(),
+            "its own week has passed"
+        );
     }
 
     #[tokio::test]

@@ -140,8 +140,13 @@ pub(super) enum RequestBody {
     /// Close the human items tendd opened itself that can no longer matter
     /// (`system_ask_cleanup_v1`): merged duplicates, ones whose original
     /// request moved on, and stale ones nobody is left to act on. Without
-    /// `apply`, only reports what it would close. Operator-console origin
-    /// only, like reading every room's human requests.
+    /// `apply`, only reports what it would close. Refused to an origin that
+    /// speaks for a pane agent. The console origin is declared, not
+    /// authenticated (as for reading the queue), so this is not an
+    /// authorization boundary: an agent that declares it can run the
+    /// cleanup. That grants nothing past the rules, which close only what
+    /// tendd itself would and never answer anything; an applied run goes in
+    /// the collaboration ledger with the OS-observed caller.
     SystemAskCleanup {
         #[serde(default)]
         apply: bool,

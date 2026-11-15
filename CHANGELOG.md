@@ -37,9 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `tend review cleanup` applies those rules to the existing backlog: it
   prints what it would merge or close, and `--apply` closes it. Agents'
-  own questions are never touched; the call is operator-console only
-  (`system_ask_cleanup_v1`) and an applied run is written to the
-  collaboration audit ledger.
+  own questions are never touched. The call (`system_ask_cleanup_v1`)
+  takes a declared operator-console origin, as reading the queue does;
+  that is not authentication, so the rules themselves are what keep it
+  safe, and an applied run is written to the collaboration audit ledger
+  with the observed caller.
 
 ### Fixed
 
