@@ -1,0 +1,62 @@
+name: iOS app
+
+# Tend for iPhone and iPad (apps/tend-ios) compiles the decision models it
+# shares with Tend for Mac (apps/shared), so a change on either side is
+# built and unit-tested for iOS here. The UI tests need a scratch tendd and
+# run locally (apps/tend-ios/README.md).
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/tend-ios/**"
+      - "apps/shared/**"
+      - ".github/workflows/ios-app.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/tend-ios/**"
+      - "apps/shared/**"
+      - ".github/workflows/ios-app.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    name: build and unit test
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Select the newest Xcode
+        run: |
+          set -euo pipefail
+          best=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          sudo xcode-select -s "$best/Contents/Developer"
+          xcodebuild -version
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Build and run TendTests
+        working-directory: apps/tend-ios
+        run: |
+          set -euo pipefail
+          xcodegen generate
+          udid=$(xcrun simctl list devices available -j \
+            | jq -r '[.devices[][] | select(.name | startswith("iPhone"))][0].udid')
+          [ -n "$udid" ] && [ "$udid" != null ] || { xcrun simctl list devices available; exit 1; }
+          set -o pipefail
+          xcodebuild \
+            -project TendiOS.xcodeproj \
+            -scheme Tend \
+            -derivedDataPath .build/DerivedData \
+            -destination "id=$udid" \
+            -only-testing:TendTests \
+            CODE_SIGN_IDENTITY=- \
+            test > "$RUNNER_TEMP/xcodebuild.log" 2>&1 && status=0 || status=$?
+          grep -E ': (error|warning): |Test Case .* failed|Executed [0-9]+ test|\*\* (TEST|BUILD) ' \
+            "$RUNNER_TEMP/xcodebuild.log" | sort -u | head -200 || true
+          exit "$status"

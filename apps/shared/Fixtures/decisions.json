@@ -1,0 +1,98 @@
+{
+    "hosts": [
+        {
+            "alias": "local",
+            "control": true,
+            "covers": [
+                "questions",
+                "waiting agents",
+                "review items"
+            ],
+            "decides_reviews": true,
+            "local": true,
+            "queue": {
+                "items": [
+                    {
+                        "action": "choice",
+                        "body": "Ship the storage migration behind a flag? (1794730400)",
+                        "created_at": "2026-11-15T08:13:20.523028Z",
+                        "from_pane": "%5",
+                        "from_session_id": "ios-asker-1794730400",
+                        "kind": "human_request",
+                        "request_id": "req_18e829ca56c50620_4"
+                    },
+                    {
+                        "decision": {
+                            "evidence": [
+                                {
+                                    "kind": "pull_request",
+                                    "url": "https://github.com/Open330/tend/pull/1"
+                                },
+                                {
+                                    "command": "cargo test -p tend review",
+                                    "kind": "test",
+                                    "passed": true
+                                }
+                            ],
+                            "needed": "Merge the retry path now?",
+                            "options": [
+                                "merge now",
+                                "wait for the perf run"
+                            ],
+                            "recommendation": "merge now: the perf run only covers reads"
+                        },
+                        "generation": 1,
+                        "id": "rv_c6875cf03193496680aaa6160cea43c3",
+                        "kind": "review",
+                        "requested_at": "2026-11-15T08:11:32.395399Z",
+                        "requested_by": {
+                            "kind": "agent",
+                            "label": "impl"
+                        },
+                        "summary": "Retry path for the storage migration (1794730292)",
+                        "target": {
+                            "kind": "session",
+                            "session_id": "ios-scratch-1794730292"
+                        }
+                    },
+                    {
+                        "decision": {
+                            "evidence": [
+                                {
+                                    "kind": "pull_request",
+                                    "url": "https://github.com/Open330/tend/pull/1"
+                                },
+                                {
+                                    "command": "cargo test -p tend review",
+                                    "kind": "test",
+                                    "passed": true
+                                }
+                            ],
+                            "needed": "Merge the retry path now?",
+                            "options": [
+                                "merge now",
+                                "wait for the perf run"
+                            ],
+                            "recommendation": "merge now: the perf run only covers reads"
+                        },
+                        "generation": 1,
+                        "id": "rv_6601cf514bdd4b48bd7192f5924c73d3",
+                        "kind": "review",
+                        "requested_at": "2026-11-15T08:13:20.497093Z",
+                        "requested_by": {
+                            "kind": "agent",
+                            "label": "impl"
+                        },
+                        "summary": "Retry path for the storage migration (1794730400)",
+                        "target": {
+                            "kind": "session",
+                            "session_id": "ios-scratch-1794730400"
+                        }
+                    }
+                ],
+                "truncated": false
+            },
+            "unavailable": []
+        }
+    ]
+}

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Tend for iPhone and iPad** (`apps/tend-ios`, phase 1, built from source):
+  pairs with a dashboard as a device that may only decide, shows what needs
+  you per host, answers questions and decides results through the
+  dashboard's decision routes, and lists what was decided. iPad uses a
+  sidebar like Tend for Mac. See
+  [docs/proposals/IOS_APP.md](docs/proposals/IOS_APP.md).
+
 ### Fixed
 
 - `tend doctor` no longer fails after an upgrade on a host where tend never
