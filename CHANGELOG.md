@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `tend doctor` no longer fails after an upgrade on a host where tend never
+  installed the Copilot CLI hooks. With `copilot` on PATH it now warns and
+  names `tend init --component copilot-hooks`; an upgrade does not write
+  another program's hook config. A leftover `~/.copilot` without the CLI no
+  longer adds a Copilot line. A `tend.json` that tend installed is still
+  checked, and one missing a hook is still an error.
+
 ## [0.10.18] - 2026-11-15
 
 ### Added

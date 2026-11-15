@@ -239,11 +239,6 @@ fn detect_opencode() -> Option<PathBuf> {
     existing_dir(dir.clone()).or_else(|| which::which("opencode").ok().and(dir))
 }
 
-/// Presence-only form of [`detect_copilot`], for `doctor`.
-pub fn copilot_installed() -> bool {
-    detect_copilot().is_some()
-}
-
 /// Copilot CLI creates `$COPILOT_HOME` (default `~/.copilot`) on first run;
 /// `copilot` on PATH covers an install that has never run.
 fn detect_copilot() -> Option<PathBuf> {
