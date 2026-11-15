@@ -37,11 +37,17 @@ pub fn server_proof(token: &str, nonce: &str) -> String {
         Hmac::<Sha256>::new_from_slice(token.as_bytes()).expect("HMAC accepts a key of any length");
     mac.update(SERVER_PROOF_LABEL.as_bytes());
     mac.update(nonce.as_bytes());
-    mac.finalize()
-        .into_bytes()
+    hex(&mac.finalize().into_bytes())
+}
+
+fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    bytes
         .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+        .fold(String::with_capacity(bytes.len() * 2), |mut out, byte| {
+            let _ = write!(out, "{byte:02x}");
+            out
+        })
 }
 
 /// Constant-time check: does `header` carry a `Bearer <token>` that
@@ -96,13 +102,7 @@ mod tests {
         );
         let mut mac = Hmac::<Sha256>::new_from_slice(b"Jefe").unwrap();
         mac.update(b"tend-dashboard-proof/v1\n00112233445566778899aabbccddeeff");
-        let expected: String = mac
-            .finalize()
-            .into_bytes()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
-        assert_eq!(proof, expected);
+        assert_eq!(proof, hex(&mac.finalize().into_bytes()));
     }
 
     #[test]

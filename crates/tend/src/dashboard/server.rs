@@ -4610,10 +4610,7 @@ mod tests {
         ] {
             let response = get(app.clone(), format!("/api/proof?nonce={nonce}")).await;
             assert_eq!(response.status(), StatusCode::OK);
-            assert_eq!(
-                response.headers()[header::CACHE_CONTROL],
-                "private, no-store"
-            );
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
             let body = body_json(response).await;
             assert_eq!(body["version"], 1);
             assert_eq!(
@@ -4632,15 +4629,12 @@ mod tests {
                 );
             }
         }
-        let mut none = DashboardConfig::loopback_default();
-        none.auth = DashboardAuthMode::None;
+        let mut off = DashboardConfig::loopback_default();
+        off.auth = DashboardAuthMode::None;
         assert_eq!(
-            get(
-                router(state_from(none)),
-                format!("/api/proof?nonce={nonce}")
-            )
-            .await
-            .status(),
+            get(router(state_from(off)), format!("/api/proof?nonce={nonce}"))
+                .await
+                .status(),
             StatusCode::NOT_FOUND
         );
     }
