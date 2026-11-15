@@ -921,8 +921,13 @@ mod tests {
 
     #[test]
     fn a_restricted_daemon_adds_only_the_rmux_server_it_was_given() {
-        let kinds =
-            |backends: Vec<SharedBackend>| backends.iter().map(|b| b.kind()).collect::<Vec<_>>();
+        let kinds = |backends: Vec<SharedBackend>| {
+            let mut kinds = Vec::new();
+            for backend in &backends {
+                kinds.push(backend.kind());
+            }
+            kinds
+        };
         assert_eq!(kinds(restricted_backends_with(None)), [HostKind::Tmux]);
         assert_eq!(
             kinds(restricted_backends_with(Some(
