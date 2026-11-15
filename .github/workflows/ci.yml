@@ -42,7 +42,10 @@ jobs:
           # libghostty and macOS caches the release depends on. PRs restore
           # main's.
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      # --locked fails the job when Cargo.lock no longer matches the
+      # manifests. `cargo install --locked` (README, INSTALL.md, install.sh)
+      # and the release build refuse a stale lock, and v0.10.19 shipped one.
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       # The workspace run unifies features, so tend is always built with
       # `dashboard` there. This builds the CLI side the way `cargo install
       # --path crates/tend-cli` does, without the dashboard server.
@@ -67,8 +70,8 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y tmux
       # e2e tests shell out to `tendd` / `tend` — those bins live in other
       # workspace packages and cargo test won't build them otherwise.
-      - run: cargo build --workspace --bins
-      - run: cargo test --workspace
+      - run: cargo build --workspace --bins --locked
+      - run: cargo test --workspace --locked
 
   js-test:
     name: dashboard JS tests

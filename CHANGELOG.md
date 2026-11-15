@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- CI builds with `--locked`, so a PR whose `Cargo.lock` is out of date fails
+  instead of breaking `cargo install --locked` after release (v0.10.19
+  shipped such a lock). Release binaries are built `--locked` too, matching
+  the install docs.
+
 ## [0.10.19] - 2026-11-15
 
 ### Added
