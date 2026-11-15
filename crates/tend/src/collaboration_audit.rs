@@ -54,6 +54,8 @@ pub enum CollaborationAuditOperation {
     WorkerDrainFinish,
     WorkerDrains,
     WithdrawReplyWakes,
+    /// `system_ask_cleanup` with `apply`: tendd's own items closed.
+    SystemAskCleanup,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

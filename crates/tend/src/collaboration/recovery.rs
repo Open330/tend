@@ -129,6 +129,11 @@ fn close_stale_stop(request: &mut CollaborationRequest, agent: Option<&Agent>) {
     }
 }
 
+/// A room as a grouping key.
+pub(super) fn subject_room(room: &super::RoomId) -> String {
+    serde_json::to_string(room).unwrap_or_default()
+}
+
 fn recovery_action(
     parent: &CollaborationRequest,
     id: String,
@@ -181,10 +186,14 @@ fn recovery_action(
     action.sender_follow = None;
     action.wake_retry = None;
     action.updates.clear();
+    action.system_ask = Some(super::system_asks::SystemAskState {
+        subject_session: parent.to.agent_session_id.clone(),
+        ..super::system_asks::SystemAskState::default()
+    });
     action
 }
 
-fn recovery_body(
+pub(super) fn recovery_body(
     session: &str,
     request_id: &str,
     current_reason: &str,
@@ -288,6 +297,23 @@ impl CollaborationStore {
         let mut missing = self.missing_recipients.lock().await;
         missing.retain(|id, _| snapshot.get(id).is_some_and(|r| !r.status.is_terminal()));
         let mut changed = Vec::new();
+        // Open managed recovery items by (room, recipient session): a new
+        // interruption of a session that already has one joins it.
+        let mut open_by_subject: std::collections::HashMap<(String, String), String> = snapshot
+            .values()
+            .filter(|r| r.needs_human_response())
+            .filter(|r| {
+                super::system_asks::system_ask_kind(r)
+                    == Some(super::system_asks::SystemAskKind::Recovery)
+            })
+            .filter_map(|r| {
+                let state = r.system_ask.as_ref()?;
+                Some((
+                    (subject_room(&r.to.room), state.subject_session.clone()),
+                    r.id.clone(),
+                ))
+            })
+            .collect();
         for original in snapshot.values().filter(|r| {
             !r.to.console
                 && r.expects_reply
@@ -346,6 +372,45 @@ impl CollaborationStore {
                     .iter()
                     .any(|u| u.at >= info.observed_at && addresses(&parent.from, &u.author));
                 let overdue = now - info.observed_at >= time::Duration::minutes(2) && !acknowledged;
+                let mut reask = false;
+                // A managed item that ended without an answer no longer
+                // holds this request when `system_asks` closed it (unless
+                // as stale, and nobody is there yet to act), or when it was
+                // another request's item that ended with that request.
+                if info
+                    .action_request_id
+                    .as_ref()
+                    .and_then(|id| snapshot.get(id))
+                    .is_some_and(|action| {
+                        action.status.is_terminal()
+                            && action.reply.is_none()
+                            && action
+                                .system_ask
+                                .as_ref()
+                                .is_some_and(|state| match &state.closed {
+                                    Some(closed)
+                                        if closed.reason
+                                            == super::system_asks::SystemAskCloseReason::Stale =>
+                                    {
+                                        !super::system_asks::abandoned(
+                                            super::system_asks::SystemAskKind::Recovery,
+                                            original,
+                                            agents,
+                                        )
+                                    }
+                                    Some(_) => true,
+                                    None => {
+                                        action.parent_request_id.as_deref()
+                                            != Some(original.id.as_str())
+                                    }
+                                })
+                    })
+                {
+                    info.action_request_id = None;
+                    // The person was already asked about this episode;
+                    // the earlier grace and acknowledgments are spent.
+                    reask = true;
+                }
                 if info.action_request_id.is_none() {
                     info.action_request_id = snapshot
                         .values()
@@ -358,11 +423,22 @@ impl CollaborationStore {
                 if info.action_request_id.is_none()
                     && (matches!(current_reason, "approval_required" | "input_required")
                         || coordinator_unavailable
-                        || overdue)
+                        || overdue
+                        || reask)
                 {
-                    let id = next_request_id(now);
-                    info.action_request_id = Some(id.clone());
-                    changed.push(recovery_action(&parent, id, now, current_reason));
+                    let key = (
+                        subject_room(&parent.from.room),
+                        parent.to.agent_session_id.clone(),
+                    );
+                    if let Some(existing) = open_by_subject.get(&key) {
+                        // Same recipient, same room: one item covers both.
+                        info.action_request_id = Some(existing.clone());
+                    } else {
+                        let id = next_request_id(now);
+                        info.action_request_id = Some(id.clone());
+                        open_by_subject.insert(key, id.clone());
+                        changed.push(recovery_action(&parent, id, now, current_reason));
+                    }
                 }
             } else if parent.status.is_terminal()
                 || agent.is_some_and(|a| matches!(a.state, AgentState::Working | AgentState::Idle))
@@ -393,7 +469,14 @@ impl CollaborationStore {
                     .and_then(|id| snapshot.get(id))
                 {
                     info.decision.clone_from(&action.reply);
-                    if let Some(refreshed) =
+                    // An open managed item is kept by `system_asks::settle`
+                    // below, across every request it covers. Once it has
+                    // ended, its own request keeps its record current as
+                    // for any other item.
+                    let managed_open = action.system_ask.is_some() && !action.status.is_terminal();
+                    let own = action.parent_request_id.as_deref() == Some(original.id.as_str());
+                    if managed_open || (action.system_ask.is_some() && !own) {
+                    } else if let Some(refreshed) =
                         refresh_recovery_action(action, info, now, &original.to.agent_session_id)
                     {
                         changed.push(refreshed);
@@ -405,9 +488,25 @@ impl CollaborationStore {
             }
         }
         drop(missing);
+        let mut view = super::system_asks::View {
+            base: &snapshot,
+            overlay: changed
+                .into_iter()
+                .map(|request| (request.id.clone(), request))
+                .collect(),
+        };
+        let settled = super::system_asks::settle(
+            &mut view,
+            agents,
+            now,
+            super::system_asks::Scope::Managed,
+            super::system_asks::SystemAskCloser::Daemon,
+        );
+        let changed: Vec<_> = view.overlay.into_values().collect();
         drop(snapshot);
         if !changed.is_empty() {
             self.persist_requests(&changed)?;
+            super::system_asks::log_settled(&settled, super::system_asks::SystemAskCloser::Daemon);
             let mut requests = self.requests.write().await;
             for request in changed {
                 requests.insert(request.id.clone(), request);

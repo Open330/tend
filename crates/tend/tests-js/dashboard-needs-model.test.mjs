@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { ago, checksOf, decidedCard, draftKey, historySections, evidenceLine, hostSections, pendingCard, safeHref, linkedItemOf, needsReturnPath } from "../src/dashboard/web/needs-model.mjs";
+import { ago, checksOf, decidedCard, draftKey, historySections, evidenceLine, hostSections, isSystemAsk, pendingCard, safeHref, linkedItemOf, needsReturnPath } from "../src/dashboard/web/needs-model.mjs";
 
 const now = Date.parse("2026-11-12T12:00:00Z");
 
@@ -249,4 +249,20 @@ test("the history is per host, and says what kept a host out", () => {
   const old = historySections({ covers: "here", history: { items: [answered] } }, now);
   assert.equal(old.length, 1);
   assert.equal(old[0].alias, "here");
+});
+
+test("tend's own items follow agents' questions and results, even from an older host", () => {
+  const now = Date.parse("2026-11-15T12:00:00Z");
+  const recovery = { kind: "human_request", request_id: "rq_r", action: "choice", body: "Muxa cannot verify…", from_session_id: "muxa:peer-recovery", from_pane: "muxa-recovery", from_alias: "Muxa recovery", created_at: "2026-10-31T00:00:00Z" };
+  const marked = { ...recovery, request_id: "rq_m", from_session_id: "x", system: true };
+  const ask = { kind: "human_request", request_id: "rq_a", action: "choice", body: "Merge?", from_session_id: "s", from_pane: "%1", created_at: "2026-11-15T11:00:00Z" };
+  const review = { kind: "review", id: "rv_1", summary: "done", target: { kind: "session", session_id: "s" }, requested_at: "2026-11-15T11:30:00Z" };
+  // An older daemon lists its own items first.
+  const [section] = hostSections({ hosts: [{ alias: "mini", local: false, control: true, queue: { items: [recovery, marked, ask, review] } }] }, now);
+  assert.deepEqual(section.cards.map((card) => card.id), ["rq_a", "rv_1", "rq_r", "rq_m"]);
+  assert.equal(section.cards[2].system, true);
+  assert.equal(section.cards[2].label, "from tend · choice");
+  assert.equal(section.cards[2].actionable, true, "still answerable");
+  assert.equal(section.cards[0].system, undefined);
+  assert.equal(isSystemAsk(ask), false);
 });

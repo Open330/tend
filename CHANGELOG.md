@@ -35,6 +35,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sidebar like Tend for Mac. See
   [docs/proposals/IOS_APP.md](docs/proposals/IOS_APP.md).
 
+- `tend review cleanup` applies those rules to the existing backlog: it
+  prints what it would merge or close, and `--apply` closes it. Agents'
+  own questions are never touched. The call (`system_ask_cleanup_v1`)
+  takes a declared operator-console origin, as reading the queue does;
+  that is not authentication, so the rules themselves are what keep it
+  safe, and an applied run is written to the collaboration audit ledger
+  with the observed caller.
+
 ### Fixed
 
 - A tendd that is not the user's (started with its own XDG directories, as
@@ -52,6 +60,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   another program's hook config. A leftover `~/.copilot` without the CLI no
   longer adds a Copilot line. A `tend.json` that tend installed is still
   checked, and one missing a hook is still an error.
+
+- The person's waiting list no longer fills up with tend's own items.
+  Peer-recovery questions and gone-sender reply notices about the same
+  session, for the same room, now share one item, and answering it applies
+  to every request it covers. tend closes one of these items without an
+  answer, keeping the row with the reason, time and closer recorded on it
+  (`system_ask`), when its original request is gone or no longer waiting
+  (finished, cancelled, recovered, reply read). It also closes one that
+  has waited over a week when nobody is left to act on it: the original
+  request's agent sender and its recipient are both gone. A request sent
+  from the operator console or a Fleet initiator keeps its recovery item
+  however old. Items from older versions, including the pre-rebrand
+  `Muxa recovery` ones that were never cleared, are left for
+  `tend review cleanup`.
+
+### Changed
+
+- The decision queue (`tend review queue`, the web Needs you page, the Mac
+  app's Home) lists agents' questions, waiting agents and review results
+  before tend's own items, which are marked (`system`, "from tend") and
+  are the first to be cut when a page is truncated. The web page and the
+  Mac app also reorder an older host's list that way.
 
 ## [0.10.18] - 2026-11-15
 
