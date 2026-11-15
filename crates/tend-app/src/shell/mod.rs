@@ -143,6 +143,73 @@ struct Home {
     _context: WebContext,
 }
 
+type Job = (wry::http::Request<Vec<u8>>, wry::RequestAsyncResponder);
+
+const WORKERS: usize = 4;
+const QUEUED: usize = 32;
+
+/// The workers that answer the Home window's requests through the proxy.
+/// They stop when the window (and with it the sender) is gone.
+fn spawn_workers(client: Arc<Client>) -> std::sync::mpsc::SyncSender<Job> {
+    let (sender, receiver) = std::sync::mpsc::sync_channel::<Job>(QUEUED);
+    let receiver = Arc::new(std::sync::Mutex::new(receiver));
+    for _ in 0..WORKERS {
+        let receiver = receiver.clone();
+        let client = client.clone();
+        std::thread::spawn(move || loop {
+            let job = receiver
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .recv();
+            let Ok((request, responder)) = job else {
+                return;
+            };
+            answer(&client, &request, responder);
+        });
+    }
+    sender
+}
+
+fn answer(
+    client: &Client,
+    request: &wry::http::Request<Vec<u8>>,
+    responder: wry::RequestAsyncResponder,
+) {
+    let method = request.method().as_str().to_owned();
+    let path = request
+        .uri()
+        .path_and_query()
+        .map_or_else(|| "/".to_owned(), |p| p.as_str().to_owned());
+    let content_type = request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let reply = proxy::handle(
+        client,
+        &method,
+        &path,
+        content_type.as_deref(),
+        request.body(),
+    );
+    let mut response = HttpResponse::builder()
+        .status(reply.status)
+        // The app origin's own framing policy; tendd's headers do not
+        // survive the proxy.
+        .header(header::X_FRAME_OPTIONS, "DENY")
+        .header(header::CONTENT_SECURITY_POLICY, "frame-ancestors 'none'")
+        .header(
+            header::CACHE_CONTROL,
+            reply.cache_control.unwrap_or_else(|| "no-store".into()),
+        );
+    if let Some(value) = reply.content_type {
+        response = response.header(header::CONTENT_TYPE, value);
+    }
+    if let Ok(response) = response.body(reply.body) {
+        responder.respond(response);
+    }
+}
+
 #[allow(clippy::too_many_lines)] // one builder chain
 fn open_home(
     target: &EventLoopWindowTarget<UserEvent>,
@@ -180,41 +247,21 @@ fn open_home(
         return;
     };
     let addr = dashboard.addr;
-    let client = Arc::new(Client::new(dashboard));
+    let jobs = spawn_workers(Arc::new(Client::new(dashboard)));
     let mut context = WebContext::new(Some(identity::state_dir().join("webview2")));
     let built = WebViewBuilder::new_with_web_context(&mut context)
         .with_asynchronous_custom_protocol(proxy::SCHEME.into(), move |_id, request, responder| {
-            let client = client.clone();
-            std::thread::spawn(move || {
-                let method = request.method().as_str().to_owned();
-                let path = request
-                    .uri()
-                    .path_and_query()
-                    .map_or_else(|| "/".to_owned(), |p| p.as_str().to_owned());
-                let content_type = request
-                    .headers()
-                    .get(header::CONTENT_TYPE)
-                    .and_then(|v| v.to_str().ok())
-                    .map(str::to_owned);
-                let reply = proxy::handle(
-                    &client,
-                    &method,
-                    &path,
-                    content_type.as_deref(),
-                    request.body(),
-                );
-                let mut response = HttpResponse::builder().status(reply.status);
-                if let Some(value) = reply.content_type {
-                    response = response.header(header::CONTENT_TYPE, value);
+            // A fixed pool answers the window; a full queue is refused
+            // rather than given another thread.
+            if let Err(error) = jobs.try_send((request, responder)) {
+                let (_, responder) = match error {
+                    std::sync::mpsc::TrySendError::Full(job)
+                    | std::sync::mpsc::TrySendError::Disconnected(job) => job,
+                };
+                if let Ok(busy) = HttpResponse::builder().status(503).body(b"busy".to_vec()) {
+                    responder.respond(busy);
                 }
-                response = response.header(
-                    header::CACHE_CONTROL,
-                    reply.cache_control.unwrap_or_else(|| "no-store".into()),
-                );
-                if let Ok(response) = response.body(reply.body) {
-                    responder.respond(response);
-                }
-            });
+            }
         })
         .with_navigation_handler(move |url| {
             if proxy::stays_in_window(&url) {

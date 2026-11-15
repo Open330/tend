@@ -100,7 +100,11 @@ pub fn snapshot(decisions: &Value) -> Snapshot {
                 .pointer("/queue/truncated")
                 .and_then(Value::as_bool)
                 .unwrap_or(false)
-            || host.pointer("/queue/items").is_none();
+            || !host.pointer("/queue/items").is_some_and(Value::is_array)
+            || host
+                .pointer("/queue/unavailable")
+                .and_then(Value::as_array)
+                .is_some_and(|reasons| !reasons.is_empty());
         if !partial {
             out.covered.insert(alias.clone());
         }

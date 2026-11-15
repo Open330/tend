@@ -32,9 +32,7 @@ pub fn allowed(method: &str, path: &str) -> bool {
                     | "/api/fleet"
                     | "/api/decisions"
                     | "/api/decisions/history"
-            ) || path
-                .strip_prefix("/static/")
-                .is_some_and(|rest| !rest.is_empty())
+            ) || path.strip_prefix("/static/").is_some_and(asset_path)
         }
         "POST" => ["/api/decisions/requests/", "/api/decisions/reviews/"]
             .iter()
@@ -48,8 +46,22 @@ fn single_segment(id: &str) -> bool {
         && id.len() <= 200
         && id
             .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b'%'))
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
 }
+
+/// An asset name: letters, digits and `_ - . /`, no `%` (so nothing is
+/// decoded into a separator or a dot segment later).
+fn asset_path(rest: &str) -> bool {
+    !rest.is_empty()
+        && rest.len() <= 200
+        && rest
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b'/'))
+}
+
+/// The largest request body the window may send (a decision is a few
+/// hundred bytes; an answer is capped at 16 KiB by the page).
+pub const BODY_LIMIT: usize = 64 * 1024;
 
 /// Whether a navigation inside the window stays in the window: only the
 /// app origin's Home pages. Parsed, so `http://tend.localhost.evil/` and
@@ -123,6 +135,9 @@ pub fn handle(
     if !allowed(method, path_and_query) {
         return Reply::text(403, "not available in the Tend app");
     }
+    if body.len() > BODY_LIMIT {
+        return Reply::text(413, "request too large");
+    }
     let headers: Vec<(&str, &str)> = content_type
         .filter(|_| method == "POST")
         .map(|value| vec![("Content-Type", value)])
@@ -188,6 +203,10 @@ mod tests {
             ("PUT", "/api/work-metadata"),
             ("DELETE", "/api/decisions/requests/x"),
             ("GET", "/home//x"),
+            ("POST", "/api/decisions/requests/a%2F..%2F..%2Fpanes"),
+            ("POST", "/api/decisions/requests/%2e%2e"),
+            ("GET", "/static/%2e%2e/api/agents"),
+            ("GET", "/static/a%5cb"),
         ] {
             assert!(!allowed(method, path), "{method} {path}");
         }

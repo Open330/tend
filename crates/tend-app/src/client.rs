@@ -14,8 +14,8 @@ use sha2::Sha256;
 use std::fmt;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
-use std::sync::Mutex;
-use std::time::Duration;
+use std::sync::{Condvar, Mutex};
+use std::time::{Duration, Instant};
 use subtle::ConstantTimeEq;
 
 use crate::settings::Dashboard;
@@ -25,7 +25,13 @@ pub const SERVER_PROOF_LABEL: &str = "tend-dashboard-proof/v1\n";
 
 const HEAD_LIMIT: usize = 64 * 1024;
 const BODY_LIMIT: usize = 16 * 1024 * 1024;
-const IO_TIMEOUT: Duration = Duration::from_secs(15);
+const REQUEST_BODY_LIMIT: usize = 64 * 1024;
+/// The whole proof exchange, and any other whole exchange.
+const PROOF_DEADLINE: Duration = Duration::from_secs(5);
+const EXCHANGE_DEADLINE: Duration = Duration::from_secs(30);
+/// Requests in flight at once; one slot is kept for decisions.
+const MAX_ACTIVE: usize = 6;
+const SLOT_WAIT: Duration = Duration::from_secs(30);
 
 #[derive(Debug)]
 pub enum ClientError {
@@ -100,8 +106,49 @@ fn fresh_nonce() -> String {
     )
 }
 
+/// A TCP stream whose reads and writes share one absolute deadline, so a
+/// peer that trickles bytes cannot hold an exchange open past it.
+struct Timed {
+    stream: TcpStream,
+    deadline: Instant,
+}
+
+impl Timed {
+    fn left(&self) -> io::Result<Duration> {
+        let left = self.deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "the dashboard took too long",
+            ))
+        } else {
+            Ok(left)
+        }
+    }
+}
+
+impl Read for Timed {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let left = self.left()?;
+        self.stream.set_read_timeout(Some(left))?;
+        self.stream.read(buf)
+    }
+}
+
+impl Write for Timed {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let left = self.left()?;
+        self.stream.set_write_timeout(Some(left))?;
+        self.stream.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.stream.flush()
+    }
+}
+
 struct Connection {
-    reader: BufReader<TcpStream>,
+    reader: BufReader<Timed>,
 }
 
 impl Connection {
@@ -109,15 +156,12 @@ impl Connection {
     fn open(dashboard: &Dashboard) -> Result<Self, ClientError> {
         let stream = TcpStream::connect_timeout(&dashboard.addr, Duration::from_secs(3))
             .map_err(ClientError::Unreachable)?;
-        stream
-            .set_read_timeout(Some(IO_TIMEOUT))
-            .map_err(ClientError::Io)?;
-        stream
-            .set_write_timeout(Some(IO_TIMEOUT))
-            .map_err(ClientError::Io)?;
         let _ = stream.set_nodelay(true);
         let mut connection = Self {
-            reader: BufReader::new(stream),
+            reader: BufReader::new(Timed {
+                stream,
+                deadline: Instant::now(),
+            }),
         };
         connection.prove(dashboard)?;
         Ok(connection)
@@ -133,9 +177,11 @@ impl Connection {
                 &[],
                 &[],
                 None,
+                PROOF_DEADLINE,
             )
             .map_err(|error| match error {
                 ClientError::Io(error) => ClientError::NotTendd(format!("no proof ({error})")),
+                ClientError::Protocol(why) => ClientError::NotTendd(format!("no proof ({why})")),
                 other => other,
             })?;
         if response.status != 200 {
@@ -165,7 +211,9 @@ impl Connection {
         }
     }
 
-    /// Write one request and read its response on this connection.
+    /// Write one request and read its response on this connection, all
+    /// within `deadline`.
+    #[allow(clippy::too_many_arguments)]
     fn exchange(
         &mut self,
         addr: SocketAddr,
@@ -174,8 +222,15 @@ impl Connection {
         headers: &[(&str, &str)],
         body: &[u8],
         token: Option<&str>,
+        deadline: Duration,
     ) -> Result<Response, ClientError> {
         use std::fmt::Write as _;
+        if !path.starts_with('/') || path.bytes().any(|b| b.is_ascii_control() || b == b' ') {
+            return Err(ClientError::Protocol("bad request target".into()));
+        }
+        if body.len() > REQUEST_BODY_LIMIT {
+            return Err(ClientError::Protocol("request body too large".into()));
+        }
         let mut head =
             format!("{method} {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: keep-alive\r\n");
         if let Some(token) = token {
@@ -191,6 +246,7 @@ impl Connection {
             let _ = write!(head, "Content-Length: {}\r\n", body.len());
         }
         head.push_str("\r\n");
+        self.reader.get_mut().deadline = Instant::now() + deadline;
         let stream = self.reader.get_mut();
         stream.write_all(head.as_bytes()).map_err(ClientError::Io)?;
         stream.write_all(body).map_err(ClientError::Io)?;
@@ -199,23 +255,53 @@ impl Connection {
     }
 }
 
+/// Append one line (up to and including `\n`) to `out`, refusing to grow
+/// it past `max` bytes: nothing an unproved peer sends is buffered beyond
+/// the limit. Returns how many bytes were read; 0 at end of stream.
+fn read_line_bounded(
+    reader: &mut impl BufRead,
+    out: &mut Vec<u8>,
+    max: usize,
+) -> Result<usize, ClientError> {
+    let start = out.len();
+    loop {
+        let available = reader.fill_buf().map_err(ClientError::Io)?;
+        if available.is_empty() {
+            return Ok(out.len() - start);
+        }
+        let newline = available.iter().position(|b| *b == b'\n').map(|i| i + 1);
+        let take = newline.unwrap_or(available.len());
+        if out.len() - start + take > max {
+            return Err(ClientError::Protocol("response line too long".into()));
+        }
+        out.extend_from_slice(&available[..take]);
+        reader.consume(take);
+        if newline.is_some() {
+            return Ok(out.len() - start);
+        }
+    }
+}
+
+fn unexpected_eof(what: &str) -> ClientError {
+    ClientError::Io(io::Error::new(
+        io::ErrorKind::UnexpectedEof,
+        what.to_owned(),
+    ))
+}
+
 fn read_response(reader: &mut impl BufRead, head_only: bool) -> Result<Response, ClientError> {
     let mut raw = Vec::new();
     loop {
-        let read = reader
-            .read_until(b'\n', &mut raw)
-            .map_err(ClientError::Io)?;
-        if read == 0 {
-            return Err(ClientError::Io(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "connection closed before a response",
-            )));
-        }
-        if raw.ends_with(b"\r\n\r\n") {
-            break;
-        }
-        if raw.len() > HEAD_LIMIT {
+        let left = HEAD_LIMIT.saturating_sub(raw.len());
+        if left == 0 {
             return Err(ClientError::Protocol("response head too large".into()));
+        }
+        let line_start = raw.len();
+        if read_line_bounded(reader, &mut raw, left)? == 0 {
+            return Err(unexpected_eof("connection closed before a response"));
+        }
+        if &raw[line_start..] == b"\r\n" && line_start > 0 {
+            break;
         }
     }
     let mut parsed_headers = [httparse::EMPTY_HEADER; 64];
@@ -244,56 +330,72 @@ fn read_response(reader: &mut impl BufRead, head_only: bool) -> Result<Response,
     if no_body {
         return Ok(response);
     }
-    let body = if response
-        .header("transfer-encoding")
-        .is_some_and(|v| v.to_ascii_lowercase().contains("chunked"))
-    {
-        read_chunked(reader)?
-    } else if let Some(length) = response.header("content-length") {
-        let length: usize = length
-            .trim()
-            .parse()
-            .map_err(|_| ClientError::Protocol("bad content-length".into()))?;
-        if length > BODY_LIMIT {
-            return Err(ClientError::Protocol("response body too large".into()));
+    let chunked = match response.header("transfer-encoding") {
+        None => false,
+        Some(coding) if coding.trim().eq_ignore_ascii_case("chunked") => true,
+        Some(_) => return Err(ClientError::Protocol("unsupported transfer coding".into())),
+    };
+    let body = match (chunked, response.header("content-length")) {
+        (true, Some(_)) => return Err(ClientError::Protocol("conflicting body framing".into())),
+        (true, None) => read_chunked(reader)?,
+        (false, Some(length)) => {
+            let length: usize = length
+                .trim()
+                .parse()
+                .map_err(|_| ClientError::Protocol("bad content-length".into()))?;
+            if length > BODY_LIMIT {
+                return Err(ClientError::Protocol("response body too large".into()));
+            }
+            let mut body = vec![0; length];
+            reader.read_exact(&mut body).map_err(ClientError::Io)?;
+            body
         }
-        let mut body = vec![0; length];
-        reader.read_exact(&mut body).map_err(ClientError::Io)?;
-        body
-    } else {
-        // Neither: the body runs to the end of the connection.
-        let mut body = Vec::new();
-        reader
-            .take(BODY_LIMIT as u64 + 1)
-            .read_to_end(&mut body)
-            .map_err(ClientError::Io)?;
-        if body.len() > BODY_LIMIT {
-            return Err(ClientError::Protocol("response body too large".into()));
+        (false, None) => {
+            // Neither: the body runs to the end of the connection.
+            let mut body = Vec::new();
+            reader
+                .take(BODY_LIMIT as u64 + 1)
+                .read_to_end(&mut body)
+                .map_err(ClientError::Io)?;
+            if body.len() > BODY_LIMIT {
+                return Err(ClientError::Protocol("response body too large".into()));
+            }
+            body
         }
-        body
     };
     Ok(Response { body, ..response })
 }
 
+const CHUNK_LINE_LIMIT: usize = 1024;
+const TRAILER_LIMIT: usize = 8 * 1024;
+const TRAILERS_MAX: usize = 32;
+
 fn read_chunked(reader: &mut impl BufRead) -> Result<Vec<u8>, ClientError> {
     let mut body = Vec::new();
     loop {
-        let mut line = String::new();
-        reader.read_line(&mut line).map_err(ClientError::Io)?;
+        let mut line = Vec::new();
+        if read_line_bounded(reader, &mut line, CHUNK_LINE_LIMIT)? == 0 {
+            return Err(unexpected_eof("connection closed inside a chunked body"));
+        }
+        let line = std::str::from_utf8(&line)
+            .map_err(|_| ClientError::Protocol("bad chunk size".into()))?;
         let size = line.split(';').next().unwrap_or("").trim();
         let size = usize::from_str_radix(size, 16)
             .map_err(|_| ClientError::Protocol("bad chunk size".into()))?;
         if size == 0 {
             // Trailers, then the blank line.
-            loop {
-                let mut trailer = String::new();
-                let read = reader.read_line(&mut trailer).map_err(ClientError::Io)?;
-                if read == 0 || trailer == "\r\n" || trailer == "\n" {
+            for _ in 0..TRAILERS_MAX {
+                let mut trailer = Vec::new();
+                if read_line_bounded(reader, &mut trailer, TRAILER_LIMIT)? == 0 {
+                    return Err(unexpected_eof("connection closed inside the trailers"));
+                }
+                if trailer == b"\r\n" || trailer == b"\n" {
                     return Ok(body);
                 }
             }
+            return Err(ClientError::Protocol("too many trailers".into()));
         }
-        if body.len() + size > BODY_LIMIT {
+        if size > BODY_LIMIT - body.len() {
             return Err(ClientError::Protocol("response body too large".into()));
         }
         let start = body.len();
@@ -303,6 +405,9 @@ fn read_chunked(reader: &mut impl BufRead) -> Result<Vec<u8>, ClientError> {
             .map_err(ClientError::Io)?;
         let mut crlf = [0; 2];
         reader.read_exact(&mut crlf).map_err(ClientError::Io)?;
+        if &crlf != b"\r\n" {
+            return Err(ClientError::Protocol("chunk not followed by CRLF".into()));
+        }
     }
 }
 
@@ -310,11 +415,28 @@ fn read_chunked(reader: &mut impl BufRead) -> Result<Vec<u8>, ClientError> {
 const POOL: usize = 4;
 
 /// The dashboard client. Every connection it uses was proved when it was
-/// opened; a few are kept alive so a decision is not held behind a slow
-/// read (a Fleet host that does not answer takes seconds).
+/// opened; a few are kept alive. At most [`MAX_ACTIVE`] requests run at
+/// once, and reads may take all but one slot, so a decision is never held
+/// behind slow reads (a Fleet host that does not answer takes seconds).
 pub struct Client {
     dashboard: Dashboard,
     idle: Mutex<Vec<Connection>>,
+    active: Mutex<usize>,
+    freed: Condvar,
+}
+
+struct Slot<'a>(&'a Client);
+
+impl Drop for Slot<'_> {
+    fn drop(&mut self) {
+        let mut active = self
+            .0
+            .active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *active -= 1;
+        self.0.freed.notify_all();
+    }
 }
 
 impl Client {
@@ -323,6 +445,8 @@ impl Client {
         Self {
             dashboard,
             idle: Mutex::new(Vec::new()),
+            active: Mutex::new(0),
+            freed: Condvar::new(),
         }
     }
 
@@ -330,6 +454,28 @@ impl Client {
         self.idle
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn slot(&self, mutation: bool) -> Result<Slot<'_>, ClientError> {
+        let limit = if mutation { MAX_ACTIVE } else { MAX_ACTIVE - 1 };
+        let mut active = self
+            .active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let deadline = Instant::now() + SLOT_WAIT;
+        while *active >= limit {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err(ClientError::Protocol("too many requests in flight".into()));
+            }
+            active = self
+                .freed
+                .wait_timeout(active, left)
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .0;
+        }
+        *active += 1;
+        Ok(Slot(self))
     }
 
     /// Send one request with the token, on a proved connection. A GET on a
@@ -343,6 +489,7 @@ impl Client {
         headers: &[(&str, &str)],
         body: &[u8],
     ) -> Result<Response, ClientError> {
+        let _slot = self.slot(method != "GET")?;
         let kept = self.idle().pop();
         let reused = kept.is_some();
         let mut connection = match kept {
@@ -350,14 +497,22 @@ impl Client {
             None => Connection::open(&self.dashboard)?,
         };
         let token = Some(self.dashboard.token.as_str());
-        let result =
-            match connection.exchange(self.dashboard.addr, method, path, headers, body, token) {
-                Err(ClientError::Io(_)) if reused && method == "GET" => {
-                    connection = Connection::open(&self.dashboard)?;
-                    connection.exchange(self.dashboard.addr, method, path, headers, body, token)
-                }
-                other => other,
-            };
+        let addr = self.dashboard.addr;
+        let result = match connection.exchange(
+            addr,
+            method,
+            path,
+            headers,
+            body,
+            token,
+            EXCHANGE_DEADLINE,
+        ) {
+            Err(ClientError::Io(_)) if reused && method == "GET" => {
+                connection = Connection::open(&self.dashboard)?;
+                connection.exchange(addr, method, path, headers, body, token, EXCHANGE_DEADLINE)
+            }
+            other => other,
+        };
         if let Ok(response) = &result {
             let closing = response
                 .header("connection")
@@ -719,5 +874,71 @@ pub(crate) mod tests {
         // depend on tend, so the literal is pinned here.
         assert_eq!(SERVER_PROOF_LABEL, "tend-dashboard-proof/v1\n");
         assert_eq!(fresh_nonce().len(), 64);
+    }
+
+    fn parse(raw: &[u8]) -> Result<Response, ClientError> {
+        read_response(&mut BufReader::new(raw), false)
+    }
+
+    #[test]
+    fn an_unproved_peer_cannot_grow_buffers_past_their_limits() {
+        // A head with no newline at all.
+        let endless = vec![b'a'; HEAD_LIMIT * 4];
+        assert!(matches!(parse(&endless), Err(ClientError::Protocol(_))));
+        // A chunk-size line without end.
+        let mut chunk = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
+        chunk.extend(vec![b'1'; CHUNK_LINE_LIMIT * 4]);
+        assert!(matches!(parse(&chunk), Err(ClientError::Protocol(_))));
+    }
+
+    #[test]
+    fn a_chunk_size_that_would_overflow_is_an_error_not_a_panic() {
+        let raw =
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\nffffffffffffffff\r\n";
+        assert!(matches!(parse(raw), Err(ClientError::Protocol(_))));
+    }
+
+    #[test]
+    fn malformed_framing_is_refused() {
+        for raw in [
+            &b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 3\r\n\r\n"[..],
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, chunked\r\n\r\n",
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nxYZ0\r\n\r\n",
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nTrailer: x\r\n",
+        ] {
+            assert!(parse(raw).is_err(), "{}", String::from_utf8_lossy(raw));
+        }
+        let ok = parse(
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nhi\r\n0\r\nX: y\r\n\r\n",
+        )
+        .unwrap();
+        assert_eq!(ok.body, b"hi");
+    }
+
+    #[test]
+    fn a_trickling_peer_is_cut_off_at_the_deadline() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0; 1024];
+            let _ = stream.read(&mut buf);
+            for _ in 0..100 {
+                if stream.write_all(b"H").is_err() {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(200));
+            }
+        });
+        let started = Instant::now();
+        let error = Client::new(dashboard(addr, "k"))
+            .request("GET", "/x", &[], &[])
+            .unwrap_err();
+        assert!(matches!(error, ClientError::NotTendd(_)), "{error}");
+        assert!(
+            started.elapsed() < PROOF_DEADLINE + Duration::from_secs(2),
+            "{:?}",
+            started.elapsed()
+        );
     }
 }
