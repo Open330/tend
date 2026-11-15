@@ -346,9 +346,19 @@ in `unlinked_executions`; they are never guessed into Work from their names.
 Their sessions still appear as workspaces in the rail (see
 [Workspace rail](#workspace-rail)), but Work only comes from managed runs.
 
-## Needs you
+## Home (needs you)
 
-`/needs` is a phone-first page with everything waiting on you, in the order
+`/home` (also `/needs`) is a phone-first page in the Mac app's three Home
+lanes: **Your turn**, **In progress** and **Finished**. The Windows app opens
+it in its window. **In progress** lists every host's agents that are working
+or starting, newest first; **Finished** lists what was decided (below), then
+the agents that went idle in the last 24 hours after doing something, with
+the first line of what they last said. Both read `GET /api/fleet`, so they
+cover the Fleet hosts the same way the queue does; an agent is one row (the
+Mac app's grouping by Work, helper folding and stage strip are not repeated
+here).
+
+**Your turn** has everything waiting on you, in the order
 `tend review queue` uses: questions agents asked you
 (`tend_request_attention`), agents waiting in their pane, then results filed
 for review. Each card shows the summary, the decision asked for, the options,
@@ -356,7 +366,7 @@ the agent's recommendation and its evidence (commit, PR link, diff, test
 result with its output tail, path). A result on a Work with declared checks
 shows what tend ran itself first (`verification`: each check, passed or how
 it failed, with its output tail), above the agent's own account; tend's copy
-of those checks in the evidence is not repeated. The **Decided** tab lists past decisions
+of those checks in the evidence is not repeated. The **Finished** tab lists past decisions
 with their notes and answers. The page reads `GET /api/decisions` and
 `GET /api/decisions/history` (both take `?limit=`, at most 500), the same
 daemon reads as the Mac app (`decision_queue`, `decision_history`).
@@ -388,7 +398,7 @@ then holds; an answer about any other item is refused. Observe-only hosts'
 items, and review items on an older host, are shown but decided on their
 own host. Only this route sends that Fleet operation: `fleet_command` over
 IPC and `POST /api/fleet/{host}/command` refuse it, so nothing else can name
-a person as having decided. The **Decided** tab is
+a person as having decided. The decided half of **Finished** is
 per host too: a Fleet host whose tend answers the Fleet `decision_history`
 read (`fleet_decision_history_v1`) sends its past decisions, read there as
 its operator console; an older or offline host is listed with what kept it

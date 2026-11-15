@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The dashboard's decision page is now Home, in the Mac app's three lanes:
+  **Your turn** (the decision queue, as before), **In progress** (every
+  Fleet host's working agents) and **Finished** (what was decided, then
+  the agents that finished in the last day). It is served at `/home` as
+  well as `/needs`; the tabs were Waiting and Decided.
+
 ### Fixed
 
 - `tend doctor` no longer fails after an upgrade on a host where tend never

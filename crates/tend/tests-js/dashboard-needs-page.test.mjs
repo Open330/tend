@@ -39,11 +39,22 @@ globalThis.window = { location: { hash: "" } };
 globalThis.localStorage = { getItem: () => null };
 globalThis.setInterval = () => 0;
 const answered = { kind: "human_answer", request_id: "rq_1", body: "Merge?", status: "completed", answer: "yes", answered_at: "2026-11-12T11:00:00Z" };
+const recent = new Date(Date.now() - 60_000).toISOString();
+const fleet = {
+  hosts: [
+    { alias: "mba", local: true, state: "online", remote: { agents: [
+      { agent_session_id: "w1", kind: "codex", pane: "%4", state: "working", last_prompt: "port the board", state_entered_at: recent },
+      { agent_session_id: "i1", kind: "claude_code", pane: "%5", state: "idle", last_prompt: "fix the toast", last_response: "Done: toast fixed", state_entered_at: recent },
+    ] } },
+  ],
+};
 globalThis.fetch = async (path) => ({
   ok: true,
   status: 200,
   json: async () =>
-    path.includes("history")
+    path.includes("/api/fleet")
+      ? fleet
+      : path.includes("history")
       ? { covers: "mba", hosts: [{ alias: "mba", local: true, history: { items: [answered] } }, { alias: "mini", local: false, unavailable: ["host is offline"], history: { items: [] } }] }
       : { hosts: [{ alias: "mba", local: true, control: true, decides_reviews: true, queue: { items: [] } }] },
 });
@@ -62,4 +73,16 @@ test("the page renders the queue and every host's history", async () => {
   assert.match(history, /mini/);
   assert.match(history, /unavailable: host is offline/);
   assert.equal(document.getElementById("covers").textContent, "Covers mba, mini.");
+  assert.match(history, /Done: toast fixed/, "an agent that finished is in Finished");
+});
+
+test("In progress lists the working agents", async () => {
+  document.getElementById("tab-progress").click();
+  await settle();
+  assert.equal(document.getElementById("status").textContent, "", "no error on the In progress tab");
+  assert.equal(document.getElementById("progress").hidden, false);
+  assert.equal(document.getElementById("history").hidden, true);
+  const progress = document.getElementById("progress").text;
+  assert.match(progress, /port the board/);
+  assert.doesNotMatch(progress, /fix the toast/);
 });
