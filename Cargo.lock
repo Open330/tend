@@ -5203,6 +5203,7 @@ dependencies = [
  "base64 0.22.1",
  "dirs 5.0.1",
  "futures",
+ "hmac",
  "http-body-util",
  "libc",
  "nix 0.29.0",

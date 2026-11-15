@@ -71,7 +71,7 @@ pub fn is_write(method: &str) -> bool {
 mod tests {
     use super::*;
     use std::sync::mpsc::channel;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     #[test]
     fn a_write_runs_while_every_reader_is_stuck() {
@@ -89,7 +89,6 @@ mod tests {
             dispatcher.submit("slow read", false).unwrap();
         }
         dispatcher.submit("queued read", false).unwrap();
-        let started = Instant::now();
         dispatcher.submit("decision", true).unwrap();
         assert_eq!(
             finished.recv_timeout(Duration::from_secs(2)).unwrap(),
@@ -106,12 +105,18 @@ mod tests {
 
     #[test]
     fn a_full_queue_hands_the_job_back() {
+        let (started, running) = channel::<u32>();
         let release = Arc::new(Mutex::new(()));
         let held = release.lock().unwrap();
         let gate = release.clone();
-        let dispatcher = Dispatcher::new(1, 1, 1, 1, move |_job: u32| drop(gate.lock().unwrap()));
-        dispatcher.submit(1, false).unwrap(); // taken by the worker, which blocks
-        std::thread::sleep(Duration::from_millis(100));
+        let started = Mutex::new(started);
+        let dispatcher = Dispatcher::new(1, 1, 1, 1, move |job: u32| {
+            let _ = started.lock().unwrap().send(job);
+            drop(gate.lock().unwrap());
+        });
+        dispatcher.submit(1, false).unwrap();
+        // The worker took job 1 and blocks; the queue is empty again.
+        assert_eq!(running.recv_timeout(Duration::from_secs(5)).unwrap(), 1);
         dispatcher.submit(2, false).unwrap(); // fills the queue
         assert_eq!(dispatcher.submit(3, false), Err(3));
         drop(held);
