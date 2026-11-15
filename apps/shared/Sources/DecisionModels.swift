@@ -186,9 +186,11 @@ struct TendHumanRequestEntry: Decodable, Hashable, Sendable {
     let workspaceID: String?
     let workID: String?
     let createdAt: String
+    /// tendd opened it itself (peer recovery, a reply for a gone sender).
+    var system: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case action, body, decision
+        case action, body, decision, system
         case requestID = "request_id"
         case fromSessionID = "from_session_id"
         case fromPane = "from_pane"

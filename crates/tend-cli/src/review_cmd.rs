@@ -8,6 +8,9 @@
 
 use anyhow::{bail, Context, Result};
 use std::fmt::Write as _;
+use tend::collaboration::system_asks::{
+    SystemAskCleanup, SystemAskCloseReason, SystemAskKind, SYSTEM_ASK_CLEANUP_CAPABILITY,
+};
 use tend::decision::{Decision, Evidence, REVIEW_DECISION_CAPABILITY};
 use tend::decision_queue::{
     DecidedItem, DecisionHistory, HumanRequestEntry, PendingItem, PendingQueue,
@@ -303,8 +306,10 @@ enum Action {
         #[arg(long)]
         json: bool,
     },
-    /// Everything waiting on you, in one list: human requests, agents
-    /// blocked in their pane, then open review items, oldest first in each.
+    /// Everything waiting on you, in one list: agents' questions, agents
+    /// blocked in their pane, open review items, then the items tend opened
+    /// itself (peer recovery, replies for a gone sender), oldest first in
+    /// each.
     Queue {
         #[arg(long, default_value_t = 50)]
         limit: usize,
@@ -316,6 +321,19 @@ enum Action {
     History {
         #[arg(long, default_value_t = 50)]
         limit: usize,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Close the items tend opened itself (peer recovery, replies for a gone
+    /// sender) that can no longer matter: duplicates about the same session
+    /// are merged into one, and items whose original request finished or
+    /// moved on, or that waited over a week with nobody left to act on
+    /// them, are closed with the reason recorded. Agents' own questions are
+    /// never touched. Prints what it would close; --apply closes it.
+    Cleanup {
+        /// Close them. Without it, nothing changes.
+        #[arg(long)]
+        apply: bool,
         #[arg(long)]
         json: bool,
     },
@@ -424,6 +442,7 @@ pub(crate) async fn run(args: Args, client: &Client) -> Result<()> {
             }
             Ok(())
         }
+        Action::Cleanup { apply, json } => cleanup(client, apply, json).await,
         Action::Show { id, json } => show(client, &id, json).await,
         Action::Accept(a) => dispose(client, DispositionKind::Accepted, a).await,
         Action::Return(a) => dispose(client, DispositionKind::Returned, a).await,
@@ -522,6 +541,9 @@ fn render_queue(queue: &PendingQueue, now: OffsetDateTime) -> String {
     }
     for item in &queue.items {
         match item {
+            PendingItem::HumanRequest(entry) if entry.system => {
+                let _ = writeln!(out, "  · tend    {}", render_human_request(entry, now));
+            }
             PendingItem::HumanRequest(entry) => {
                 let _ = writeln!(out, "  ? ask     {}", render_human_request(entry, now));
             }
@@ -568,6 +590,65 @@ fn render_queue(queue: &PendingQueue, now: OffsetDateTime) -> String {
     }
     for source in &queue.unavailable {
         let _ = writeln!(out, "unavailable: {source}");
+    }
+    out
+}
+
+async fn cleanup(client: &Client, apply: bool, json: bool) -> Result<()> {
+    let hello = client
+        .hello(std::time::Duration::from_secs(3))
+        .await
+        .context("asking tendd what it supports")?;
+    if !hello
+        .capabilities
+        .iter()
+        .any(|c| c == SYSTEM_ASK_CLEANUP_CAPABILITY)
+    {
+        bail!("this tendd cannot clean up its own items ({SYSTEM_ASK_CLEANUP_CAPABILITY}); restart it with the same tend build");
+    }
+    let cleanup = client.system_ask_cleanup(apply).await?;
+    if json {
+        println!("{}", serde_json::to_string(&cleanup)?);
+    } else {
+        print!("{}", render_cleanup(&cleanup, OffsetDateTime::now_utc()));
+    }
+    Ok(())
+}
+
+fn render_cleanup(cleanup: &SystemAskCleanup, now: OffsetDateTime) -> String {
+    let mut out = String::new();
+    let verb = if cleanup.dry_run {
+        "would close"
+    } else {
+        "closed"
+    };
+    let _ = writeln!(
+        out,
+        "{verb} {} of tend's own items; {} would stay open, with {} from agents untouched",
+        cleanup.closed.len(),
+        cleanup.open_after,
+        cleanup.agent_asks_open,
+    );
+    for ask in &cleanup.closed {
+        let kind = match ask.kind {
+            SystemAskKind::Recovery => "recovery",
+            SystemAskKind::ReplyWake => "reply",
+        };
+        let why = match (ask.reason, &ask.into) {
+            (SystemAskCloseReason::Collapsed, Some(into)) => format!("merged into {into}"),
+            (reason, _) => reason.as_str().to_owned(),
+        };
+        let session: String = ask.subject_session.chars().take(8).collect();
+        let _ = writeln!(
+            out,
+            "  {}  {:>4}  {kind:<8}  session {session}  {why}  (about {})",
+            ask.request_id,
+            crate::attend::humanize_since(ask.created_at, now),
+            ask.parents.join(", "),
+        );
+    }
+    if cleanup.dry_run && !cleanup.closed.is_empty() {
+        out.push_str("nothing changed; run again with --apply to close them\n");
     }
     out
 }
@@ -983,6 +1064,7 @@ mod tests {
             workspace_id: Some("tend".into()),
             work_id: Some("storage".into()),
             created_at: datetime!(2026-11-12 11:00 UTC),
+            system: false,
         };
         let queue = PendingQueue {
             items: vec![PendingItem::HumanRequest(entry.clone())],

@@ -69,7 +69,7 @@ function el(tag, className, text) {
 }
 
 function renderCard(card) {
-  const li = el("li", "card");
+  const li = el("li", card.system ? "card system" : "card");
   li.dataset.id = card.id;
   if (card.host) li.dataset.host = card.host;
   li.append(el("div", `kind ${card.kind}`, card.label));
@@ -290,7 +290,8 @@ async function refresh() {
       const sections = hostSections(data);
       renderSections($("queue"), sections);
       const total = cardCount(sections);
-      $("count").textContent = total ? `${total} waiting` : "";
+      const fromTend = sections.reduce((sum, section) => sum + section.cards.filter((card) => card.system).length, 0);
+      $("count").textContent = total ? `${total} waiting${fromTend ? ` · ${fromTend} from tend` : ""}` : "";
       status.textContent = "";
       $("covers").textContent = `Covers ${sections.map((s) => s.alias).join(", ")}.`;
     } else if (state.tab === "progress") {

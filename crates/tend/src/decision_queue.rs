@@ -5,8 +5,9 @@
 //! (an agent is blocked on an answer), agents waiting on input in their
 //! pane, and open review items (a result waits to be looked at). Order is by
 //! how much is blocked, then by age: human requests first, then waiting
-//! agents (error, choice, input, asked question), then review items, oldest
-//! first within each. Nothing here is inferred: each entry is a claim or a
+//! agents (error, choice, input, asked question), then review items, then
+//! the items tendd opened itself (peer recovery, a reply for a gone
+//! sender), oldest first within each. Nothing here is inferred: each entry is a claim or a
 //! state some other part of tend already records.
 
 use crate::collaboration::{CollaborationRequest, HumanAction, RequestStatus};
@@ -103,6 +104,10 @@ pub struct HumanRequestEntry {
     pub work_id: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
+    /// tendd opened this item itself (peer recovery, a reply for a gone
+    /// sender), not an agent. Listed after agents' questions and results.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub system: bool,
 }
 
 impl HumanRequestEntry {
@@ -119,6 +124,7 @@ impl HumanRequestEntry {
             workspace_id: request.workspace_id.clone(),
             work_id: request.work_id.clone(),
             created_at: request.created_at,
+            system: crate::collaboration::system_asks::system_ask_kind(request).is_some(),
         }
     }
 }
@@ -352,6 +358,11 @@ pub fn assemble_queue(
         .filter(|request| request.needs_human_response())
         .collect();
     human.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));
+    // tendd's own items (recovery, gone-sender replies) go last: an agent's
+    // question or a result to review is never buried under them.
+    let (system, human): (Vec<_>, Vec<_>) = human
+        .into_iter()
+        .partition(|request| crate::collaboration::system_asks::system_ask_kind(request).is_some());
     let mut waiting: Vec<(u8, AgentWaitingEntry)> = agents
         .iter()
         .filter(|a| agent_needs_person(a))
@@ -379,7 +390,10 @@ pub fn assemble_queue(
                 reviews
                     .into_iter()
                     .map(|item| PendingItem::Review(Box::new(item))),
-            ),
+            )
+            .chain(system.into_iter().map(|request| {
+                PendingItem::HumanRequest(HumanRequestEntry::from_request(request))
+            })),
         limit,
     );
     PendingQueue {
@@ -478,6 +492,52 @@ mod tests {
                 serde_json::json!({"status":"completed","body":"merge it","at":answered});
         }
         serde_json::from_value(value).unwrap()
+    }
+
+    /// A recovery item as tendd opens it.
+    fn recovery(id: &str, at: &str) -> CollaborationRequest {
+        let mut request = human(id, at, None);
+        request.from.agent_kind = crate::AgentKind::Task;
+        request.from.agent_session_id = "tend:peer-recovery".into();
+        request.from.pane = "tend-recovery".into();
+        request.parent_request_id = Some("rq_parent".into());
+        request
+    }
+
+    #[test]
+    fn tends_own_items_come_after_agents_questions_and_results() {
+        let agents = [agent("1", "error", "2026-11-12T11:00:00Z")];
+        let humans = [
+            recovery("rq_recovery", "2026-10-01T00:00:00Z"),
+            human("rq_agent", "2026-11-12T11:30:00Z", None),
+        ];
+        let reviews = vec![review("rv_a", datetime!(2026-11-12 12:00 UTC), None)];
+        let queue = assemble_queue(&humans, &agents, reviews, 50);
+        let order: Vec<(String, bool)> = queue
+            .items
+            .iter()
+            .map(|item| match item {
+                PendingItem::HumanRequest(h) => (h.request_id.clone(), h.system),
+                PendingItem::AgentWaiting(a) => (a.session_id.clone(), false),
+                PendingItem::Review(r) => (r.id.clone(), false),
+            })
+            .collect();
+        assert_eq!(
+            order,
+            [
+                ("rq_agent".into(), false),
+                ("1".into(), false),
+                ("rv_a".into(), false),
+                ("rq_recovery".into(), true),
+            ]
+        );
+        // A page cut short drops tend's items first.
+        let short = assemble_queue(&humans, &agents, Vec::new(), 2);
+        assert!(short.truncated);
+        assert!(short
+            .items
+            .iter()
+            .all(|item| !matches!(item, PendingItem::HumanRequest(h) if h.system)));
     }
 
     #[test]

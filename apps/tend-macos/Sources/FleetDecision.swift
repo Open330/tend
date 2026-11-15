@@ -28,6 +28,9 @@ struct FleetDecision: Identifiable, Hashable, Sendable {
     let workID: String?
     let since: Date?
     let evidence: [TendEvidence]
+    /// tendd opened it itself (peer recovery, a reply for a gone sender),
+    /// not an agent: listed after agents' questions and results.
+    var isSystemAsk = false
     /// The asking agent as Home sees it, when it is on the board.
     var askerAgentID: String?
     var askerCwd: String?
@@ -89,7 +92,11 @@ struct FleetDecision: Identifiable, Hashable, Sendable {
         workID = entry.workID
         since = TendUsageTimestamp.parse(entry.createdAt)
         evidence = entry.decision?.evidence ?? []
+        isSystemAsk = entry.system == true || Self.tendServices.contains(entry.fromSessionID)
     }
+
+    /// The services an older tendd's own items come from.
+    static let tendServices: Set<String> = ["tend:peer-recovery", "muxa:peer-recovery", "tend:reply-wake", "muxa:reply-wake"]
 
     init(humanRequest message: TendOperatorMessage) {
         let request = message.request
@@ -102,6 +109,7 @@ struct FleetDecision: Identifiable, Hashable, Sendable {
         workID = request.workID
         since = TendUsageTimestamp.parse(request.createdAt)
         evidence = request.decision?.evidence ?? []
+        isSystemAsk = Self.tendServices.contains(request.from.agentSessionID)
     }
 
     init(review item: TendReviewItem, host: TendFleetHostIdentity) {
@@ -154,7 +162,9 @@ enum FleetDecisions {
             .filter { queue?.isComplete != true || $0.host.alias != localHost.alias }
             .sorted { $0.request.createdAt < $1.request.createdAt }
         pending.forEach { add(FleetDecision(humanRequest: $0)) }
-        return result
+        // tendd's own items after everything an agent asked or handed in,
+        // whichever host or daemon version listed them.
+        return result.filter { !$0.isSystemAsk } + result.filter(\.isSystemAsk)
     }
 }
 

@@ -944,6 +944,10 @@ pub struct CollaborationRequest {
     /// followed by a submitted prompt (`wake_retry.rs`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wake_retry: Option<wake_retry::WakeRetry>,
+    /// On a human item tendd opened itself: what it is about, the other
+    /// requests it covers, and why tendd closed it (`system_asks.rs`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_ask: Option<system_asks::SystemAskState>,
 }
 
 impl CollaborationRequest {
@@ -3322,6 +3326,7 @@ impl CollaborationStore {
             allow_path_overlap: input.allow_path_overlap,
             execute_scope,
             wake_retry: None,
+            system_ask: None,
             dispatch_id: input.dispatch_id,
             source_node_id: input.source_node_id,
             delegation_parent: input.delegation_parent,
@@ -10361,6 +10366,7 @@ mod recipient_slot_tests;
 mod recovery;
 mod retirement;
 pub mod sender_follow;
+pub mod system_asks;
 pub mod wake_retry;
 pub use retirement::{RequestRetirement, RETIRE_CAPABILITY};
 #[cfg(test)]

@@ -14,7 +14,8 @@ fn answered_by_person(request: &CollaborationRequest) -> bool {
 }
 
 impl CollaborationStore {
-    /// Requests to the operator still owed an answer, oldest first, and
+    /// Requests to the operator still owed an answer, agents' before tendd's
+    /// own, oldest first within each, and
     /// whether more than `limit` exist.
     pub async fn open_human_requests(
         &self,
@@ -26,7 +27,16 @@ impl CollaborationStore {
             .values()
             .filter(|request| request.needs_human_response())
             .collect();
-        open.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));
+        // Agents' questions before tendd's own items, so a page cut by
+        // `limit` drops recovery notices first, never an agent's question.
+        open.sort_by(|a, b| {
+            let system =
+                |r: &CollaborationRequest| super::system_asks::system_ask_kind(r).is_some();
+            system(a)
+                .cmp(&system(b))
+                .then(a.created_at.cmp(&b.created_at))
+                .then(a.id.cmp(&b.id))
+        });
         let more = open.len() > limit;
         Ok((open.into_iter().take(limit).cloned().collect(), more))
     }

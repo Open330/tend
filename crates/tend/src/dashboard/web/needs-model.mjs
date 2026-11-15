@@ -120,10 +120,30 @@ function asker(entry) {
   return entry.workspace_id && entry.work_id ? `${who} · ${entry.workspace_id}/${entry.work_id}` : who;
 }
 
+const TEND_SERVICES = ["tend:peer-recovery", "muxa:peer-recovery", "tend:reply-wake", "muxa:reply-wake"];
+
+/// An item tend opened itself (peer recovery, a reply for a gone sender),
+/// not an agent's question. Older daemons do not send `system`; their items
+/// are known by the service session that opened them.
+export function isSystemAsk(item) {
+  return item?.kind === "human_request" && (item.system === true || TEND_SERVICES.includes(item.from_session_id));
+}
+
 /// One card for a pending entry.
 export function pendingCard(item, now = Date.now()) {
   switch (item?.kind) {
     case "human_request":
+      if (isSystemAsk(item)) {
+        return {
+          id: item.request_id,
+          kind: "ask",
+          system: true,
+          label: item.action ? `from tend · ${item.action}` : "from tend",
+          title: item.body,
+          meta: `${asker(item)} · ${ago(item.created_at, now)}`,
+          ...decisionParts(item.decision),
+        };
+      }
       return {
         id: item.request_id,
         kind: "ask",
@@ -201,6 +221,11 @@ export function hostSections(data, now = Date.now()) {
     const cards = (host.queue?.items || [])
       .map((item) => pendingCard(item, now))
       .filter(Boolean)
+      // Agents' questions and results first, tend's own items after, even
+      // from an older host that still lists them first. Stable otherwise.
+      .map((card, index) => ({ card, index }))
+      .sort((a, b) => (a.card.system === true) - (b.card.system === true) || a.index - b.index)
+      .map(({ card }) => card)
       .map((card) => ({
         ...card,
         host: host.alias,

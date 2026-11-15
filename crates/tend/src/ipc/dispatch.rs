@@ -288,7 +288,8 @@ async fn route(
         | RequestBody::ReviewDispose { .. }
         | RequestBody::ReviewRecord { .. }
         | RequestBody::DecisionQueue { .. }
-        | RequestBody::DecisionHistory { .. }) => {
+        | RequestBody::DecisionHistory { .. }
+        | RequestBody::SystemAskCleanup { .. }) => {
             Box::pin(decisions::handle(ctx, conn, turn, body)).await
         }
         body @ (RequestBody::WorkBacklog { .. }

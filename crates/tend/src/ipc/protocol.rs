@@ -137,6 +137,22 @@ pub(super) enum RequestBody {
         #[serde(default)]
         origin: Option<collaboration::CollaborationOrigin>,
     },
+    /// Close the human items tendd opened itself that can no longer matter
+    /// (`system_ask_cleanup_v1`): merged duplicates, ones whose original
+    /// request moved on, and stale ones nobody is left to act on. Without
+    /// `apply`, only reports what it would close. Refused to an origin that
+    /// speaks for a pane agent. The console origin is declared, not
+    /// authenticated (as for reading the queue), so this is not an
+    /// authorization boundary: an agent that declares it can run the
+    /// cleanup. That grants nothing past the rules, which close only what
+    /// tendd itself would and never answer anything; an applied run goes in
+    /// the collaboration ledger with the OS-observed caller.
+    SystemAskCleanup {
+        #[serde(default)]
+        apply: bool,
+        #[serde(default)]
+        origin: Option<collaboration::CollaborationOrigin>,
+    },
     /// Durable Work records, backlog order (`work_backlog_v1`). With
     /// `stage`, only records at that stage.
     WorkBacklog {
@@ -1069,6 +1085,7 @@ pub(super) const CAPABILITIES: &[&str] = &[
     crate::decision::REVIEW_DECISION_CAPABILITY,
     crate::decision::HUMAN_DECISION_CAPABILITY,
     crate::decision_queue::DECISION_QUEUE_CAPABILITY,
+    collaboration::system_asks::SYSTEM_ASK_CLEANUP_CAPABILITY,
     crate::work::WORK_BACKLOG_CAPABILITY,
     crate::work::WORK_VERIFY_CAPABILITY,
     crate::work_complete::CAPABILITY,
@@ -1328,6 +1345,9 @@ pub struct Response {
     /// `decision_queue_v1`: past decisions, newest first.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decision_history: Option<Box<crate::decision_queue::DecisionHistory>>,
+    /// `system_ask_cleanup_v1`: what a cleanup closed or would close.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_ask_cleanup: Option<Box<collaboration::system_asks::SystemAskCleanup>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pipeline_claims: Option<Vec<PipelineClaim>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1447,6 +1467,7 @@ impl Response {
             review_summary: None,
             decision_queue: None,
             decision_history: None,
+            system_ask_cleanup: None,
             work_records: None,
             work_record: None,
             pipeline_claims: None,
