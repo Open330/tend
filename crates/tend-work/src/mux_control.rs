@@ -382,6 +382,8 @@ mod tests {
         assert!(capture_batch(&tmux, &trailing).is_none());
     }
 
+    // The fake rmux is a `#!/bin/sh` script, which Windows cannot execute.
+    #[cfg(unix)]
     #[test]
     fn lifecycle_commands_use_one_rmux_server_and_keep_termination_guards() {
         use std::os::unix::fs::PermissionsExt;
