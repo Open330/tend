@@ -48,6 +48,9 @@ pub struct Snapshot {
     pub items: Vec<Item>,
     /// `host: why` for each host the queue could not cover.
     pub unavailable: Vec<String>,
+    /// Hosts read in full: listed, nothing unavailable, not truncated. Only
+    /// for these does a missing item mean it was decided.
+    pub covered: BTreeSet<String>,
 }
 
 fn first_line(text: &str, limit: usize) -> String {
@@ -88,6 +91,18 @@ pub fn snapshot(decisions: &Value) -> Snapshot {
             .filter_map(Value::as_str)
         {
             out.unavailable.push(format!("{alias}: {why}"));
+        }
+        let partial = host
+            .get("unavailable")
+            .and_then(Value::as_array)
+            .is_some_and(|reasons| !reasons.is_empty())
+            || host
+                .pointer("/queue/truncated")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            || host.pointer("/queue/items").is_none();
+        if !partial {
+            out.covered.insert(alias.clone());
         }
         let items = host
             .pointer("/queue/items")
@@ -183,7 +198,14 @@ impl Seen {
             .iter()
             .filter(|i| !self.keys.contains(&i.key))
             .collect();
-        let gone: Vec<String> = self.keys.difference(&now).cloned().collect();
+        // Gone only where the read was complete: a host that could not be
+        // read, or a truncated queue, keeps what was known about it.
+        let host_of = |key: &str| key.split('|').next().unwrap_or("").to_owned();
+        let (gone, kept): (Vec<String>, Vec<String>) = self
+            .keys
+            .difference(&now)
+            .cloned()
+            .partition(|key| current.covered.contains(&host_of(key)));
         let toasts = match fresh.len() {
             0 => Vec::new(),
             1 if !first => vec![Toast::One(fresh[0].clone())],
@@ -194,6 +216,7 @@ impl Seen {
             n => vec![Toast::Summary(n)],
         };
         self.keys = now;
+        self.keys.extend(kept);
         Changes { toasts, gone }
     }
 }
@@ -265,6 +288,20 @@ mod tests {
         // A burst beyond the limit is summarised.
         let burst = seen.update(&read(&["b", "c", "d", "e", "f", "g"]), false);
         assert_eq!(burst.toasts, vec![Toast::Summary(4)]);
+        // A host that could not be read keeps its items (and toasts).
+        let partial = snapshot(
+            &json!({"hosts": [{"alias": "h", "queue": {"items": []}, "unavailable": ["host is offline"]}]}),
+        );
+        let offline = seen.update(&partial, false);
+        assert_eq!(
+            offline,
+            Changes::default(),
+            "nothing withdrawn while h is unreadable"
+        );
+        let truncated = snapshot(
+            &json!({"hosts": [{"alias": "h", "queue": {"items": [], "truncated": true}}]}),
+        );
+        assert!(seen.update(&truncated, false).gone.is_empty());
         // Kept across a restart: the same items are not told again.
         let mut again = Seen::from_keys(seen.keys().cloned());
         assert_eq!(

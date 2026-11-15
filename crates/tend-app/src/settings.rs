@@ -4,8 +4,11 @@
 //! `tend::paths::default_config_file`), then the `TEND_DASHBOARD_*`
 //! environment variables, which win.
 //!
-//! The app only ever talks to a loopback dashboard in token mode: it refuses
-//! anything else and says how to fix it.
+//! The app only ever talks to a loopback dashboard in token mode, with a
+//! token long enough to have been generated (`tend init` makes 64 hex
+//! digits): it refuses anything else and says how to fix it. It also reads
+//! this host's Fleet node id (`$XDG_DATA_HOME/tend/host-id`), which the
+//! dashboard's proof is bound to.
 
 use std::ffi::OsString;
 use std::fmt;
@@ -13,12 +16,17 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 const DEFAULT_BIND: &str = "127.0.0.1:7878";
+/// The shortest token the app accepts: a (nonce, proof) pair is an offline
+/// check for a guessed token, harmless only when the token is random.
+pub const MIN_TOKEN_LEN: usize = 32;
 
 /// The dashboard the app may talk to.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Dashboard {
     pub addr: SocketAddr,
     pub token: String,
+    /// This host's Fleet node id, which the server proof covers.
+    pub node: String,
 }
 
 impl fmt::Debug for Dashboard {
@@ -26,6 +34,7 @@ impl fmt::Debug for Dashboard {
         // Never print the token.
         f.debug_struct("Dashboard")
             .field("addr", &self.addr)
+            .field("node", &self.node)
             .finish_non_exhaustive()
     }
 }
@@ -37,6 +46,8 @@ pub enum SettingsError {
     Disabled,
     AuthOff,
     NoToken,
+    WeakToken,
+    NoNode(PathBuf),
     BadBind(String),
     NotLoopback(String),
 }
@@ -56,6 +67,15 @@ impl fmt::Display for SettingsError {
             Self::NoToken => f.write_str(
                 "the dashboard has no token; run `tend init --component dashboard` or set [dashboard] token",
             ),
+            Self::WeakToken => write!(
+                f,
+                "the dashboard token is shorter than {MIN_TOKEN_LEN} characters; let `tend init --component dashboard` generate one"
+            ),
+            Self::NoNode(path) => write!(
+                f,
+                "no node id at {} yet; start tendd once (`tend daemon start`)",
+                path.display()
+            ),
             Self::BadBind(bind) => write!(f, "[dashboard] bind {bind:?} is not an address"),
             Self::NotLoopback(bind) => write!(
                 f,
@@ -65,15 +85,25 @@ impl fmt::Display for SettingsError {
     }
 }
 
+fn absolute(env: &impl Fn(&str) -> Option<OsString>, key: &str) -> Option<PathBuf> {
+    env(key).map(PathBuf::from).filter(|p| p.is_absolute())
+}
+
 /// The config file tendd reads by default.
 pub fn config_path(env: &impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
-    let absolute = |key: &str| env(key).map(PathBuf::from).filter(|p| p.is_absolute());
-    if let Some(path) = absolute("TEND_CONFIG") {
+    if let Some(path) = absolute(env, "TEND_CONFIG") {
         return Some(path);
     }
-    absolute("XDG_CONFIG_HOME")
+    absolute(env, "XDG_CONFIG_HOME")
         .or_else(dirs::config_dir)
         .map(|dir| dir.join("tend").join("config.toml"))
+}
+
+/// This host's node id file, where tendd keeps it.
+pub fn node_path(env: &impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    absolute(env, "XDG_DATA_HOME")
+        .or_else(dirs::data_dir)
+        .map(|dir| dir.join("tend").join("host-id"))
 }
 
 /// Read the dashboard settings from the process environment.
@@ -83,7 +113,12 @@ pub fn load() -> Result<Dashboard, SettingsError> {
         Some(path) => read(&path)?,
         None => None,
     };
-    resolve(text.as_deref(), &env)
+    let node_file = node_path(&env).unwrap_or_else(|| PathBuf::from("host-id"));
+    let node = read(&node_file)?
+        .map(|text| text.trim().to_owned())
+        .filter(|node| !node.is_empty())
+        .ok_or(SettingsError::NoNode(node_file))?;
+    resolve(text.as_deref(), &node, &env)
 }
 
 fn read(path: &Path) -> Result<Option<String>, SettingsError> {
@@ -97,9 +132,11 @@ fn read(path: &Path) -> Result<Option<String>, SettingsError> {
     }
 }
 
-/// The settings from a config file's text (if any) and the environment.
+/// The settings from a config file's text (if any), this host's node id
+/// and the environment.
 pub fn resolve(
     config: Option<&str>,
+    node: &str,
     env: &impl Fn(&str) -> Option<OsString>,
 ) -> Result<Dashboard, SettingsError> {
     let table = config
@@ -147,6 +184,9 @@ pub fn resolve(
         .map(|token| token.trim().to_owned())
         .filter(|token| !token.is_empty())
         .ok_or(SettingsError::NoToken)?;
+    if token.chars().count() < MIN_TOKEN_LEN {
+        return Err(SettingsError::WeakToken);
+    }
     let bind = env_str("TEND_DASHBOARD_BIND")
         .or_else(|| file_str("bind"))
         .unwrap_or_else(|| DEFAULT_BIND.into());
@@ -157,7 +197,11 @@ pub fn resolve(
     if !addr.ip().is_loopback() {
         return Err(SettingsError::NotLoopback(bind));
     }
-    Ok(Dashboard { addr, token })
+    Ok(Dashboard {
+        addr,
+        token,
+        node: node.to_owned(),
+    })
 }
 
 #[cfg(test)]
@@ -173,33 +217,45 @@ mod tests {
         move |key| map.get(key).cloned()
     }
 
-    const FILE: &str = "[dashboard]\nenabled = true\nbind = \"127.0.0.1:17878\"\ntoken = \"t0k\"\n";
+    const TOKEN: &str = "t0k-0123456789abcdef0123456789abcdef";
+    const FILE: &str = "[dashboard]\nenabled = true\nbind = \"127.0.0.1:17878\"\ntoken = \"t0k-0123456789abcdef0123456789abcdef\"\n";
+
+    fn file(body: &str) -> String {
+        format!("[dashboard]\nenabled = true\n{body}")
+    }
 
     #[test]
     fn the_config_file_gives_the_address_and_token() {
-        let got = resolve(Some(FILE), &env(&[])).unwrap();
+        let got = resolve(Some(FILE), "n1", &env(&[])).unwrap();
         assert_eq!(got.addr, "127.0.0.1:17878".parse().unwrap());
-        assert_eq!(got.token, "t0k");
-        assert!(!format!("{got:?}").contains("t0k"), "Debug hides the token");
+        assert_eq!(got.token, TOKEN);
+        assert_eq!(got.node, "n1");
+        assert!(
+            !format!("{got:?}").contains("t0k-"),
+            "Debug hides the token"
+        );
     }
 
     #[test]
     fn the_environment_wins_like_it_does_for_tendd() {
+        let other = "envtok-0123456789abcdef0123456789abcdef";
         let got = resolve(
             Some(FILE),
+            "n1",
             &env(&[
-                ("TEND_DASHBOARD_TOKEN", "envtok"),
+                ("TEND_DASHBOARD_TOKEN", other),
                 ("TEND_DASHBOARD_BIND", "[::1]:9000"),
             ]),
         )
         .unwrap();
-        assert_eq!(got.token, "envtok");
+        assert_eq!(got.token, other);
         assert_eq!(got.addr, "[::1]:9000".parse().unwrap());
         let on = resolve(
             None,
+            "n1",
             &env(&[
                 ("TEND_DASHBOARD_ENABLED", "true"),
-                ("TEND_DASHBOARD_TOKEN", "x"),
+                ("TEND_DASHBOARD_TOKEN", TOKEN),
             ]),
         )
         .unwrap();
@@ -208,38 +264,44 @@ mod tests {
 
     #[test]
     fn anything_but_a_loopback_token_dashboard_is_refused() {
-        assert_eq!(resolve(None, &env(&[])), Err(SettingsError::Disabled));
+        let token = format!("token = \"{TOKEN}\"\n");
+        assert_eq!(resolve(None, "n", &env(&[])), Err(SettingsError::Disabled));
         assert_eq!(
             resolve(
-                Some("[dashboard]\nenabled = false\ntoken = \"x\"\n"),
+                Some(&format!("[dashboard]\nenabled = false\n{token}")),
+                "n",
                 &env(&[])
             ),
             Err(SettingsError::Disabled)
         );
         assert_eq!(
             resolve(
-                Some("[dashboard]\nenabled = true\nauth = \"none\"\ntoken = \"x\"\n"),
+                Some(&file(&format!("auth = \"none\"\n{token}"))),
+                "n",
                 &env(&[])
             ),
             Err(SettingsError::AuthOff)
         );
         assert_eq!(
-            resolve(
-                Some("[dashboard]\nenabled = true\ntoken = \"  \"\n"),
-                &env(&[])
-            ),
+            resolve(Some(&file("token = \"  \"\n")), "n", &env(&[])),
             Err(SettingsError::NoToken)
         );
         assert_eq!(
+            resolve(Some(&file("token = \"short\"\n")), "n", &env(&[])),
+            Err(SettingsError::WeakToken)
+        );
+        assert_eq!(
             resolve(
-                Some("[dashboard]\nenabled = true\ntoken = \"x\"\nbind = \"0.0.0.0:7878\"\n"),
+                Some(&file(&format!("{token}bind = \"0.0.0.0:7878\"\n"))),
+                "n",
                 &env(&[])
             ),
             Err(SettingsError::NotLoopback("0.0.0.0:7878".into()))
         );
         assert!(matches!(
             resolve(
-                Some("[dashboard]\nenabled = true\ntoken = \"x\"\nbind = \"localhost:1\"\n"),
+                Some(&file(&format!("{token}bind = \"localhost:1\"\n"))),
+                "n",
                 &env(&[])
             ),
             Err(SettingsError::BadBind(_))
@@ -247,7 +309,7 @@ mod tests {
     }
 
     #[test]
-    fn the_config_path_follows_tend_config_then_xdg() {
+    fn the_paths_follow_tend_config_then_xdg() {
         let tend_config = if cfg!(windows) {
             r"C:\t\c.toml"
         } else {
@@ -267,6 +329,10 @@ mod tests {
                 ("XDG_CONFIG_HOME", xdg)
             ])),
             Some(PathBuf::from(xdg).join("tend").join("config.toml"))
+        );
+        assert_eq!(
+            node_path(&env(&[("XDG_DATA_HOME", xdg)])),
+            Some(PathBuf::from(xdg).join("tend").join("host-id"))
         );
     }
 }
