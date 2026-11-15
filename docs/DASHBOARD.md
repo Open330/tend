@@ -440,15 +440,18 @@ no credential at all: no pane output or input, Fleet commands, Work control,
 shares, access management or new pairings. Deciding is still real
 authority: an answer can tell an agent to go ahead.
 
-Pairing follows the OAuth device authorization grant (RFC 8628), so the
-secret never leaves the phone:
+Pairing is shaped like the OAuth device authorization grant (RFC 8628),
+with tend's own endpoints: no secret passes through a link, the clipboard
+or another app.
 
 1. The app sends `POST /auth/devices/request` `{"name": "…", "platform":
    "ios"}` and gets `{device_code, user_code, expires_in, interval}`. It
    keeps the device code and shows the user code (`BCDF-GHJK`).
 2. An operator opens **access** in the dashboard header, types the code
    under **Devices**, and approves (`POST /api/devices/approve`
-   `{"user_code": "…"}`, which answers with the device's name).
+   `{"user_code": "…"}`, which answers with the device's name). Approve
+   only a code shown on a device you are pairing yourself, right now: a
+   code someone sends you would pair *their* device (RFC 8628, section 5.4).
 3. The app polls `POST /auth/devices/token` `{"device_code": "…"}` every
    `interval` seconds: `202 {"status": "pending"}` until approved, then
    `201 {"device": {id, name, platform}, "token": "tdv_…"}` exactly once.

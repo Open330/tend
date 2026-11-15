@@ -1,0 +1,584 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		073C03596BF1DBC870EBB32B /* PairingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCAD11EEB5CFB9EA6D1E6FAF /* PairingView.swift */; };
+		287A1637C1CC6EE83F3B82EC /* Lenient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EEE6E5BC90A24E8C9F1727D /* Lenient.swift */; };
+		4BC5FB1E7480AA2A68D45CC7 /* DecisionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6BC9EE51CD60BF0AF2747E1 /* DecisionModels.swift */; };
+		6610CC8E44C28DEE40FD99DB /* CredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DF1E163D8D67D39A5A4BDF0 /* CredentialStore.swift */; };
+		94F69B007139CB948C3178FF /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 8EDBF061CB6930BADE889B40 /* Assets.xcassets */; };
+		96761DD2FD290D341375CB85 /* DashboardClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23550044E5E2654FD0F4A7B8 /* DashboardClient.swift */; };
+		99772BDB247357656275EAA5 /* ReviewItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5F78FACBBC871A0ED81E770 /* ReviewItem.swift */; };
+		B317046313B8E00807438793 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B44D1910E30C14D9FD4C1990 /* AppModel.swift */; };
+		C231238B23B5E647DE447DB0 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D56693538EC3DC99913ECD1 /* Theme.swift */; };
+		E78BE3278AC1583442B75B9C /* Screens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 138E7A01E13B0679B065DEB1 /* Screens.swift */; };
+		EE18DA7C1E753962F585B568 /* DecisionCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4D34A68E8D9EF021A8EC823 /* DecisionCard.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		4A52AC3EE1D29BB9C445CFDE /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 713169D271DDC74E23584912 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CD702FB1DCCD797B433A4E61;
+			remoteInfo = Tend;
+		};
+		8D0D8DD79AB6D7D8CA7838C8 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 713169D271DDC74E23584912 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CD702FB1DCCD797B433A4E61;
+			remoteInfo = Tend;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		0DF1E163D8D67D39A5A4BDF0 /* CredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialStore.swift; sourceTree = "<group>"; };
+		138E7A01E13B0679B065DEB1 /* Screens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screens.swift; sourceTree = "<group>"; };
+		22E9E877BDE5C1C14EF6AC9F /* TendTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = TendTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		23550044E5E2654FD0F4A7B8 /* DashboardClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardClient.swift; sourceTree = "<group>"; };
+		2EEE6E5BC90A24E8C9F1727D /* Lenient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Lenient.swift; sourceTree = "<group>"; };
+		3D56693538EC3DC99913ECD1 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		8EDBF061CB6930BADE889B40 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		B44D1910E30C14D9FD4C1990 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		C5F78FACBBC871A0ED81E770 /* ReviewItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewItem.swift; sourceTree = "<group>"; };
+		C6BC9EE51CD60BF0AF2747E1 /* DecisionModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecisionModels.swift; sourceTree = "<group>"; };
+		D6528FA0B9AAAF5165D22F7B /* TendUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = TendUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		DFDEFDA2480B5470BBA5A596 /* Tend.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Tend.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F4D34A68E8D9EF021A8EC823 /* DecisionCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecisionCard.swift; sourceTree = "<group>"; };
+		FCAD11EEB5CFB9EA6D1E6FAF /* PairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		24012C03A194395463B0D3BF /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				B44D1910E30C14D9FD4C1990 /* AppModel.swift */,
+				0DF1E163D8D67D39A5A4BDF0 /* CredentialStore.swift */,
+				23550044E5E2654FD0F4A7B8 /* DashboardClient.swift */,
+				F4D34A68E8D9EF021A8EC823 /* DecisionCard.swift */,
+				FCAD11EEB5CFB9EA6D1E6FAF /* PairingView.swift */,
+				138E7A01E13B0679B065DEB1 /* Screens.swift */,
+				3D56693538EC3DC99913ECD1 /* Theme.swift */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		34D5E0E58E5F8DD1B6845FF5 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				C6BC9EE51CD60BF0AF2747E1 /* DecisionModels.swift */,
+				2EEE6E5BC90A24E8C9F1727D /* Lenient.swift */,
+				C5F78FACBBC871A0ED81E770 /* ReviewItem.swift */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		3948028DD6AEE53269EB995C /* shared */ = {
+			isa = PBXGroup;
+			children = (
+				34D5E0E58E5F8DD1B6845FF5 /* Sources */,
+			);
+			path = shared;
+			sourceTree = "<group>";
+		};
+		44C26B1B8017CE120541DA8E /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				8EDBF061CB6930BADE889B40 /* Assets.xcassets */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		740AF8F00BECAB12B3304B40 /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
+		818E2F934BBE673A538721CA /* UITests */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = UITests;
+			sourceTree = "<group>";
+		};
+		8FA9B8462C723765CB45078A /* apps */ = {
+			isa = PBXGroup;
+			children = (
+				3948028DD6AEE53269EB995C /* shared */,
+			);
+			name = apps;
+			path = ..;
+			sourceTree = "<group>";
+		};
+		946EB0D5C12CAC9079B06193 = {
+			isa = PBXGroup;
+			children = (
+				8FA9B8462C723765CB45078A /* apps */,
+				44C26B1B8017CE120541DA8E /* Resources */,
+				24012C03A194395463B0D3BF /* Sources */,
+				740AF8F00BECAB12B3304B40 /* Tests */,
+				818E2F934BBE673A538721CA /* UITests */,
+				958E049C0EEDCBCD4296D49F /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		958E049C0EEDCBCD4296D49F /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				DFDEFDA2480B5470BBA5A596 /* Tend.app */,
+				22E9E877BDE5C1C14EF6AC9F /* TendTests.xctest */,
+				D6528FA0B9AAAF5165D22F7B /* TendUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		36A469C1F6AA7F2A80C59D9A /* TendTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F599785180891C59C9C2D764 /* Build configuration list for PBXNativeTarget "TendTests" */;
+			buildPhases = (
+				07A11844EDFA2B8A8328003C /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				DDD9B23A200F3FFA02501C36 /* PBXTargetDependency */,
+			);
+			name = TendTests;
+			packageProductDependencies = (
+			);
+			productName = TendTests;
+			productReference = 22E9E877BDE5C1C14EF6AC9F /* TendTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		439FF88EA537FD9D3F07B186 /* TendUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 93FCF010EB4B11F4E23E3595 /* Build configuration list for PBXNativeTarget "TendUITests" */;
+			buildPhases = (
+				ACE136058A93B056DC76EDEC /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				7F831B0BF1DEA44DDB641846 /* PBXTargetDependency */,
+			);
+			name = TendUITests;
+			packageProductDependencies = (
+			);
+			productName = TendUITests;
+			productReference = D6528FA0B9AAAF5165D22F7B /* TendUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		CD702FB1DCCD797B433A4E61 /* Tend */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3983B88D9CF05994B9117459 /* Build configuration list for PBXNativeTarget "Tend" */;
+			buildPhases = (
+				E994F4A427DB0A2861723682 /* Sources */,
+				C8969D9A7A0AF14089593517 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Tend;
+			packageProductDependencies = (
+			);
+			productName = Tend;
+			productReference = DFDEFDA2480B5470BBA5A596 /* Tend.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		713169D271DDC74E23584912 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					439FF88EA537FD9D3F07B186 = {
+						TestTargetID = CD702FB1DCCD797B433A4E61;
+					};
+					CD702FB1DCCD797B433A4E61 = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 263D3A8A303CB2F1441E3E1D /* Build configuration list for PBXProject "TendiOS" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 946EB0D5C12CAC9079B06193;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 958E049C0EEDCBCD4296D49F /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				CD702FB1DCCD797B433A4E61 /* Tend */,
+				36A469C1F6AA7F2A80C59D9A /* TendTests */,
+				439FF88EA537FD9D3F07B186 /* TendUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		C8969D9A7A0AF14089593517 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				94F69B007139CB948C3178FF /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		07A11844EDFA2B8A8328003C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		ACE136058A93B056DC76EDEC /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E994F4A427DB0A2861723682 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B317046313B8E00807438793 /* AppModel.swift in Sources */,
+				6610CC8E44C28DEE40FD99DB /* CredentialStore.swift in Sources */,
+				96761DD2FD290D341375CB85 /* DashboardClient.swift in Sources */,
+				EE18DA7C1E753962F585B568 /* DecisionCard.swift in Sources */,
+				4BC5FB1E7480AA2A68D45CC7 /* DecisionModels.swift in Sources */,
+				287A1637C1CC6EE83F3B82EC /* Lenient.swift in Sources */,
+				073C03596BF1DBC870EBB32B /* PairingView.swift in Sources */,
+				99772BDB247357656275EAA5 /* ReviewItem.swift in Sources */,
+				E78BE3278AC1583442B75B9C /* Screens.swift in Sources */,
+				C231238B23B5E647DE447DB0 /* Theme.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		7F831B0BF1DEA44DDB641846 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CD702FB1DCCD797B433A4E61 /* Tend */;
+			targetProxy = 8D0D8DD79AB6D7D8CA7838C8 /* PBXContainerItemProxy */;
+		};
+		DDD9B23A200F3FFA02501C36 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CD702FB1DCCD797B433A4E61 /* Tend */;
+			targetProxy = 4A52AC3EE1D29BB9C445CFDE /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		370C87FD708CAD75EC1F8515 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Tend;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.tend.ios;
+				PRODUCT_NAME = Tend;
+				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		3884DF3253B377CC5A608B94 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.tend.ios.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Tend.app/Tend";
+			};
+			name = Release;
+		};
+		3C4D9A05DE4A28BD45B46E5B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.tend.ios.uitests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Tend;
+			};
+			name = Debug;
+		};
+		720F06797717C20422ED0857 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Tend;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.tend.ios;
+				PRODUCT_NAME = Tend;
+				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		B7106D751456189A4684895F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.tend.ios.uitests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Tend;
+			};
+			name = Release;
+		};
+		CE191214ADE8BF66DB72CC3E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		DC789B3A91ED702E0960C1E4 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.tend.ios.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Tend.app/Tend";
+			};
+			name = Debug;
+		};
+		EAAE74EE8DC53B03C33329B8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		263D3A8A303CB2F1441E3E1D /* Build configuration list for PBXProject "TendiOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EAAE74EE8DC53B03C33329B8 /* Debug */,
+				CE191214ADE8BF66DB72CC3E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		3983B88D9CF05994B9117459 /* Build configuration list for PBXNativeTarget "Tend" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				720F06797717C20422ED0857 /* Debug */,
+				370C87FD708CAD75EC1F8515 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		93FCF010EB4B11F4E23E3595 /* Build configuration list for PBXNativeTarget "TendUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3C4D9A05DE4A28BD45B46E5B /* Debug */,
+				B7106D751456189A4684895F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		F599785180891C59C9C2D764 /* Build configuration list for PBXNativeTarget "TendTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DC789B3A91ED702E0960C1E4 /* Debug */,
+				3884DF3253B377CC5A608B94 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 713169D271DDC74E23584912 /* Project object */;
+}

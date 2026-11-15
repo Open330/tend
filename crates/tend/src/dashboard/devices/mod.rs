@@ -1,8 +1,9 @@
 //! Paired devices: a phone that may decide, and nothing else.
 //!
-//! Pairing follows the OAuth device authorization grant (RFC 8628): the
-//! **device asks**, an **operator approves**, and the secret that becomes
-//! the credential never leaves the device.
+//! Pairing is shaped like the OAuth device authorization grant (RFC 8628),
+//! with tend's own endpoints: the **device asks**, an **operator
+//! approves**, and no secret passes through a link, the clipboard or
+//! another app.
 //!
 //! 1. The app calls `POST /auth/devices/request` with its name. It gets a
 //!    secret `device_code` (kept on the phone) and a short `user_code`
@@ -140,6 +141,12 @@ pub(in crate::dashboard) enum Poll {
 }
 
 pub(in crate::dashboard) struct Devices {
+    /// Serializes the transitions that change which devices exist (issuing
+    /// a token, removing one, removing all) from the capacity check to the
+    /// durable write, so memory and the store agree when each one ends and
+    /// a removal can never miss an issuance in flight. Lock order: this,
+    /// then `registry`, then `storage`.
+    transitions: Mutex<()>,
     registry: Mutex<Registry>,
     /// `None` until the first device is paired (or the store existed at
     /// start); always `None` for an in-memory registry.
@@ -227,6 +234,7 @@ impl Devices {
     #[must_use]
     pub(in crate::dashboard) fn memory() -> Arc<Self> {
         Arc::new(Self {
+            transitions: Mutex::new(()),
             registry: Mutex::new(Registry::default()),
             storage: Mutex::new(None),
             path: None,
@@ -239,6 +247,7 @@ impl Devices {
     pub(in crate::dashboard) async fn open(path: Option<PathBuf>) -> std::io::Result<Arc<Self>> {
         let path = path.or_else(|| crate::paths::data_dir().map(|d| d.join(DEFAULT_STORAGE_PATH)));
         let devices = Arc::new(Self {
+            transitions: Mutex::new(()),
             registry: Mutex::new(Registry::default()),
             storage: Mutex::new(None),
             path: path.clone(),
@@ -252,6 +261,12 @@ impl Devices {
             devices.registry().devices = stored;
         }
         Ok(devices)
+    }
+
+    fn transition(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.transitions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn registry(&self) -> std::sync::MutexGuard<'_, Registry> {
@@ -368,6 +383,7 @@ impl Devices {
     /// The device polls with its device code.
     pub(in crate::dashboard) fn poll(&self, device_code: &str) -> Poll {
         let hash = sha256(device_code.trim());
+        let _transition = self.transition();
         let request = {
             let mut registry = self.pruned();
             let Some(index) = registry
@@ -387,6 +403,7 @@ impl Devices {
             // polls racing with the same code.
             registry.requests.swap_remove(index)
         };
+        let (request_code, request_expires) = (request.user_code.clone(), request.expires);
         let token = format!("{TOKEN_PREFIX}{}", random_secret());
         let at = now_unix();
         let device = Device {
@@ -398,14 +415,23 @@ impl Devices {
             last_seen_at: at,
             token_hash: sha256(&token),
         };
-        match self.storage() {
-            Ok(Some(storage)) => {
-                if let Err(error) = storage.insert(&device) {
-                    return Poll::Storage(error.to_string());
-                }
-            }
-            Ok(None) => {}
-            Err(error) => return Poll::Storage(error.to_string()),
+        let stored = match self.storage() {
+            Ok(Some(storage)) => storage.insert(&device),
+            Ok(None) => Ok(()),
+            Err(error) => Err(error),
+        };
+        if let Err(error) = stored {
+            // Nothing was issued: the approved request stays, so the next
+            // poll can try again.
+            self.registry().requests.push(PendingRequest {
+                device_code_hash: hash,
+                user_code: request_code,
+                name: device.name,
+                platform: device.platform,
+                expires: request_expires,
+                approved_by: Some(device.approved_by),
+            });
+            return Poll::Storage(error.to_string());
         }
         self.registry().devices.push(device.clone());
         Poll::Issued(Box::new(device), token)
@@ -454,6 +480,7 @@ impl Devices {
 
     /// Unpair a device; `false` when no such device exists.
     pub(in crate::dashboard) fn remove(&self, id: &str) -> std::io::Result<bool> {
+        let _transition = self.transition();
         if !self.registry().devices.iter().any(|device| device.id == id) {
             return Ok(false);
         }
@@ -467,25 +494,21 @@ impl Devices {
     /// Unpair every device and drop every pending request; how many
     /// devices were removed.
     pub(in crate::dashboard) fn remove_all(&self) -> std::io::Result<usize> {
-        let ids: Vec<String> = self
-            .registry()
-            .devices
-            .iter()
-            .map(|d| d.id.clone())
-            .collect();
-        if ids.is_empty() {
-            self.registry().requests.clear();
+        let _transition = self.transition();
+        // Approvals still waiting for their poll are cancelled too.
+        let count = {
+            let mut registry = self.registry();
+            registry.requests.clear();
+            registry.devices.len()
+        };
+        if count == 0 {
             return Ok(0);
         }
         if let Some(storage) = self.storage()? {
-            for id in &ids {
-                storage.remove(id)?;
-            }
+            storage.clear()?;
         }
-        let mut registry = self.registry();
-        registry.devices.clear();
-        registry.requests.clear();
-        Ok(ids.len())
+        self.registry().devices.clear();
+        Ok(count)
     }
 
     #[cfg(test)]

@@ -148,6 +148,13 @@ impl Storage {
             .map_err(io::Error::other)
     }
 
+    pub(super) fn clear(&self) -> io::Result<()> {
+        self.connection()?
+            .execute("DELETE FROM devices", [])
+            .map(drop)
+            .map_err(io::Error::other)
+    }
+
     pub(super) fn remove(&self, id: &str) -> io::Result<()> {
         self.connection()?
             .execute("DELETE FROM devices WHERE id = ?1", [id])

@@ -35,7 +35,7 @@ export function openAccessManager(request, { login = true, devices: pairing = fa
     <p class="share-message" role="status"></p>
     <section class="access-devices-section" hidden>
     <h3>Devices</h3>
-    <p>A paired device (the Tend app on a phone) can read and answer what needs you, on every host this dashboard covers, and nothing else: no pane output, no typing into panes, no settings. To pair one, open the app, enter this dashboard's address, and type the code it shows here. Removing the operator who approved a device, or changing the access token, does not unpair it.</p>
+    <p>A paired device (the Tend app on a phone) can read and answer what needs you, on every host this dashboard covers, and nothing else: no pane output, no typing into panes, no settings. To pair one, open the app, enter this dashboard's address, and type the code it shows here. Only enter a code shown on a device you are pairing yourself, right now; never a code someone sent you. Removing the operator who approved a device, or changing the access token, does not unpair it.</p>
     <form class="access-pair-device"><label>Code shown on the device<input name="code" autocomplete="off" autocapitalize="characters" maxlength="16" placeholder="BCDF-GHJK" required></label><button type="submit">Pair device</button></form>
     <div class="access-devices"></div>
     </section>
