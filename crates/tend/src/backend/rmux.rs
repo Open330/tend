@@ -478,6 +478,26 @@ pub fn endpoint_from_env() -> Option<String> {
     endpoint_from_value(&std::env::var("RMUX").ok()?)
 }
 
+/// `TEND_RMUX_SOCKET`: the one rmux server a daemon that is not the user's
+/// observes (a socket path, or the `$RMUX` tuple a pane advertises).
+///
+/// rmux's counterpart of a scratch `TMUX_TMPDIR`: a daemon started with its
+/// own XDG directories watches no rmux server it would have to infer (see
+/// [`ambient_endpoint`]), so without this it sees no pane at all. Only
+/// [`super::active_backends`]' restricted set reads it; every other rmux
+/// path (the user's daemon, CLI navigation, lifecycle commands, activity
+/// sampling) is unchanged, so it cannot split one process across two
+/// servers. Commands on a pane it observed use that pane's recorded
+/// endpoint as usual.
+#[must_use]
+pub fn explicit_endpoint() -> Option<String> {
+    explicit_endpoint_from(std::env::var("TEND_RMUX_SOCKET").ok().as_deref())
+}
+
+fn explicit_endpoint_from(value: Option<&str>) -> Option<String> {
+    endpoint_from_value(value?)
+}
+
 /// [`endpoint_from_env`] as a server to act on or observe: `None` for a
 /// process restricted to its own multiplexer (a daemon that is not the
 /// user's, or a CLI aimed at one), whose inherited `$RMUX` names the user's
@@ -824,6 +844,20 @@ mod tests {
         cols[32] = "alpha-group";
         cols.push(socket);
         cols.join("\t")
+    }
+
+    #[test]
+    fn an_explicit_endpoint_accepts_a_path_or_the_pane_tuple() {
+        assert_eq!(explicit_endpoint_from(None), None);
+        assert_eq!(explicit_endpoint_from(Some("  ")), None);
+        assert_eq!(
+            explicit_endpoint_from(Some(r"\\.\pipe\rmux-x-1")).as_deref(),
+            Some(r"\\.\pipe\rmux-x-1")
+        );
+        assert_eq!(
+            explicit_endpoint_from(Some("/tmp/rmux-1/w5,4242,0")).as_deref(),
+            Some("/tmp/rmux-1/w5")
+        );
     }
 
     #[test]
