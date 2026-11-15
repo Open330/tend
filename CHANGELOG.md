@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.19] - 2026-11-15
+
 ### Added
 
 - The dashboard's decision page is now Home, in the Mac app's three lanes:
