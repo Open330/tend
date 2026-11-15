@@ -1,10 +1,14 @@
-// "Needs you": the decision queue, phone-first. Reads /api/decisions and
-// /api/decisions/history with the operator's credential: the dashboard
-// token kept by the main page, or the OIDC operator session cookie.
+// Home, phone-first, in the Mac app's three lanes: "Your turn" (the
+// decision queue, /api/decisions), "In progress" and "Finished" (what was
+// decided, /api/decisions/history, and the agents that finished, from the
+// Fleet snapshot /api/fleet). Reads with the operator's credential: the
+// dashboard token kept by the main page, or the OIDC operator session
+// cookie. Served at /needs and /home.
 // Everything an agent wrote is rendered with textContent, never as HTML.
 
 import { draftKey, historySections, hostSections, linkedItemOf, needsReturnPath } from "./needs-model.mjs";
 import { withPaneHash } from "./pane-drawer.mjs";
+import { cardCount, finishedAgentSections, finishedSections, progressSections } from "./home-model.mjs";
 
 const TOKEN_KEY = "tend.token";
 const REFRESH_MS = 10000;
@@ -235,6 +239,7 @@ function renderSections(list, sections, empty = "Nothing is waiting on you.") {
 /// operator could read may stay on screen.
 function forget() {
   $("queue").replaceChildren();
+  $("progress").replaceChildren();
   $("history").replaceChildren();
   $("count").textContent = "";
   $("covers").textContent = "";
@@ -284,15 +289,32 @@ async function refresh() {
       if (composing()) return;
       const sections = hostSections(data);
       renderSections($("queue"), sections);
-      const total = sections.reduce((sum, section) => sum + section.cards.length, 0);
+      const total = cardCount(sections);
       $("count").textContent = total ? `${total} waiting` : "";
       status.textContent = "";
       $("covers").textContent = `Covers ${sections.map((s) => s.alias).join(", ")}.`;
-    } else {
-      const data = await read("/api/decisions/history");
+    } else if (state.tab === "progress") {
+      const data = await read("/api/fleet");
       if (!current()) return;
-      const sections = historySections(data);
-      renderSections($("history"), sections, "No decisions recorded yet.");
+      const sections = progressSections(data);
+      renderSections($("progress"), sections, "Nothing is in progress.");
+      status.textContent = "";
+      $("covers").textContent = `Covers ${sections.map((s) => s.alias).join(", ")}.`;
+    } else {
+      // The Fleet read only adds the agents that finished: without it the
+      // lane still shows what was decided.
+      // A lost sign-in is not "unavailable": it drops the page like any
+      // other read does.
+      const [data, fleet] = await Promise.all([
+        read("/api/decisions/history"),
+        read("/api/fleet").catch((error) => {
+          if (error.auth) throw error;
+          return null;
+        }),
+      ]);
+      if (!current()) return;
+      const sections = finishedSections(historySections(data), fleet ? finishedAgentSections(fleet) : []);
+      renderSections($("history"), sections, "Nothing finished yet.");
       status.textContent = "";
       $("covers").textContent = `Covers ${sections.map((s) => s.alias).join(", ")}.`;
     }
@@ -304,17 +326,18 @@ async function refresh() {
   }
 }
 
+const TABS = ["queue", "progress", "history"];
+
 function select(tab) {
   state.tab = tab;
-  $("tab-queue").setAttribute("aria-selected", String(tab === "queue"));
-  $("tab-history").setAttribute("aria-selected", String(tab === "history"));
-  $("queue").hidden = tab !== "queue";
-  $("history").hidden = tab !== "history";
+  for (const name of TABS) {
+    $(`tab-${name}`).setAttribute("aria-selected", String(tab === name));
+    $(name).hidden = tab !== name;
+  }
   refresh().then(revealLinkedItem);
 }
 
-$("tab-queue").addEventListener("click", () => select("queue"));
-$("tab-history").addEventListener("click", () => select("history"));
+for (const name of TABS) $(`tab-${name}`).addEventListener("click", () => select(name));
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) refresh().then(revealLinkedItem);
 });

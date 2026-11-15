@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The dashboard's decision page is now Home, in the Mac app's three lanes:
+  **Your turn** (the decision queue, as before), **In progress** (every
+  Fleet host's working agents) and **Finished** (what was decided, then
+  the agents that finished in the last day). It is served at `/home` as
+  well as `/needs`; the tabs were Waiting and Decided.
 - `GET /api/proof?nonce=N` on the dashboard: an HMAC of the nonce, this
   host's node id and the dashboard's address under the dashboard token,
   answered without a credential. A client (the Windows
