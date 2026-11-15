@@ -455,6 +455,8 @@ pub fn router(state: AppState) -> Router {
     api.merge(proof)
         .merge(assets::router::<()>())
         .route("/needs", get(super::decisions::page_handler))
+        // Home: the same page, under the name the apps open it by.
+        .route("/home", get(super::decisions::page_handler))
         .layer(host_layer)
         .layer(TraceLayer::new_for_http().make_span_with(make_request_span::<Body>))
 }
@@ -4814,13 +4816,16 @@ mod tests {
                 "{uri}"
             );
         }
-        let page = get(app, "/needs", None).await;
-        assert_eq!(page.status(), StatusCode::OK);
-        assert_eq!(page.headers()[header::X_FRAME_OPTIONS], "DENY");
-        assert_eq!(
-            page.headers()[header::CONTENT_SECURITY_POLICY],
-            "frame-ancestors 'none'"
-        );
+        for uri in ["/needs", "/home"] {
+            let page = get(app.clone(), uri, None).await;
+            assert_eq!(page.status(), StatusCode::OK, "{uri}");
+            assert_eq!(page.headers()[header::X_FRAME_OPTIONS], "DENY", "{uri}");
+            assert_eq!(
+                page.headers()[header::CONTENT_SECURITY_POLICY],
+                "frame-ancestors 'none'",
+                "{uri}"
+            );
+        }
     }
 
     #[tokio::test]

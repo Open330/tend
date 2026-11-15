@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   toasts for new questions and results on every Fleet host, start with
   Windows. It sends the dashboard token only to a server that proved it
   knows it and never hands it to the page. See docs/WINDOWS.md.
+- The dashboard's decision page is now Home, in the Mac app's three lanes:
+  **Your turn** (the decision queue, as before), **In progress** (every
+  Fleet host's working agents) and **Finished** (what was decided, then
+  the agents that finished in the last day). It is served at `/home` as
+  well as `/needs`; the tabs were Waiting and Decided.
 - `GET /api/proof?nonce=N` on the dashboard: an HMAC of the nonce, this
   host's node id and the dashboard's address under the dashboard token,
   answered without a credential. A client (the Windows
@@ -23,14 +28,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dashboard: **paired devices**. A phone can pair with the dashboard and
   get its own credential that only reads and answers what needs you
   (`/api/decisions*`), on every host the dashboard covers. The phone asks,
-  an operator approves its code under **access ▸ Devices** (RFC 8628
-  device grant), and the token never leaves the phone. Devices expire after
+  an operator approves its code under **access ▸ Devices** (shaped like
+  the RFC 8628 device grant), and no secret passes through a link or the
+  clipboard. Devices expire after
   30 days unused or 90 days in all, can be removed one by one or all at once,
   and their decisions are recorded as `app:<name>#<id>`. See
   [DASHBOARD.md](docs/DASHBOARD.md#paired-devices).
+- **Tend for iPhone and iPad** (`apps/tend-ios`, phase 1, built from source):
+  pairs with a dashboard as a device that may only decide, shows what needs
+  you per host, answers questions and decides results through the
+  dashboard's decision routes, and lists what was decided. iPad uses a
+  sidebar like Tend for Mac. See
+  [docs/proposals/IOS_APP.md](docs/proposals/IOS_APP.md).
 
 ### Fixed
 
+- A tendd that is not the user's (started with its own XDG directories, as
+  tests and scratch setups do) can now watch one rmux server of its own:
+  `TEND_RMUX_SOCKET` names it, a socket path or the `$RMUX` value a pane
+  advertises. Without it such a daemon saw no rmux pane at all, so on
+  Windows its agents could never ask a question or be reached by a peer
+  (`collaboration origin is not a hook-correlated tracked pane agent`).
+  Only a process restricted to its own multiplexer reads it (such a
+  daemon, or a CLI aimed at one); the user's daemon and an ordinary CLI
+  ignore it.
 - `tend doctor` no longer fails after an upgrade on a host where tend never
   installed the Copilot CLI hooks. With `copilot` on PATH it now warns and
   names `tend init --component copilot-hooks`; an upgrade does not write
