@@ -8,6 +8,10 @@ use tend::event::{AgentEvent, AgentId, AgentKind};
 use tend::tmux::PaneInfo;
 use time::OffsetDateTime;
 
+/// An absolute working directory on this platform. `/repo` has no drive on
+/// Windows, so an execute request addressed to it could not be reserved.
+pub(crate) const TEST_REPO: &str = if cfg!(windows) { r"C:\repo" } else { "/repo" };
+
 pub(crate) fn room_participant(
     pane: &str,
     session: &str,
@@ -158,7 +162,7 @@ pub(crate) fn collaboration_pane(pane_id: &str, pane_index: &str) -> PaneInfo {
         tty: String::new(),
         current_command: "agent".into(),
         title: String::new(),
-        current_path: "/repo".into(),
+        current_path: TEST_REPO.into(),
         pane_pid: 0,
         socket: Some("default".into()),
     }
@@ -178,7 +182,7 @@ pub(crate) async fn add_agent(
                 surface: None,
                 pane: Some(pane.into()),
                 tmux_socket: Some("default".into()),
-                cwd: Some("/repo".into()),
+                cwd: Some(TEST_REPO.into()),
             },
             at: OffsetDateTime::now_utc(),
         })
@@ -223,7 +227,7 @@ pub(crate) async fn add_capped_agent(store: &tend::SharedStore, pane: &str, sess
                 surface: None,
                 pane: Some(pane.into()),
                 tmux_socket: Some("default".into()),
-                cwd: Some("/repo".into()),
+                cwd: Some(TEST_REPO.into()),
             },
             scope: tend::event::RateLimitScope::FiveHour,
             source: tend::event::RateLimitSource::Statusline,

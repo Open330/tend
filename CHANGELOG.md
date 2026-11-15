@@ -13,6 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of breaking `cargo install --locked` after release (v0.10.19
   shipped such a lock). Release binaries are built `--locked` too, matching
   the install docs.
+- Windows: `tend init` can replace and remove its agent skill links. A
+  directory symlink or junction was removed as a file, which Windows refuses
+  with "access denied", so upgrading or uninstalling the skill failed.
+- Windows: `tend work dispatch` and durable cross-host peer calls (with a
+  `dispatch_id`) can journal their dispatch. Making the record durable opened
+  its directory as a file, which Windows refuses, so every such dispatch
+  failed before it was sent.
 
 ## [0.10.19] - 2026-11-15
 

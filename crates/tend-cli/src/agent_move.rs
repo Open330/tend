@@ -1458,6 +1458,10 @@ mod tests {
     impl Server {
         fn start(host: HostKind) -> Result<Self> {
             let directory = tempfile::tempdir()?;
+            #[cfg(windows)]
+            if host == HostKind::Rmux {
+                return Self::start_windows_rmux(directory);
+            }
             let endpoint = BackendEndpoint {
                 host,
                 socket: directory
@@ -1488,6 +1492,65 @@ mod tests {
             Ok(Self {
                 _directory: directory,
                 endpoint,
+            })
+        }
+        /// rmux on Windows accepts `-S` only for the pipe a server already
+        /// listens on, whose name it derives itself: start a private server
+        /// by label, then address it by that pipe as tend does. Its panes run
+        /// PowerShell rather than `/bin/sh`. The server starts outside this
+        /// process's job, as `tend restore --boot` starts one: an SSH
+        /// session's or a CI runner's job forbids the breakaway rmux needs.
+        #[cfg(windows)]
+        fn start_windows_rmux(directory: tempfile::TempDir) -> Result<Self> {
+            static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let label = format!(
+                "tend-move-test-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            );
+            let rmux = |args: &[&str]| {
+                let mut command = std::process::Command::new("rmux");
+                command
+                    .arg("-L")
+                    .arg(&label)
+                    .args(args)
+                    .env_remove("RMUX")
+                    .env_remove("RMUX_PANE")
+                    .env_remove("TMUX")
+                    .env_remove("TMUX_PANE");
+                command
+            };
+            tend_work::windows_detach::spawn(&rmux(&[
+                "-f",
+                "NUL",
+                "new-session",
+                "-d",
+                "-s",
+                "source",
+                "-n",
+                "main",
+                "Write-Output 'conversation-preserved'; Start-Sleep 300",
+            ]))?;
+            let started = std::time::Instant::now();
+            let socket = loop {
+                let output =
+                    rmux(&["display-message", "-p", "-t", "=source", "#{socket_path}"]).output()?;
+                let socket = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+                if output.status.success() && socket.starts_with(r"\\.\pipe\") {
+                    break socket;
+                }
+                if started.elapsed() > std::time::Duration::from_secs(20) {
+                    let _ = rmux(&["kill-server"]).output();
+                    anyhow::bail!("rmux label {label} did not start within 20s");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            };
+            Ok(Self {
+                _directory: directory,
+                endpoint: BackendEndpoint {
+                    host: HostKind::Rmux,
+                    socket,
+                },
             })
         }
         fn control(&self) -> Control {

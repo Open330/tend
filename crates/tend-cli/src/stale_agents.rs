@@ -607,7 +607,12 @@ mod tests {
     fn codex_profile_uses_owners_default_home_when_unset() {
         assert_eq!(
             codex_home_from_environment(b"HOME=/owner\0"),
-            Some("/owner/.codex".into())
+            // Joined with the platform separator: `/owner\.codex` on Windows.
+            Some(if cfg!(windows) {
+                r"/owner\.codex".into()
+            } else {
+                "/owner/.codex".into()
+            })
         );
         assert_eq!(
             codex_home_from_environment(b"HOME=/owner\0CODEX_HOME=/profile\0"),

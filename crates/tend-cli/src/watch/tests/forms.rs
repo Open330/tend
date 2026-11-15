@@ -5,8 +5,9 @@ fn n_opens_the_spawn_form_and_enter_launches_with_the_prompt_inline() {
     let mut app = app_with_paneless_and_pane();
     assert!(matches!(key_action(&mut app, 'n'), Action::None));
     let spawn = app.spawn.as_mut().expect("n must open the spawn form");
-    // Point at a directory that certainly exists.
-    spawn.dir = "/tmp".into();
+    // Point at a directory that certainly exists (`/tmp` does not on Windows).
+    let tmp = std::env::temp_dir().to_string_lossy().into_owned();
+    spawn.dir.clone_from(&tmp);
     spawn.dir_cursor = spawn.dir.chars().count();
     for c in "리뷰해줘".chars() {
         spawn.prompt.push(c);
@@ -32,7 +33,7 @@ fn n_opens_the_spawn_form_and_enter_launches_with_the_prompt_inline() {
             work,
         }) => {
             assert_eq!(work, None, "no name typed — derive from dir");
-            assert_eq!(dir, "/tmp");
+            assert_eq!(dir, tmp);
             assert_eq!(agent_label, "codex");
             assert_eq!(
                 launch,
@@ -61,7 +62,7 @@ fn a_typed_work_id_is_preserved_for_tmux_metadata() {
     let mut app = app_with_paneless_and_pane();
     let _ = key_action(&mut app, 'n');
     let spawn = app.spawn.as_mut().unwrap();
-    spawn.dir = "/tmp".into();
+    spawn.dir = std::env::temp_dir().to_string_lossy().into_owned();
     spawn.name = "my.review:run".into();
     spawn.prompt = "go".into();
     let action = handle_spawn_event(KeyCode::Enter, KeyModifiers::NONE, &mut app);

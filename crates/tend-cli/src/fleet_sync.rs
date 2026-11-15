@@ -568,7 +568,12 @@ mod persistence_tests {
         assert!(persist(&client, &transfer).await.is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
         // No backup: only the config and the daemon's socket and its claim.
-        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 3);
+        // A Windows named pipe leaves no file, and there is no claim.
+        let daemon_files = if cfg!(unix) { 2 } else { 0 };
+        assert_eq!(
+            std::fs::read_dir(dir.path()).unwrap().count(),
+            1 + daemon_files
+        );
         transfer.expected_text = before.into();
         let (backup, next) = persist(&client, &transfer).await.unwrap().unwrap();
         assert_eq!(std::fs::read_to_string(&backup).unwrap(), before);

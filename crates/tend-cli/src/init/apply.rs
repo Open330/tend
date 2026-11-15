@@ -178,7 +178,14 @@ fn apply_symlink(
     }
     if remove {
         match fs::read_link(path) {
-            Ok(current) if current == target => apply_delete(path, false, report),
+            Ok(current) if current == target => match remove_link(path) {
+                Ok(()) => {
+                    report.deleted.push(path.to_path_buf());
+                    Ok(())
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(e) => Err(e).with_context(|| format!("removing {}", path.display())),
+            },
             Err(e)
                 if e.kind() == std::io::ErrorKind::NotFound
                     && fs::symlink_metadata(path).is_err() =>
@@ -203,6 +210,18 @@ fn apply_symlink(
         anyhow::bail!("agent skill symlinks require a Unix or Windows host");
         report.edited.push(path.to_path_buf());
         Ok(())
+    }
+}
+
+/// Remove a skill link, never what it points at. A Windows directory link (a
+/// directory symlink or a junction) is a directory entry: `remove_file`
+/// refuses it with "access denied", while `remove_dir` removes the link
+/// itself without touching the target.
+fn remove_link(path: &Path) -> std::io::Result<()> {
+    if cfg!(windows) {
+        fs::remove_dir(path)
+    } else {
+        fs::remove_file(path)
     }
 }
 
@@ -713,7 +732,7 @@ mod tests {
     fn backup_path_appends_stamp() {
         let p = PathBuf::from("/tmp/foo.conf");
         let b = backup_path(&p, 1_234_567_890);
-        assert_eq!(b.to_string_lossy(), "/tmp/foo.conf.tend-backup-1234567890");
+        assert_eq!(b, Path::new("/tmp/foo.conf.tend-backup-1234567890"));
     }
 
     #[cfg(unix)]

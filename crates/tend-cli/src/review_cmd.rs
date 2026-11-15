@@ -951,6 +951,14 @@ mod tests {
     use tend::review::ReviewSummary;
     use time::macros::datetime;
 
+    /// Absolute on this platform: `/src/tend` has no drive on Windows, so it
+    /// would be resolved against the current one.
+    const REPO: &str = if cfg!(windows) {
+        r"C:\src\tend"
+    } else {
+        "/src/tend"
+    };
+
     #[test]
     fn segment_is_empty_with_nothing_open() {
         let now = datetime!(2026-11-06 12:00 UTC);
@@ -978,7 +986,7 @@ mod tests {
             options: vec!["merge".into(), "hold".into()],
             recommend: Some("merge".into()),
             evidence: vec!["commit:abc123".into(), "test-pass:cargo test".into()],
-            repo: Some("/src/tend".into()),
+            repo: Some(REPO.into()),
         }
         .build()
         .unwrap()
@@ -987,7 +995,7 @@ mod tests {
             decision.evidence[0],
             Evidence::Commit {
                 sha: "abc123".into(),
-                repo: Some("/src/tend".into())
+                repo: Some(REPO.into())
             }
         );
         let mut out = String::new();
@@ -996,7 +1004,7 @@ mod tests {
         assert!(out.contains("test passed: cargo test"), "{out}");
         let bad = DecisionArgs {
             evidence: vec!["commit:--exec".into()],
-            repo: Some("/src/tend".into()),
+            repo: Some(REPO.into()),
             ..DecisionArgs::default()
         };
         assert!(bad.build().is_err());
@@ -1019,7 +1027,7 @@ mod tests {
                 summary: Some("done".into()),
                 commits: vec!["abc123".into()],
                 decision: DecisionArgs {
-                    repo: Some("/src/tend".into()),
+                    repo: Some(REPO.into()),
                     evidence: vec!["test-pass:cargo test".into()],
                     ..DecisionArgs::default()
                 },

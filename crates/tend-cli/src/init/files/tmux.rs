@@ -327,7 +327,11 @@ mod tests {
         assert_eq!(outcome, Outcome::Inserted);
         assert!(after.contains("set-buffer -b 'tend-window-name-#{client_pid}' -- \\\"%%%\\\""));
         assert!(after.contains("--buffer 'tend-window-name-#{client_pid}'"));
-        assert!(after.contains("; tmux delete-buffer -b 'tend-window-name-#{client_pid}'"));
+        // rmux on Windows ships no `tmux` binary; the cleanup names rmux.
+        let cleanup = if cfg!(windows) { "rmux" } else { "tmux" };
+        assert!(after.contains(&format!(
+            "; {cleanup} delete-buffer -b 'tend-window-name-#{{client_pid}}'"
+        )));
         assert!(!after.contains("run-shell -b"));
         assert!(!after.contains("-- '%%"));
     }

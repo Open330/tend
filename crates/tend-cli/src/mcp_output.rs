@@ -173,7 +173,8 @@ mod tests {
         let (shutdown, rx) = tokio::sync::broadcast::channel(1);
         let daemon = tokio::spawn(async move { server.run(rx).await.unwrap() });
         tokio::time::timeout(Duration::from_secs(5), async {
-            while !socket.exists() {
+            // A Windows named pipe leaves no file to wait for.
+            while !tend::transport::endpoint_is_live(&socket) {
                 tokio::task::yield_now().await;
             }
         })
