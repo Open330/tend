@@ -42,8 +42,9 @@ daemon) is not the user's daemon, so it never infers a multiplexer from
 `$RMUX` or rmux's default server: those are the user's. Give it a private
 server to observe with `TEND_RMUX_SOCKET`, the server's pipe (for example
 `rmux -L scratch display-message -p '#{socket_path}'`) or a pane's `$RMUX`
-value. It is the rmux counterpart of a scratch `TMUX_TMPDIR`. Only such a
-daemon reads it: the user's daemon and the CLI ignore it. A scratch daemon
+value. It is the rmux counterpart of a scratch `TMUX_TMPDIR`. Only a
+process restricted to its own multiplexer reads it (such a daemon, or a CLI
+aimed at one); the user's daemon and an ordinary CLI ignore it. A scratch daemon
 does not sample activity from that server (activity sampling stays
 fail-closed for it).
 

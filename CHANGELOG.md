@@ -26,8 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   advertises. Without it such a daemon saw no rmux pane at all, so on
   Windows its agents could never ask a question or be reached by a peer
   (`collaboration origin is not a hook-correlated tracked pane agent`).
-  Only a daemon that is not the user's reads it; the user's daemon and the
-  CLI ignore it.
+  Only a process restricted to its own multiplexer reads it (such a
+  daemon, or a CLI aimed at one); the user's daemon and an ordinary CLI
+  ignore it.
 - `tend doctor` no longer fails after an upgrade on a host where tend never
   installed the Copilot CLI hooks. With `copilot` on PATH it now warns and
   names `tend init --component copilot-hooks`; an upgrade does not write
