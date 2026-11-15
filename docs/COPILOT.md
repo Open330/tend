@@ -18,8 +18,13 @@ when `COPILOT_HOME` is set). Copilot loads every `*.json` file in that folder
 as user hooks; user hooks need no folder-trust prompt. tend owns only this one
 file: re-running `tend init` rewrites it, `tend init --uninstall --component
 copilot-hooks` deletes it, and your other hook files are never touched.
-Restart running Copilot sessions after installing. `tend doctor` reports a
-missing or incomplete file when Copilot is installed.
+Restart running Copilot sessions after installing.
+
+`tend doctor` checks this file only when `copilot` is on PATH or the file
+exists. A `~/.copilot` folder alone is not enough, since IDE extensions and
+an uninstalled CLI leave one behind. Upgrading tend does not write the file,
+so with `copilot` on PATH and no file, doctor shows a warning with the
+command to run. A file missing a hook tend uses is an error.
 
 ## What each hook does
 

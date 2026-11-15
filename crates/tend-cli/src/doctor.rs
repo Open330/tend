@@ -1169,14 +1169,46 @@ fn check_agent_hooks() -> Vec<(String, CheckResult)> {
             ),
         ));
     }
-    // Copilot likewise: only when it is installed.
-    if crate::init::detect::copilot_installed() {
-        checks.push((
-            "Hooks · Copilot CLI".to_string(),
-            check_one_agent_hook("copilot", copilot::default_path(), copilot_hook_configured),
-        ));
+    if let Some(result) =
+        check_copilot_hooks(copilot::default_path(), which::which("copilot").is_ok())
+    {
+        checks.push(("Hooks · Copilot CLI".to_string(), result));
     }
     checks
+}
+
+/// The Copilot CLI line, or `None` when there is nothing to report.
+///
+/// Copilot support arrived in a release, and nothing writes an agent's
+/// hooks on upgrade: `tend upgrade` swaps the binaries and re-execs tendd,
+/// and the Claude/Codex hooks keep working only because their
+/// `tend hook <agent>` commands never change. Writing into another
+/// program's config stays with `tend init`, which shows the plan first. So
+/// a Copilot whose hooks were never installed is a notice, not a failure.
+///
+/// The probe needs the `copilot` binary on PATH. `~/.copilot` alone is not
+/// enough: the IDE extensions and an uninstalled CLI leave it behind, and a
+/// hook file nothing runs is not worth a line. A `tend.json` that tend did
+/// install is still checked, since the user chose to install it.
+fn check_copilot_hooks(path: Option<PathBuf>, on_path: bool) -> Option<CheckResult> {
+    let installed = path.as_deref().is_some_and(Path::exists);
+    if installed {
+        return Some(check_one_agent_hook(
+            "copilot",
+            path,
+            copilot_hook_configured,
+        ));
+    }
+    if !on_path {
+        return None;
+    }
+    Some(match path {
+        Some(path) => CheckResult::Warn(format!(
+            "not set up — `copilot` is on PATH but {} is not installed; run `tend init --component copilot-hooks` to track its sessions",
+            path.display()
+        )),
+        None => CheckResult::Warn("could not resolve home path for copilot".to_string()),
+    })
 }
 
 /// Does `$COPILOT_HOME/hooks/tend.json` wire every event tend reads? A
@@ -2502,6 +2534,32 @@ esac
             antigravity_hook_configured(split),
             "coverage is what matters, not which key holds it",
         );
+    }
+
+    #[test]
+    fn copilot_hooks_never_installed_are_a_notice_and_need_the_binary() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hooks").join("tend.json");
+        // `~/.copilot` without the CLI: no line at all.
+        assert!(check_copilot_hooks(Some(path.clone()), false).is_none());
+        // The CLI, hooks never installed: a notice, never a failure.
+        assert!(matches!(
+            check_copilot_hooks(Some(path.clone()), true),
+            Some(CheckResult::Warn(m)) if m.contains("copilot-hooks")
+        ));
+        // Installed by tend: checked, even without the binary on PATH.
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, crate::init::files::copilot::upsert("").0).unwrap();
+        assert!(matches!(
+            check_copilot_hooks(Some(path.clone()), false),
+            Some(CheckResult::Ok(_))
+        ));
+        // Installed but stale: still a failure.
+        std::fs::write(&path, "{\"version\":1,\"hooks\":{}}").unwrap();
+        assert!(matches!(
+            check_copilot_hooks(Some(path), true),
+            Some(CheckResult::Fail(_))
+        ));
     }
 
     #[test]
