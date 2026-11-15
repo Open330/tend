@@ -124,10 +124,11 @@ decision on another control-mode host is routed by `host`).
 
 ## Sign-in: device pairing
 
-The phone gets **its own credential, which can only decide**. Pairing
-follows the OAuth device authorization grant (RFC 8628): the phone asks, an
-operator approves, and the secret that becomes the credential never leaves
-the phone. There is no link or custom URL scheme that carries a secret.
+The phone gets **its own credential, which can only decide**. Pairing is
+shaped like the OAuth device authorization grant (RFC 8628), with tend's own
+endpoints and responses: the phone asks, an operator approves, and no secret
+passes through a link, the clipboard or another app (the device code goes
+only from the phone to the daemon).
 
 ```text
  iPhone                                          Mac browser, signed in as operator
@@ -155,7 +156,10 @@ the phone. There is no link or custom URL scheme that carries a secret.
   accepted.
 - **Approve.** `POST /api/devices/approve {user_code}` with the dashboard
   token or an operator session (with the existing CSRF proof). The answer
-  names the device, so the operator sees what they approved.
+  names the device after the fact; a device-supplied name proves nothing.
+  The remaining risk is RFC 8628's remote phishing (section 5.4): someone
+  shows the operator *their* code. The dialog says to approve only a code
+  shown on a device you are pairing yourself, right now.
 - **Token.** Issued once, atomically under the registry lock (two racing
   polls get one token). The daemon stores the token's SHA-256 with the
   device id, the name the app sent (bounded, control characters removed),
