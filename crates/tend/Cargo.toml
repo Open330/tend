@@ -18,6 +18,7 @@ dashboard = [
     "dep:tokio-stream",
     "dep:rust-embed",
     "dep:openidconnect",
+    "dep:hmac",
 ]
 
 [dependencies]
@@ -52,6 +53,8 @@ uuid = { workspace = true }
 rusqlite = { workspace = true }
 base64 = { workspace = true }
 sha2 = "0.10"
+# The dashboard's server proof (`/api/proof`): HMAC-SHA256 under the token.
+hmac = { version = "0.12", optional = true }
 # Operator sign-in and viewer accounts for a published dashboard.
 openidconnect = { version = "4.0.1", default-features = false, features = ["reqwest", "rustls-tls"], optional = true }
 
