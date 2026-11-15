@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Dashboard: **paired devices**. A phone can pair with the dashboard and
+  get its own credential that only reads and answers what needs you
+  (`/api/decisions*`), on every host the dashboard covers. The phone asks,
+  an operator approves its code under **access ▸ Devices** (RFC 8628
+  device grant), and the token never leaves the phone. Devices expire after
+  30 days unused or 90 days in all, can be removed one by one or all at once,
+  and their decisions are recorded as `app:<name>#<id>`. See
+  [DASHBOARD.md](docs/DASHBOARD.md#paired-devices).
+
 ### Fixed
 
 - A tendd that is not the user's (started with its own XDG directories, as
