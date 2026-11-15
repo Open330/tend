@@ -5259,7 +5259,7 @@ dependencies = [
 
 [[package]]
 name = "tend-app"
-version = "0.10.18"
+version = "0.10.19"
 dependencies = [
  "dirs 5.0.1",
  "hmac",
