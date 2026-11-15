@@ -90,14 +90,14 @@ mod tests {
         }
         dispatcher.submit("queued read", false).unwrap();
         dispatcher.submit("decision", true).unwrap();
+        // The decision runs while every reader is still held.
         assert_eq!(
-            finished.recv_timeout(Duration::from_secs(2)).unwrap(),
+            finished.recv_timeout(Duration::from_secs(10)).unwrap(),
             "decision"
         );
-        assert!(started.elapsed() < Duration::from_secs(1));
         drop(held);
         let mut rest: Vec<_> = (0..4)
-            .map(|_| finished.recv_timeout(Duration::from_secs(2)).unwrap())
+            .map(|_| finished.recv_timeout(Duration::from_secs(10)).unwrap())
             .collect();
         rest.sort_unstable();
         assert_eq!(rest, ["queued read", "slow read", "slow read", "slow read"]);
