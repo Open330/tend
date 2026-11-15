@@ -135,7 +135,9 @@ struct HostQueue: Decodable, Hashable, Sendable, Identifiable {
         decidesReviews = (try? values.decodeIfPresent(Bool.self, forKey: .decidesReviews)) ?? local
         covers = (try? values.decodeIfPresent([String].self, forKey: .covers)) ?? []
         unavailable = (try? values.decodeIfPresent([String].self, forKey: .unavailable)) ?? []
-        queue = (try? values.decodeIfPresent(TendPendingQueue.self, forKey: .queue)) ?? TendPendingQueue()
+        // A section whose queue cannot be read is an error, never an empty
+        // queue: "nothing needs you" must mean that.
+        queue = try values.decode(TendPendingQueue.self, forKey: .queue)
     }
 }
 
@@ -155,7 +157,7 @@ struct HostHistory: Decodable, Hashable, Sendable, Identifiable {
         alias = try values.decode(String.self, forKey: .alias)
         local = (try? values.decodeIfPresent(Bool.self, forKey: .local)) ?? false
         unavailable = (try? values.decodeIfPresent([String].self, forKey: .unavailable)) ?? []
-        history = (try? values.decodeIfPresent(TendDecisionHistory.self, forKey: .history)) ?? TendDecisionHistory()
+        history = try values.decode(TendDecisionHistory.self, forKey: .history)
     }
 }
 
@@ -176,6 +178,10 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate, Sendable {
 }
 
 struct DashboardClient: Sendable {
+    /// Unit tests answer requests with a `URLProtocol` stub; set before the
+    /// first request. Never set by the app.
+    nonisolated(unsafe) static var testProtocolClasses: [AnyClass]?
+
     let origin: ServerOrigin
     /// The device token; nil before pairing.
     var token: String?
@@ -188,6 +194,7 @@ struct DashboardClient: Sendable {
         configuration.urlCache = nil
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.timeoutIntervalForRequest = 30
+        if let stub = testProtocolClasses { configuration.protocolClasses = stub }
         return URLSession(configuration: configuration, delegate: NoRedirects(), delegateQueue: nil)
     }()
 
@@ -207,6 +214,10 @@ struct DashboardClient: Sendable {
         let response: URLResponse
         do {
             (data, response) = try await Self.session.data(for: request)
+        } catch let error as URLError where error.code == .cancelled {
+            throw CancellationError()
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             throw DashboardError.transport(error.localizedDescription)
         }

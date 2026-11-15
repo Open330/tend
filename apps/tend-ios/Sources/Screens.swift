@@ -30,7 +30,7 @@ struct YourTurnView: View {
                 }
                 if !model.loaded {
                     ProgressView().frame(maxWidth: .infinity).padding(.top, 40)
-                } else if sections.allSatisfy({ PendingDecision.from($0).isEmpty && $0.unavailable.isEmpty }) {
+                } else if AppModel.allClear(sections) {
                     empty
                 }
                 ForEach(sections) { section in
@@ -69,7 +69,7 @@ struct HostSectionView: View {
     var body: some View {
         let decisions = PendingDecision.from(section)
         VStack(alignment: .leading, spacing: 10) {
-            if showsHeader, !decisions.isEmpty || !section.unavailable.isEmpty {
+            if showsHeader, !decisions.isEmpty || !section.unavailable.isEmpty || !section.queue.isComplete {
                 HStack(spacing: 6) {
                     Image(systemName: "server.rack")
                     Text(verbatim: section.alias).font(.subheadline.weight(.semibold))
@@ -91,6 +91,13 @@ struct HostSectionView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
+            if section.queue.undecoded > 0 {
+                Label(String(localized: "\(section.queue.undecoded) more need you in a form this app cannot show yet. Open the dashboard in a browser, or update the app."), systemImage: "exclamationmark.triangle")
+                    .font(.footnote)
+                    .foregroundStyle(TendColor.waiting)
+                    .accessibilityIdentifier("undecoded")
+            }
+
             ForEach(decisions) { decision in
                 DecisionCard(decision: decision)
             }
@@ -105,8 +112,13 @@ struct DecidedView: View {
         List {
             if !model.historyLoaded {
                 ProgressView().frame(maxWidth: .infinity)
-            } else if model.past.isEmpty {
+            } else if model.past.isEmpty, model.history.allSatisfy({ $0.history.isComplete && $0.unavailable.isEmpty }) {
                 Text("Nothing decided yet.").foregroundStyle(.secondary)
+            }
+            ForEach(model.history.filter { !$0.history.isComplete || !$0.unavailable.isEmpty }) { section in
+                Label(historyGap(section), systemImage: "exclamationmark.triangle")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
             ForEach(model.past) { past in
                 VStack(alignment: .leading, spacing: 4) {
@@ -141,6 +153,15 @@ struct DecidedView: View {
     }
 }
 
+private func historyGap(_ section: HostHistory) -> String {
+    var parts = section.unavailable + section.history.unavailable
+    if section.history.truncated { parts.append(String(localized: "only the latest are shown")) }
+    if section.history.undecoded > 0 {
+        parts.append(String(localized: "\(section.history.undecoded) this app cannot show"))
+    }
+    return String(localized: "\(section.alias): \(parts.joined(separator: "; "))")
+}
+
 struct DeviceSettingsView: View {
     @Environment(AppModel.self) private var model
     @State private var confirming = false
@@ -156,6 +177,19 @@ struct DeviceSettingsView: View {
                     Text("This device's key can read and answer what needs you on every host the dashboard covers, and nothing else. It stops working after 30 days unused, 90 days after pairing, or when removed under access ▸ Devices.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                }
+                if let problem = model.signOutProblem {
+                    Section {
+                        Label(problem, systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(TendColor.error)
+                            .accessibilityIdentifier("signOutProblem")
+                        Button(String(localized: "Forget this device here only"), role: .destructive) {
+                            model.forgetLocally()
+                        }
+                        .accessibilityIdentifier("forgetLocally")
+                    } footer: {
+                        Text("Then remove it under access ▸ Devices on the dashboard; until then, its key keeps working there.")
+                    }
                 }
                 Section {
                     Button(String(localized: "Sign out"), role: .destructive) { confirming = true }
@@ -269,4 +303,9 @@ struct TendApp: App {
             RootView().environment(model)
         }
     }
+}
+
+extension TendDecisionHistory {
+    /// Every source was read in full and every entry decoded.
+    var isComplete: Bool { !truncated && unavailable.isEmpty && undecoded == 0 }
 }

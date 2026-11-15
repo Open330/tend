@@ -216,6 +216,16 @@ final class AppModel {
     private(set) var busy: Set<String> = []
 
     private var pairingTask: Task<Void, Never>?
+    /// Which pairing attempt may still change state: a newer attempt, a
+    /// cancel or a pairing makes every older one's late answer a no-op.
+    private var attempt = UUID()
+    /// Which pairing the reads and decisions in flight belong to: after a
+    /// sign-out or a new pairing, their late answers (a 401 included) are
+    /// dropped instead of landing on the new one.
+    private var session = UUID()
+    /// Why Sign out could not unpair this device on the dashboard; the key
+    /// is kept so it can be retried.
+    private(set) var signOutProblem: String?
 
     init() {
         if ProcessInfo.processInfo.arguments.contains("-TendResetState") {
@@ -234,6 +244,13 @@ final class AppModel {
     }
 
     var pending: [PendingDecision] { hosts.flatMap(PendingDecision.from) }
+
+    /// "Nothing needs you" only when every host was read in full, every
+    /// entry decoded, and none is waiting: an item this app cannot read, a
+    /// cut-off list or a host that could not be read is never all clear.
+    static func allClear(_ hosts: [HostQueue]) -> Bool {
+        hosts.allSatisfy { $0.queue.isComplete && $0.unavailable.isEmpty && $0.queue.items.isEmpty }
+    }
 
     /// What the person can act on from here, for the badge.
     var actionableCount: Int { pending.filter(\.decidable).count }
@@ -258,68 +275,103 @@ final class AppModel {
         let deviceName = name.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? UIDevice.current.name
         let platform = UIDevice.current.userInterfaceIdiom == .pad ? "ipados" : "ios"
         pairingTask?.cancel()
+        let mine = UUID()
+        attempt = mine
         pairingTask = Task { [weak self] in
             let client = DashboardClient(origin: origin)
+            // Only the latest, uncancelled attempt may touch state.
+            @MainActor func current() -> AppModel? {
+                guard let self, self.attempt == mine, !Task.isCancelled else { return nil }
+                return self
+            }
             do {
                 let request = try await client.requestPairing(name: deviceName, platform: platform)
-                guard let self, !Task.isCancelled else { return }
+                guard let model = current() else { return }
                 let expires = Date().addingTimeInterval(TimeInterval(request.expiresIn))
-                self.phase = .waitingForApproval(origin: origin, userCode: request.userCode, expires: expires)
+                model.phase = .waitingForApproval(origin: origin, userCode: request.userCode, expires: expires)
                 let interval = UInt64(max(request.interval, 1))
-                while !Task.isCancelled, Date() < expires {
+                while Date() < expires {
                     try await Task.sleep(nanoseconds: interval * 1_000_000_000)
-                    if case .issued(let device, let token) = try await client.pollPairing(deviceCode: request.deviceCode) {
-                        let pairing = Pairing(origin: origin, device: device, token: token)
-                        guard CredentialStore.save(pairing) else {
-                            self.fail(String(localized: "Could not keep the key in this device's Keychain."))
-                            return
-                        }
-                        self.phase = .paired(pairing)
-                        await self.refresh()
+                    let answer = try await client.pollPairing(deviceCode: request.deviceCode)
+                    guard let model = current() else { return }
+                    if case .issued(let device, let token) = answer {
+                        model.paired(Pairing(origin: origin, device: device, token: token))
+                        await model.refresh()
                         return
                     }
                 }
-                if !Task.isCancelled {
-                    self.fail(String(localized: "The code expired before it was approved. Start again."))
-                }
+                current()?.fail(String(localized: "The code expired before it was approved. Start again."))
             } catch is CancellationError {
                 return
             } catch {
-                self?.fail(error.localizedDescription)
+                current()?.fail(error.localizedDescription)
             }
         }
     }
 
+    private func paired(_ pairing: Pairing) {
+        guard CredentialStore.save(pairing) else {
+            fail(String(localized: "Could not keep the key in this device's Keychain."))
+            return
+        }
+        attempt = UUID()
+        session = UUID()
+        signOutProblem = nil
+        phase = .paired(pairing)
+    }
+
     private func fail(_ message: String) {
+        attempt = UUID()
         pairingProblem = message
         phase = .unpaired
     }
 
     func cancelPairing() {
+        attempt = UUID()
         pairingTask?.cancel()
         pairingTask = nil
         phase = .unpaired
     }
 
-    /// Unpair on the dashboard, then forget the key here. The key is
-    /// forgotten even when the dashboard cannot be reached.
+    /// Unpair on the dashboard, then forget the key here. When the
+    /// dashboard cannot be reached the key is kept and the failure shown,
+    /// so revoking can be retried; `forgetLocally` is the explicit way out.
     func signOut() async {
-        if let client { try? await client.forget() }
+        guard let client else { return }
+        let mine = session
+        do {
+            try await client.forget()
+        } catch DashboardError.signedOut {
+            // Already unpaired there: nothing left to revoke.
+        } catch {
+            guard session == mine else { return }
+            signOutProblem = String(localized: "The dashboard could not be reached, so this device is still paired there: \(error.localizedDescription)")
+            return
+        }
+        guard session == mine else { return }
         forgetLocally()
     }
 
-    private func forgetLocally() {
+    /// Forget the key on this device only. The dashboard still lists the
+    /// device until it is removed under access ▸ Devices or expires.
+    func forgetLocally() {
         CredentialStore.clear()
+        session = UUID()
+        signOutProblem = nil
         phase = .unpaired
         hosts = []
         history = []
         loaded = false
         historyLoaded = false
         problem = nil
+        failures = [:]
+        outcome = nil
     }
 
-    private func handle(_ error: Error) -> String {
-        if case DashboardError.signedOut = error {
+    /// The user-facing message for a failed call made under `mine`; a 401
+    /// means this device was removed, so it is unpaired here too.
+    private func handle(_ error: Error, session mine: UUID) -> String {
+        if case DashboardError.signedOut = error, session == mine {
             forgetLocally()
             pairingProblem = DashboardError.signedOut.localizedDescription
         }
@@ -342,23 +394,35 @@ final class AppModel {
         repeat {
             refreshAgain = false
             guard let client else { return }
+            let mine = session
             do {
-                hosts = try await client.queue()
+                let read = try await client.queue()
+                guard session == mine else { return }
+                hosts = read
                 loaded = true
                 problem = nil
+            } catch is CancellationError {
+                return
             } catch {
-                problem = handle(error)
+                guard session == mine else { return }
+                problem = handle(error, session: mine)
             }
         } while refreshAgain
     }
 
     func refreshHistory() async {
         guard let client else { return }
+        let mine = session
         do {
-            history = try await client.history()
+            let read = try await client.history()
+            guard session == mine else { return }
+            history = read
             historyLoaded = true
+        } catch is CancellationError {
+            return
         } catch {
-            problem = handle(error)
+            guard session == mine else { return }
+            problem = handle(error, session: mine)
         }
     }
 
@@ -366,17 +430,20 @@ final class AppModel {
 
     private func act(_ decision: PendingDecision, done: String, _ call: (DashboardClient) async throws -> Void) async -> Bool {
         guard let client else { return false }
+        let mine = session
         busy.insert(decision.id)
         defer { busy.remove(decision.id) }
         do {
             try await call(client)
+            guard session == mine else { return false }
             failures[decision.id] = nil
             outcome = done
             await refresh()
             await refreshHistory()
             return true
         } catch {
-            failures[decision.id] = handle(error)
+            guard session == mine else { return false }
+            failures[decision.id] = handle(error, session: mine)
             return false
         }
     }

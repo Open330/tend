@@ -14,7 +14,7 @@
 # its socket into the real server's environment.
 #
 # Binaries: $TENDD and $TEND (default target/debug). Port: $PORT (7979).
-# The operator token is printed by `up` and stored in the sandbox root.
+# The operator token is printed by `up`; `token` prints it again.
 set -euo pipefail
 
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
@@ -50,7 +50,7 @@ SB
   done
 }
 
-token() { cat "$ROOT/operator-token"; }
+token() { cat "$WRAP/operator-token"; }
 
 seed() {
   eval "$("$SANDBOX" env --name "$NAME")"
@@ -98,8 +98,9 @@ token = "$tok"
 TOML
   env -u TMUX -u TMUX_PANE "$SANDBOX" up --name "$NAME" --config "$cfg" \
     --tendd "$WRAP/tendd" --tend "$WRAP/tend" --extra-path "$WRAP" ${ALLOW:+$ALLOW}
-  printf '%s\n' "$tok" > "$ROOT/operator-token"
-  chmod 600 "$ROOT/operator-token"
+  # Kept beside the wrappers, not in the sandbox root, whose `down` removes
+  # only what tend-sandbox itself created.
+  ( umask 077; printf '%s\n' "$tok" > "$WRAP/operator-token" )
   env -u TMUX -u TMUX_PANE "$SANDBOX" daemon --name "$NAME" --tendd "$WRAP/tendd" --tend "$WRAP/tend"
   local waited=0
   until curl -fsS -o /dev/null "http://127.0.0.1:$PORT/auth/session"; do
@@ -112,7 +113,13 @@ TOML
 }
 
 down() {
-  env -u TMUX -u TMUX_PANE "$SANDBOX" down --name "$NAME" --tendd "${WRAP}/tendd" --tend "${WRAP}/tend" || true
+  local status=0
+  if [ -d "$ROOT" ]; then
+    env -u TMUX -u TMUX_PANE "$SANDBOX" down --name "$NAME" --tendd "$WRAP/tendd" --tend "$WRAP/tend" || status=$?
+  fi
+  [ "$status" -eq 0 ] || die "tend-sandbox down failed ($status); $ROOT left in place"
+  # Only our own wrapper directory: the fixed name, never a variable path.
+  rm -rf -- "/tmp/$NAME-wrap"
 }
 
 case "${1:-}" in
