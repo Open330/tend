@@ -310,6 +310,7 @@ fn run(open: Option<Option<String>>, exe: &Path, app_id: String) -> ExitCode {
     let mut pending_open = open;
     let exe = exe.to_path_buf();
     let mut tried_daemon = false;
+    let mut last_problem: Option<String> = None;
 
     event_loop.run(move |event, target, control_flow| {
         *control_flow = ControlFlow::Wait;
@@ -354,6 +355,13 @@ fn run(open: Option<Option<String>>, exe: &Path, app_id: String) -> ExitCode {
                     let _ = tray.set_icon(tray_icon(report.rooms()));
                     let _ = tray.set_tooltip(Some(report.tooltip()));
                 }
+                if report.problem != last_problem {
+                    log(&format!(
+                        "status: {}",
+                        report.problem.as_deref().unwrap_or("dashboard reachable")
+                    ));
+                    last_problem.clone_from(&report.problem);
+                }
                 let down = report
                     .problem
                     .as_deref()
@@ -367,6 +375,7 @@ fn run(open: Option<Option<String>>, exe: &Path, app_id: String) -> ExitCode {
                 }
                 for key in &report.changes.gone {
                     toasts.withdraw(&identity::toast_tag(key));
+                    log(&format!("withdrawn {key}"));
                 }
                 if notify_item.is_checked() {
                     for toast in report.changes.toasts {
