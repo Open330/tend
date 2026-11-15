@@ -150,15 +150,34 @@ So the app never sends the token, and never runs a page, before the server
 has proved it is tendd:
 
 - **Server proof.** A new unauthenticated route, `GET /api/proof?nonce=N`,
-  answers `HMAC-SHA256(token, "tend-dashboard-proof/v1\n" + N)` for a
-  fresh random nonce from the app. Only a process that knows the token can
-  answer; the answer reveals nothing about it. The app checks it on every
-  TCP connection it opens, before the first request on it that carries the
-  token, and keeps that one connection alive: a TCP connection cannot be
-  taken over by another user's process, so every later request on it goes
-  to the same verified tendd. A failed proof drops the connection, sends
-  nothing, and the tray says "the dashboard on 127.0.0.1:7878 is not
-  tendd".
+  answers `HMAC-SHA256(token, "tend-dashboard-proof/v1\n" + node + "\n" +
+  bind + "\n" + N)`: `node` is this host's Fleet node id (the owner-only
+  `host-id` file, which the app reads too), `bind` the address the
+  dashboard listens on, `N` a fresh 256-bit nonce from the OS generator for
+  every connection. The app checks it, full length and constant time, on
+  every TCP connection it opens, before the first request on it that
+  carries the token, and uses that connection object only (a few are kept
+  alive, each proved; no redirects, no system proxy, the numeric
+  configured address). A failed proof drops the connection, sends nothing,
+  and the tray says the dashboard address is not tendd.
+- **What the proof does and does not establish.** It is a challenge, not a
+  channel binding (review round 2). It defeats a squatter that holds the
+  address alone, and, because the answer covers node and address, a relay
+  that forwards the nonce to *another* tend sharing the token (a Fleet
+  host, a published dashboard): that one answers for its own node or
+  address. What it cannot exclude is a relay to *this* daemon's own proof
+  route while the squatter holds this daemon's configured address; that
+  needs this daemon to listen somewhere else at the same time, which a
+  single `bind` does not do. The residual case (two tendd instances of the
+  same account and data directory on different addresses with one token)
+  is unsupported and documented. Channel binding proper (loopback TLS with
+  a key pinned through the per-user data directory) is the upgrade if that
+  ever has to be supported; it is not needed for phase 1's single-daemon
+  topology. Whether another Windows account can bind a port the daemon
+  holds is not part of the argument (the daemon may be down).
+- **Token strength.** A (nonce, proof) pair is an offline check for a
+  guessed token, so the app refuses tokens under 32 characters (`tend init`
+  generates 64 hex digits).
 - **The token stays native.** The WebView loads Home from an app-owned
   origin (`http://tend.localhost/`, wry's custom protocol), and the app
   answers each of its requests itself, by forwarding it over the verified
@@ -166,6 +185,11 @@ has proved it is tendd:
   the token; nothing is written to `localStorage`. The page's HTML and
   scripts come from the verified tendd too, so an impostor's content is
   never executed.
+- **Mutations are sent once.** A GET whose kept connection went stale is
+  sent again on a newly proved connection; a POST never is. If a decision's
+  answer is lost, Home reads the queue again and the server's own state
+  (decisions are final, a different second decision is a 409) is the
+  authority.
 - **Scoped forwarding.** The app forwards only what Home uses: `GET /home`,
   `/needs`, `/static/*`, `/api/health`, `/api/fleet`, `/api/decisions`,
   `/api/decisions/history`, and `POST /api/decisions/requests/{id}` and
@@ -173,7 +197,11 @@ has proved it is tendd:
   input, work control and operator administration are refused (403) even
   though the token would allow them. So a bug in the page, or a page that
   is not Home, can at worst read Home's data and answer or decide items,
-  each of which is audited (`web:token`).
+  each of which is audited (`web:token`). This is the app limiting what it
+  forwards, not a daemon-enforced scoped token: a script bug in Home still
+  has Home's decision authority. Paths are matched exactly (no `..`, no
+  `//`, one id segment); the page's own `Authorization`, `Cookie`, `Host`
+  and `Origin` are never forwarded; no CORS is granted.
 - **Where the token comes from**: `TEND_DASHBOARD_TOKEN`, else
   `[dashboard] token` in the config file tendd reads. That file is in the
   person's profile; a process that can read it can already drive tendd
@@ -273,7 +301,9 @@ Toasts:
 - at start, items already waiting give one summary toast ("3 things need
   you"), not one each;
 - an item that leaves the queue (decided here, on the phone or on another
-  host) removes its toast from the notification center;
+  host) removes its toast from the notification center, but only after a
+  complete read of its host (listed, nothing unavailable, not truncated);
+  an offline host or a truncated queue keeps what was known;
 - the queue is read every 15 s while the dashboard answers, and at once on
   resume from sleep; when it does not answer, the read backs off to 60 s
   and the tray shows the daemon as unreachable, never an empty, healthy
@@ -337,6 +367,7 @@ unless use on Windows shows up.
   read already serves `/needs` every 10 s per open page. With Fleet hosts it
   reaches each host's relay; the phase 1 measurement includes it.
 - **Proof route**: `/api/proof` is a new unauthenticated route. It answers
-  only in token mode, with an HMAC of a caller-chosen nonce under a
-  domain-separated label, so it is not an oracle for anything else the
-  token signs (nothing else is signed with it).
+  only when a token is configured and auth is on, for a 32-128 hex-digit
+  nonce, under a domain-separated label (nothing else is signed with the
+  token). It is an online oracle for this daemon's own answers, which is
+  why the answer covers node and address (above).
