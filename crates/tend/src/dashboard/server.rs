@@ -171,6 +171,9 @@ pub struct AppState {
     pub(in crate::dashboard) reviews: crate::review::ReviewStore,
     /// Where decisions made from the web are audited, one JSON line each.
     pub(in crate::dashboard) decision_audit: Option<PathBuf>,
+    /// The node id `/api/proof` binds its answer to. `None` reads this
+    /// host's `host-id` file (tests set one so they never touch it).
+    pub(in crate::dashboard) proof_node: Option<String>,
 }
 
 #[derive(Clone, Default)]
@@ -218,6 +221,7 @@ impl AppState {
             stats_config: StatsConfig::default(),
             fleet: None,
             decision_audit: None,
+            proof_node: None,
             reviews: crate::review::ReviewStore::unavailable("review items are served by tendd"),
             work_store: Arc::new(tokio::sync::Mutex::new(WorkStore::memory())),
             agents_by_state_cache: Arc::new(tokio::sync::Mutex::new(AgentsByStateCache::default())),
@@ -248,6 +252,13 @@ impl AppState {
     #[must_use]
     pub fn with_decision_audit(mut self, path: Option<PathBuf>) -> Self {
         self.decision_audit = path;
+        self
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub(in crate::dashboard) fn with_proof_node(mut self, node: &str) -> Self {
+        self.proof_node = Some(node.to_owned());
         self
     }
 
@@ -794,9 +805,19 @@ async fn proof_handler(State(state): State<AppState>, Query(query): Query<ProofQ
     if !super::auth::valid_proof_nonce(&query.nonce) {
         return (StatusCode::BAD_REQUEST, "nonce must be 32-128 hex digits").into_response();
     }
+    let node = match state.proof_node.clone() {
+        Some(node) => node,
+        None => match crate::paths::default_node_id_file()
+            .map(|path| crate::fleet::load_or_create_node_id(&path))
+        {
+            Some(Ok(node)) => node.to_string(),
+            _ => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        },
+    };
+    let bind = state.config.bind.to_string();
     Json(json!({
         "version": 1,
-        "proof": super::auth::server_proof(token, &query.nonce),
+        "proof": super::auth::server_proof(token, &node, &bind, &query.nonce),
     }))
     .into_response()
 }
@@ -4605,8 +4626,8 @@ mod tests {
         };
         let nonce = "0123456789abcdef0123456789abcdef";
         for app in [
-            router(state_with_token("s3cret")),
-            router(public_read_state("s3cret")),
+            router(state_with_token("s3cret").with_proof_node("node-1")),
+            router(public_read_state("s3cret").with_proof_node("node-1")),
         ] {
             let response = get(app.clone(), format!("/api/proof?nonce={nonce}")).await;
             assert_eq!(response.status(), StatusCode::OK);
@@ -4615,7 +4636,12 @@ mod tests {
             assert_eq!(body["version"], 1);
             assert_eq!(
                 body["proof"],
-                super::super::auth::server_proof("s3cret", nonce)
+                super::super::auth::server_proof(
+                    "s3cret",
+                    "node-1",
+                    &DashboardConfig::loopback_default().bind.to_string(),
+                    nonce
+                )
             );
             assert!(!body.to_string().contains("s3cret"));
             for bad in [
@@ -4632,9 +4658,12 @@ mod tests {
         let mut off = DashboardConfig::loopback_default();
         off.auth = DashboardAuthMode::None;
         assert_eq!(
-            get(router(state_from(off)), format!("/api/proof?nonce={nonce}"))
-                .await
-                .status(),
+            get(
+                router(state_from(off).with_proof_node("node-1")),
+                format!("/api/proof?nonce={nonce}")
+            )
+            .await
+            .status(),
             StatusCode::NOT_FOUND
         );
     }

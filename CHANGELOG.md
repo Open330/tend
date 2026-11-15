@@ -9,8 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `GET /api/proof?nonce=N` on the dashboard: an HMAC of the nonce under the
-  dashboard token, answered without a credential. A client (the Windows
+- `GET /api/proof?nonce=N` on the dashboard: an HMAC of the nonce, this
+  host's node id and the dashboard's address under the dashboard token,
+  answered without a credential. A client (the Windows
   app) checks it before sending the token, so a process that took the
   loopback port while tendd was down cannot collect it.
 

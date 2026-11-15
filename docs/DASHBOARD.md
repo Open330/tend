@@ -29,7 +29,7 @@ bound to loopback and configure the public origin as described below.
 | `GET /`             | The dashboard HTML (loads the JS bundle).                                      |
 | `GET /static/*`     | Embedded JS/CSS/font assets.                                                   |
 | `GET /api/health`   | `{ ok, version, protocol }`                                                    |
-| `GET /api/proof?nonce=N` | No credential: `{ version: 1, proof }`, `proof` = hex HMAC-SHA256(token, `tend-dashboard-proof/v1\n` + N) for a 32-128 hex-digit nonce. A client checks it before sending the token, since anyone can bind a loopback port while tendd is down. 404 without a token or with `auth = "none"`. |
+| `GET /api/proof?nonce=N` | No credential: `{ version: 1, proof }`, `proof` = hex HMAC-SHA256(token, `tend-dashboard-proof/v1\n` + node + `\n` + bind + `\n` + N), where node is this host's Fleet node id (`host-id`) and bind the dashboard's address, for a 32-128 hex-digit nonce. A client checks it before sending the token, since anyone can bind a loopback port while tendd is down; node and bind stop an impostor from relaying the nonce to another tend that shares the token. 404 without a token or with `auth = "none"`. |
 | `GET /api/access`   | Current read/control access mode and whether the supplied PAT can edit.        |
 | `GET /api/agents`   | Current `Store` snapshot.                                                      |
 | `GET /api/fleet?selector=...` | Cached hierarchy, including the always-present local node.          |
