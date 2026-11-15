@@ -470,7 +470,7 @@ function renderAccess() {
   const viewing = !editing && login.signedIn && login.role === "viewer";
   const canUpgrade = viewing && login.enrollment && access.writeAvailable;
   document.querySelector("#manage-shares").hidden = !editing;
-  document.querySelector("#manage-access").hidden = !(editing && login.available);
+  document.querySelector("#manage-access").hidden = !(editing && (login.available || access.devicePairingAvailable));
   if (dom.upgradeAccess) dom.upgradeAccess.hidden = !canUpgrade;
   const canStartWork = editing && access.workStartAvailable;
   dom.workItemsPanel?.classList.toggle("can-start", Boolean(access.workStartAvailable));
@@ -536,6 +536,7 @@ async function fetchAccess() {
     writeAvailable: Boolean(data.write_available),
     writeAuthorized: Boolean(data.write_authorized),
     workStartAvailable: Boolean(data.capabilities?.work_start),
+    devicePairingAvailable: Boolean(data.capabilities?.device_pairing),
     signInRequired: false,
     login: normalizeLogin(data.login),
   };
@@ -629,6 +630,7 @@ const store = {
     writeAvailable: false,
     writeAuthorized: false,
     workStartAvailable: false,
+    devicePairingAvailable: false,
     // Set when a read was refused and sign-in is offered instead.
     signInRequired: false,
     login: { available: false, signedIn: false, role: "none", email: null, via: null, enrollment: false, loginUrl: null },
@@ -4985,4 +4987,7 @@ async function pollCollaboration() {
 main();
 
 document.querySelector("#manage-shares")?.addEventListener("click", () => openShareManager(null, controlFetch));
-document.querySelector("#manage-access")?.addEventListener("click", () => openAccessManager(controlFetch));
+document.querySelector("#manage-access")?.addEventListener("click", () => openAccessManager(controlFetch, {
+  login: store.access.login.available,
+  devices: store.access.devicePairingAvailable,
+}));

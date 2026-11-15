@@ -20,6 +20,9 @@ const fleet = {
       { agent_session_id: "f", kind: "claude_code", pane: "rmux:%6", state: "idle", last_prompt: "yesterday", state_entered_at: at(60 * 30) },
       { agent_session_id: "g", kind: "claude_code", state: "working", last_prompt: "headless" },
       { agent_session_id: "h", kind: "claude_code", pane: "rmux:%7", state: "stopped", last_prompt: "gone" },
+      { agent_session_id: "q", kind: "claude_code", pane: "rmux:%8", state: "idle", last_response: "Deploy now?", awaiting_reply: { question: "Deploy now?", since: at(4) }, state_entered_at: at(4) },
+      { agent_session_id: "z", kind: "claude_code", pane: "rmux:%9", state: "idle", last_response: "from the future", state_entered_at: at(-30) },
+      { agent_session_id: "o", kind: "codex", pane: "rmux:%10", state: "working", last_prompt: "offset", state_entered_at: "2026-11-15T13:59:00+02:00" },
     ] } },
     { alias: "rtzr", local: false, state: "offline", error: "ssh: timeout" },
   ],
@@ -28,15 +31,16 @@ const fleet = {
 test("In progress: working and starting agents per host, this host first, newest first", () => {
   const sections = progressSections(fleet, now);
   assert.deepEqual(sections.map((s) => s.alias), ["home", "mini", "rtzr"]);
-  assert.deepEqual(sections[0].cards.map((c) => c.id), ["home:b", "home:a"]);
+  // 13:59+02:00 is 11:59Z, newer than "a" (11:30Z) and older than "b".
+  assert.deepEqual(sections[0].cards.map((c) => c.id), ["home:b", "home:o", "home:a"]);
   assert.deepEqual(sections[1].cards.map((c) => c.id), ["mini:r1"]);
   assert.deepEqual(sections[2].notes, ["offline: ssh: timeout"]);
-  assert.equal(cardCount(sections), 3);
+  assert.equal(cardCount(sections), 4);
 });
 
 test("an agent card names the task, the repo and where it runs; only this host's panes link", () => {
   const [home, mini] = progressSections(fleet, now);
-  const card = home.cards[1];
+  const card = home.cards[2];
   assert.equal(card.title, "older");
   assert.equal(card.meta, "claude_code · tend · tend · %1 · 30m");
   assert.equal(card.pane, "rmux:%1");
@@ -49,6 +53,7 @@ test("an agent card names the task, the repo and where it runs; only this host's
 
 test("Finished: idle agents that did something recently, with what they said", () => {
   const [home] = finishedAgentSections(fleet, now);
+  // Not the one awaiting a reply (it is in Your turn), not one from the future.
   assert.deepEqual(home.cards.map((c) => c.id), ["home:d"]);
   assert.equal(home.cards[0].outcome, "All green");
 });

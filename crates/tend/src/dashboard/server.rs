@@ -171,6 +171,8 @@ pub struct AppState {
     pub(in crate::dashboard) reviews: crate::review::ReviewStore,
     /// Where decisions made from the web are audited, one JSON line each.
     pub(in crate::dashboard) decision_audit: Option<PathBuf>,
+    /// Paired devices, whose tokens may only decide.
+    pub(in crate::dashboard) devices: Arc<super::devices::Devices>,
 }
 
 #[derive(Clone, Default)]
@@ -218,6 +220,7 @@ impl AppState {
             stats_config: StatsConfig::default(),
             fleet: None,
             decision_audit: None,
+            devices: super::devices::Devices::memory(),
             reviews: crate::review::ReviewStore::unavailable("review items are served by tendd"),
             work_store: Arc::new(tokio::sync::Mutex::new(WorkStore::memory())),
             agents_by_state_cache: Arc::new(tokio::sync::Mutex::new(AgentsByStateCache::default())),
@@ -362,18 +365,11 @@ pub fn router(state: AppState) -> Router {
     };
     let write_api = super::sharing::admin_routes()
         .merge(super::operator::admin_routes())
+        .merge(super::devices::admin_routes())
         .route("/api/panes/{pane}/prompt", post(pane_prompt_handler))
         .route("/api/fleet/{host}/command", post(fleet_command_handler))
         .route("/api/panes/{pane}/abort", post(pane_abort_handler))
         .route("/api/work-metadata", put(work_metadata_put_handler))
-        .route(
-            "/api/decisions/reviews/{id}",
-            post(super::decisions::review_handler),
-        )
-        .route(
-            "/api/decisions/requests/{id}",
-            post(super::decisions::answer_handler),
-        )
         .route("/api/work-control/prompt", post(work_prompt_handler))
         .route("/api/work-control/up", post(work_up_handler))
         .route("/api/work-control/abort", post(work_abort_handler))
@@ -392,11 +388,6 @@ pub fn router(state: AppState) -> Router {
     // is a GET: a viewer session gets 403, and in `public_read` an anonymous
     // visitor needs the token (401). Being a GET it needs no CSRF proof.
     let operator_read_api = Router::new()
-        .route("/api/decisions", get(super::decisions::queue_handler))
-        .route(
-            "/api/decisions/history",
-            get(super::decisions::history_handler),
-        )
         .route("/api/panes/{pane}/output", get(pane_output_handler))
         .route(
             "/api/panes/{pane}/output/stream",
@@ -407,9 +398,35 @@ pub fn router(state: AppState) -> Router {
             write_auth_middleware,
         ))
         .layer(middleware::map_response(no_store));
+    // The decisions: operator-only like pane output (reads included), and
+    // the only routes a paired device's token reaches. See
+    // [`decision_auth_middleware`].
+    let decision_api = Router::new()
+        .route("/api/decisions", get(super::decisions::queue_handler))
+        .route(
+            "/api/decisions/history",
+            get(super::decisions::history_handler),
+        )
+        .route(
+            "/api/decisions/reviews/{id}",
+            post(super::decisions::review_handler),
+        )
+        .route(
+            "/api/decisions/requests/{id}",
+            post(super::decisions::answer_handler),
+        )
+        .layer(DefaultBodyLimit::max(CONTROL_BODY_LIMIT_BYTES))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            decision_auth_middleware,
+        ))
+        .layer(middleware::map_response(no_store));
     let api = read_api
         .merge(write_api)
         .merge(operator_read_api)
+        .merge(decision_api)
+        .merge(super::devices::pairing_routes())
+        .merge(super::devices::device_routes(state.clone()))
         .merge(super::sharing::recipient_routes(state.clone()))
         .merge(super::operator::routes())
         .with_state(state.clone());
@@ -487,6 +504,12 @@ pub async fn serve(
     });
     let sharing = super::sharing::Sharing::open(config.sharing.clone()).await?;
     let operator = super::operator::OperatorLogin::open(config.login.clone(), None).await?;
+    // Devices pair only with a dashboard token; without one nothing is opened.
+    let devices = if config.token.is_some() {
+        super::devices::Devices::open(None).await?
+    } else {
+        super::devices::Devices::memory()
+    };
     let mut state = AppState::new(store, config.clone(), pane_cache, sessions)
         .with_collaboration(collaboration)
         .with_backends(backends)
@@ -501,6 +524,7 @@ pub async fn serve(
         .with_fleet(runtime.fleet);
     state.sharing = sharing;
     state.operator = operator;
+    state.devices = devices;
     let app = router(state);
     let listener = TcpListener::bind(config.bind).await?;
     let local = listener.local_addr()?;
@@ -683,6 +707,33 @@ async fn write_auth_middleware(
     Ok(next.run(req).await)
 }
 
+/// The decision routes: everything [`write_auth_middleware`] admits, plus
+/// a paired device's token (`Bearer tdv_…`), which nothing else accepts.
+/// The device is handed to the handlers so they record it as the actor.
+async fn decision_auth_middleware(
+    State(state): State<AppState>,
+    mut req: Request<Body>,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    if state.config.token.is_none() {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    match operator_authorized(&state, &req) {
+        Ok(()) => {}
+        Err(StatusCode::UNAUTHORIZED) => {
+            if let Some(device) = super::devices::device_auth(&state, req.headers()) {
+                req.extensions_mut().insert(device);
+            } else if state.operator.viewer(req.headers()) {
+                return Err(StatusCode::FORBIDDEN);
+            } else {
+                return Err(StatusCode::UNAUTHORIZED);
+            }
+        }
+        Err(other) => return Err(other),
+    }
+    Ok(next.run(req).await)
+}
+
 #[derive(Debug, Serialize)]
 struct HealthResponse {
     ok: bool,
@@ -746,6 +797,9 @@ pub(super) fn login_status(state: &AppState, headers: &HeaderMap) -> LoginStatus
 struct AccessCapabilities {
     work_start: bool,
     pane_sharing: bool,
+    /// `device_pairing_v1`: operators can pair a device that may only
+    /// decide (needs the dashboard token to be configured).
+    device_pairing: bool,
 }
 
 async fn access_handler(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
@@ -763,6 +817,7 @@ async fn access_handler(State(state): State<AppState>, headers: HeaderMap) -> im
         capabilities: AccessCapabilities {
             work_start: state.config.allow_work_start,
             pane_sharing: state.config.sharing.is_some(),
+            device_pairing: state.config.token.is_some(),
         },
         login: login_status(&state, &headers),
     })

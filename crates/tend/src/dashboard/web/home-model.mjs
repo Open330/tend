@@ -81,8 +81,19 @@ function liveAgents(host) {
   return agents.filter((agent) => !isPaneless(agent) && agent.state !== "stopped");
 }
 
+function instant(agent) {
+  const at = Date.parse(since(agent) || "");
+  return Number.isFinite(at) ? at : 0;
+}
+
 function newestFirst(a, b) {
-  return String(since(b) || "").localeCompare(String(since(a) || ""));
+  return instant(b) - instant(a);
+}
+
+/// Waiting on the person even while idle: it asked a question in its pane
+/// (the daemon's `awaiting_reply`). Such an agent is in Your turn.
+function awaitingReply(agent) {
+  return agent?.awaiting_reply != null;
 }
 
 function notesOf(host) {
@@ -106,7 +117,7 @@ export function progressSections(fleet, now = Date.now()) {
     covers: [],
     notes: notesOf(host),
     cards: liveAgents(host)
-      .filter((agent) => RUNNING.has(agent.state) && !needsAttention(agent))
+      .filter((agent) => RUNNING.has(agent.state) && !needsAttention(agent) && !awaitingReply(agent))
       .sort(newestFirst)
       .map((agent) => agentCard(agent, host, now)),
   }));
@@ -121,10 +132,11 @@ export function finishedAgentSections(fleet, now = Date.now(), window = FINISHED
     covers: [],
     notes: [],
     cards: liveAgents(host)
-      .filter((agent) => agent.state === "idle" && (agent.last_response || agent.last_prompt))
+      .filter((agent) => agent.state === "idle" && !awaitingReply(agent) && (agent.last_response || agent.last_prompt))
       .filter((agent) => {
         const at = Date.parse(since(agent) || "");
-        return Number.isFinite(at) && now - at <= window;
+        // A clock a little ahead is tolerated; the future is not "finished".
+        return Number.isFinite(at) && now - at <= window && at - now <= 60_000;
       })
       .sort(newestFirst)
       .map((agent) => agentCard(agent, host, now)),

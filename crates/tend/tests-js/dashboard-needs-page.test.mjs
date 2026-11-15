@@ -48,7 +48,12 @@ const fleet = {
     ] } },
   ],
 };
-globalThis.fetch = async (path) => ({
+let fleetStatus = 200;
+globalThis.fetch = async (path) => path.includes("/api/fleet") && fleetStatus !== 200 ? ({
+  ok: false,
+  status: fleetStatus,
+  json: async () => null,
+}) : ({
   ok: true,
   status: 200,
   json: async () =>
@@ -85,4 +90,13 @@ test("In progress lists the working agents", async () => {
   const progress = document.getElementById("progress").text;
   assert.match(progress, /port the board/);
   assert.doesNotMatch(progress, /fix the toast/);
+});
+
+test("a sign-in lost on the Fleet read drops the page like any other read", async () => {
+  fleetStatus = 401;
+  document.getElementById("tab-history").click();
+  await settle();
+  assert.equal(document.getElementById("history").children.length, 0, "no private history left");
+  assert.equal(document.getElementById("login").hidden, false, "sign-in offered");
+  fleetStatus = 200;
 });

@@ -303,7 +303,15 @@ async function refresh() {
     } else {
       // The Fleet read only adds the agents that finished: without it the
       // lane still shows what was decided.
-      const [data, fleet] = await Promise.all([read("/api/decisions/history"), read("/api/fleet").catch(() => null)]);
+      // A lost sign-in is not "unavailable": it drops the page like any
+      // other read does.
+      const [data, fleet] = await Promise.all([
+        read("/api/decisions/history"),
+        read("/api/fleet").catch((error) => {
+          if (error.auth) throw error;
+          return null;
+        }),
+      ]);
       if (!current()) return;
       const sections = finishedSections(historySections(data), fleet ? finishedAgentSections(fleet) : []);
       renderSections($("history"), sections, "Nothing finished yet.");
