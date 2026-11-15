@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A tendd that is not the user's (started with its own XDG directories, as
+  tests and scratch setups do) can now watch one rmux server of its own:
+  `TEND_RMUX_SOCKET` names it, a socket path or the `$RMUX` value a pane
+  advertises. Without it such a daemon saw no rmux pane at all, so on
+  Windows its agents could never ask a question or be reached by a peer
+  (`collaboration origin is not a hook-correlated tracked pane agent`).
+  The user's own daemon is unchanged unless the variable is set.
 - `tend doctor` no longer fails after an upgrade on a host where tend never
   installed the Copilot CLI hooks. With `copilot` on PATH it now warns and
   names `tend init --component copilot-hooks`; an upgrade does not write

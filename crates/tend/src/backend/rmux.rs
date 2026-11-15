@@ -54,7 +54,7 @@ impl RmuxBackend {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            endpoint: ambient_endpoint(),
+            endpoint: explicit_endpoint().or_else(ambient_endpoint),
         }
     }
 
@@ -478,6 +478,23 @@ pub fn endpoint_from_env() -> Option<String> {
     endpoint_from_value(&std::env::var("RMUX").ok()?)
 }
 
+/// `TEND_RMUX_SOCKET`: the rmux server to observe and drive, named
+/// explicitly (a socket path, or the `$RMUX` tuple a pane advertises).
+///
+/// rmux's counterpart of `TMUX_TMPDIR` for a daemon that is not the user's:
+/// one started with its own XDG directories watches no rmux server it would
+/// have to infer (see [`ambient_endpoint`]), so without this it can see no
+/// pane at all. An explicit endpoint is the operator's intent, so it is
+/// honoured for every process and wins over the ambient one.
+#[must_use]
+pub fn explicit_endpoint() -> Option<String> {
+    explicit_endpoint_from(std::env::var("TEND_RMUX_SOCKET").ok().as_deref())
+}
+
+fn explicit_endpoint_from(value: Option<&str>) -> Option<String> {
+    endpoint_from_value(value?)
+}
+
 /// [`endpoint_from_env`] as a server to act on or observe: `None` for a
 /// process restricted to its own multiplexer (a daemon that is not the
 /// user's, or a CLI aimed at one), whose inherited `$RMUX` names the user's
@@ -824,6 +841,20 @@ mod tests {
         cols[32] = "alpha-group";
         cols.push(socket);
         cols.join("\t")
+    }
+
+    #[test]
+    fn an_explicit_endpoint_accepts_a_path_or_the_pane_tuple() {
+        assert_eq!(explicit_endpoint_from(None), None);
+        assert_eq!(explicit_endpoint_from(Some("  ")), None);
+        assert_eq!(
+            explicit_endpoint_from(Some(r"\\.\pipe\rmux-x-1")).as_deref(),
+            Some(r"\\.\pipe\rmux-x-1")
+        );
+        assert_eq!(
+            explicit_endpoint_from(Some("/tmp/rmux-1/w5,4242,0")).as_deref(),
+            Some("/tmp/rmux-1/w5")
+        );
     }
 
     #[test]

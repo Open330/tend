@@ -35,6 +35,15 @@ rmux 0.10.0 redraws a whole popup every frame, so the watch popup flickers.
 fix ([RMUX.md](RMUX.md#popup-rendering-on-rmux-0100)); until a release does,
 `cargo install --git https://github.com/Open330/rmux --locked rmux` builds it.
 
+### A scratch daemon
+
+A tendd started with its own XDG directories (a test or a second, scratch
+daemon) is not the user's daemon, so it never infers a multiplexer from
+`$RMUX` or rmux's default server: those are the user's. Give it a private
+server explicitly with `TEND_RMUX_SOCKET`, the server's pipe (for example
+`rmux -L scratch display-message -p '#{socket_path}'`) or a pane's `$RMUX`
+value. It is the rmux counterpart of a scratch `TMUX_TMPDIR`.
+
 ### After a reboot
 
 tendd snapshots the workspace on an interval, and follows the server across

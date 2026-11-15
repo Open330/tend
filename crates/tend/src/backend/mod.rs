@@ -235,9 +235,10 @@ fn backend_of(kind: HostKind) -> SharedBackend {
 /// [`pane_id_host_kind`] and the cross-host reaping guard).
 pub fn active_backends() -> Vec<SharedBackend> {
     // A daemon that is not the user's (`tmux::scanner::restrict_to_own_tmux_dir`)
-    // observes only tmux, and that only in its own `TMUX_TMPDIR`: rmux's
-    // default server, a herdr or cmux GUI and zellij sessions found through
-    // the environment or an installed CLI are the user's.
+    // observes tmux only in its own `TMUX_TMPDIR`, and rmux only on the server
+    // `TEND_RMUX_SOCKET` names: rmux's default server, a herdr or cmux GUI and
+    // zellij sessions found through the environment or an installed CLI are
+    // the user's.
     if crate::tmux::scanner::own_tmux_dir_only() {
         return restricted_backends();
     }
@@ -257,9 +258,22 @@ pub fn active_backends() -> Vec<SharedBackend> {
     )
 }
 
-/// What a daemon that is not the user's observes: tmux only.
+/// What a daemon that is not the user's observes: tmux (in its own
+/// `TMUX_TMPDIR`), plus the one rmux server named by `TEND_RMUX_SOCKET`,
+/// which is how a scratch daemon on Windows gets a multiplexer of its own.
 fn restricted_backends() -> Vec<SharedBackend> {
-    vec![Arc::new(tmux::TmuxBackend::new())]
+    restricted_backends_with(rmux::explicit_endpoint())
+}
+
+fn restricted_backends_with(rmux_endpoint: Option<String>) -> Vec<SharedBackend> {
+    let mut backends: Vec<SharedBackend> = Vec::new();
+    if let Some(endpoint) = rmux_endpoint {
+        // First, so the scratch server is the primary backend, as `$RMUX`
+        // makes it for a daemon started inside one.
+        backends.push(Arc::new(rmux::RmuxBackend::with_endpoint(endpoint)));
+    }
+    backends.push(Arc::new(tmux::TmuxBackend::new()));
+    backends
 }
 
 /// Decoupled-from-process-env variant of [`active_backends`] for tests.
@@ -904,6 +918,19 @@ pub fn pane_endpoints_match(pane_id: Option<&str>, left: &str, right: &str) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_restricted_daemon_adds_only_the_rmux_server_it_was_given() {
+        let kinds =
+            |backends: Vec<SharedBackend>| backends.iter().map(|b| b.kind()).collect::<Vec<_>>();
+        assert_eq!(kinds(restricted_backends_with(None)), [HostKind::Tmux]);
+        assert_eq!(
+            kinds(restricted_backends_with(Some(
+                r"\\.\pipe\rmux-scratch".into()
+            ))),
+            [HostKind::Rmux, HostKind::Tmux]
+        );
+    }
 
     /// Helper that builds a `read` closure from a static lookup table.
     /// Tests pass `&[("TMUX", "1"), ...]`; missing keys read as
