@@ -477,3 +477,113 @@ async fn the_store_is_created_at_the_first_pairing_and_survives_a_restart() {
     assert_eq!(auth.id, device.id);
     assert_eq!(auth.approved_by.email.as_deref(), Some("a@b"));
 }
+
+fn token_by() -> ApprovedBy {
+    ApprovedBy {
+        credential: "token".into(),
+        issuer: None,
+        subject: None,
+        email: None,
+    }
+}
+
+/// An approved request's device code.
+fn approved(devices: &Devices, name: &str) -> String {
+    let (code, user, ..) = devices.request(name, "ios").unwrap();
+    devices.approve(&user, token_by()).unwrap();
+    code
+}
+
+async fn store_with(paired: usize) -> (tempfile::TempDir, PathBuf, Arc<Devices>) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("devices.sqlite3");
+    let devices = Devices::open(Some(path.clone())).await.unwrap();
+    for i in 0..paired {
+        let code = approved(&devices, &format!("d{i}"));
+        assert!(matches!(devices.poll(&code), Poll::Issued(..)));
+    }
+    (dir, path, devices)
+}
+
+fn stored_rows(path: &std::path::Path) -> i64 {
+    rusqlite::Connection::open(path)
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM devices", [], |row| row.get(0))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn remove_all_never_misses_a_token_being_issued() {
+    let (_dir, path, devices) = store_with(1).await;
+    let code = approved(&devices, "late");
+    // Hold the store so the poll stops between taking its request and
+    // writing the device; remove all arrives meanwhile.
+    let slot = devices.storage_slot();
+    let poller = {
+        let devices = devices.clone();
+        std::thread::spawn(move || devices.poll(&code))
+    };
+    std::thread::sleep(Duration::from_millis(100));
+    let remover = {
+        let devices = devices.clone();
+        std::thread::spawn(move || devices.remove_all().unwrap())
+    };
+    std::thread::sleep(Duration::from_millis(100));
+    drop(slot);
+    let issued = poller.join().unwrap();
+    let count = remover.join().unwrap();
+    // Remove all ran after the issuance finished, and took it with it.
+    let Poll::Issued(_, token) = issued else {
+        panic!("{issued:?}")
+    };
+    assert_eq!(count, 2);
+    assert!(devices
+        .authenticate(Some(&format!("Bearer {token}")))
+        .is_none());
+    assert!(devices.list().is_empty());
+    assert_eq!(stored_rows(&path), 0);
+}
+
+#[tokio::test]
+async fn remove_all_cancels_approvals_not_yet_collected() {
+    let devices = Devices::memory();
+    let code = approved(&devices, "phone");
+    devices.remove_all().unwrap();
+    assert!(matches!(devices.poll(&code), Poll::Invalid));
+}
+
+#[tokio::test]
+async fn parallel_issuance_never_exceeds_the_device_limit() {
+    let (_dir, path, devices) = store_with(MAX_DEVICES - 1).await;
+    let codes = [approved(&devices, "a"), approved(&devices, "b")];
+    let slot = devices.storage_slot();
+    let polls: Vec<_> = codes
+        .into_iter()
+        .map(|code| {
+            let devices = devices.clone();
+            std::thread::spawn(move || devices.poll(&code))
+        })
+        .collect();
+    std::thread::sleep(Duration::from_millis(100));
+    drop(slot);
+    let results: Vec<Poll> = polls.into_iter().map(|p| p.join().unwrap()).collect();
+    assert_eq!(
+        results
+            .iter()
+            .filter(|r| matches!(r, Poll::Issued(..)))
+            .count(),
+        1
+    );
+    assert_eq!(
+        results.iter().filter(|r| matches!(r, Poll::Full)).count(),
+        1
+    );
+    assert_eq!(devices.list().len(), MAX_DEVICES);
+    drop(devices);
+    assert_eq!(stored_rows(&path), i64::try_from(MAX_DEVICES).unwrap());
+    // And the store still opens.
+    assert_eq!(
+        Devices::open(Some(path)).await.unwrap().list().len(),
+        MAX_DEVICES
+    );
+}
