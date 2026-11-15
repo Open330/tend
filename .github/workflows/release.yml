@@ -119,6 +119,9 @@ jobs:
           # Two binaries from the workspace.
           bin: tend,tendd
           target: ${{ matrix.target }}
+          # Build from Cargo.lock as committed, like `cargo install --locked`
+          # in the install docs and scripts/release-local.sh.
+          locked: true
           # Archive filename pattern: tend-v0.1.0-x86_64-unknown-linux-gnu.tar.gz
           archive: tend-${{ steps.ref.outputs.name }}-${{ matrix.target }}
           # Bundle license, README, and example wiring next to the binaries.
