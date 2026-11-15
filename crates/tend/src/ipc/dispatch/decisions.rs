@@ -4,6 +4,43 @@
 
 use super::*;
 
+/// The ledger entry an operator's decision call leaves: a read of every
+/// room's human requests goes in like a widened listing; closing tend's own
+/// items in the operator's queue is its own operation.
+fn decision_audit(body: &RequestBody) -> Option<CollaborationAuditContext> {
+    match body {
+        RequestBody::DecisionQueue { origin, limit }
+        | RequestBody::DecisionHistory { origin, limit } => origin
+            .as_ref()
+            .filter(|origin| origin.console)
+            .map(|origin| {
+                let mut context = CollaborationAuditContext::new(
+                    CollaborationAuditOperation::List,
+                    origin.clone(),
+                );
+                context.scope = Some(MailboxScope::All);
+                context.read_view = Some(collaboration::CollaborationReadView::Full);
+                context.query_limit = Some(*limit);
+                context
+            }),
+        RequestBody::SystemAskCleanup {
+            apply: true,
+            origin,
+        } => origin
+            .as_ref()
+            .filter(|origin| origin.console)
+            .map(|origin| {
+                let mut context = CollaborationAuditContext::new(
+                    CollaborationAuditOperation::SystemAskCleanup,
+                    origin.clone(),
+                );
+                context.scope = Some(MailboxScope::All);
+                context
+            }),
+        _ => None,
+    }
+}
+
 pub(super) async fn handle(
     ctx: &ServerCtx,
     conn: &mut Conn,
@@ -69,26 +106,10 @@ pub(super) async fn handle(
             *kind = name;
             response
         }
-        body @ (RequestBody::DecisionQueue { .. } | RequestBody::DecisionHistory { .. }) => {
-            // An operator read of every room's human requests goes
-            // in the collaboration ledger like a widened listing.
-            let audit = match &body {
-                RequestBody::DecisionQueue { origin, limit }
-                | RequestBody::DecisionHistory { origin, limit } => origin
-                    .as_ref()
-                    .filter(|origin| origin.console)
-                    .map(|origin| {
-                        let mut context = CollaborationAuditContext::new(
-                            CollaborationAuditOperation::List,
-                            origin.clone(),
-                        );
-                        context.scope = Some(MailboxScope::All);
-                        context.read_view = Some(collaboration::CollaborationReadView::Full);
-                        context.query_limit = Some(*limit);
-                        context
-                    }),
-                _ => None,
-            };
+        body @ (RequestBody::DecisionQueue { .. }
+        | RequestBody::DecisionHistory { .. }
+        | RequestBody::SystemAskCleanup { .. }) => {
+            let audit = decision_audit(&body);
             let (name, response) = Box::pin(super::review::decision_response(
                 reviews,
                 collaboration,

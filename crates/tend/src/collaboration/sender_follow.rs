@@ -148,6 +148,21 @@ pub fn sender_whereabouts(
     SenderWhereabouts::Gone
 }
 
+/// The text of a gone-sender item about `parent`'s reply.
+pub(super) fn gone_sender_body(parent: &CollaborationRequest) -> String {
+    let status = parent.status;
+    format!(
+        "The reply to request {id} ({status:?}) arrived, but its sender session {session} \
+         ({label}) is gone and no single session holds its slot, so nobody was told.\n\
+         Read the reply with `tend msg show {id}` and decide whether to hand it to another \
+         agent. Answering this item records that you have seen it; it does not move the \
+         reply. If the sender's session returns, it is still woken.",
+        id = parent.id,
+        session = parent.from.agent_session_id,
+        label = parent.from.label(),
+    )
+}
+
 fn gone_sender_action(
     parent: &CollaborationRequest,
     id: String,
@@ -181,17 +196,11 @@ fn gone_sender_action(
     action.kind = RequestKind::Question;
     action.work_mode = WorkMode::ReadOnly;
     action.human_action = Some(HumanAction::Information);
-    let status = parent.status;
-    action.body = format!(
-        "The reply to request {id} ({status:?}) arrived, but its sender session {session} \
-         ({label}) is gone and no single session holds its slot, so nobody was told.\n\
-         Read the reply with `tend msg show {id}` and decide whether to hand it to another \
-         agent. Answering this item records that you have seen it; it does not move the \
-         reply. If the sender's session returns, it is still woken.",
-        id = parent.id,
-        session = parent.from.agent_session_id,
-        label = parent.from.label(),
-    );
+    action.body = gone_sender_body(parent);
+    action.system_ask = Some(super::system_asks::SystemAskState {
+        subject_session: parent.from.agent_session_id.clone(),
+        ..super::system_asks::SystemAskState::default()
+    });
     action.status = RequestStatus::Queued;
     action.created_at = now;
     action.claimed_at = None;
@@ -265,12 +274,54 @@ impl CollaborationStore {
         {
             return Ok(None);
         }
-        let id = next_request_id(now);
-        let action = gone_sender_action(parent, id.clone(), now);
+        // An open item about the same gone sender, in the same room, takes
+        // this reply too instead of a second item.
+        let subject = parent.from.agent_session_id.clone();
+        let existing = {
+            let requests = self.requests.read().await;
+            requests
+                .values()
+                .filter(|r| r.needs_human_response())
+                .filter(|r| {
+                    super::system_asks::system_ask_kind(r)
+                        == Some(super::system_asks::SystemAskKind::ReplyWake)
+                })
+                .filter(|r| r.to.room == parent.from.room)
+                .find(|r| {
+                    r.system_ask
+                        .as_ref()
+                        .is_some_and(|state| state.subject_session == subject)
+                })
+                .cloned()
+        };
+        let action = if let Some(mut existing) = existing {
+            let state = existing.system_ask.get_or_insert_with(Default::default);
+            if !state.covers.iter().any(|id| id == request_id) {
+                state.covers.push(request_id.to_owned());
+            }
+            let covers = state.covers.clone();
+            let own = {
+                let requests = self.requests.read().await;
+                existing
+                    .parent_request_id
+                    .as_deref()
+                    .and_then(|id| requests.get(id).cloned())
+            };
+            if let Some(own) = own {
+                existing.body = gone_sender_body(&own)
+                    + &super::system_asks::covers_note(
+                        super::system_asks::SystemAskKind::ReplyWake,
+                        &covers,
+                    );
+            }
+            existing
+        } else {
+            gone_sender_action(parent, next_request_id(now), now)
+        };
         parent
             .sender_follow
             .get_or_insert_with(SenderFollowState::default)
-            .gone_action_request_id = Some(id);
+            .gone_action_request_id = Some(action.id.clone());
         let rows = [parent.clone(), action.clone()];
         self.commit_request_rows(&rows).await?;
         self.publish_change();
@@ -283,27 +334,66 @@ impl CollaborationStore {
     }
 
     /// Withdraw unanswered gone-sender items whose reply has since been read
-    /// or delivered (the sender came back, or someone read it).
+    /// or delivered (the sender came back, or someone read it). An item
+    /// covering several replies goes once all of them are; it keeps the
+    /// record of why.
     pub async fn retire_gone_sender_items(&self) -> Result<(), CollaborationError> {
+        use super::system_asks::{
+            still_waiting, SystemAskCloseReason, SystemAskCloser, SystemAskClosure, SystemAskKind,
+        };
         self.ensure_enabled()?;
         let _transaction = self.transaction_lock.lock().await;
+        let now = OffsetDateTime::now_utc();
         let rows: Vec<_> = {
             let requests = self.requests.read().await;
             requests
                 .values()
-                .filter(|parent| !parent.reply_wake_owed())
-                .filter_map(|parent| {
-                    let id = parent
-                        .sender_follow
-                        .as_ref()?
-                        .gone_action_request_id
-                        .as_ref()?;
-                    let action = requests.get(id)?;
-                    (action.status == RequestStatus::Queued && action.reply.is_none()).then(|| {
-                        let mut retired = action.clone();
-                        retired.status = RequestStatus::Cancelled;
-                        retired
-                    })
+                .filter(|action| {
+                    action.status == RequestStatus::Queued
+                        && action.reply.is_none()
+                        && super::system_asks::system_ask_kind(action)
+                            == Some(SystemAskKind::ReplyWake)
+                })
+                .filter_map(|action| {
+                    let mut linked: Vec<&str> =
+                        action.parent_request_id.as_deref().into_iter().collect();
+                    if let Some(state) = &action.system_ask {
+                        linked.extend(state.covers.iter().map(String::as_str));
+                    }
+                    let parents: Vec<_> =
+                        linked.iter().filter_map(|id| requests.get(*id)).collect();
+                    // Missing originals are `system_asks::settle`'s to judge.
+                    if parents.is_empty()
+                        || parents.iter().any(|parent| {
+                            still_waiting(SystemAskKind::ReplyWake, parent, &action.id)
+                        })
+                    {
+                        return None;
+                    }
+                    // An unmanaged item is withdrawn only through the
+                    // original that still names it, as before.
+                    if action.system_ask.is_none()
+                        && !parents.iter().any(|parent| {
+                            parent
+                                .sender_follow
+                                .as_ref()
+                                .and_then(|follow| follow.gone_action_request_id.as_deref())
+                                == Some(action.id.as_str())
+                        })
+                    {
+                        return None;
+                    }
+                    let mut retired = action.clone();
+                    retired.status = RequestStatus::Cancelled;
+                    if let Some(state) = retired.system_ask.as_mut() {
+                        state.closed = Some(SystemAskClosure {
+                            reason: SystemAskCloseReason::ParentClosed,
+                            at: now,
+                            by: SystemAskCloser::Daemon,
+                            into: None,
+                        });
+                    }
+                    Some(retired)
                 })
                 .collect()
         };
@@ -530,6 +620,52 @@ mod tests {
             pane_pid: 0,
             socket: Some("default".into()),
         }
+    }
+
+    #[tokio::test]
+    async fn replies_for_one_gone_sender_share_one_item_until_all_are_seen() {
+        let store = CollaborationStore::in_memory(CollaborationOptions::default());
+        let lead = participant("lead-1", "%1", None);
+        let first = replied(&store, &lead).await;
+        let second = replied(&store, &lead).await;
+        for id in [&first, &second] {
+            let mut requests = store.requests.write().await;
+            requests.get_mut(id).unwrap().reply.as_mut().unwrap().at -= SENDER_GONE_GRACE;
+        }
+        let action = store.report_gone_sender(&first).await.unwrap().unwrap();
+        let joined = store.report_gone_sender(&second).await.unwrap().unwrap();
+        assert_eq!(joined.id, action.id, "the second reply joins the open item");
+        assert_eq!(store.pending_human_notifications().await.len(), 1);
+        let item = row(&store, &action.id).await;
+        assert_eq!(
+            item.system_ask.as_ref().unwrap().covers,
+            vec![second.clone()]
+        );
+        assert!(item.body.contains(&second), "{}", item.body);
+        // One reply read: the other still needs telling.
+        store
+            .requests
+            .write()
+            .await
+            .get_mut(&first)
+            .unwrap()
+            .mark_reply_read(OffsetDateTime::now_utc());
+        store.retire_gone_sender_items().await.unwrap();
+        assert!(row(&store, &action.id).await.needs_human_response());
+        store
+            .requests
+            .write()
+            .await
+            .get_mut(&second)
+            .unwrap()
+            .mark_reply_read(OffsetDateTime::now_utc());
+        store.retire_gone_sender_items().await.unwrap();
+        let retired = row(&store, &action.id).await;
+        assert_eq!(retired.status, RequestStatus::Cancelled);
+        assert_eq!(
+            retired.system_ask.unwrap().closed.unwrap().reason,
+            super::super::system_asks::SystemAskCloseReason::ParentClosed
+        );
     }
 
     #[tokio::test]

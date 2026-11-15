@@ -2391,6 +2391,55 @@ async fn ask_provider_add_and_remove_compose_the_list_over_the_wire() {
 }
 
 #[tokio::test]
+async fn system_ask_cleanup_is_an_operator_action_and_reports_before_it_closes() {
+    use crate::collaboration::{CollaborationOptions, CollaborationStore};
+    let dir = tempdir().unwrap();
+    let sock = dir.path().join("tend-cleanup.sock");
+    let mailbox = CollaborationStore::in_memory(CollaborationOptions::default());
+    let server = Server::new(sock.clone(), Store::shared()).with_collaboration(mailbox);
+    let (tx, rx) = broadcast::channel(1);
+    let handle = tokio::spawn(async move { server.run(rx).await.unwrap() });
+    wait_for_socket(&sock).await;
+    let client = Client::new(sock.clone());
+    let hello = client
+        .hello(std::time::Duration::from_secs(3))
+        .await
+        .unwrap();
+    assert!(hello
+        .capabilities
+        .iter()
+        .any(|c| c == crate::collaboration::system_asks::SYSTEM_ASK_CLEANUP_CAPABILITY));
+    let report = client.system_ask_cleanup(false).await.unwrap();
+    assert!(report.dry_run && report.closed.is_empty(), "{report:?}");
+    // Without `apply` on the wire, nothing is written.
+    let default = raw_call(
+        &sock,
+        &serde_json::json!({"protocol": crate::ipc::PROTOCOL_VERSION, "kind": "system_ask_cleanup",
+               "origin": {"pane": "", "console": true}}),
+    )
+    .await;
+    assert_eq!(default["system_ask_cleanup"]["dry_run"], true, "{default}");
+    // An agent's origin cannot close the operator's items.
+    let refused = raw_call(
+        &sock,
+        &serde_json::json!({"protocol": crate::ipc::PROTOCOL_VERSION, "kind": "system_ask_cleanup",
+            "apply": true, "origin": {"pane": "%1", "socket": "default", "console": false}}),
+    )
+    .await;
+    assert_eq!(refused["ok"], false, "{refused}");
+    assert!(
+        refused["error"]
+            .as_str()
+            .unwrap()
+            .contains("operator-console"),
+        "{refused}"
+    );
+    assert!(refused.get("system_ask_cleanup").is_none(), "{refused}");
+    tx.send(()).unwrap();
+    handle.await.unwrap();
+}
+
+#[tokio::test]
 async fn human_requests_in_the_decision_queue_are_an_operator_read() {
     use crate::collaboration::{
         CollaborationOptions, CollaborationStore, HumanAction, NewRequest, Participant, RequestKind,

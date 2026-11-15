@@ -148,6 +148,24 @@ impl Client {
 }
 
 impl Client {
+    /// Close tendd's own human items that can no longer matter, as the
+    /// operator, or with `apply` false only report them. Requires
+    /// `system_ask_cleanup_v1`.
+    pub async fn system_ask_cleanup(
+        &self,
+        apply: bool,
+    ) -> Result<crate::collaboration::system_asks::SystemAskCleanup, RuntimeError> {
+        let req = serde_json::json!({
+            "protocol": PROTOCOL_VERSION,
+            "kind": "system_ask_cleanup",
+            "apply": apply,
+            "origin": crate::decision_queue::operator_origin(),
+        });
+        field(&self.call_checked(&req).await?, "system_ask_cleanup")
+    }
+}
+
+impl Client {
     /// Apply a Fleet review decision on this host, as the operator, and
     /// say exactly how it ended: the option must be one the item offers,
     /// and the item must end up holding this disposition and note (a

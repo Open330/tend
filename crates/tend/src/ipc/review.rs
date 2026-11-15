@@ -121,6 +121,20 @@ pub(super) async fn decision_response(
                 },
             )
         }
+        RequestBody::SystemAskCleanup { apply, origin } => {
+            if let Some(refused) = operator_only(origin.as_ref()) {
+                return ("system_ask_cleanup", Response::err(refused.to_string()));
+            }
+            let agents = store.snapshot().await;
+            let response = match collaboration.cleanup_system_asks(&agents, !apply).await {
+                Ok(cleanup) => Response {
+                    system_ask_cleanup: Some(Box::new(cleanup)),
+                    ..Response::ok()
+                },
+                Err(error) => Response::err(error.to_string()),
+            };
+            ("system_ask_cleanup", response)
+        }
         _ => ("decision", Response::err("not a decision request")),
     }
 }

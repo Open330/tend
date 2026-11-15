@@ -884,6 +884,7 @@ fn collaboration_request(
         turn_offer: None,
         sender_follow: None,
         wake_retry: None,
+        system_ask: None,
         user_authorized: false,
         task_contract: None,
         attempt: None,

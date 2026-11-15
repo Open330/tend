@@ -16,6 +16,9 @@ main { padding: 0 1rem 2rem; max-width: 46rem; margin: 0 auto; }
 .card .kind { font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .card .kind.ask { color: var(--warn); }
 .card .kind.agent { color: var(--accent); }
+/* tend's own items (recovery, gone-sender replies): quieter than agents' questions. */
+.card.system { background: transparent; }
+.card.system .kind.ask { color: var(--muted); }
 .card h2 { font-size: 1rem; margin: .25rem 0 .35rem; white-space: pre-wrap; overflow-wrap: anywhere; }
 .card .meta { color: var(--muted); font-size: .85rem; overflow-wrap: anywhere; }
 .card .needed { margin: .5rem 0 .25rem; font-weight: 600; white-space: pre-wrap; }

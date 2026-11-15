@@ -40,12 +40,12 @@ private final class Requests: @unchecked Sendable {
     var all: [[String: Any]] { lock.lock(); defer { lock.unlock() }; return objects }
 }
 
-private func message(host: TendFleetHostIdentity, id: String, created: String, status: String = "queued") throws -> TendOperatorMessage {
+private func message(host: TendFleetHostIdentity, id: String, created: String, status: String = "queued", session: String? = nil) throws -> TendOperatorMessage {
     let json = """
     {"id":"\(id)","kind":"question","body":"Which schema?","expects_reply":true,"work_mode":"read_only",
      "status":"\(status)","created_at":"\(created)",
      "decision":{"options":["v1","v2"]},
-     "from":{"agent_kind":"codex","agent_session_id":"s-\(id)","pane":"%9","room":{"host":"tmux","window_id":"@1"},"alias":"db"},
+     "from":{"agent_kind":"codex","agent_session_id":"\(session ?? "s-\(id)")","pane":"%9","room":{"host":"tmux","window_id":"@1"},"alias":"db"},
      "to":{"agent_kind":"unknown","agent_session_id":"__tend_console__","pane":"console","room":{"host":"tmux","window_id":"@1"},"console":true}}
     """
     let request = try JSONDecoder().decode(TendCollaborationRequest.self, from: Data(json.utf8))
@@ -128,6 +128,27 @@ private func message(host: TendFleetHostIdentity, id: String, created: String, s
         let review = try #require({ if case .review(let item) = queue.items[2] { item } else { nil } }())
         let fallback = FleetDecisions.merge(queue: nil, reviews: [review], messages: messages, localHost: local)
         #expect(fallback.map(\.id) == ["review:rv_1", "human:mini:req_r", "human:mac:req_1"])
+    }
+
+    @Test func tendsOwnItemsComeAfterAgentsQuestionsAndResults() throws {
+        // This Mac's queue marks its own items; another host's older tendd
+        // only names the service that opened them.
+        let json = """
+        {"items":[
+          {"kind":"human_request","request_id":"req_sys","action":"choice","body":"Tend cannot verify…",
+           "from_session_id":"tend:peer-recovery","from_pane":"tend-recovery","created_at":"2026-10-01T00:00:00Z","system":true},
+          {"kind":"human_request","request_id":"req_q","action":"choice","body":"Merge?",
+           "from_session_id":"s-q","from_pane":"%4","created_at":"2026-11-12T01:00:00Z"}
+        ],"truncated":false}
+        """
+        let queue = try JSONDecoder().decode(TendPendingQueue.self, from: Data(json.utf8))
+        let messages = [
+            try message(host: remote, id: "req_muxa", created: "2026-10-01T00:00:00Z", session: "muxa:peer-recovery"),
+            try message(host: remote, id: "req_r", created: "2026-11-12T00:00:00Z"),
+        ]
+        let decisions = FleetDecisions.merge(queue: queue, reviews: [], messages: messages, localHost: local)
+        #expect(decisions.map(\.id) == ["human:mac:req_q", "human:mini:req_r", "human:mac:req_sys", "human:mini:req_muxa"])
+        #expect(decisions.map(\.isSystemAsk) == [false, false, true, true])
     }
 
     @Test func evidenceOpensChangesOnlyForAReadableLocalCheckout() throws {
