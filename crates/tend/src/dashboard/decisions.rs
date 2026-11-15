@@ -386,7 +386,21 @@ fn error(status: StatusCode, message: impl Into<String>) -> Response {
 /// The display label (`web:<email>`, `web:token`) and, for a session, the
 /// identity that authorized it (issuer and subject) for the audit line: an
 /// email is shown, not trusted, and may be absent.
-fn operator_identity(state: &AppState, headers: &HeaderMap) -> (String, serde_json::Value) {
+///
+/// A paired device (admitted by the decision gate, which hands it over as
+/// a request extension) is `app:<device name>#<id prefix>`; its audit line
+/// names the device and who approved it.
+fn operator_identity(
+    state: &AppState,
+    headers: &HeaderMap,
+    device: Option<&super::devices::DeviceAuth>,
+) -> (String, serde_json::Value) {
+    if let Some(device) = device {
+        return (
+            super::devices::Device::label(&device.name, &device.id),
+            json!({ "credential": "device", "device": device.id, "approved_by": device.approved_by }),
+        );
+    }
     match super::operator::authenticate(state.config.token.as_deref(), &state.operator, headers) {
         Some(super::operator::OperatorAuth::Session) => match state.operator.account(headers) {
             Some((issuer, subject, email)) => (
@@ -402,7 +416,7 @@ fn operator_identity(state: &AppState, headers: &HeaderMap) -> (String, serde_js
 /// One audit line per decision written from the web: when, who, what, and
 /// how it ended. Appended to `path` (owner-only, rotated once at 4 MiB)
 /// and always logged.
-async fn audit(path: Option<&PathBuf>, entry: serde_json::Value) {
+pub(in crate::dashboard) async fn audit(path: Option<&PathBuf>, entry: serde_json::Value) {
     tracing::info!(target: "tend::dashboard::decisions", entry = %entry, "web decision");
     let Some(path) = path else {
         return;
@@ -456,9 +470,10 @@ pub(super) async fn review_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
+    device: Option<axum::Extension<super::devices::DeviceAuth>>,
     Json(decision): Json<ReviewDecision>,
 ) -> Response {
-    let (by, account) = operator_identity(&state, &headers);
+    let (by, account) = operator_identity(&state, &headers, device.as_deref());
     let note = crate::review::decision_note(decision.option.as_deref(), decision.note.as_deref());
     if note
         .as_ref()
@@ -685,9 +700,10 @@ pub(super) async fn answer_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
+    device: Option<axum::Extension<super::devices::DeviceAuth>>,
     Json(answer): Json<HumanAnswer>,
 ) -> Response {
-    let (by, account) = operator_identity(&state, &headers);
+    let (by, account) = operator_identity(&state, &headers, device.as_deref());
     if answer.answer.len() > MAX_ANSWER_BYTES {
         return error(
             StatusCode::BAD_REQUEST,

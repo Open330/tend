@@ -1,7 +1,8 @@
 // Operator-only "access" dialog: who is using the dashboard right now,
-// accounts enrolled as operators with the token (see /auth/enroll), and
-// viewer rules for read-only sign-in. Removing an operator or a rule ends
-// the sessions it allowed immediately.
+// accounts enrolled as operators with the token (see /auth/enroll), viewer
+// rules for read-only sign-in, and paired devices (a phone that may only
+// decide; see docs/DASHBOARD.md "Paired devices"). Removing an operator, a
+// rule or a device ends what it allowed immediately.
 const VIA = {
   group: "operator group",
   enrollment: "registered account",
@@ -26,12 +27,19 @@ function describeRule(rule) {
   return rule;
 }
 
-export function openAccessManager(request) {
+export function openAccessManager(request, { login = true, devices: pairing = false } = {}) {
   const dialog = document.createElement("dialog");
   dialog.className = "share-dialog";
   dialog.innerHTML = `<h2>Access</h2>
     <p class="access-current"></p>
     <p class="share-message" role="status"></p>
+    <section class="access-devices-section" hidden>
+    <h3>Devices</h3>
+    <p>A paired device (the Tend app on a phone) can read and answer what needs you, on every host this dashboard covers, and nothing else: no pane output, no typing into panes, no settings. To pair one, open the app, enter this dashboard's address, and type the code it shows here. Only enter a code shown on a device you are pairing yourself, right now; never a code someone sent you. Removing the operator who approved a device, or changing the access token, does not unpair it.</p>
+    <form class="access-pair-device"><label>Code shown on the device<input name="code" autocomplete="off" autocapitalize="characters" maxlength="16" placeholder="BCDF-GHJK" required></label><button type="submit">Pair device</button></form>
+    <div class="access-devices"></div>
+    </section>
+    <section class="access-login-section">
     <h3>Operators</h3>
     <p>Operators have full control. Members of the identity provider's operator group are allowed automatically and aren't listed. Other accounts become operators by entering the access token once.</p>
     <div class="access-operators"></div>
@@ -39,12 +47,18 @@ export function openAccessManager(request) {
     <p>Viewers can see the dashboard but not change anything. Add an email address, or <code>*@domain</code> for everyone at that domain; the provider must have verified the address.</p>
     <form class="access-add-viewer"><label>Add viewer<input name="rule" autocomplete="off" maxlength="300" placeholder="ann@example.com or *@example.com" required></label><button type="submit">Add viewer</button></form>
     <div class="access-viewers"></div>
+    </section>
     <button type="button" class="share-close">Close</button>`;
   const current = dialog.querySelector(".access-current");
   const message = dialog.querySelector(".share-message");
   const operators = dialog.querySelector(".access-operators");
   const viewers = dialog.querySelector(".access-viewers");
   const form = dialog.querySelector(".access-add-viewer");
+  const deviceSection = dialog.querySelector(".access-devices-section");
+  const deviceList = dialog.querySelector(".access-devices");
+  const pairForm = dialog.querySelector(".access-pair-device");
+  deviceSection.hidden = !pairing;
+  dialog.querySelector(".access-login-section").hidden = !login;
   const when = (seconds) => new Date(seconds * 1000).toLocaleString();
   const note = (text) => {
     const p = document.createElement("p");
@@ -133,14 +147,72 @@ export function openAccessManager(request) {
     }
   }
 
-  async function refresh() {
-    const [operatorData, viewerData] = await Promise.all([
-      request("/api/operators", { method: "GET" }),
-      request("/api/viewers", { method: "GET" }),
-    ]);
-    renderOperators(operatorData);
-    renderViewers(viewerData);
+  function renderDevices(data) {
+    deviceList.replaceChildren();
+    if (!data.devices.length) {
+      deviceList.append(note("No paired devices."));
+      return;
+    }
+    for (const device of data.devices) {
+      const by = device.approved_by?.email || (device.approved_by?.credential === "token" ? "the access token" : "an operator");
+      deviceList.append(row(
+        `${device.name} (${device.platform}) · approved by ${by} · paired ${when(device.created_at)} · last used ${when(device.last_seen_at)}`,
+        device.id,
+        async () => {
+          await request(`/api/devices/${encodeURIComponent(device.id)}/remove`, { method: "POST" });
+          await refresh();
+          message.textContent = "Device removed; it can no longer decide.";
+        },
+      ));
+    }
+    const all = document.createElement("button");
+    all.type = "button";
+    all.textContent = "Remove all devices";
+    all.addEventListener("click", async () => {
+      all.disabled = true;
+      try {
+        await request("/api/devices/remove-all", { method: "POST" });
+        await refresh();
+        message.textContent = "Every device removed.";
+      } catch (error) {
+        message.textContent = error.message;
+        all.disabled = false;
+      }
+    });
+    deviceList.append(all);
   }
+
+  async function refresh() {
+    const [operatorData, viewerData, deviceData] = await Promise.all([
+      login ? request("/api/operators", { method: "GET" }) : null,
+      login ? request("/api/viewers", { method: "GET" }) : null,
+      pairing ? request("/api/devices", { method: "GET" }) : null,
+    ]);
+    if (operatorData) renderOperators(operatorData);
+    else current.textContent = "You are using the access token (no account) · operator";
+    if (viewerData) renderViewers(viewerData);
+    if (deviceData) renderDevices(deviceData);
+  }
+
+  pairForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const input = pairForm.elements.code;
+    const button = pairForm.querySelector("button");
+    button.disabled = true;
+    try {
+      const data = await request("/api/devices/approve", {
+        method: "POST",
+        body: JSON.stringify({ user_code: input.value }),
+      });
+      input.value = "";
+      await refresh();
+      message.textContent = `Paired "${data.approved.name}". It appears below once the app has picked up its key.`;
+    } catch (error) {
+      message.textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
