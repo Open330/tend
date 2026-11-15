@@ -10,6 +10,7 @@
 #![cfg_attr(not(windows), allow(dead_code))]
 
 mod client;
+mod dispatch;
 mod identity;
 mod mark;
 mod poller;

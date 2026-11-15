@@ -489,7 +489,7 @@ impl Client {
         headers: &[(&str, &str)],
         body: &[u8],
     ) -> Result<Response, ClientError> {
-        let _slot = self.slot(method != "GET")?;
+        let _slot = self.slot(crate::dispatch::is_write(method))?;
         let kept = self.idle().pop();
         let reused = kept.is_some();
         let mut connection = match kept {

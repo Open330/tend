@@ -20,6 +20,7 @@ use wry::http::{header, Response as HttpResponse};
 use wry::{NewWindowResponse, WebContext, WebView, WebViewBuilder, WebViewBuilderExtWindows};
 
 use crate::client::Client;
+use crate::dispatch::{self, Dispatcher};
 use crate::identity;
 use crate::mark::{self, Rooms};
 use crate::poller::{Poller, Report};
@@ -145,29 +146,23 @@ struct Home {
 
 type Job = (wry::http::Request<Vec<u8>>, wry::RequestAsyncResponder);
 
-const WORKERS: usize = 4;
-const QUEUED: usize = 32;
+/// The workers that answer the Home window: three for reads, one kept for
+/// decisions, each kind with its own bounded queue. They stop when the
+/// window (and with it the dispatcher) is gone.
+fn spawn_workers(client: Arc<Client>) -> Dispatcher<Job> {
+    Dispatcher::new(3, 32, 1, 8, move |(request, responder): Job| {
+        answer(&client, &request, responder);
+    })
+}
 
-/// The workers that answer the Home window's requests through the proxy.
-/// They stop when the window (and with it the sender) is gone.
-fn spawn_workers(client: Arc<Client>) -> std::sync::mpsc::SyncSender<Job> {
-    let (sender, receiver) = std::sync::mpsc::sync_channel::<Job>(QUEUED);
-    let receiver = Arc::new(std::sync::Mutex::new(receiver));
-    for _ in 0..WORKERS {
-        let receiver = receiver.clone();
-        let client = client.clone();
-        std::thread::spawn(move || loop {
-            let job = receiver
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .recv();
-            let Ok((request, responder)) = job else {
-                return;
-            };
-            answer(&client, &request, responder);
-        });
+fn refuse(responder: wry::RequestAsyncResponder, status: u16, text: &str) {
+    if let Ok(response) = HttpResponse::builder()
+        .status(status)
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(text.as_bytes().to_vec())
+    {
+        responder.respond(response);
     }
-    sender
 }
 
 fn answer(
@@ -251,16 +246,14 @@ fn open_home(
     let mut context = WebContext::new(Some(identity::state_dir().join("webview2")));
     let built = WebViewBuilder::new_with_web_context(&mut context)
         .with_asynchronous_custom_protocol(proxy::SCHEME.into(), move |_id, request, responder| {
-            // A fixed pool answers the window; a full queue is refused
+            // Oversized bodies never enter a queue; a full queue is refused
             // rather than given another thread.
-            if let Err(error) = jobs.try_send((request, responder)) {
-                let (_, responder) = match error {
-                    std::sync::mpsc::TrySendError::Full(job)
-                    | std::sync::mpsc::TrySendError::Disconnected(job) => job,
-                };
-                if let Ok(busy) = HttpResponse::builder().status(503).body(b"busy".to_vec()) {
-                    responder.respond(busy);
-                }
+            if request.body().len() > proxy::BODY_LIMIT {
+                return refuse(responder, 413, "request too large");
+            }
+            let write = dispatch::is_write(request.method().as_str());
+            if let Err((_, responder)) = jobs.submit((request, responder), write) {
+                refuse(responder, 503, "busy");
             }
         })
         .with_navigation_handler(move |url| {
