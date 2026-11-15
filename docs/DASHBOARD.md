@@ -51,6 +51,9 @@ bound to loopback and configure the public origin as described below.
 | `POST /api/work-control/abort` | Send Ctrl-C to every live agent run linked to one Work.          |
 | `POST /api/terminal-sessions/{id}/input` | Send input to a Tend-owned PTY.                         |
 | `POST /api/terminal-sessions/{id}/terminate` | Terminate a Tend-owned PTY.                          |
+| `POST /auth/devices/request`, `POST /auth/devices/token` | A device asks to be paired and collects its token. See [Paired devices](#paired-devices). |
+| `GET /api/devices`, `POST /api/devices/approve`, `POST /api/devices/{id}/remove`, `POST /api/devices/remove-all` | Operator only: list, approve, unpair devices. |
+| `GET /api/device`, `POST /api/device/forget` | A paired device: who it is, unpair itself. |
 
 `auth = "token"` protects all API endpoints. `auth = "public_read"` leaves
 GET/SSE endpoints public but always requires the bearer token for write/control
@@ -425,6 +428,62 @@ generic payload carries it as `link`. The address is `[sinks.webhook]
 dashboard_url`, else `[dashboard.login] public_url`'s origin; set
 `dashboard_url = ""` for no link. Opening it still needs an operator
 sign-in.
+
+## Paired devices
+
+A phone (the Tend app for iPhone and iPad) does not use the dashboard
+token or an operator sign-in. It gets **its own credential, which can only
+decide**: it reads `GET /api/decisions` and `GET /api/decisions/history`
+and posts the two decision routes above, for every host this dashboard
+covers, and nothing else. Every other route refuses it as it would refuse
+no credential at all: no pane output or input, Fleet commands, Work control,
+shares, access management or new pairings. Deciding is still real
+authority: an answer can tell an agent to go ahead.
+
+Pairing is shaped like the OAuth device authorization grant (RFC 8628),
+with tend's own endpoints: no secret passes through a link, the clipboard
+or another app.
+
+1. The app sends `POST /auth/devices/request` `{"name": "…", "platform":
+   "ios"}` and gets `{device_code, user_code, expires_in, interval}`. It
+   keeps the device code and shows the user code (`BCDF-GHJK`).
+2. An operator opens **access** in the dashboard header, types the code
+   under **Devices**, and approves (`POST /api/devices/approve`
+   `{"user_code": "…"}`, which answers with the device's name). Approve
+   only a code shown on a device you are pairing yourself, right now: a
+   code someone sends you would pair *their* device (RFC 8628, section 5.4).
+3. The app polls `POST /auth/devices/token` `{"device_code": "…"}` every
+   `interval` seconds: `202 {"status": "pending"}` until approved, then
+   `201 {"device": {id, name, platform}, "token": "tdv_…"}` exactly once.
+   It sends `Authorization: Bearer tdv_…` from then on.
+
+Limits and lifetime:
+
+- A request lives 10 minutes; at most 32 are pending (then 429). The
+  device code and the token are 244 random bits; the user code is 8
+  characters and only a signed-in operator can submit it.
+- A device stops working after 30 days unused or 90 days after pairing,
+  whichever comes first, and the moment it is removed (**Remove**, **Remove
+  all**, or the app's Sign out, `POST /api/device/forget`). At most 16 are
+  paired.
+- Devices are their own principals. Removing the operator who approved a
+  device, or rotating the dashboard token, does **not** unpair it: use
+  **Remove all**.
+- Pairing needs a configured dashboard token (it is what makes anyone an
+  operator); without one the routes answer 404 and decisions 403.
+
+A device decision is recorded as `app:<name>#<id prefix>`. Its line in
+`dashboard-decisions.jsonl` names the device id and who approved it; pairing,
+approval and removal are written there too, never with a code or a token.
+A decision on another Fleet host carries only the label to that host; the
+full attribution is in this host's audit file.
+
+Paired devices are stored in SQLite at
+`$XDG_DATA_HOME/tend/dashboard-devices/devices.sqlite3` (mode `0600` in a
+`0700` directory, exclusive lock, refused if it is not a tend device store):
+the device id, name, platform, who approved it, the times, and the SHA-256
+of its token, never the token. The file is created when the first device
+pairs. `/api/access` reports `capabilities.device_pairing`.
 
 ## Collaboration graph and history API
 

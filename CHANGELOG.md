@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Dashboard: **paired devices**. A phone can pair with the dashboard and
+  get its own credential that only reads and answers what needs you
+  (`/api/decisions*`), on every host the dashboard covers. The phone asks,
+  an operator approves its code under **access ▸ Devices** (shaped like
+  the RFC 8628 device grant), and no secret passes through a link or the
+  clipboard. Devices expire after
+  30 days unused or 90 days in all, can be removed one by one or all at once,
+  and their decisions are recorded as `app:<name>#<id>`. See
+  [DASHBOARD.md](docs/DASHBOARD.md#paired-devices).
 - **Tend for iPhone and iPad** (`apps/tend-ios`, phase 1, built from source):
   pairs with a dashboard as a device that may only decide, shows what needs
   you per host, answers questions and decides results through the
