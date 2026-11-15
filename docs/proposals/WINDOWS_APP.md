@@ -153,31 +153,36 @@ has proved it is tendd:
   answers `HMAC-SHA256(token, "tend-dashboard-proof/v1\n" + node + "\n" +
   bind + "\n" + N)`: `node` is this host's Fleet node id (the owner-only
   `host-id` file, which the app reads too), `bind` the address the
-  dashboard listens on, `N` a fresh 256-bit nonce from the OS generator for
-  every connection. The app checks it, full length and constant time, on
-  every TCP connection it opens, before the first request on it that
-  carries the token, and uses that connection object only (a few are kept
-  alive, each proved; no redirects, no system proxy, the numeric
-  configured address). A failed proof drops the connection, sends nothing,
-  and the tray says the dashboard address is not tendd.
-- **What the proof does and does not establish.** It is a challenge, not a
-  channel binding (review round 2). It defeats a squatter that holds the
-  address alone, and, because the answer covers node and address, a relay
-  that forwards the nonce to *another* tend sharing the token (a Fleet
-  host, a published dashboard): that one answers for its own node or
-  address. What it cannot exclude is a relay to *this* daemon's own proof
-  route while the squatter holds this daemon's configured address; that
-  needs this daemon to listen somewhere else at the same time, which a
-  single `bind` does not do. The residual case (two tendd instances of the
-  same account and data directory on different addresses with one token)
-  is unsupported and documented. Channel binding proper (loopback TLS with
-  a key pinned through the per-user data directory) is the upgrade if that
-  ever has to be supported; it is not needed for phase 1's single-daemon
-  topology. Whether another Windows account can bind a port the daemon
-  holds is not part of the argument (the daemon may be down).
+  dashboard listens on, `N` a fresh nonce for every connection (244
+  random bits from the OS generator, as two UUIDv4). The app checks it,
+  full length and constant time, on every TCP connection it opens, before
+  the first request on it that carries the token, and uses that connection
+  object only (a few are kept alive, each proved; no redirects, no system
+  proxy, the numeric configured address; every line an unproved peer sends
+  is bounded before it is buffered, and each exchange has an absolute
+  deadline). A failed proof drops the connection, sends nothing, and the
+  tray says the dashboard address is not tendd.
+- **What the proof does and does not establish.** It is conditional
+  endpoint authentication, not a channel binding (review rounds 2 and 3).
+  It defeats a squatter that holds the address alone, and, because the
+  answer covers node and address, a relay that forwards the nonce to
+  *another* honest tend sharing the token (a Fleet host, a published
+  dashboard): that one answers for its own node or address. The assumption
+  it rests on, stated exactly: an attacker cannot both intercept the app's
+  connection and reach an honest proof service that signs the *same*
+  (token, node, configured address). A single `bind` closes the ordinary
+  case; what stays outside is an alternate route to that same signed
+  identity (the OS letting another listener co-bind or redirect a live
+  connection, or a cloned identity and config in another environment). A
+  malicious Fleet host that already holds a reused token can sign
+  anything, and a process running as the owner can read the token anyway;
+  both are outside this boundary. Channel binding proper (loopback TLS with
+  a key pinned through the per-user data directory) is the upgrade if this
+  boundary ever has to widen.
 - **Token strength.** A (nonce, proof) pair is an offline check for a
-  guessed token, so the app refuses tokens under 32 characters (`tend init`
-  generates 64 hex digits).
+  guessed token, so the token must be generated, not chosen (`tend init`
+  makes 64 hex digits). The app refuses tokens under 32 characters; that is
+  a length check, not proof of entropy (32 `a`s pass).
 - **The token stays native.** The WebView loads Home from an app-owned
   origin (`http://tend.localhost/`, wry's custom protocol), and the app
   answers each of its requests itself, by forwarding it over the verified
