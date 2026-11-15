@@ -1,0 +1,173 @@
+import XCTest
+@testable import Tend
+
+/// Answers the app's requests from a table the test sets, with an optional
+/// delay per path.
+final class StubProtocol: URLProtocol, @unchecked Sendable {
+    struct Reply {
+        var status: Int
+        var body: String
+        var delay: TimeInterval = 0
+    }
+
+    nonisolated(unsafe) static var replies: [String: [Reply]] = [:]
+    nonisolated(unsafe) static var seen: [String] = []
+    static let lock = NSLock()
+
+    static func reset() {
+        lock.withLock { replies = [:]; seen = [] }
+    }
+
+    static func on(_ path: String, _ replies: Reply...) {
+        lock.withLock { Self.replies[path, default: []].append(contentsOf: replies) }
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let path = request.url?.path ?? ""
+        let reply: Reply = Self.lock.withLock {
+            Self.seen.append(path)
+            guard var queue = Self.replies[path], !queue.isEmpty else {
+                return Reply(status: 404, body: #"{"error":"no stub"}"#)
+            }
+            let next = queue.count > 1 ? queue.removeFirst() : queue[0]
+            Self.replies[path] = queue
+            return next
+        }
+        let url = request.url!
+        DispatchQueue.global().asyncAfter(deadline: .now() + reply.delay) { [self] in
+            let response = HTTPURLResponse(url: url, statusCode: reply.status, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: Data(reply.body.utf8))
+            client?.urlProtocolDidFinishLoading(self)
+        }
+    }
+
+    override func stopLoading() {}
+}
+
+@MainActor
+final class LifecycleTests: XCTestCase {
+    override class func setUp() {
+        DashboardClient.testProtocolClasses = [StubProtocol.self]
+    }
+
+    override func setUp() {
+        StubProtocol.reset()
+        CredentialStore.clear()
+    }
+
+    override func tearDown() {
+        CredentialStore.clear()
+    }
+
+    private func eventually(_ timeout: TimeInterval = 5, _ condition: () -> Bool) async {
+        let end = Date().addingTimeInterval(timeout)
+        while !condition(), Date() < end {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+    }
+
+    private static let emptyQueue = #"{"hosts":[{"alias":"here","local":true,"control":true,"covers":[],"unavailable":[],"queue":{"items":[],"truncated":false,"unavailable":[]}}]}"#
+
+    private func pairedModel() -> AppModel {
+        let origin = try! ServerOrigin(parsing: "https://tend.test")
+        CredentialStore.save(Pairing(origin: origin, device: PairedDevice(id: "dev_1", name: "phone"), token: "tdv_x"))
+        return AppModel()
+    }
+
+    func testALateAnswerToAnOldAttemptLeavesTheNewOneAlone() async {
+        // The first attempt's request is slow and fails; the second one
+        // answers at once. The first must not undo the second.
+        StubProtocol.on("/auth/devices/request",
+                        .init(status: 500, body: #"{"error":"old attempt"}"#, delay: 0.6),
+                        .init(status: 201, body: #"{"device_code":"d2","user_code":"NEWC-ODE2","expires_in":600,"interval":1}"#))
+        StubProtocol.on("/auth/devices/token", .init(status: 202, body: #"{"status":"pending"}"#))
+        let model = AppModel()
+        model.startPairing(address: "https://tend.test", name: "phone")
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        model.startPairing(address: "https://tend.test", name: "phone")
+        try? await Task.sleep(nanoseconds: 1_200_000_000)
+        guard case .waitingForApproval(_, let code, _) = model.phase else {
+            return XCTFail("phase is \(model.phase)")
+        }
+        XCTAssertEqual(code, "NEWC-ODE2")
+        XCTAssertNil(model.pairingProblem)
+        model.cancelPairing()
+    }
+
+    func testACancelledAttemptNeverPairs() async {
+        StubProtocol.on("/auth/devices/request",
+                        .init(status: 201, body: #"{"device_code":"d1","user_code":"AAAA-BBBB","expires_in":600,"interval":1}"#))
+        StubProtocol.on("/auth/devices/token",
+                        .init(status: 201, body: #"{"device":{"id":"dev_9","name":"phone"},"token":"tdv_late"}"#, delay: 0.3))
+        let model = AppModel()
+        model.startPairing(address: "https://tend.test", name: "phone")
+        await eventually { if case .waitingForApproval = model.phase { true } else { false } }
+        // Cancel while the poll that would issue the token is in flight.
+        try? await Task.sleep(nanoseconds: 1_100_000_000)
+        model.cancelPairing()
+        try? await Task.sleep(nanoseconds: 600_000_000)
+        XCTAssertEqual(model.phase, .unpaired)
+        XCTAssertNil(CredentialStore.load(), "a cancelled attempt kept a key")
+    }
+
+    func testSignOutThatCannotReachTheDashboardKeepsTheKey() async {
+        StubProtocol.on("/api/device/forget", .init(status: 500, body: #"{"error":"store unavailable"}"#))
+        let model = pairedModel()
+        await model.signOut()
+        XCTAssertNotNil(model.pairing, "the key was dropped although the dashboard still honours it")
+        XCTAssertNotNil(model.signOutProblem)
+        XCTAssertNotNil(CredentialStore.load())
+        // The explicit way out.
+        model.forgetLocally()
+        XCTAssertNil(model.pairing)
+        XCTAssertNil(CredentialStore.load())
+    }
+
+    func testSignOutOfAnAlreadyRemovedDeviceSucceeds() async {
+        StubProtocol.on("/api/device/forget", .init(status: 401, body: ""))
+        let model = pairedModel()
+        await model.signOut()
+        XCTAssertNil(model.pairing)
+        XCTAssertNil(model.signOutProblem)
+    }
+
+    func testAReadFromBeforeSignOutDoesNotRepopulate() async {
+        StubProtocol.on("/api/decisions", .init(status: 200, body: Self.emptyQueue, delay: 0.5))
+        StubProtocol.on("/api/device/forget", .init(status: 200, body: #"{"removed":"dev_1"}"#))
+        let model = pairedModel()
+        let read = Task { await model.refresh() }
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        await model.signOut()
+        await read.value
+        XCTAssertNil(model.pairing)
+        XCTAssertTrue(model.hosts.isEmpty)
+        XCTAssertFalse(model.loaded)
+    }
+
+    func testARemovedDeviceIsUnpairedOnItsNextRead() async {
+        StubProtocol.on("/api/decisions", .init(status: 401, body: ""))
+        let model = pairedModel()
+        await model.refresh()
+        XCTAssertNil(model.pairing)
+        XCTAssertNotNil(model.pairingProblem)
+    }
+
+    func testAllClearNeedsCompleteQueues() throws {
+        func hosts(_ json: String) throws -> [HostQueue] {
+            struct Hosts: Decodable { let hosts: [HostQueue] }
+            return try JSONDecoder().decode(Hosts.self, from: Data(json.utf8)).hosts
+        }
+        XCTAssertTrue(AppModel.allClear(try hosts(Self.emptyQueue)))
+        // Only an item this app cannot read: not all clear.
+        let unknown = #"{"hosts":[{"alias":"here","local":true,"unavailable":[],"queue":{"items":[{"kind":"future_item"}],"truncated":false,"unavailable":[]}}]}"#
+        XCTAssertFalse(AppModel.allClear(try hosts(unknown)))
+        let offline = #"{"hosts":[{"alias":"mini","local":false,"unavailable":["host is offline"],"queue":{"items":[]}}]}"#
+        XCTAssertFalse(AppModel.allClear(try hosts(offline)))
+        // A section without a readable queue is an error, not an empty one.
+        XCTAssertThrowsError(try hosts(#"{"hosts":[{"alias":"x","queue":"garbage"}]}"#))
+    }
+}

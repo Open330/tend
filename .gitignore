@@ -11,5 +11,8 @@
 /apps/tend-macos/.qa-derived/
 /apps/tend-macos/*.xcresult/
 /apps/tend-macos/Tend.xcodeproj/
+/apps/tend-ios/.build/
+/apps/tend-ios/TendiOS.xcodeproj/
+/apps/tend-ios/*.xcresult/
 # Claude Code's sub-agent isolation worktrees + local agent state.
 .claude/
