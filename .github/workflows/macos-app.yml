@@ -9,11 +9,13 @@ on:
     branches: [main]
     paths:
       - "apps/tend-macos/**"
+      - "apps/shared/**"
       - ".github/workflows/macos-app.yml"
   pull_request:
     branches: [main]
     paths:
       - "apps/tend-macos/**"
+      - "apps/shared/**"
       - ".github/workflows/macos-app.yml"
   # Run on main by hand to seed the shared libghostty and Rust caches.
   workflow_dispatch:

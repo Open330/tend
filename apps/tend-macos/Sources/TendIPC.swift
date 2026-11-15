@@ -1043,15 +1043,6 @@ struct TendIPCResponse: Decodable, Sendable {
     }
 }
 
-/// A field decoded when it has the expected shape and nil otherwise.
-struct TendLenient<Value: Decodable & Sendable>: Decodable, Sendable {
-    let value: Value?
-
-    init(from decoder: Decoder) throws {
-        value = try? Value(from: decoder)
-    }
-}
-
 private struct TendRevisionUpdate: Decodable, Sendable {
     let revision: UInt64
 }
