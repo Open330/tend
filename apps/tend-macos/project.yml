@@ -26,6 +26,8 @@ targets:
     platform: macOS
     sources:
       - path: Sources
+      # Platform-neutral models shared with the iOS app (apps/tend-ios).
+      - path: ../shared/Sources
       - path: Resources
     dependencies:
       - package: GhosttyKit
