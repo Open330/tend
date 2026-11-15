@@ -40,9 +40,12 @@ fix ([RMUX.md](RMUX.md#popup-rendering-on-rmux-0100)); until a release does,
 A tendd started with its own XDG directories (a test or a second, scratch
 daemon) is not the user's daemon, so it never infers a multiplexer from
 `$RMUX` or rmux's default server: those are the user's. Give it a private
-server explicitly with `TEND_RMUX_SOCKET`, the server's pipe (for example
+server to observe with `TEND_RMUX_SOCKET`, the server's pipe (for example
 `rmux -L scratch display-message -p '#{socket_path}'`) or a pane's `$RMUX`
-value. It is the rmux counterpart of a scratch `TMUX_TMPDIR`.
+value. It is the rmux counterpart of a scratch `TMUX_TMPDIR`. Only such a
+daemon reads it: the user's daemon and the CLI ignore it. A scratch daemon
+does not sample activity from that server (activity sampling stays
+fail-closed for it).
 
 ### After a reboot
 
