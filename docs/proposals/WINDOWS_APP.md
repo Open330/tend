@@ -339,6 +339,13 @@ toast, Run value) with unit tests; the end-to-end script and the
   finished), host availability, timestamps, membership and a revision;
   fixtures shared with the Swift tests before the Mac app switches. The
   blocked-stage gap above closes here.
+- A daemon-enforced scoped credential instead of the dashboard token: pair
+  the app as a **paired device** (`docs/DASHBOARD.md#paired-devices`, added
+  by the iOS stream in this wave: RFC 8628 device grant, decision-only
+  scope, `app:<name>#<id>` in the audit). Its scope covers the decision
+  queue and history, not `/api/fleet`, so In progress needs the scope
+  widened to Home's reads or served from `home_board`; either way the
+  proof stays, since a device token is a bearer token too.
 - Optional client mode for a published dashboard (OIDC).
 - `tend upgrade` rebuilds `tend-app`; signing and winget if decided.
 
