@@ -2,7 +2,7 @@ import GhosttyTerminal
 import SwiftUI
 import UniformTypeIdentifiers
 
-struct ContentView: View {
+struct ContentView: View, @MainActor Equatable {
     /// Read, not observed: what the body shows comes from `inputs`
     /// (`TendContentInputs`), published only when it changes. Editors other
     /// than Home observe the model themselves (`TendEditorDetail`).
@@ -23,6 +23,11 @@ struct ContentView: View {
     }
 
     private var shown: TendContentInputs { inputs.value }
+
+    /// Everything else it shows is its own state or its observed inputs.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.model === rhs.model
+    }
 
     /// A binding that shows the published input and writes the model.
     private func binding(
