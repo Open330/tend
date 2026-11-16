@@ -937,7 +937,9 @@ async function markReviewed(unit, key) {
   state.busy.add(key);
   render();
   try {
-    await write("/api/home/reviewed", { id: unit.id });
+    // The key of the result on screen: tendd refuses (409) a unit that
+    // changed since, so a mark never accepts a newer result unseen.
+    await write("/api/home/reviewed", { id: unit.id, review_key: unit.reviewKey });
     state.results.delete(key);
     if (state.selected === unit.id) state.selected = null;
     // Hidden at once; the next read confirms the mark.
@@ -946,6 +948,7 @@ async function markReviewed(unit, key) {
   } catch (error) {
     if (error.auth && error.status === 401) return lostAccess(error);
     state.results.set(key, { ok: false, text: error.message });
+    if (error.status === 409) setTimeout(refresh, 0);
   } finally {
     state.busy.delete(key);
     render();
