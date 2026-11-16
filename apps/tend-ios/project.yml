@@ -27,7 +27,7 @@ targets:
       - path: Resources
     settings:
       base:
-        # Not registered anywhere yet; see "Owner decisions" in the proposal.
+        # Registered in the owner's Apple developer team on 2026-11-16.
         PRODUCT_BUNDLE_IDENTIFIER: dev.tend.ios
         PRODUCT_NAME: Tend
         MARKETING_VERSION: 0.1.0
