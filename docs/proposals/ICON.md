@@ -24,15 +24,26 @@ SVG is not what you see. Every macOS number here is taken from the system's
 own rendering. `actool` compiles the bundle into a throwaway app, and
 NSWorkspace draws that app's icon (`scripts/brand/render-app-icon.swift`),
 which is how Finder and the Dock draw Tend.app. The pipeline was checked by
-rendering the shipped bundle this way: the result is pixel-identical to the
-installed `/Applications/Tend.app` icon.
+rendering the shipped bundle this way and comparing with the installed
+`/Applications/Tend.app` (0.10.20) on macOS 27.2.1 / Xcode 27.2. The
+geometry and alpha are identical. Under 1% of pixels differ, by at most
+6/255 in a channel, which is renderer variation and not a different icon.
 
 On each 1024 px rendering, `tend_icons.py measure` finds the **plate** from
 the opaque pixels. It finds the **glyph** as every pixel that differs (by
 more than 40 of 255 in any channel) from the plate colour sampled 3.5% in
 from the plate's edge on the same row, so vertical gradients do not count as
-glyph. It reports the glyph's larger side as a fraction of the plate, and
-the smallest margin.
+glyph. It reports the glyph's larger bounding-box side as a fraction of the
+plate, and the smallest margin.
+
+This is a repeatable **geometry** estimate, not a measure of optical size.
+It compares bounding boxes, not filled area or visual mass, so a dense square
+and a thin ring of the same span score the same. It is also sensitive at the
+edges. With a 20/255 threshold instead of 40, Xcode reads 91.7% instead of
+79.9%, Safari 83.9% instead of 80.1% and Slack 73.7% instead of 70.1%. That
+is because bevels and rims start to count. Full-bleed artwork reads about
+93%, not 100%, because the 3.5% sampling band is skipped. Use it to place
+Tend among its neighbours, not to prescribe an exact size.
 
 ### Tend today, per platform
 
@@ -76,11 +87,12 @@ measured the same way:
 (Finder, Ghostty and Notes are full-bleed artwork, 84-90%, and are left out
 of the median.)
 
-**Verdict: the mark is undersized.** The median glyph-on-plate icon in the
-owner's Dock spans 77.5% of its plate (Linear 75.4% and ChatGPT 79.5% either
-side of it), and Tend's spans 58.7%: **24% smaller across, 43% less area**. Its margin of 20.6% per side is the largest of any
-app measured except Terminal's lone prompt. Because the mark is a dense
-filled square, the plate reads as a thick frame around it.
+**Verdict: the mark is undersized.** The median of the twelve glyph-on-plate
+icons above is **75.3%** of the plate (between Notion and Linear, the closest
+shapes to a filled square). Tend's mark spans 58.7%, **22% smaller across** by
+this bounding-box measure. Its margin of 20.6% per side is the largest of any
+app measured. Because the mark is a dense filled square, the plate reads as
+a thick frame around it.
 
 On iOS the shipped PNG has the same 58% / 21% geometry. In the simulator's
 home screen it is visibly the smallest glyph on the page (see below).
@@ -100,8 +112,8 @@ All five come from one geometry, the room outlines shared with
 
 ### What "no background" can mean on Apple platforms (C)
 
-On macOS 26 and later, every app icon is a squircle. An Icon Composer
-bundle always gets a ground: it was tested with no fill, `"fill": "none"`
+On macOS, every app icon is now a squircle. An Icon Composer
+bundle always gets a ground. On macOS 27.2.1 with Xcode 27.2 it was tested with no fill, `"fill": "none"`
 and a fully transparent solid fill, and in all three the system paints
 white or grey glass into the passages. They never become see-through. iOS
 requires an opaque square and masks it. So "the rooms are the icon" means
@@ -120,8 +132,8 @@ merges into the background and the icon loses its bottom-right corner.
 
 ![16 and 32 px](icon/small.webp)
 
-- **A**: at 16 px the mark is about 7.6 px across. The rooms read as four
-  dots, and the passages are lost to anti-aliasing.
+- **A**: at 16 px the mark is about 7.6 px across. The four colours remain,
+  but the canted passage loses its shape to anti-aliasing.
 - **B**: about 10 px. Four rooms are distinguishable at 16 px, and at 32 px
   the canted passage is visible.
 - **C**: legible on light grounds. On dark grounds the ink room merges with
@@ -131,13 +143,15 @@ merges into the background and the icon loses its bottom-right corner.
 - **E**: like B on light grounds. On a light wallpaper the white plate's
   edge is faint at 16 px.
 
-No variant dies at 16 px. A is the weakest.
+Every variant keeps a recognisable mark at 16 px. C alone does not keep its
+full silhouette (on dark grounds). A is the weakest of the rest.
 
-### Icon styles (Default, Dark, Clear light/dark, Tinted light/dark, from `ictool`)
+### Icon styles (Default, Dark, Clear light/dark, Tinted light/dark, from `ictool`, at 256 px)
 
 ![Icon styles](icon/styles.webp)
 
-B and D hold up in every style. C and E get a dark-style specialisation
+B and D hold up in every style at 256 px. The styles were not exported at
+16 or 32 px. C and E get a dark-style specialisation
 (the working room turns paper when the fill darkens), which works. In the
 Clear and Tinted styles their ink room turns into a dull grey block.
 
@@ -173,27 +187,30 @@ instead of a screenshot. The icons themselves are the system's pixels.
 ## Recommendation: B
 
 1. **It fixes the measured problem and nothing else.** The mark goes from
-   58.7% to 76.7% of the plate, which is the median of the owner's Dock
-   (77.5%) and sits between Notion and Linear (75%, the closest shapes) and
-   ChatGPT (79.5%). The margin
-   goes from 20.6% to 11.7%.
+   58.7% to 76.7% of the plate, next to the median of the owner's Dock
+   (75.3%) and to Notion and Linear (75.2%, 75.4%), the closest shapes. The
+   margin goes from 20.6% to 11.7%. As a check that a dense square at that
+   span is not too heavy: the rooms fill about 81% of their bounding square,
+   which makes about 47% of the plate. A filled circle 80% across, like
+   Safari's or Chrome's, covers about 50%.
 2. **It keeps everything that was decided for the icon.** That means the
    graphite ground, rule A's colours (STATES.md), the paper working room,
    and the same mark the menu bar, favicon and tray draw.
-3. **It holds up everywhere.** It is legible at 16 px, works in all six
-   icon styles, and on light and dark wallpapers.
+3. **It holds up everywhere tested.** It is legible at 16 px, works in all
+   six icon styles (at 256 px), and on light and dark wallpapers.
 4. **It is the smallest change.** Two numbers (the offset and scale of the
    room layers) change in the Icon Composer bundle, and the other assets
    are regenerated.
 
-**D is the honest form of the owner's idea**, and the best of the
-"no background" options. The rooms are the icon, it is the most legible at
-16 px, and it works in every style. It is not the recommendation for three
-reasons. Without the frame, the four rooms read as a coloured window rather
-than "a house with four rooms". It is the loudest icon in the Dock. And it
-breaks the visual link to the bare mark used everywhere else, where the
-rooms sit on nothing. If the owner prefers it, the draft PR is one
-`tend_icons.py apply D` away.
+**D is a coequal choice, and the honest form of the owner's idea.** The
+measurement does not decide between B and D; taste does. D drops the frame,
+so it comes closest to the edge-to-edge bare mark of the menu bar, favicon
+and tray. It is the most legible at 16 px, and it works in every style. The
+reasons it is second here are preferences, not defects. Without the frame,
+the four rooms read to me more as a coloured window than as rooms inside one
+house. The system's corner clipping changes the outer rooms' silhouette. And
+in the Dock it is the loudest icon. If the owner prefers D, the draft PR is
+one `tend_icons.py apply D` away.
 
 C and E are not recommended because of the ink working room (grey slab in
 Clear/Tinted, lost corner at 16 px on dark).
@@ -225,6 +242,7 @@ automatic-gradient colours.
   show the generic one. The window and tray already use the mark. Adding a
   resource icon belongs to the windows-app stream.
 - The iOS app could ship the same `AppIcon.icon` bundle as the Mac app
-  instead of a PNG, which would give it the system's glass rendering and
-  the dark, clear and tinted styles. That needs an iOS project change, so
+  instead of a PNG. The system already derives dark, clear and tinted
+  versions from a bitmap icon by segmenting it. A layered bundle would give
+  explicit control of those styles and the system's layer effects. That needs an iOS project change, so
   it is left to the ios-app stream.

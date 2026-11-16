@@ -129,7 +129,7 @@ VARIANTS = {
     v.key: v
     for v in [
         Variant("A", "Today", "Graphite plate, mark at 58% of the icon.", 0.21, "graphite", PAPER),
-        Variant("B", "Grid", "Graphite plate, mark enlarged to 76%, about the median of the owner's Dock (77.5%).", 0.12, "graphite", PAPER),
+        Variant("B", "Grid", "Graphite plate, mark enlarged to 76%, next to the median of the owner's Dock (75.3%).", 0.12, "graphite", PAPER),
         Variant("C", "Rooms only", "No plate of our own: the rooms fill the icon; the system's light fill shows in the passages.", 0.0, "light", INK),
         Variant("D", "Rooms, dark passages", "The rooms fill the icon; the passages stay graphite.", 0.0, "graphite", PAPER),
         Variant("E", "Light plate", "The light system fill as the plate, mark at 76%, working room in ink (the web favicon on a plate).", 0.12, "light", INK),
