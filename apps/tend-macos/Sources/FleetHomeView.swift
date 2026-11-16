@@ -26,6 +26,8 @@ struct FleetHomeView: View {
     @StateObject private var decisionFeed = FleetDecisionFeed()
     /// Planned Work not started yet (`work_backlog_v1`).
     @StateObject private var backlogFeed = FleetBacklogFeed()
+    /// Prompts and Work tendd sends when ready (`work_queue_v1`).
+    @StateObject private var queueFeed = FleetQueueFeed()
     /// A commit or range from a decision's evidence, open in Changes.
     @State private var revisionTarget: FleetRevisionTarget?
     @AppStorage("home.review.scope") private var reviewScope: FleetReviewScope = .day
@@ -131,6 +133,14 @@ struct FleetHomeView: View {
             while !Task.isCancelled {
                 await backlogFeed.load(model.client)
                 try? await Task.sleep(for: FleetBacklogFeed.refreshEvery)
+            }
+        }
+        .task(id: homeBoard.isVisible) {
+            queueFeed.isActive = homeBoard.isVisible
+            guard homeBoard.isVisible else { return }
+            while !Task.isCancelled {
+                await queueFeed.load(model.client)
+                try? await Task.sleep(for: FleetQueueFeed.refreshEvery)
             }
         }
         .sheet(isPresented: $showsReview) {
@@ -327,6 +337,7 @@ struct FleetHomeView: View {
             answer: { text in await feed.answer(decision, text: text, model: model) },
             decide: { disposition, note in await feed.decide(decision, disposition, note: note, model: model) },
             openAsker: asker.map { hosted in { open(hosted) } },
+            dismiss: decision.isHumanRequest ? { await feed.dismiss(decision, model: model) } : nil,
             draft: feed.drafts.row(for: decision.id)
         )
     }
@@ -503,9 +514,13 @@ struct FleetHomeView: View {
         Group {
             // A decision read that failed keeps the lanes, so its warning
             // shows instead of an ordinary empty Home.
-            let problem = decisionFeed.problem == nil && backlogFeed.problem == nil ? 0 : 1
+            // The queue is this Mac's, like the backlog.
+            let queueIsShown = hostFilter == nil || hostFilter == homeBoard.localHostAlias
+            let queued = queueIsShown ? queueFeed.shown : []
+            let queueProblem = queueIsShown ? queueFeed.problem : nil
+            let problem = decisionFeed.problem == nil && backlogFeed.problem == nil && queueProblem == nil ? 0 : 1
             let backlog = backlog
-            if FleetBoard.showsEmptyBoard(visible: works.count + decisions.count + backlog.count + problem, reviewed: reviewedCount) {
+            if FleetBoard.showsEmptyBoard(visible: works.count + decisions.count + backlog.count + queued.count + problem, reviewed: reviewedCount) {
                 FleetEmptyBoard(
                     isConnected: homeBoard.isConnected,
                     newAgent: { model.presentNewAgent() },
@@ -520,6 +535,10 @@ struct FleetHomeView: View {
                             let model = model
                             Task { await feed.start(record, model: model) }
                         }
+                    }
+                    // A failed or stuck queue shows its column with the reason.
+                    if !queued.isEmpty || queueProblem != nil {
+                        FleetQueueColumn(feed: queueFeed, items: queued, client: model.client)
                     }
                     ForEach(FleetLane.allCases) { lane in
                         FleetLaneColumn(

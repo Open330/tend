@@ -91,6 +91,19 @@ fn unversioned(path: &str) -> &str {
 /// No dashboard page may be framed by another site.
 const FRAME_POLICY: &str = "frame-ancestors 'none'";
 
+/// Home (`/home`, `/needs`) is written for a strict policy: its own scripts
+/// and styles only, no inline code, no other origin. The older pages still
+/// carry inline handlers and only get [`FRAME_POLICY`].
+const HOME_POLICY: &str = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'";
+
+fn policy_for(path: &str) -> &'static str {
+    if path == "home.html" {
+        HOME_POLICY
+    } else {
+        FRAME_POLICY
+    }
+}
+
 pub(super) fn serve_page(path: &str) -> Response {
     let Some(file) = WebAssets::get(path) else {
         return StatusCode::NOT_FOUND.into_response();
@@ -104,7 +117,7 @@ pub(super) fn serve_page(path: &str) -> Response {
         [
             (header::CONTENT_TYPE, mime_for(path)),
             (header::CACHE_CONTROL, ASSET_CACHE_CONTROL),
-            (header::CONTENT_SECURITY_POLICY, FRAME_POLICY),
+            (header::CONTENT_SECURITY_POLICY, policy_for(path)),
             (header::X_FRAME_OPTIONS, "DENY"),
         ],
         html,
@@ -118,11 +131,11 @@ pub(super) fn serve_asset(path: &str) -> Response {
             let mime = mime_for(path);
             (
                 // Framing headers on every asset, not just the canonical
-                // pages: `/static/needs.html` is the same page.
+                // pages: `/static/home.html` is the same page as `/home`.
                 [
                     (header::CONTENT_TYPE, mime),
                     (header::CACHE_CONTROL, ASSET_CACHE_CONTROL),
-                    (header::CONTENT_SECURITY_POLICY, FRAME_POLICY),
+                    (header::CONTENT_SECURITY_POLICY, policy_for(path)),
                     (header::X_FRAME_OPTIONS, "DENY"),
                 ],
                 file.data.into_owned(),

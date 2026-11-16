@@ -276,7 +276,7 @@ Done when, on real Windows (`jiun-home`):
    script cannot: an actual logon, clicking a real toast into the running
    app, and an item decided from the phone disappearing.
 
-Home's lanes in phase 1, computed in `home-model.mjs` from `/api/decisions`
+Home's lanes in phase 1, computed in `home-board.mjs` (formerly `home-model.mjs`) from `/api/decisions`
 and `/api/fleet`:
 
 - **Your turn**: the decision queue, all hosts (questions, waiting agents,

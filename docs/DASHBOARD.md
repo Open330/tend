@@ -352,15 +352,43 @@ Their sessions still appear as workspaces in the rail (see
 
 ## Home (needs you)
 
-`/home` (also `/needs`) is a phone-first page in the Mac app's three Home
-lanes: **Your turn**, **In progress** and **Finished**. The Windows app opens
-it in its window. **In progress** lists every host's agents that are working
-or starting, newest first; **Finished** lists what was decided (below), then
-the agents that went idle in the last 24 hours after doing something, with
-the first line of what they last said. Both read `GET /api/fleet`, so they
-cover the Fleet hosts the same way the queue does; an agent is one row (the
-Mac app's grouping by Work, helper folding and stage strip are not repeated
-here).
+`/home` (also `/needs`) is Tend for Mac's Home in the browser: the same
+shell (an activity rail with Home and Explore, the Home tab, a status bar
+with the tendd chip and the host and agent counts), the same header (Filter
+by host or project, Hosts n/m with each host's state, Start Work), and the
+same three lanes side by side: **Your turn**, **In progress** and
+**Finished**, with the Mac's words, cards, colours and type. The colours,
+type and spacing come from one file shared with the Mac app,
+`apps/shared/Design/tokens.json` (see
+[proposals/WEB_HOME.md](proposals/WEB_HOME.md)). The Windows app opens this
+page in its window. On a phone (under 760 px) a segmented control shows one
+lane at a time and a unit's details open as a full-screen sheet. The page
+follows the browser's language (English or Korean) and colour scheme.
+
+Like the Mac app, Home has two card layouts, switched with the two-icon
+toggle in the header and remembered per browser: **status emphasis** (the
+default: the lane's colour stripe, a bold title, the question or the latest
+line in an inset box, the state, agent, host, project and time on one line;
+Your turn cards tinted) and **compact list** (one row per item: a status
+dot, the title, the host and how long ago; selecting a row opens its
+details, a decision's whole card included).
+
+Units are grouped by project inside each lane, a project placed where its
+first unit is, tend's own asks last. **In progress** lists every host's
+agents that are working or starting, newest first; **Finished** lists the
+agents that went idle in the last 24 hours after doing something, with the
+first line of what they last said, and what was decided (below); older
+items fold behind "N older". Both read `GET /api/fleet`, so they cover the
+Fleet hosts the same way the queue does. An agent is one unit with one
+stage, the way the Mac app draws an agent no Work owns; grouping a Work's
+agents into one unit, helper folding and the Backlog lane come with a
+daemon-side board read (WEB_HOME.md, phase 2).
+
+Selecting a unit opens its details beside the lanes (over them in a narrow
+window): what it is doing now or its last result, a field to answer it or
+send it the next instruction (`POST /api/panes/{pane}/prompt`, operators
+only, local panes only), **Open Pane** (the pane drawer on `/`), its stages
+and its agents. Escape closes it.
 
 **Your turn** has everything waiting on you, in the order
 `tend review queue` uses: questions agents asked you
@@ -411,13 +439,15 @@ out.
 Each card can be decided from the page, through the same daemon paths as
 the Mac app:
 
-- a question (human request): pick an option or write an answer, then
-  **Send answer** or **Decline** — `POST /api/decisions/requests/{id}`
+- a question (human request): an option fills the answer, **Answer…** (or
+  **Other…**) opens it, then **Send**; **Decline…** is in the card's `…`
+  menu — `POST /api/decisions/requests/{id}`
   with `{"answer": "…", "declined": false, "host": "…"}` (`host` only for a
   question on another Fleet host). Only requests addressed to the operator
   console can be answered, once.
-- a result to review: an option button, **Looks good**, **Send back** (needs
-  a note) or **Withdraw** — `POST /api/decisions/reviews/{id}` with
+- a result to review: **Accept**, or an option or **Return…** to open the
+  note, then **Accept** or **Return** (needs a note); **Withdraw** is in the
+  card's `…` menu — `POST /api/decisions/reviews/{id}` with
   `{"disposition": "accepted" | "returned" | "withdrawn", "note": "…",
   "option": "…", "host": "…"}` (`host` only for an item on another Fleet
   host); a chosen option is recorded in the note. Dispositions are
@@ -432,6 +462,16 @@ written as one JSON line, with the signed-in account's issuer and subject,
 to `$XDG_DATA_HOME/tend/dashboard-decisions.jsonl`
 (owner-only, rotated at 4 MiB) and logged. No dashboard page or static asset can
 be framed by another site (`frame-ancestors 'none'`, `X-Frame-Options: DENY`).
+Home itself runs under a strict Content Security Policy (its own scripts,
+styles and images only; no inline code; `connect-src 'self'`).
+
+The page takes the token from a `#token=…` link (it moves into the
+browser's storage and out of the address bar), from the browser's storage,
+or not at all when a proxy adds it (the Windows app does). A 403 on a read
+other than the queue (`/api/fleet`, the history, `/api/access`), as a paired
+device or the Windows app's proxy gets, leaves that part empty; a refused
+queue or any 401 drops everything private on the page and offers the
+sign-in, which returns to `/home#item=…`.
 
 Notifications link here. With `[sinks.webhook]` enabled, each message ends
 with a link to the agent's card (`<dashboard>/needs#item=<session>`) and the
@@ -443,13 +483,24 @@ sign-in.
 ## Paired devices
 
 A phone (the Tend app for iPhone and iPad) does not use the dashboard
-token or an operator sign-in. It gets **its own credential, which can only
-decide**: it reads `GET /api/decisions` and `GET /api/decisions/history`
-and posts the two decision routes above, for every host this dashboard
-covers, and nothing else. Every other route refuses it as it would refuse
-no credential at all: no pane output or input, Fleet commands, Work control,
-shares, access management or new pairings. Deciding is still real
-authority: an answer can tell an agent to go ahead.
+token or an operator sign-in. It gets **its own credential**, with one of
+two scopes:
+
+- **`decide`** (the default): it reads `GET /api/decisions` and `GET
+  /api/decisions/history` and posts the two decision routes above, for
+  every host this dashboard covers. Deciding is still real authority: an
+  answer can tell an agent to go ahead.
+- **`operate`** (opt-in, granted by the approving operator): everything in
+  `decide`, plus device-only routes for the app's Home and Hosts, starting
+  with `GET /api/device/fleet` (the Fleet snapshot cut down to hosts'
+  states and their agents: no SSH targets, labels, capabilities or panes
+  without an agent). Later routes add an agent's recent output and starting
+  new work, which runs agents with permissions bypassed.
+
+Every operator route refuses a device token of either scope as it would
+refuse no credential at all: no `/api/fleet`, pane output or input, Fleet
+commands, Work control, shares, access management or new pairings. A
+device route outside its scope answers 403.
 
 Pairing is shaped like the OAuth device authorization grant (RFC 8628),
 with tend's own endpoints: no secret passes through a link, the clipboard
@@ -458,14 +509,25 @@ or another app.
 1. The app sends `POST /auth/devices/request` `{"name": "…", "platform":
    "ios"}` and gets `{device_code, user_code, expires_in, interval}`. It
    keeps the device code and shows the user code (`BCDF-GHJK`).
-2. An operator opens **access** in the dashboard header, types the code
-   under **Devices**, and approves (`POST /api/devices/approve`
-   `{"user_code": "…"}`, which answers with the device's name). Approve
-   only a code shown on a device you are pairing yourself, right now: a
-   code someone sends you would pair *their* device (RFC 8628, section 5.4).
+   It may add `"scope": "operate"` to ask for hosts and new work; anything
+   else asks for `decide`.
+2. An operator opens **access** in the dashboard header and types the code
+   under **Devices**. The dashboard first looks it up without granting
+   anything (`POST /api/devices/lookup` `{"user_code": "…"}`: the name,
+   platform, requested scope and when it asked), then the operator approves
+   that request (`POST /api/devices/approve` `{"user_code": "…", "scope":
+   "decide" | "operate"}`). For a device that asked for `operate`, the
+   dialog shows a separate, unticked box; without the tick it is paired to
+   `decide`. The device gets the lesser of what it asked and what was
+   granted; a scope left out is `decide`. Approve only a code shown on a
+   device you are holding, right now: a code someone sends you would pair
+   *their* device (RFC 8628, section 5.4), and with `operate` it could
+   start agents on your hosts.
 3. The app polls `POST /auth/devices/token` `{"device_code": "…"}` every
    `interval` seconds: `202 {"status": "pending"}` until approved, then
-   `201 {"device": {id, name, platform}, "token": "tdv_…"}` exactly once.
+   `201 {"device": {id, name, platform}, "token": "tdv_…", "scope": [...]}`
+   exactly once (`["decisions"]` or `["decisions", "operate"]`, as `GET
+   /api/device` also says).
    It sends `Authorization: Bearer tdv_…` from then on.
 
 Limits and lifetime:
@@ -477,6 +539,14 @@ Limits and lifetime:
   whichever comes first, and the moment it is removed (**Remove**, **Remove
   all**, or the app's Sign out, `POST /api/device/forget`). At most 16 are
   paired.
+- **Limit to deciding** (`POST /api/devices/{id}/limit`) drops an
+  `operate` device to `decide` at once, keeping it paired. It is written to
+  the store before it answers and cannot be undone for that token; to widen
+  a device, pair it again. Neither limiting nor removing undoes an agent a
+  device already started.
+- Every use counts towards the idle limit, so a token in daily use, by its
+  owner or by whoever stole it, lasts the full 90 days: removing it is the
+  defence.
 - Devices are their own principals. Removing the operator who approved a
   device, or rotating the dashboard token, does **not** unpair it: use
   **Remove all**.

@@ -24,6 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   status dot, the title, the host, how long ago); selecting a row opens its
   details beside the board, where a decision is answered and a unit's agent
   answered, opened or marked Looks Good as before.
+- Paired devices have a scope. `decide` is what phase 1 devices had, and
+  every existing device keeps it. `operate` also lets the iPhone and iPad
+  app see the hosts and their agents through `GET /api/device/fleet`, a cut-down
+  Fleet snapshot. The app asks for a scope. The operator first looks the code
+  up, which grants nothing, then approves with a separate, unticked box for
+  `operate`. The device gets the lesser of the two. **Limit to deciding**
+  narrows a device without unpairing it. Every operator route still refuses
+  a device token of either scope. The device store moves to schema version
+  2 in place.
 - tendd keeps a Work queue (`work_queue_v1`): prompts it sends to an agent
   once that agent is free, and Work it starts once fewer than
   `[work_queue] max_busy_agents` (default 3) agents are busy. The queue lives
@@ -48,9 +57,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reconciler, `tend work start` and watch rules all refuse to register,
   claim, launch or join that Work. A launch interrupted by a restart stays
   held until you settle it in the queue.
+- Home shows a Queued column while tendd's Work queue holds anything: each
+  item's title, target and status, and why it is still waiting. Move items
+  up or down, edit a waiting prompt, cancel, remove, or start one now. An
+  item that may already have been sent is flagged; mark it sent, or say it
+  was not sent or send it again after confirming it may arrive twice. The
+  Start Work sheet gains Add to Queue, which queues the new Work on this Mac
+  instead of starting it now.
 
 ### Fixed
 
+- A question on Home's Your turn can be dismissed in one click: **Dismiss**
+  (also in the card's menu) closes it without an answer, on the host that
+  holds it. It is recorded there as declined, so it leaves every client's
+  queue. The asking agent, if it is still running, reads that the person
+  dismissed it. Before, the only way to clear a wrong or outdated question
+  was to type an answer. An agent's question that has waited over ten
+  minutes and whose session its host does not list is marked **Asker not
+  listed**: the agent may have exited.
 - Windows: `tend init` can replace and remove its agent skill links. A
   directory symlink or junction was removed as a file, which Windows refuses
   with "access denied", so upgrading or uninstalling the skill failed.
@@ -78,6 +102,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The dashboard's Home (`/home`, also `/needs`) is rebuilt as Tend for Mac's
+  Home: the activity rail, Home tab and status bar; the header with Filter
+  (host, project), Hosts and Start Work; Your turn, In progress and Finished
+  side by side, grouped by project, with the Mac's decision and unit cards,
+  words and order; a details panel with the agent's current state, a field
+  to answer it or send the next instruction, its stages and agents. The
+  Mac's two card layouts are there too (status emphasis, the default, and
+  compact list), switched in the header. On a phone one lane shows at a
+  time. It follows the browser's language
+  (English or Korean) and colour scheme, and runs under a strict Content
+  Security Policy. The workbench's "needs you" link now reads "Home".
 - CI has a Windows job (windows-latest): clippy over the workspace and
   the tests of `tend-cli`, `tendd`, `tend-work` and `tend-app`, with rmux
   installed so the live rmux tests run. cargo-deny runs once per supported
