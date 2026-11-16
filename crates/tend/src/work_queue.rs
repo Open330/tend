@@ -614,8 +614,9 @@ pub enum QueueTargetSpec {
         work: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         workspace: Option<String>,
-        /// Absolute directory to start in (required: tendd's own working
-        /// directory is never a project).
+        /// Absolute directory to start in. Without one the route provides
+        /// it (a worktree or prepare step) and `workspace` is required:
+        /// tendd's own working directory is never a project.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cwd: Option<PathBuf>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -626,6 +627,10 @@ pub enum QueueTargetSpec {
         skill: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         context: Option<String>,
+        /// What `[[route]]` rules match against (the Work id the person
+        /// would have used); the queue mints the Work id itself.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        route_key: Option<String>,
     },
     /// An agent, by session id or by the pane it runs in.
     Agent {

@@ -56,6 +56,8 @@ pub(crate) fn target(args: &Value) -> Result<QueueTargetSpec, String> {
             external: None,
             skill: None,
             context: None,
+            // Routes match the name the agent gave, as `work up` would.
+            route_key: text(args, "work"),
         });
     }
     if let Some(work) = text(args, "work") {

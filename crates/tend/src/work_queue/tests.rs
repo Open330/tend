@@ -157,6 +157,7 @@ fn new_work(work: &str) -> QueueTarget {
             dry_run: false,
             new_only: false,
             queue_lease: None,
+            route_key: None,
             host: None,
         },
     }

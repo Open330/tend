@@ -67,7 +67,8 @@ pub struct AddArgs {
     /// Start a new Work with this prompt when the queue's throttle allows.
     #[arg(long)]
     new: bool,
-    /// New Work: a short name that shapes its id (the id is always new).
+    /// New Work: the name you would give `tend work up`. Routes match it,
+    /// and it shapes the queued Work's id (the id itself is always new).
     #[arg(long, requires = "new")]
     name: Option<String>,
     /// New Work: the directory to start in. Defaults to the current one.
@@ -163,7 +164,7 @@ pub struct ResolveArgs {
     json: bool,
 }
 
-pub async fn run(cmd: QueueCmd, client: &Client) -> Result<()> {
+pub async fn run(cmd: QueueCmd, client: &Client, config: &tend::config::Config) -> Result<()> {
     require_queue(client).await?;
     match cmd {
         QueueCmd::List(args) => {
@@ -175,7 +176,7 @@ pub async fn run(cmd: QueueCmd, client: &Client) -> Result<()> {
             }
             Ok(())
         }
-        QueueCmd::Add(args) => add(args, client).await,
+        QueueCmd::Add(args) => add(args, client, config).await,
         QueueCmd::Edit(args) => {
             let (id, revision) = find(client, &args.id).await?;
             let edit = QueueEditRequest {
@@ -266,22 +267,9 @@ fn work_target(spec: &str) -> Result<QueueTargetSpec> {
     QueueTargetSpec::work_path(spec).map_err(|error| anyhow::anyhow!("--work: {error}"))
 }
 
-fn add_target(args: &AddArgs) -> Result<QueueTargetSpec> {
+fn add_target(args: &AddArgs, config: &tend::config::Config) -> Result<QueueTargetSpec> {
     if args.new {
-        let cwd = match &args.cwd {
-            Some(cwd) => tend::paths::canonicalize(cwd)
-                .with_context(|| format!("resolving {}", cwd.display()))?,
-            None => std::env::current_dir().context("reading the current directory")?,
-        };
-        return Ok(QueueTargetSpec::NewWork {
-            work: args.name.clone(),
-            workspace: args.workspace.clone(),
-            cwd: Some(cwd),
-            pipeline: args.pipeline.clone(),
-            external: None,
-            skill: None,
-            context: None,
-        });
+        return new_work_target(args, &config.route);
     }
     if let Some(work) = &args.work {
         return work_target(work);
@@ -306,8 +294,8 @@ fn add_target(args: &AddArgs) -> Result<QueueTargetSpec> {
     })
 }
 
-async fn add(args: AddArgs, client: &Client) -> Result<()> {
-    let target = add_target(&args)?;
+async fn add(args: AddArgs, client: &Client, config: &tend::config::Config) -> Result<()> {
+    let target = add_target(&args, config)?;
     let request_key = args
         .request_key
         .clone()
@@ -350,6 +338,66 @@ fn added(
         format!(
             "{error}\nIt may have been added anyway. Retry with --request-key {request_key} to add it at most once."
         )
+    })
+}
+
+/// A new Work target that launches the way `tend work up NAME` would: the
+/// queue mints the Work id, so the name is sent as the route key, and a
+/// route that provides the directory (a worktree, a prepare step, its own
+/// cwd) gets none from here; its workspace comes from the route then.
+fn new_work_target(
+    args: &AddArgs,
+    routes: &[tend::config::RouteConfig],
+) -> Result<QueueTargetSpec> {
+    let name = args
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty());
+    let route = match name {
+        Some(name) => tend::pipeline::select_route(routes, name)
+            .map_err(|error| anyhow::anyhow!("{error}"))?,
+        None => None,
+    };
+    let route_dir = route.is_some_and(|route| {
+        route.worktree.is_some() || route.prepare.is_some() || route.cwd.is_some()
+    });
+    let (cwd, workspace) = if args.cwd.is_none() && route_dir {
+        let route_workspace = route
+            .and_then(|route| route.workspace.clone())
+            .filter(|workspace| !workspace.contains("{{"));
+        let Some(workspace) = args.workspace.clone().or(route_workspace) else {
+            bail!(
+                "the route for {} provides the directory; name the workspace with --workspace",
+                name.unwrap_or_default()
+            );
+        };
+        (None, Some(workspace))
+    } else {
+        let cwd = match &args.cwd {
+            Some(cwd) => tend::paths::canonicalize(cwd)
+                .with_context(|| format!("resolving {}", cwd.display()))?,
+            None => std::env::current_dir().context("reading the current directory")?,
+        };
+        let workspace = args.workspace.clone().or_else(|| {
+            route
+                .and_then(|route| route.workspace.clone())
+                .filter(|workspace| !workspace.contains("{{"))
+        });
+        (Some(cwd), workspace)
+    };
+    Ok(QueueTargetSpec::NewWork {
+        work: name.map(str::to_string),
+        workspace,
+        cwd,
+        pipeline: args
+            .pipeline
+            .clone()
+            .or_else(|| route.and_then(|route| route.pipeline.clone())),
+        external: None,
+        skill: None,
+        context: None,
+        route_key: name.map(str::to_string),
     })
 }
 
@@ -532,6 +580,70 @@ mod tests {
         assert_eq!(key, "k-1");
         assert_eq!(added(daemon(&key, false), &key).unwrap().id, "q-0");
         assert_eq!(stored.len(), 1);
+    }
+
+    fn route(pattern: &str, workspace: Option<&str>, worktree: bool) -> tend::config::RouteConfig {
+        let mut route: tend::config::RouteConfig =
+            toml::from_str(&format!("match = {pattern:?}\npipeline = \"special\"\n")).unwrap();
+        route.workspace = workspace.map(str::to_string);
+        if worktree {
+            route.worktree = Some(toml::from_str("").unwrap());
+        }
+        route
+    }
+
+    fn new_args(name: Option<&str>) -> AddArgs {
+        AddArgs {
+            prompt: "fix it".into(),
+            agent: None,
+            work: None,
+            new: true,
+            name: name.map(str::to_string),
+            cwd: Some(PathBuf::from("/")),
+            workspace: None,
+            pipeline: None,
+            title: None,
+            request_key: None,
+            json: false,
+        }
+    }
+
+    /// The queued launch routes like `tend work up NAME`: the name is the
+    /// route key, and the route's pipeline and workspace are what is sent.
+    #[test]
+    fn a_new_work_target_follows_the_route_its_name_matches() {
+        let routes = vec![
+            route("^ENG-", Some("engineering"), false),
+            route(".*", None, false),
+        ];
+        let QueueTargetSpec::NewWork {
+            route_key,
+            pipeline,
+            workspace,
+            cwd,
+            ..
+        } = new_work_target(&new_args(Some("ENG-42")), &routes).unwrap()
+        else {
+            unreachable!()
+        };
+        assert_eq!(route_key.as_deref(), Some("ENG-42"));
+        assert_eq!(pipeline.as_deref(), Some("special"));
+        assert_eq!(workspace.as_deref(), Some("engineering"));
+        assert!(cwd.is_some());
+        // A route that makes its own worktree gets no directory from here.
+        let worktree = vec![route("^ENG-", Some("engineering"), true)];
+        let QueueTargetSpec::NewWork { cwd, workspace, .. } = new_work_target(
+            &AddArgs {
+                cwd: None,
+                ..new_args(Some("ENG-42"))
+            },
+            &worktree,
+        )
+        .unwrap() else {
+            unreachable!()
+        };
+        assert!(cwd.is_none());
+        assert_eq!(workspace.as_deref(), Some("engineering"));
     }
 
     #[test]

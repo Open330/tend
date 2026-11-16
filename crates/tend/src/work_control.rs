@@ -94,6 +94,11 @@ pub struct WorkUpRequest {
     /// (`--queue-lease`, with `new_only`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_lease: Option<String>,
+    /// Match `[[route]]` rules against this instead of the Work id
+    /// (`--route-key`): a queued Work's id is minted, so the name the
+    /// person routed by is kept apart from it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_key: Option<String>,
     /// Fleet host alias that runs the CLI. Absent or `"local"` runs it next
     /// to the daemon that accepted the request; any other alias must be a
     /// configured host in `mode = "control"`.
@@ -227,6 +232,7 @@ impl WorkUpRequest {
             args.push("--queue-lease".into());
             args.push(lease.to_string());
         }
+        push_option(&mut args, "--route-key", self.route_key.as_deref());
         args
     }
 }
@@ -910,6 +916,7 @@ mod tests {
             dry_run: false,
             new_only: false,
             queue_lease: None,
+            route_key: None,
             host: host.map(str::to_string),
         }
     }
@@ -955,6 +962,7 @@ mod tests {
             dry_run: false,
             new_only: false,
             queue_lease: None,
+            route_key: None,
             host: None,
         };
         assert!(matches!(input.validate(), Err(WorkUpError::Invalid(_))));

@@ -132,6 +132,7 @@ fn request(host: Option<&str>) -> WorkUpRequest {
         dry_run: false,
         new_only: false,
         queue_lease: None,
+        route_key: None,
         host: host.map(str::to_string),
     }
 }

@@ -80,6 +80,10 @@ pub struct UpArgs {
     /// `--new-only`. Registration and claims are made under it.
     #[arg(long, hide = true, requires = "new_only")]
     pub queue_lease: Option<String>,
+    /// Match `[[route]]` rules against this name instead of the Work id
+    /// (the Work queue mints ids, so it keeps the name routed by).
+    #[arg(long, hide = true)]
+    pub route_key: Option<String>,
     /// Skip external issue lookup and launch on the Work id alone.
     #[arg(long)]
     pub no_ticket: bool,
@@ -854,7 +858,14 @@ pub async fn resolve(
     // An explicitly linked issue may carry the routing prefix while the
     // durable Work id stays provider-neutral (`auth-cleanup` + `ENG-1234`).
     // Legacy calls without `--external` continue routing on the Work id.
-    let route_selector = explicit_external.unwrap_or(&work);
+    // A queued Work's id is minted; it routes by the name it was queued
+    // under.
+    let route_key = args
+        .route_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let route_selector = explicit_external.or(route_key).unwrap_or(&work);
     let route = match pipeline::select_route(&config.route, route_selector)? {
         Some(route) => route,
         None if args.pipeline.is_some() => &fallback,
@@ -2139,6 +2150,7 @@ mod tests {
             dry_run: true,
             new_only: true,
             queue_lease: None,
+            route_key: None,
             host: None,
         };
         let args = parse_up_argv(&request.arguments()).unwrap();
@@ -2184,6 +2196,7 @@ mod tests {
             dry_run: false,
             new_only: false,
             queue_lease: None,
+            route_key: None,
             show_prompts: false,
             yes: false,
             no_ticket: true,
