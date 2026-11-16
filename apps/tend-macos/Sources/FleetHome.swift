@@ -342,14 +342,23 @@ enum FleetBoard {
         return unit
     }
 
-    /// Needs-you units wait longest first; the others show the most recent
-    /// change first.
+    /// Lanes in board order (Your turn, In progress, Finished). Your turn
+    /// waits longest first, by when the unit started waiting; In progress
+    /// and Finished show the latest change first, which for Finished is when
+    /// it finished.
     static func order(_ lhs: FleetWork, _ rhs: FleetWork) -> Bool {
         if lhs.lane != rhs.lane { return lhs.lane.rawValue < rhs.lane.rawValue }
-        let left = lhs.since ?? .distantPast
-        let right = rhs.since ?? .distantPast
+        let left = sortTime(lhs)
+        let right = sortTime(rhs)
         if left != right { return lhs.lane == .needsYou ? left < right : left > right }
         return lhs.id < rhs.id
+    }
+
+    /// The moment a unit is ordered by in its lane: when it started waiting
+    /// in Your turn, its latest change elsewhere. Unknown sorts as oldest.
+    static func sortTime(_ work: FleetWork) -> Date {
+        let time = work.lane == .needsYou ? work.since : (work.lastChange ?? work.since)
+        return time ?? .distantPast
     }
 
     // MARK: - Managed Work
@@ -631,6 +640,48 @@ struct FleetProjectGroup: Identifiable, Sendable {
     var id: String { project ?? "" }
 }
 
+/// One entry of Your turn: a decision from tendd's queue, or a unit whose
+/// agent waits on the person.
+enum FleetTurnItem: Identifiable, Sendable {
+    case decision(FleetDecision)
+    case work(FleetWork)
+
+    var id: String {
+        switch self {
+        case .decision(let decision): "decision:\(decision.id)"
+        case .work(let work): work.id
+        }
+    }
+
+    /// Since when it waits on the person.
+    var since: Date? {
+        switch self {
+        case .decision(let decision): decision.since
+        case .work(let work): work.since
+        }
+    }
+
+    var repo: String? {
+        switch self {
+        case .decision(let decision): decision.repo
+        case .work(let work): work.repo
+        }
+    }
+
+    var isSystemAsk: Bool {
+        if case .decision(let decision) = self { return decision.isSystemAsk }
+        return false
+    }
+}
+
+/// Your turn's entries of one project.
+struct FleetTurnGroup: Identifiable, Sendable {
+    let project: String?
+    let items: [FleetTurnItem]
+
+    var id: String { project ?? "" }
+}
+
 extension FleetBoard {
     /// How long a finished unit stays in the Finished lane's main list.
     static let recentFinish: TimeInterval = 24 * 3600
@@ -639,14 +690,41 @@ extension FleetBoard {
     /// is, so the lane's order (the longest wait, the latest change) still
     /// decides which project comes first.
     static func byProject(_ works: [FleetWork]) -> [FleetProjectGroup] {
+        grouped(works, by: \.repo).map { FleetProjectGroup(project: $0.project, works: $0.items) }
+    }
+
+    /// Your turn's entries grouped by project the same way.
+    static func byProject(_ items: [FleetTurnItem]) -> [FleetTurnGroup] {
+        grouped(items, by: \.repo).map { FleetTurnGroup(project: $0.project, items: $0.items) }
+    }
+
+    private static func grouped<Item>(_ items: [Item], by repo: (Item) -> String?) -> [(project: String?, items: [Item])] {
         var order: [String?] = []
-        var groups: [String: [FleetWork]] = [:]
-        for work in works {
-            let key = work.repo ?? ""
-            if groups[key] == nil { order.append(work.repo) }
-            groups[key, default: []].append(work)
+        var groups: [String: [Item]] = [:]
+        for item in items {
+            let project = repo(item)
+            let key = project ?? ""
+            if groups[key] == nil { order.append(project) }
+            groups[key, default: []].append(item)
         }
-        return order.map { FleetProjectGroup(project: $0, works: groups[$0 ?? ""] ?? []) }
+        return order.map { ($0, groups[$0 ?? ""] ?? []) }
+    }
+
+    /// Your turn as one list: the daemon's decisions and the units whose
+    /// agents wait, longest wait first, whichever kind each is. tendd's own
+    /// items (peer recovery and the like) stay after everything an agent
+    /// asked. An unknown time counts as the longest wait; on a tie a
+    /// decision comes first, then the order each list came in.
+    static func yourTurn(works: [FleetWork], decisions: [FleetDecision]) -> [FleetTurnItem] {
+        let items = decisions.map(FleetTurnItem.decision) + works.map(FleetTurnItem.work)
+        return items.enumerated().sorted { lhs, rhs in
+            let (left, right) = (lhs.element, rhs.element)
+            if left.isSystemAsk != right.isSystemAsk { return !left.isSystemAsk }
+            let leftSince = left.since ?? .distantPast
+            let rightSince = right.since ?? .distantPast
+            if leftSince != rightSince { return leftSince < rightSince }
+            return lhs.offset < rhs.offset
+        }.map(\.element)
     }
 
     /// A finished unit that changed within `recentFinish`, or one with no

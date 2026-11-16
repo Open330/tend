@@ -12,6 +12,9 @@ struct ContentView: View {
     @State private var chrome = TitleBarMetrics.fallback
     @State private var showingShortcuts = false
     @AppStorage("tend.sidebar.visible") private var sidebarVisible = true
+    /// Exited shells closed from the Shells list, kept here so they stay
+    /// hidden while the side bar is folded away and rebuilt.
+    @State private var dismissedShellIDs: Set<String> = []
 
     /// Just the activity rail and its edge.
     private var collapsedSidebarWidth: CGFloat { TendTheme.activityBarWidth + 1 }
@@ -28,35 +31,24 @@ struct ContentView: View {
     var body: some View {
         let _ = TendPerf.count("content.body")
         VStack(spacing: 0) {
-            HSplitView {
-                if sidebarVisible {
-                    TendSidebar(
-                        model: model,
-                        chrome: chrome,
-                        openPinnedSession: { id in
-                            model.selectWatchSession(id)
-                            tabs.openPinned(.fleetSession(id))
-                        },
-                        openPinnedPane: { id in
-                            model.selectWatchPane(id)
-                            tabs.openPinned(.pane(id))
-                        },
-                        openFile: openFile,
-                        closeShell: dismissExitedShell,
-                        focusRequest: sidebarFocusRequest
-                    )
-                        // Each split pane is hosted on its own, so each opts out
-                        // of the hidden title bar's inset: its top row is the
-                        // title bar (see WorkbenchWindowChrome.swift).
-                        .ignoresSafeArea(.container, edges: .top)
-                        .frame(
-                            minWidth: model.isSidebarListCollapsed ? collapsedSidebarWidth : 260,
-                            idealWidth: model.isSidebarListCollapsed ? collapsedSidebarWidth : 300,
-                            maxWidth: model.isSidebarListCollapsed ? collapsedSidebarWidth : 380
-                        )
+            HStack(spacing: 0) {
+                // With the lists folded away (Home), the rail sits beside
+                // the split view instead of in it: a split view's divider
+                // runs the window's full height, through the traffic lights
+                // over the narrow rail. The rail draws its own edge below
+                // the title bar row instead.
+                if sidebarVisible, model.isSidebarListCollapsed {
+                    sidebar
+                        .frame(width: collapsedSidebarWidth)
                 }
-                editorRegion
-                    .frame(minWidth: 560)
+                HSplitView {
+                    if sidebarVisible, !model.isSidebarListCollapsed {
+                        sidebar
+                            .frame(minWidth: 260, idealWidth: 300, maxWidth: 380)
+                    }
+                    editorRegion
+                        .frame(minWidth: 560)
+                }
             }
             // WS-C usage: the usage popover jumps to a capped agent's pane.
             WorkbenchStatusBar(model: model, openPane: { id in
@@ -211,6 +203,29 @@ struct ContentView: View {
             .help("More Actions")
         }
         .buttonStyle(.tendIcon)
+    }
+
+    private var sidebar: some View {
+        TendSidebar(
+            model: model,
+            chrome: chrome,
+            openPinnedSession: { id in
+                model.selectWatchSession(id)
+                tabs.openPinned(.fleetSession(id))
+            },
+            openPinnedPane: { id in
+                model.selectWatchPane(id)
+                tabs.openPinned(.pane(id))
+            },
+            openFile: openFile,
+            closeShell: dismissExitedShell,
+            focusRequest: sidebarFocusRequest,
+            dismissedShellIDs: $dismissedShellIDs
+        )
+        // Each split pane is hosted on its own, so each opts out of the
+        // hidden title bar's inset: its top row is the title bar (see
+        // WorkbenchWindowChrome.swift).
+        .ignoresSafeArea(.container, edges: .top)
     }
 
     @ViewBuilder

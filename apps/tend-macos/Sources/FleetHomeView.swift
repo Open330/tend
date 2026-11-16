@@ -555,7 +555,8 @@ extension FleetHomeView: @MainActor Equatable {
 private struct FleetLaneColumn: View {
     let lane: FleetLane
     let works: [FleetWork]
-    /// The daemon's decisions, in Your turn only, above the Work cards.
+    /// The daemon's decisions, in Your turn only, among the Work cards by
+    /// how long each waits.
     var decisions: [FleetDecision] = []
     var decisionCard: ((FleetDecision) -> FleetDecisionCard)?
     /// Why the decisions may be incomplete (a source tendd could not read).
@@ -647,11 +648,6 @@ private struct FleetLaneColumn: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 4)
                     }
-                    if let decisionCard {
-                        ForEach(decisions) { decision in
-                            decisionCard(decision)
-                        }
-                    }
                     if works.isEmpty && decisions.isEmpty {
                         Text(empty)
                             .font(TendType.detail)
@@ -659,19 +655,32 @@ private struct FleetLaneColumn: View {
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 24)
                     }
-                    let groups = FleetBoard.byProject(shown)
-                    ForEach(groups) { group in
-                        if groups.count > 1 {
-                            FleetProjectHeader(project: group.project, count: group.works.count)
+                    if lane == .needsYou {
+                        // Decisions and waiting units in one list, the
+                        // longest wait first.
+                        let groups = FleetBoard.byProject(FleetBoard.yourTurn(works: shown, decisions: decisionCard == nil ? [] : decisions))
+                        ForEach(groups) { group in
+                            if groups.count > 1 {
+                                FleetProjectHeader(project: group.project, count: group.items.count)
+                            }
+                            ForEach(group.items) { item in
+                                switch item {
+                                case .decision(let decision):
+                                    decisionCard?(decision)
+                                case .work(let work):
+                                    workCard(work)
+                                }
+                            }
                         }
-                        ForEach(group.works) { work in
-                            FleetWorkCard(
-                                work: work,
-                                isSelected: work.id == selectedID,
-                                select: { select(work.id) },
-                                movedFrom: movedFrom[work.id]
-                            )
-                            .modifier(FleetCardMotion(id: work.id, space: cardSpace))
+                    } else {
+                        let groups = FleetBoard.byProject(shown)
+                        ForEach(groups) { group in
+                            if groups.count > 1 {
+                                FleetProjectHeader(project: group.project, count: group.works.count)
+                            }
+                            ForEach(group.works) { work in
+                                workCard(work)
+                            }
                         }
                     }
                     if emptyCount > 0 {
@@ -719,6 +728,16 @@ private struct FleetLaneColumn: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(TendTheme.panelFill, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+    }
+
+    private func workCard(_ work: FleetWork) -> some View {
+        FleetWorkCard(
+            work: work,
+            isSelected: work.id == selectedID,
+            select: { select(work.id) },
+            movedFrom: movedFrom[work.id]
+        )
+        .modifier(FleetCardMotion(id: work.id, space: cardSpace))
     }
 }
 
