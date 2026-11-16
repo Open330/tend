@@ -117,7 +117,9 @@ function Api([string]$path) {
 
 function Cleanup {
     Say "cleanup"
-    Get-CimInstance Win32_Process -Filter "Name='tend-app.exe'" | Where-Object { $_.ExecutablePath -eq $app } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    # Only instances this run started: a person's own app from the same
+    # build is refused at the start, never stopped.
+    if ($ownsApp) { Get-CimInstance Win32_Process -Filter "Name='tend-app.exe'" | Where-Object { $_.ExecutablePath -eq $app } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } }
     Get-CimInstance Win32_Process -Filter "Name='tendd.exe'" | Where-Object { $_.CommandLine -like "*$Root*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     foreach ($l in $label.Values) {
         # Always an explicit -L on a private label: never the person's server.
@@ -127,7 +129,11 @@ function Cleanup {
     & $app --uninstall | Out-Null
 }
 
+$ownsApp = $false
 try {
+    $running = @(Get-CimInstance Win32_Process -Filter "Name='tend-app.exe'" | Where-Object { $_.ExecutablePath -eq $app })
+    if ($running) { throw "tend-app from $app is already running (pid $($running.ProcessId -join ', ')): quit it or test another build" }
+    $ownsApp = $true
     # ---------------------------------------------------- two scratch daemons
     Get-ChildItem $Root -Exclude "e2e.log", "result.txt" -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
     $sockets = @{}
@@ -241,7 +247,9 @@ Start-Sleep 3600
 
     $ui = Join-Path $PSScriptRoot "windows-app-uia.ps1"
     $driven = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $ui -ProcessId ((Get-Process tend-app | Where-Object { $_.Path -eq $app } | Select-Object -First 1).Id) 2>&1
+    $uiaExit = $LASTEXITCODE
     $driven | ForEach-Object { Say "uia: $_" }
+    Check ($uiaExit -eq 0) "the UI Automation driver finished without an error (exit $uiaExit)"
 
     function DecisionHistory { @((Api "/api/decisions/history").hosts | ForEach-Object { [pscustomobject]@{ alias = $_.alias; items = @($_.history.items) } }) }
     $answeredLocal = WaitFor { ((DecisionHistory | Where-Object alias -eq "local").items | Where-Object { $_.kind -eq "human_answer" -and $_.answer -eq "yes" }).Count -ge 2 } 30 "local answers"
@@ -268,7 +276,10 @@ Start-Sleep 3600
             $c = $impostor.AcceptTcpClient(); $s = $c.GetStream(); $s.ReadTimeout = 2000
             $buf = [byte[]]::new(8192)
             try { $n = $s.Read($buf, 0, $buf.Length); [void]$captured.Append([System.Text.Encoding]::ASCII.GetString($buf, 0, $n)) } catch { }
-            $reply = [System.Text.Encoding]::ASCII.GetBytes("HTTP/1.1 200 OK`r`nContent-Length: 79`r`n`r`n{""version"":1,""proof"":""0000000000000000000000000000000000000000000000000000000000000000""}")
+            # Well-formed, with a full-length MAC that is wrong: the app must
+            # refuse it on the proof itself, not on a parse error.
+            $body = '{"version":1,"proof":"' + (RandomHex 32) + '"}'
+            $reply = [System.Text.Encoding]::ASCII.GetBytes("HTTP/1.1 200 OK`r`nContent-Type: application/json`r`nContent-Length: $($body.Length)`r`n`r`n$body")
             try { $s.Write($reply, 0, $reply.Length) } catch { }
             Start-Sleep -Milliseconds 300
             $c.Close()
@@ -290,3 +301,5 @@ finally {
     Say $verdict
     Set-Content (Join-Path $Root "result.txt") $verdict
 }
+# A direct run exits with its verdict too, not only the -Desktop wrapper.
+if ($failures.Count -eq 0) { exit 0 } else { exit 1 }

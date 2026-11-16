@@ -50,6 +50,10 @@ ignore = [
     # Revisit when notify-rust ships a tauri-winrt-notification that allows quick-xml >=0.41.
     "RUSTSEC-2026-0194", # quick-xml: quadratic runtime on duplicate attribute names
     "RUSTSEC-2026-0195", # quick-xml: unbounded namespace-declaration allocation (NsReader)
+    # Unmaintained, and reachable only through tend-app's Windows-only
+    # dependencies on their Linux side, which no tend build compiles:
+    "RUSTSEC-2025-0057", # fxhash: wry -> kuchikiki -> selectors (Linux)
+    "RUSTSEC-2024-0370", # proc-macro-error: tao/tray-icon -> gtk -> glib-macros (Linux)
 ]
 
 [licenses]
