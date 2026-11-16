@@ -538,6 +538,8 @@ fn the_device_fleet_leaves_out_what_the_app_does_not_show() {
                     "kind": "claude_code", "agent_session_id": "s1", "pane": "%1",
                     "tmux_socket": "/tmp/x", "pid": 42, "cwd": "/w/tend", "state": "working",
                     "last_response": "x".repeat(40_000), "workload": {"cpu": 1},
+                    "awaiting_reply": {"question": "q".repeat(50_000), "since": "t", "extra": {"a": 1}},
+                    "model": {"nested": "not a scalar"},
                 }],
                 "panes": [{"pane_id": "%2", "current_path": "/secret"}],
                 "backends": [{"kind": "tmux"}],
@@ -560,6 +562,15 @@ fn the_device_fleet_leaves_out_what_the_app_does_not_show() {
         assert!(agent.get(gone).is_none(), "{gone}");
     }
     assert!(agent["last_response"].as_str().unwrap().len() <= 16 * 1024 + 4);
+    // Nested text is bounded too, and only listed nested fields pass.
+    assert!(agent["awaiting_reply"]["question"].as_str().unwrap().len() <= 16 * 1024 + 4);
+    assert_eq!(agent["awaiting_reply"]["since"], "t");
+    assert!(agent["awaiting_reply"].get("extra").is_none());
+    assert!(
+        agent.get("model").is_none(),
+        "a structure nobody listed is dropped"
+    );
+    assert!(cut.to_string().len() < 64 * 1024);
 }
 
 #[tokio::test]

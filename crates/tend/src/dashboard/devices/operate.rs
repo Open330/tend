@@ -47,20 +47,33 @@ const AGENT_FIELDS: &[&str] = &[
 /// Longest text field passed on, in bytes; the app shows less.
 const MAX_TEXT_BYTES: usize = 16 * 1024;
 
+/// `awaiting_reply`'s fields the app reads.
+const AWAITING_FIELDS: &[&str] = &["question", "since"];
+
+/// A selected value: a string capped at [`MAX_TEXT_BYTES`]; an object only
+/// through its own field list (`awaiting_reply`); anything else as is
+/// when it is a scalar, dropped when it is a structure nobody listed.
+fn bounded(field: &str, value: &Value) -> Option<Value> {
+    match value {
+        Value::String(text) if text.len() > MAX_TEXT_BYTES => {
+            let mut end = MAX_TEXT_BYTES;
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            Some(Value::String(format!("{}…", &text[..end])))
+        }
+        Value::Object(inner) if field == "awaiting_reply" => {
+            Some(Value::Object(pick(inner, AWAITING_FIELDS)))
+        }
+        Value::Object(_) | Value::Array(_) => None,
+        other => Some(other.clone()),
+    }
+}
+
 fn pick(source: &Map<String, Value>, fields: &[&str]) -> Map<String, Value> {
     let mut out = Map::new();
     for field in fields {
-        if let Some(value) = source.get(*field) {
-            let value = match value {
-                Value::String(text) if text.len() > MAX_TEXT_BYTES => {
-                    let mut end = MAX_TEXT_BYTES;
-                    while !text.is_char_boundary(end) {
-                        end -= 1;
-                    }
-                    Value::String(format!("{}…", &text[..end]))
-                }
-                other => other.clone(),
-            };
+        if let Some(value) = source.get(*field).and_then(|value| bounded(field, value)) {
             out.insert((*field).to_owned(), value);
         }
     }

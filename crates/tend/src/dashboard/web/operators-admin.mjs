@@ -28,6 +28,44 @@ function describeRule(rule) {
   return rule;
 }
 
+/// Lookup, then approve that exact request. The code approved is the one
+/// looked up, held here: never re-read from an input that may have changed
+/// while the lookup was in flight. A newer lookup or a cancel makes an older
+/// lookup's late answer void.
+export function devicePairing(request) {
+  let pending = null;
+  let attempt = 0;
+  return {
+    /// The request behind `code` (name, platform, scope, age), or null when
+    /// a newer lookup or a cancel replaced this one.
+    async lookup(code) {
+      const mine = ++attempt;
+      pending = null;
+      const data = await request("/api/devices/lookup", {
+        method: "POST",
+        body: JSON.stringify({ user_code: code }),
+      });
+      if (mine !== attempt) return null;
+      pending = code;
+      return data.request;
+    },
+    async approve(scope) {
+      if (pending === null) throw new Error("Look the code up first.");
+      const code = pending;
+      pending = null;
+      attempt += 1;
+      return request("/api/devices/approve", {
+        method: "POST",
+        body: JSON.stringify({ user_code: code, scope }),
+      });
+    },
+    cancel() {
+      pending = null;
+      attempt += 1;
+    },
+  };
+}
+
 export function openAccessManager(request, { login = true, devices: pairing = false } = {}) {
   const dialog = document.createElement("dialog");
   dialog.className = "share-dialog";
@@ -66,7 +104,7 @@ export function openAccessManager(request, { login = true, devices: pairing = fa
   const approveForm = dialog.querySelector(".access-approve-device");
   const approveWhat = approveForm.querySelector(".access-approve-what");
   const approveOperate = approveForm.querySelector(".access-approve-operate");
-  let pendingCode = null;
+  const pairingFlow = devicePairing(request);
   deviceSection.hidden = !pairing;
   dialog.querySelector(".access-login-section").hidden = !login;
   const when = (seconds) => new Date(seconds * 1000).toLocaleString();
@@ -229,14 +267,14 @@ export function openAccessManager(request, { login = true, devices: pairing = fa
     event.preventDefault();
     const input = pairForm.elements.code;
     const button = pairForm.querySelector("button");
+    // The code approved later is exactly the one looked up now, never what
+    // the field holds when the answer arrives.
+    const code = input.value;
     button.disabled = true;
+    input.disabled = true;
     try {
-      const data = await request("/api/devices/lookup", {
-        method: "POST",
-        body: JSON.stringify({ user_code: input.value }),
-      });
-      const asked = data.request;
-      pendingCode = input.value;
+      const asked = await pairingFlow.lookup(code);
+      if (!asked) return;
       const minutes = Math.max(0, Math.round((asked.age_secs || 0) / 60));
       approveWhat.textContent = `"${asked.name}" (${asked.platform}) asked ${minutes ? `${minutes} min ago` : "just now"} to ${
         asked.scope === "operate" ? "decide, see hosts and start work" : "decide only"
@@ -250,11 +288,12 @@ export function openAccessManager(request, { login = true, devices: pairing = fa
       message.textContent = error.message;
     } finally {
       button.disabled = false;
+      input.disabled = false;
     }
   });
 
   function closeApproval() {
-    pendingCode = null;
+    pairingFlow.cancel();
     approveForm.hidden = true;
     pairForm.hidden = false;
     pairForm.elements.code.value = "";
@@ -264,15 +303,11 @@ export function openAccessManager(request, { login = true, devices: pairing = fa
 
   approveForm.addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (!pendingCode) return;
     const button = approveForm.querySelector("button[type=submit]");
     button.disabled = true;
     try {
       const scope = !approveOperate.hidden && approveForm.elements.operate.checked ? "operate" : "decide";
-      const data = await request("/api/devices/approve", {
-        method: "POST",
-        body: JSON.stringify({ user_code: pendingCode, scope }),
-      });
+      const data = await pairingFlow.approve(scope);
       closeApproval();
       await refresh();
       message.textContent = `Paired "${data.approved.name}" to ${
