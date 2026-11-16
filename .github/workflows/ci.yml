@@ -166,10 +166,76 @@ jobs:
       - run: cargo check --workspace
 
   deny:
-    name: cargo-deny
+    name: cargo-deny (${{ matrix.target }})
     runs-on: ubuntu-latest
+    # One run per supported target. A single run over the union of targets
+    # follows edges no build compiles (tend-app's Windows-only wry and tray
+    # crates into their Linux-only dependencies) and flags crates that ship
+    # nowhere, while a target-narrowed audit would drop the others' real ones.
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
+          - x86_64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v5
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
+          arguments: --all-features --locked --target ${{ matrix.target }}
+
+  windows:
+    name: windows
+    runs-on: windows-latest
+    env:
+      # No debug info and no incremental state: the test binaries are large
+      # on Windows, and the cache stays small.
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # The live rmux tests (agent_move, the rmux backend) drive a private
+      # rmux server; without rmux on PATH they skip themselves. The release
+      # zip is the install docs/WINDOWS.md names besides winget, which hosted
+      # runners do not reliably have; its checksum is the release's
+      # SHA256SUMS entry.
+      - name: Install rmux 0.10.0
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP "rmux.zip"
+          Invoke-WebRequest -UseBasicParsing "https://github.com/Helvesec/rmux/releases/download/v0.10.0/rmux-0.10.0-windows-x86_64.zip" -OutFile $zip
+          $sum = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
+          if ($sum -ne "e315e2d51d927ba9621732812c0f932c862d05f4b677dbf3cab76f0d27372a70") { throw "rmux zip checksum $sum" }
+          $root = Join-Path $env:RUNNER_TEMP "rmux"
+          Expand-Archive $zip $root
+          # The archive's top level holds the client and its daemon (a second
+          # rmux.exe sits under libexec): name the directory, do not search.
+          $dir = Join-Path $root "rmux-0.10.0-windows-x86_64"
+          foreach ($exe in "rmux.exe", "rmux-daemon.exe") { if (-not (Test-Path (Join-Path $dir $exe))) { throw "no $exe in $dir" } }
+          $dir >> $env:GITHUB_PATH
+      - name: rmux is the pinned one
+        shell: pwsh
+        run: |
+          $source = (Get-Command rmux).Source
+          if (-not $source.StartsWith((Join-Path $env:RUNNER_TEMP "rmux"))) { throw "rmux resolves to $source" }
+          $version = (rmux -V)
+          if ($version -ne "rmux 0.10.0") { throw "rmux -V: $version" }
+          "$source $version"
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # The integration tests run the tend and tendd binaries.
+      - run: cargo build --locked --bins -p tend-cli -p tendd
+      # `tend`'s own unit tests still assume Unix paths in fixtures
+      # (docs/WINDOWS.md); these four packages pass on Windows.
+      - run: cargo test --locked -p tend-cli -p tendd -p tend-work -p tend-app

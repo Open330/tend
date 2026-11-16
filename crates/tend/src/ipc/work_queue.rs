@@ -444,7 +444,7 @@ async fn resolve_target(
             }
             let no_ticket = external.as_deref().is_none_or(|e| e.trim().is_empty());
             Ok(QueueTarget::NewWork {
-                request: WorkUpRequest {
+                request: Box::new(WorkUpRequest {
                     work,
                     external,
                     pipeline,
@@ -459,7 +459,7 @@ async fn resolve_target(
                     queue_lease: None,
                     route_key,
                     host: None,
-                },
+                }),
             })
         }
         QueueTargetSpec::Agent {
@@ -834,7 +834,7 @@ impl Executor {
             .await?;
         match (&claim.item.target, target) {
             (QueueTarget::NewWork { request }, _) => {
-                self.launch(&claim.item, &claim.attempt, request.clone())
+                self.launch(&claim.item, &claim.attempt, (**request).clone())
                     .await;
             }
             (_, Some(target)) => self.deliver(&claim.item, &claim.attempt, target).await,
