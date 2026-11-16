@@ -425,9 +425,20 @@ pub(super) fn operator_identity(
 /// how it ended. Appended to `path` (owner-only, rotated once at 4 MiB)
 /// and always logged.
 pub(in crate::dashboard) async fn audit(path: Option<&PathBuf>, entry: serde_json::Value) {
+    if !try_audit(path, entry).await {
+        tracing::warn!(target: "tend::dashboard::decisions", "web decision audit line not written");
+    }
+}
+
+/// [`audit`], saying whether the line was written (or, without an audit
+/// file, logged). For actions that must not happen unrecorded.
+pub(in crate::dashboard) async fn try_audit(
+    path: Option<&PathBuf>,
+    entry: serde_json::Value,
+) -> bool {
     tracing::info!(target: "tend::dashboard::decisions", entry = %entry, "web decision");
     let Some(path) = path else {
-        return;
+        return true;
     };
     let mut line = entry.to_string();
     line.push('\n');
@@ -449,12 +460,12 @@ pub(in crate::dashboard) async fn audit(path: Option<&PathBuf>, entry: serde_jso
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
         }
-        options.open(&path)?.write_all(line.as_bytes())
+        let mut file = options.open(&path)?;
+        file.write_all(line.as_bytes())?;
+        file.sync_data()
     })
     .await;
-    if !matches!(written, Ok(Ok(()))) {
-        tracing::warn!(target: "tend::dashboard::decisions", "web decision audit line not written");
-    }
+    matches!(written, Ok(Ok(())))
 }
 
 #[derive(Debug, Deserialize)]

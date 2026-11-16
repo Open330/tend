@@ -61,10 +61,23 @@ impl Storage {
                  CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, \
                  token_hash BLOB NOT NULL UNIQUE, name TEXT NOT NULL, platform TEXT NOT NULL, \
                  approved_by TEXT NOT NULL, created_at INTEGER NOT NULL, \
-                 last_seen_at INTEGER NOT NULL, scope TEXT NOT NULL DEFAULT 'decide');",
+                 last_seen_at INTEGER NOT NULL, scope TEXT NOT NULL DEFAULT 'decide'); \
+                 CREATE TABLE IF NOT EXISTS device_starts (device_id TEXT NOT NULL, \
+                 key TEXT NOT NULL, fingerprint BLOB NOT NULL, work TEXT NOT NULL, \
+                 state TEXT NOT NULL, detail TEXT, created_at INTEGER NOT NULL, \
+                 updated_at INTEGER NOT NULL, PRIMARY KEY (device_id, key));",
             )
             .map_err(io::Error::other)?;
         migrate(&connection)?;
+        // A start still reserved was cut off by a restart: it may have run.
+        // It becomes unknown and is never dispatched again.
+        connection
+            .execute(
+                "UPDATE device_starts SET state = 'unknown', detail = 'tendd restarted during the start' \
+                 WHERE state = 'reserved'",
+                [],
+            )
+            .map_err(io::Error::other)?;
         let devices = {
             let mut statement = connection
                 .prepare(
@@ -175,15 +188,100 @@ impl Storage {
     }
 
     pub(super) fn clear(&self) -> io::Result<()> {
-        self.connection()?
+        let connection = self.connection()?;
+        connection
+            .execute("DELETE FROM device_starts", [])
+            .map_err(io::Error::other)?;
+        connection
             .execute("DELETE FROM devices", [])
             .map(drop)
             .map_err(io::Error::other)
     }
 
     pub(super) fn remove(&self, id: &str) -> io::Result<()> {
-        self.connection()?
+        let connection = self.connection()?;
+        connection
+            .execute("DELETE FROM device_starts WHERE device_id = ?1", [id])
+            .map_err(io::Error::other)?;
+        connection
             .execute("DELETE FROM devices WHERE id = ?1", [id])
+            .map(drop)
+            .map_err(io::Error::other)
+    }
+
+    /// Every start kept, for loading at open.
+    pub(super) fn starts(&self) -> io::Result<Vec<super::Start>> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT device_id, key, fingerprint, work, state, detail, created_at, updated_at \
+                 FROM device_starts",
+            )
+            .map_err(io::Error::other)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok(super::Start {
+                    device: row.get(0)?,
+                    key: row.get(1)?,
+                    fingerprint: row.get(2)?,
+                    work: row.get(3)?,
+                    state: row.get(4)?,
+                    detail: row.get(5)?,
+                    created_at: row.get(6)?,
+                    updated_at: row.get(7)?,
+                })
+            })
+            .map_err(io::Error::other)?;
+        rows.collect::<Result<_, _>>().map_err(io::Error::other)
+    }
+
+    /// Reserve a start; fails if (device, key) is already there.
+    pub(super) fn reserve(&self, start: &super::Start) -> io::Result<()> {
+        self.connection()?
+            .execute(
+                "INSERT INTO device_starts VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    start.device,
+                    start.key,
+                    start.fingerprint,
+                    start.work,
+                    start.state,
+                    start.detail,
+                    start.created_at,
+                    start.updated_at
+                ],
+            )
+            .map(drop)
+            .map_err(io::Error::other)
+    }
+
+    pub(super) fn finish_start(
+        &self,
+        device: &str,
+        key: &str,
+        state: &str,
+        detail: Option<&str>,
+        at: i64,
+    ) -> io::Result<()> {
+        self.connection()?
+            .execute(
+                "UPDATE device_starts SET state = ?3, detail = ?4, updated_at = ?5 \
+                 WHERE device_id = ?1 AND key = ?2",
+                params![device, key, state, detail, at],
+            )
+            .map(drop)
+            .map_err(io::Error::other)
+    }
+
+    /// Drop starts that settled before `settled`. A reserved or unknown
+    /// start is never dropped (only with its device).
+    pub(super) fn prune_starts(&self, settled: i64) -> io::Result<()> {
+        self.connection()?
+            .execute(
+                "DELETE FROM device_starts WHERE state IN ('started', 'failed', 'refused') \
+                 AND created_at < ?1",
+                [settled],
+            )
             .map(drop)
             .map_err(io::Error::other)
     }

@@ -14,6 +14,8 @@
 //! | `POST /api/device/forget` | that device | unpair itself (sign out) |
 //! | `GET /api/device/fleet` | that device, `operate` | the Fleet snapshot, cut down |
 //! | `POST /api/device/capture` | that device, `operate` | one agent's recent output |
+//! | `GET /api/device/work-options` | that device, `operate` | a host's pipelines and projects |
+//! | `POST /api/device/work` | that device, `operate` | start new work (create-only) |
 //!
 //! The decision routes accept a device token through the dashboard's
 //! decision gate (`server.rs`), not here. Requests, approvals, issued
@@ -121,6 +123,14 @@ pub(in crate::dashboard) fn operate_routes(state: AppState) -> Router<AppState> 
         .route(
             "/api/device/capture",
             post(super::operate::capture).layer(DefaultBodyLimit::max(1024)),
+        )
+        .route(
+            "/api/device/work-options",
+            get(super::operate::work_options),
+        )
+        .route(
+            "/api/device/work",
+            post(super::operate::work).layer(DefaultBodyLimit::max(16 * 1024)),
         )
         .layer(middleware::from_fn_with_state(state.clone(), operate_only))
         .layer(middleware::from_fn_with_state(state, device_only))
@@ -406,7 +416,7 @@ async fn whoami(
 ) -> Response {
     // What an `operate` device can use here beyond the hosts.
     let features: Vec<&str> = if device.scope == Scope::Operate && state.fleet.is_some() {
-        vec!["capture"]
+        vec!["capture", "work"]
     } else {
         Vec::new()
     };

@@ -178,6 +178,8 @@ pub struct AppState {
     pub(in crate::dashboard) devices: Arc<super::devices::Devices>,
     /// The daemon stores Home's board reads besides agents and decisions.
     pub(in crate::dashboard) home_sources: crate::home_board::HomeSources,
+    /// Tests stand in for `work up` here; `None` runs the real one.
+    pub(in crate::dashboard) device_work_up: Option<super::devices::WorkUpRunner>,
 }
 
 #[derive(Clone, Default)]
@@ -231,6 +233,7 @@ impl AppState {
             proof_node: None,
             devices: super::devices::Devices::memory(),
             home_sources: crate::home_board::HomeSources::default(),
+            device_work_up: None,
             reviews: crate::review::ReviewStore::unavailable("review items are served by tendd"),
             work_store: Arc::new(tokio::sync::Mutex::new(WorkStore::memory())),
             agents_by_state_cache: Arc::new(tokio::sync::Mutex::new(AgentsByStateCache::default())),
@@ -261,6 +264,13 @@ impl AppState {
     #[must_use]
     pub fn with_decision_audit(mut self, path: Option<PathBuf>) -> Self {
         self.decision_audit = path;
+        self
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub(in crate::dashboard) fn with_work_up(mut self, run: super::devices::WorkUpRunner) -> Self {
+        self.device_work_up = Some(run);
         self
     }
 

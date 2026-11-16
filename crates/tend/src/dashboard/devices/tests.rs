@@ -929,7 +929,7 @@ async fn an_operate_device_reads_one_agents_output_and_nothing_else() {
     );
     let (token, device) = pair_with(&app, "phone", Some("operate"), Some("operate")).await;
     let (_, me) = call(&app, "GET", "/api/device", Some(&token), None).await;
-    assert_eq!(me["features"], json!(["capture"]));
+    assert_eq!(me["features"], json!(["capture", "work"]));
     let body = |session: &str| Some(json!({"host": "mini", "session_id": session}));
 
     let (status, out) = call(
@@ -1061,4 +1061,504 @@ fn an_agents_pane_is_told_apart_by_its_endpoint_or_not_at_all() {
     // A pane that names no socket does not match an agent that names one.
     let unnamed = [pane("%3", None)];
     assert!(super::operate::agent_pane(&unnamed, "%3", Some("default")).is_none());
+}
+
+// ---------------------------------------------------------------------------
+// Starting new work from a device.
+
+type Launched = Arc<std::sync::Mutex<Vec<crate::work_control::WorkUpRequest>>>;
+
+/// A Fleet with one control host, `mini`, whose agent works in `/w/tend`;
+/// its relay lists the pipeline `solo` (and `routes`), and a stand-in
+/// `work up` answers `outcome` and records what it was asked to start.
+async fn work_app(
+    allow: bool,
+    routes: Value,
+    outcome: fn() -> Result<Value, crate::work_control::WorkUpError>,
+    audit: Option<std::path::PathBuf>,
+    devices: Option<Arc<Devices>>,
+) -> (Router, Launched) {
+    use crate::fleet::{FleetCommandResult, FleetOperation};
+    let store = Arc::new(crate::fleet::FleetStore::new());
+    let now = "2026-11-16T00:00:00Z";
+    let host: crate::fleet::FleetHostSnapshot = serde_json::from_value(json!({
+        "alias": "mini", "local": false, "ssh_target": "jiun@mini", "labels": {}, "annotations": {},
+        "mode": "control", "state": "online",
+        "remote": {
+            "revision": 1, "observed_at": now, "sessions": [], "backends": [], "panes": [],
+            "agents": [{
+                "kind": "claude_code", "agent_session_id": "s1", "pane": "%3", "cwd": "/w/tend",
+                "state": "idle", "started_at": now, "last_activity_at": now, "state_entered_at": now
+            }]
+        }
+    }))
+    .unwrap();
+    store.upsert_host(host).await;
+    let (runtime, mut commands) = crate::fleet::FleetRuntime::new(store);
+    tokio::spawn(async move {
+        while let Some(command) = commands.recv().await {
+            let result = match command.operation {
+                FleetOperation::WorkCommand { args, stdin } => {
+                    assert_eq!(args, ["work", "options", "--json"]);
+                    assert!(stdin.is_none());
+                    let mut result = FleetCommandResult::accepted("options");
+                    result.command_exit_code = Some(0);
+                    result.command_stdout = Some(
+                        json!({
+                            "config_path": "/home/x/.config/tend/config.toml",
+                            "pipelines": [{"name": "solo", "description": "one implementer",
+                                           "agents": [{"prompt": "secret prompt"}]}],
+                            "routes": routes,
+                        })
+                        .to_string(),
+                    );
+                    Ok(result)
+                }
+                other => Err(format!("a device route sent {other:?}")),
+            };
+            let _ = command.reply.send(result);
+        }
+    });
+    let launched: Launched = Arc::default();
+    let seen = launched.clone();
+    let runner: super::WorkUpRunner = Arc::new(move |request| {
+        seen.lock().unwrap().push(request);
+        Box::pin(async move { outcome() })
+    });
+    let mut cfg = DashboardConfig::loopback_default();
+    cfg.token = Some(TOKEN.to_owned());
+    cfg.allow_work_start = allow;
+    let mut state = AppState::new(
+        Store::shared(),
+        Arc::new(cfg),
+        Arc::new(PaneCache::new(Duration::from_secs(60))),
+        crate::session::PtySessionBackend::shared(),
+    )
+    .with_fleet(Some(runtime))
+    .with_work_up(runner)
+    .with_decision_audit(audit);
+    if let Some(devices) = devices {
+        state = state.with_devices(devices);
+    }
+    (router(state), launched)
+}
+
+#[allow(clippy::unnecessary_wraps)] // the runner's shape
+fn started() -> Result<Value, crate::work_control::WorkUpError> {
+    Ok(json!({"work": "x"}))
+}
+
+fn timed_out() -> Result<Value, crate::work_control::WorkUpError> {
+    Err(crate::work_control::WorkUpError::Timeout)
+}
+
+fn start_body(key: &str) -> Value {
+    json!({"idempotency_key": key, "host": "mini", "project": "/w/tend",
+           "pipeline": "solo", "request": "fix the login timeout"})
+}
+
+const KEY: &str = "6f2b1b8e-3a5f-4f62-9a55-3c1f0c7b9d11";
+const KEY2: &str = "0b7f6a1c-2d3e-4f5a-8b9c-0d1e2f3a4b5c";
+
+#[tokio::test]
+async fn work_options_list_only_what_a_phone_chooses_from() {
+    let (app, _) = work_app(true, json!([]), started, None, None).await;
+    let (token, _) = pair_with(&app, "phone", Some("operate"), Some("operate")).await;
+    let (status, options) = call(
+        &app,
+        "GET",
+        "/api/device/work-options?host=mini",
+        Some(&token),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{options}");
+    assert_eq!(options["allow_work_start"], true);
+    assert_eq!(options["projects"], json!(["/w/tend"]));
+    assert_eq!(options["pipelines"][0]["name"], "solo");
+    assert_eq!(options["pipelines"][0]["agents"], 1);
+    let text = options.to_string();
+    assert!(
+        !text.contains("config_path") && !text.contains("secret prompt"),
+        "{text}"
+    );
+    let (_, me) = call(&app, "GET", "/api/device", Some(&token), None).await;
+    assert_eq!(me["features"], json!(["capture", "work"]));
+}
+
+#[tokio::test]
+async fn a_device_starts_only_new_work_built_by_the_server() {
+    let dir = tempfile::tempdir().unwrap();
+    let audit = dir.path().join("decisions.jsonl");
+    let (app, launched) = work_app(true, json!([]), started, Some(audit.clone()), None).await;
+    let (token, device) = pair_with(&app, "phone", Some("operate"), Some("operate")).await;
+    let (status, first) = call(
+        &app,
+        "POST",
+        "/api/device/work",
+        Some(&token),
+        Some(start_body(KEY)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(first["state"], "started");
+    let work = first["work"].as_str().unwrap().to_owned();
+    assert!(work.starts_with("phone-"), "{work}");
+    {
+        let sent = launched.lock().unwrap();
+        assert_eq!(sent.len(), 1);
+        let request = &sent[0];
+        assert_eq!(request.work, work, "the server mints the id");
+        assert!(request.new_only && request.no_ticket && !request.dry_run);
+        assert_eq!(
+            request.cwd.as_deref(),
+            Some(std::path::Path::new("/w/tend"))
+        );
+        assert_eq!(request.pipeline.as_deref(), Some("solo"));
+        assert_eq!(request.host.as_deref(), Some("mini"));
+        assert_eq!(request.body.as_deref(), Some("fix the login timeout"));
+        assert!(
+            request.workspace.is_none() && request.skill.is_none() && request.context.is_none()
+        );
+        assert!(
+            request.external.is_none()
+                && request.queue_lease.is_none()
+                && request.route_key.is_none()
+        );
+    }
+    // A retry with the same key gets the same start, and nothing runs again.
+    let (status, again) = call(
+        &app,
+        "POST",
+        "/api/device/work",
+        Some(&token),
+        Some(start_body(KEY)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(again["work"], work.as_str());
+    assert_eq!(launched.lock().unwrap().len(), 1);
+    // The same key for another request is refused.
+    let mut other = start_body(KEY);
+    other["request"] = json!("something else");
+    let (status, _) = call(&app, "POST", "/api/device/work", Some(&token), Some(other)).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    // Intent before, result after, never the request text.
+    let lines = std::fs::read_to_string(&audit).unwrap();
+    let actions: Vec<String> = lines
+        .lines()
+        .map(|l| serde_json::from_str::<Value>(l).unwrap())
+        .filter(|l| l["account"]["device"] == device.as_str())
+        .map(|l| l["action"].as_str().unwrap_or("").to_owned())
+        .collect();
+    assert_eq!(actions, ["device_work_requested", "device_work_finished"]);
+    assert!(!lines.contains("fix the login timeout"));
+}
+
+#[tokio::test]
+async fn every_way_a_start_is_refused_runs_nothing() {
+    let routes =
+        json!([{"match": "^phone-", "cwd": "/elsewhere", "worktree": false, "prepare": false}]);
+    for (allow, routes, body, expected) in [
+        (
+            false,
+            json!([]),
+            start_body(KEY),
+            StatusCode::NOT_IMPLEMENTED,
+        ),
+        (
+            true,
+            json!([]),
+            json!({"idempotency_key": KEY, "host": "mini", "project": "/w/other", "pipeline": "solo", "request": "x"}),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            true,
+            json!([]),
+            json!({"idempotency_key": KEY, "host": "mini", "project": "/w/tend/../etc", "pipeline": "solo", "request": "x"}),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            true,
+            json!([]),
+            json!({"idempotency_key": KEY, "host": "mini", "project": "/w/tend", "pipeline": "triad", "request": "x"}),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            true,
+            json!([]),
+            json!({"idempotency_key": KEY, "host": "mini", "project": "/w/tend", "pipeline": "solo", "request": "x", "workspace": "w"}),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            true,
+            json!([]),
+            json!({"idempotency_key": "not-a-uuid", "host": "mini", "project": "/w/tend", "pipeline": "solo", "request": "x"}),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            true,
+            json!([]),
+            json!({"idempotency_key": KEY, "host": "mini", "project": "/w/tend", "pipeline": "solo", "request": "  "}),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            true,
+            json!([]),
+            json!({"idempotency_key": KEY, "host": "nowhere", "project": "/w/tend", "pipeline": "solo", "request": "x"}),
+            StatusCode::NOT_FOUND,
+        ),
+        (true, routes, start_body(KEY), StatusCode::CONFLICT),
+    ] {
+        let (app, launched) = work_app(allow, routes, started, None, None).await;
+        let (token, _) = pair_with(&app, "phone", Some("operate"), Some("operate")).await;
+        let (status, answer) = call(
+            &app,
+            "POST",
+            "/api/device/work",
+            Some(&token),
+            Some(body.clone()),
+        )
+        .await;
+        assert_eq!(status, expected, "{body} → {answer}");
+        assert!(launched.lock().unwrap().is_empty(), "{body} ran");
+    }
+    // A decide device, and an operate device limited to deciding, may not.
+    let (app, launched) = work_app(true, json!([]), started, None, None).await;
+    let (decide, _) = pair_with(&app, "phone", None, None).await;
+    let (status, _) = call(
+        &app,
+        "POST",
+        "/api/device/work",
+        Some(&decide),
+        Some(start_body(KEY)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (token, id) = pair_with(&app, "phone 2", Some("operate"), Some("operate")).await;
+    call(
+        &app,
+        "POST",
+        &format!("/api/devices/{id}/limit"),
+        Some(TOKEN),
+        None,
+    )
+    .await;
+    let (status, _) = call(
+        &app,
+        "POST",
+        "/api/device/work",
+        Some(&token),
+        Some(start_body(KEY)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(launched.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn an_unwritable_audit_starts_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    // A directory where the audit file should be: the line cannot be written.
+    let audit = dir.path().join("decisions.jsonl");
+    std::fs::create_dir(&audit).unwrap();
+    let (app, launched) = work_app(true, json!([]), started, Some(audit), None).await;
+    let (token, _) = pair_with(&app, "phone", Some("operate"), Some("operate")).await;
+    let (status, _) = call(
+        &app,
+        "POST",
+        "/api/device/work",
+        Some(&token),
+        Some(start_body(KEY)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert!(launched.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn an_uncertain_start_is_never_dispatched_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("devices.sqlite3");
+    let devices = Devices::open(Some(path.clone())).await.unwrap();
+    let (app, launched) = work_app(true, json!([]), timed_out, None, Some(devices)).await;
+    let (token, device) = pair_with(&app, "phone", Some("operate"), Some("operate")).await;
+    let (_, first) = call(
+        &app,
+        "POST",
+        "/api/device/work",
+        Some(&token),
+        Some(start_body(KEY)),
+    )
+    .await;
+    assert_eq!(first["state"], "unknown", "a timeout may have started it");
+    let (_, again) = call(
+        &app,
+        "POST",
+        "/api/device/work",
+        Some(&token),
+        Some(start_body(KEY)),
+    )
+    .await;
+    assert_eq!(again["state"], "unknown");
+    assert_eq!(launched.lock().unwrap().len(), 1, "never dispatched twice");
+    drop(app);
+
+    // A start cut off while reserved (tendd stopped mid-dispatch) comes
+    // back unknown after a restart, and is not dispatched either.
+    let devices = Devices::open(Some(path.clone())).await.unwrap();
+    let print = vec![1u8; 32];
+    assert!(matches!(
+        devices
+            .reserve_start(&device, KEY2, &print, "phone-1116-aaaaaaaaaaaa")
+            .unwrap(),
+        super::Reservation::New(_)
+    ));
+    // Busy: one start per device in flight.
+    assert!(matches!(
+        devices
+            .reserve_start(&device, "another", &print, "phone-1116-bbbbbbbbbbbb")
+            .unwrap(),
+        super::Reservation::Busy
+    ));
+    drop(devices);
+    let reopened = Devices::open(Some(path)).await.unwrap();
+    match reopened
+        .reserve_start(&device, KEY2, &print, "phone-1116-cccccccccccc")
+        .unwrap()
+    {
+        super::Reservation::Replay(start) => {
+            assert_eq!(start.state, "unknown");
+            assert_eq!(start.work, "phone-1116-aaaaaaaaaaaa");
+        }
+        other => panic!("expected the earlier start, got {other:?}"),
+    }
+}
+
+fn failed_after_running() -> Result<Value, crate::work_control::WorkUpError> {
+    Err(crate::work_control::WorkUpError::Failed(
+        "second agent did not start".into(),
+    ))
+}
+
+#[tokio::test]
+async fn the_route_check_sees_the_id_that_is_launched() {
+    // Matches about half of all minted ids: a check of one id and a launch
+    // of another would let some matching launches through.
+    let routes = json!([{"match": "[0-7]$", "cwd": "/elsewhere"}]);
+    let (app, launched) = work_app(true, routes, started, None, None).await;
+    let (token, _) = pair_with(&app, "phone", Some("operate"), Some("operate")).await;
+    let pattern = regex::Regex::new("[0-7]$").unwrap();
+    let mut refused = 0;
+    for _ in 0..24 {
+        let key = uuid::Uuid::new_v4().to_string();
+        let (status, _) = call(
+            &app,
+            "POST",
+            "/api/device/work",
+            Some(&token),
+            Some(start_body(&key)),
+        )
+        .await;
+        if status == StatusCode::CONFLICT {
+            refused += 1;
+        }
+    }
+    let sent = launched.lock().unwrap();
+    assert!(
+        refused > 0 && !sent.is_empty(),
+        "both outcomes should occur in 24 starts"
+    );
+    for request in sent.iter() {
+        assert!(
+            !pattern.is_match(&request.work),
+            "{} launched past a route that matches it",
+            request.work
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_unknown_start_survives_any_age_in_the_registry() {
+    let devices = Devices::memory();
+    let (app, launched) = work_app(true, json!([]), timed_out, None, Some(devices.clone())).await;
+    let (token, _) = pair_with(&app, "phone", Some("operate"), Some("operate")).await;
+    let (_, first) = call(
+        &app,
+        "POST",
+        "/api/device/work",
+        Some(&token),
+        Some(start_body(KEY)),
+    )
+    .await;
+    assert_eq!(first["state"], "unknown");
+    devices.age_starts(400 * 24 * 3600);
+    let (_, again) = call(
+        &app,
+        "POST",
+        "/api/device/work",
+        Some(&token),
+        Some(start_body(KEY)),
+    )
+    .await;
+    assert_eq!(again["state"], "unknown");
+    assert_eq!(again["work"], first["work"]);
+    assert_eq!(
+        launched.lock().unwrap().len(),
+        1,
+        "an unknown start ran again"
+    );
+}
+
+#[tokio::test]
+async fn a_failure_after_launching_is_unknown_not_failed() {
+    let (app, _) = work_app(true, json!([]), failed_after_running, None, None).await;
+    let (token, _) = pair_with(&app, "phone", Some("operate"), Some("operate")).await;
+    let (_, answer) = call(
+        &app,
+        "POST",
+        "/api/device/work",
+        Some(&token),
+        Some(start_body(KEY)),
+    )
+    .await;
+    assert_eq!(answer["state"], "unknown", "{answer}");
+}
+
+#[tokio::test]
+async fn a_retry_gets_its_outcome_even_after_starting_is_turned_off() {
+    let devices = Devices::memory();
+    let (on, launched) = work_app(true, json!([]), started, None, Some(devices.clone())).await;
+    let (token, _) = pair_with(&on, "phone", Some("operate"), Some("operate")).await;
+    let (_, first) = call(
+        &on,
+        "POST",
+        "/api/device/work",
+        Some(&token),
+        Some(start_body(KEY)),
+    )
+    .await;
+    assert_eq!(first["state"], "started");
+    let (off, _) = work_app(false, json!([]), started, None, Some(devices)).await;
+    let (status, again) = call(
+        &off,
+        "POST",
+        "/api/device/work",
+        Some(&token),
+        Some(start_body(KEY)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(again["work"], first["work"]);
+    // A new key, though, is refused with starting off.
+    let (status, _) = call(
+        &off,
+        "POST",
+        "/api/device/work",
+        Some(&token),
+        Some(start_body(KEY2)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
+    assert_eq!(launched.lock().unwrap().len(), 1);
 }
