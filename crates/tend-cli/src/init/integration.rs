@@ -1254,7 +1254,7 @@ fn agent_host(args: &str) -> Option<Host> {
 /// The config a process with environment `environ` reads: its provider
 /// variable when absolute, else its own `HOME`'s default. `None` when that
 /// cannot be told (a relative home, no `HOME`).
-#[cfg(any(unix, test))]
+#[cfg(unix)]
 fn process_config(host: Host, environ: &[(String, String)]) -> Option<PathBuf> {
     let get = |key: &str| {
         environ
@@ -1607,12 +1607,19 @@ mod tests {
                 (Host::Codex, dir.path().join("codex/config.toml")),
             ],
         );
-        assert_eq!(homes.len(), 2, "{homes:?}");
+        // Without the Unix symlink the profile's config is a file of its own.
+        let codex = if cfg!(unix) { 1 } else { 2 };
+        assert_eq!(homes.len(), codex + 1, "{homes:?}");
         assert_eq!(homes[0].config, shared.join(".claude.json"));
         assert_eq!(homes[0].source, HomeSource::Account);
         assert_eq!(homes[0].agents, if cfg!(unix) { 2 } else { 1 });
-        assert_eq!(homes[1].host, Host::Codex);
-        assert_eq!(homes[1].agents, 1);
+        if !cfg!(unix) {
+            assert_eq!(homes[1].config, linked.join(".claude.json"));
+            assert_eq!(homes[1].source, HomeSource::Live);
+            assert_eq!(homes[1].agents, 1);
+        }
+        assert_eq!(homes[codex].host, Host::Codex);
+        assert_eq!(homes[codex].agents, 1);
     }
 
     #[test]
@@ -1686,12 +1693,24 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)] // one table of shell forms, built per platform
     fn account_homes_are_read_literally_with_launch_precedence() {
+        // An absolute path on this platform: `/p` has no drive on Windows.
+        let abs = |path: &str| {
+            if cfg!(windows) {
+                format!("C:{path}")
+            } else {
+                path.to_owned()
+            }
+        };
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("acct.env");
         fs::write(
             &file,
-            "export CLAUDE_CONFIG_DIR=\"/from/file\"\nCLAUDE_CODE_OAUTH_TOKEN=x\n",
+            format!(
+                "export CLAUDE_CONFIG_DIR=\"{}\"\nCLAUDE_CODE_OAUTH_TOKEN=x\n",
+                abs("/from/file")
+            ),
         )
         .unwrap();
         let profile =
@@ -1706,12 +1725,12 @@ mod tests {
         let var = "CLAUDE_CONFIG_DIR";
         // An explicit entry wins over the sourced file, as at launch.
         assert_eq!(
-            account_home(&profile(&[(var, "/explicit")], Some(&file)), var),
-            Ok(Some("/explicit".into()))
+            account_home(&profile(&[(var, &abs("/explicit"))], Some(&file)), var),
+            Ok(Some(abs("/explicit").into()))
         );
         assert_eq!(
             account_home(&profile(&[], Some(&file)), var),
-            Ok(Some("/from/file".into()))
+            Ok(Some(abs("/from/file").into()))
         );
         // A token-only account inherits the launch environment: no home.
         assert_eq!(
@@ -1738,35 +1757,55 @@ mod tests {
             fs::write(&path, text).unwrap();
             account_home(&profile(&[], Some(&path)), var)
         };
+        let p = |rest: &str| abs(&format!("/p/{rest}"));
         // A trailing comment is not part of the value.
         assert_eq!(
-            from("CLAUDE_CONFIG_DIR=/p/a # account home\n"),
-            Ok(Some("/p/a".into()))
+            from(&format!("CLAUDE_CONFIG_DIR={} # account home\n", p("a"))),
+            Ok(Some(p("a").into()))
         );
         assert_eq!(
-            from("CLAUDE_CONFIG_DIR='/p/a b' # home\n"),
-            Ok(Some("/p/a b".into()))
+            from(&format!("CLAUDE_CONFIG_DIR='{}' # home\n", p("a b"))),
+            Ok(Some(p("a b").into()))
         );
         // Shell forms this reader does not follow are not guessed.
-        assert_eq!(from("CLAUDE_CONFIG_DIR='/p/a'#x\n"), Err(()));
+        assert_eq!(
+            from(&format!("CLAUDE_CONFIG_DIR='{}'#x\n", p("a"))),
+            Err(())
+        );
         assert_eq!(from("CLAUDE_CONFIG_DIR=\"$HOME/p\"\n"), Err(()));
-        assert_eq!(from("CLAUDE_CONFIG_DIR=/p/$(whoami)\n"), Err(()));
-        assert_eq!(from("[ -n x ] && CLAUDE_CONFIG_DIR=/p/c\n"), Err(()));
+        assert_eq!(
+            from(&format!("CLAUDE_CONFIG_DIR={}\n", p("$(whoami)"))),
+            Err(())
+        );
+        assert_eq!(
+            from(&format!("[ -n x ] && CLAUDE_CONFIG_DIR={}\n", p("c"))),
+            Err(())
+        );
         // The last assignment wins, and an empty one is not undone by an
         // earlier value.
         assert_eq!(
-            from("CLAUDE_CONFIG_DIR=/p/1\nCLAUDE_CONFIG_DIR=/p/2\n"),
-            Ok(Some("/p/2".into()))
+            from(&format!(
+                "CLAUDE_CONFIG_DIR={}\nCLAUDE_CONFIG_DIR={}\n",
+                p("1"),
+                p("2")
+            )),
+            Ok(Some(p("2").into()))
         );
         assert_eq!(
-            from("CLAUDE_CONFIG_DIR=/p/1\nCLAUDE_CONFIG_DIR=\n"),
+            from(&format!(
+                "CLAUDE_CONFIG_DIR={}\nCLAUDE_CONFIG_DIR=\n",
+                p("1")
+            )),
             Ok(None)
         );
         // `KEY= word` is a command, not an assignment.
         assert_eq!(from("CLAUDE_CONFIG_DIR= /tmp/command\n"), Err(()));
         assert_eq!(from("CLAUDE_CONFIG_DIR= '/tmp/command'\n"), Err(()));
         assert_eq!(
-            from("CLAUDE_CONFIG_DIR=/p/1\nCLAUDE_CONFIG_DIR=   # cleared\n"),
+            from(&format!(
+                "CLAUDE_CONFIG_DIR={}\nCLAUDE_CONFIG_DIR=   # cleared\n",
+                p("1")
+            )),
             Ok(None)
         );
         // Control flow decides whether an assignment runs: not followed.
@@ -1780,11 +1819,19 @@ mod tests {
             Err(())
         );
         assert_eq!(from("OTHER=a \\\nCLAUDE_CONFIG_DIR=/tmp/never\n"), Err(()));
-        // Only an unquoted `~/` is the home directory.
-        let home = std::env::var("HOME").unwrap();
+        // Only an unquoted `~/` is the home directory (`USERPROFILE` when
+        // `HOME` is unset, as on Windows).
+        let home = std::env::var("HOME")
+            .ok()
+            .filter(|home| !home.is_empty())
+            .or_else(|| std::env::var("USERPROFILE").ok())
+            .unwrap();
         assert_eq!(
             from("CLAUDE_CONFIG_DIR=~/acct\n"),
-            Ok(Some(PathBuf::from(format!("{home}/acct"))))
+            Ok(Some(PathBuf::from(format!(
+                "{}/acct",
+                home.trim_end_matches(['/', '\\'])
+            ))))
         );
         assert_eq!(from("CLAUDE_CONFIG_DIR='~/acct'\n"), Err(()));
         assert_eq!(from("CLAUDE_CONFIG_DIR=\"~/acct\"\n"), Err(()));
@@ -1796,6 +1843,8 @@ mod tests {
         );
     }
 
+    // Only Unix reads other processes' environments (`ps eww`).
+    #[cfg(unix)]
     #[test]
     fn a_process_config_comes_from_its_own_environment() {
         let env = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {

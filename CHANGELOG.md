@@ -51,6 +51,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Windows: `tend init` can replace and remove its agent skill links. A
+  directory symlink or junction was removed as a file, which Windows refuses
+  with "access denied", so upgrading or uninstalling the skill failed.
+- Windows: `tend work dispatch` and durable cross-host peer calls (with a
+  `dispatch_id`) can journal their dispatch. Making the record durable opened
+  its directory as a file, which Windows refuses, so every such dispatch
+  failed before it was sent.
 - A prompt send that tmux did not confirm is no longer reported as "nothing
   was sent". A paste that failed or timed out after tmux received it, or a
   backend that crashed mid-send, may already have typed the text. Those now

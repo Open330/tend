@@ -1516,7 +1516,7 @@ async fn a_sender_busy_again_since_the_scan_gets_no_reply_wake() {
                         surface: None,
                         pane: Some("%1".into()),
                         tmux_socket: Some("default".into()),
-                        cwd: Some("/repo".into()),
+                        cwd: Some(TEST_REPO.into()),
                     },
                     prompt: "next task".into(),
                     at: OffsetDateTime::now_utc(),
@@ -1631,7 +1631,7 @@ async fn a_refusing_pane_is_retried_on_the_next_idle_turn_not_in_a_loop() {
         surface: None,
         pane: Some("%1".into()),
         tmux_socket: Some("default".into()),
-        cwd: Some("/repo".into()),
+        cwd: Some(TEST_REPO.into()),
     };
     store
         .apply(&AgentEvent::PromptSubmitted {
@@ -1739,7 +1739,7 @@ async fn a_redelivery_rechecks_the_recipient_after_taking_the_pane_guard() {
         surface: None,
         pane: Some(pane.into()),
         tmux_socket: Some("default".into()),
-        cwd: Some("/repo".into()),
+        cwd: Some(TEST_REPO.into()),
     };
     for (session, pane) in [("sender", "%1"), ("recipient", "%2")] {
         store
@@ -2460,20 +2460,48 @@ fn adaptive_delivery_cost_matrix() {
 /// reconciliation that row's own identity, not the delivery participant's
 /// `pending-pane:` id, or the undelivered-wake bound never matches it.
 #[tokio::test]
+#[allow(clippy::too_many_lines)] // one scenario, with a fake agent process per platform
 async fn a_refused_wake_to_a_launching_pane_remembers_its_synthetic_row() {
     struct Worker(std::process::Child);
     impl Drop for Worker {
         fn drop(&mut self) {
+            // The Windows stand-in waits in a child of its own.
+            #[cfg(windows)]
+            let _ = std::process::Command::new("taskkill")
+                .args(["/F", "/T", "/PID", &self.0.id().to_string()])
+                .output();
             let _ = self.0.kill();
             let _ = self.0.wait();
         }
     }
+    #[cfg(unix)]
     let worker = Worker(
         std::process::Command::new("bash")
             .args(["-c", "exec -a 'codex --no-daemon' sleep 30"])
             .spawn()
             .unwrap(),
     );
+    // Windows cannot rename a process's argv[0]: a copy of `cmd.exe` named
+    // `codex.exe` stands in, with `--no-daemon` in a trailing remark.
+    // Declared before `worker` so the copy outlives the process.
+    #[cfg(windows)]
+    let codex_dir = tempfile::tempdir().unwrap();
+    #[cfg(windows)]
+    let worker = {
+        let system = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
+        let codex = codex_dir.path().join("codex.exe");
+        std::fs::copy(
+            std::path::Path::new(&system).join(r"System32\cmd.exe"),
+            &codex,
+        )
+        .unwrap();
+        Worker(
+            std::process::Command::new(&codex)
+                .args(["/d", "/c", "ping -n 30 127.0.0.1 >NUL & rem --no-daemon"])
+                .spawn()
+                .unwrap(),
+        )
+    };
     let store = tend::Store::shared();
     add_agent(&store, "%1", "sender", AgentKind::ClaudeCode).await;
     let synthetic = format!("{}default:%2", tend::state::SYNTHETIC_SESSION_PREFIX);

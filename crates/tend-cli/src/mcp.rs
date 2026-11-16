@@ -3223,7 +3223,9 @@ fn persist_peer_dispatch(
         Ok(mut file) => {
             file.write_all(&serde_json::to_vec(&value)?)?;
             file.sync_all()?;
-            std::fs::File::open(dir)?.sync_all()?;
+            // Windows cannot open a directory as a file; NTFS journals the create.
+            #[cfg(unix)]
+            std::fs::File::open(&dir)?.sync_all()?;
         }
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
             let existing: Value = serde_json::from_slice(&std::fs::read(path)?)?;
@@ -6550,6 +6552,9 @@ mod tests {
     use std::path::Path;
     use std::sync::{Arc, Mutex};
     use std::time::Instant;
+    /// An absolute working directory on this platform: `/repo` has no drive
+    /// on Windows, so execute requests addressed there could not be reserved.
+    const TEST_REPO: &str = if cfg!(windows) { r"C:\repo" } else { "/repo" };
     use tend::backend::{BackendCaps, HostKind, PaneBackend, SharedBackend};
     use tend::event::AgentEvent;
     use tend::ipc::Server;
@@ -6659,7 +6664,7 @@ mod tests {
             tty: String::new(),
             current_command: "agent".into(),
             title: String::new(),
-            current_path: "/repo".into(),
+            current_path: TEST_REPO.into(),
             pane_pid: 0,
             socket: Some("default".into()),
         }
@@ -6861,7 +6866,7 @@ mod tests {
                         surface: None,
                         pane: Some(pane.into()),
                         tmux_socket: origin.socket.clone(),
-                        cwd: Some("/repo".into()),
+                        cwd: Some(TEST_REPO.into()),
                     },
                     at: time::OffsetDateTime::now_utc(),
                 })
@@ -7040,7 +7045,7 @@ mod tests {
                         surface: None,
                         pane: Some(pane.into()),
                         tmux_socket: origin.socket.clone(),
-                        cwd: Some("/repo".into()),
+                        cwd: Some(TEST_REPO.into()),
                     },
                     at: time::OffsetDateTime::now_utc(),
                 })
@@ -7517,7 +7522,7 @@ mod tests {
             surface: None,
             pane: Some("%1".into()),
             tmux_socket: Some("default".into()),
-            cwd: Some("/repo".into()),
+            cwd: Some(TEST_REPO.into()),
         };
         store
             .apply(&AgentEvent::Started {
@@ -7557,7 +7562,7 @@ mod tests {
                     surface: None,
                     pane: Some("%2".into()),
                     tmux_socket: Some("default".into()),
-                    cwd: Some("/repo".into()),
+                    cwd: Some(TEST_REPO.into()),
                 },
                 at: time::OffsetDateTime::now_utc(),
             })
@@ -7581,7 +7586,7 @@ mod tests {
                     surface: None,
                     pane: Some("%1".into()),
                     tmux_socket: Some("default".into()),
-                    cwd: Some("/repo".into()),
+                    cwd: Some(TEST_REPO.into()),
                 },
                 prompt: "close registration stream".into(),
                 at: time::OffsetDateTime::now_utc(),
@@ -9598,7 +9603,14 @@ mod tests {
     }
     #[test]
     fn peer_context_is_bounded_deduplicated_and_before_flag_separator() {
-        let root = tempfile::tempdir().unwrap();
+        // Windows' temp directory is under `~\AppData`, which is never peer
+        // context; the test binary's own directory is outside it.
+        let root = if cfg!(windows) {
+            let exe = std::env::current_exe().unwrap();
+            tempfile::tempdir_in(exe.parent().unwrap()).unwrap()
+        } else {
+            tempfile::tempdir().unwrap()
+        };
         let cwd = root.path().join("cwd");
         let inputs = root.path().join("inputs");
         std::fs::create_dir_all(&cwd).unwrap();

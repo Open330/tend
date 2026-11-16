@@ -342,15 +342,21 @@ clippy warnings. Tests that exercise Unix-only behaviour — `#!/bin/sh`
 fixtures through `test_support::write_executable`, `0600`/`0700` mode
 assertions, and socket send-buffer backpressure — are gated `#[cfg(unix)]`.
 
-The remaining Windows test failures are Unix assumptions in fixtures — 23 of
-1,229 in `cargo test -p tend --lib`: paths like `/tmp/...` that are not
-absolute without a drive prefix, so request validation rejects them, and
-bounded-command tests that run `sh`. `tend-cli`'s unit tests import Unix-only
-APIs. CI runs on Linux and macOS only.
+`cargo test -p tend-cli -p tendd -p tend-work` passes on Windows (checked
+2026-11-16 on a clean Windows 11 VM with rmux 0.10.0 and Windows PowerShell:
+`tend-cli` 1,235 unit and 13 integration tests, `tendd` 166, `tend-work`
+156). Build the binaries first (`cargo build --bins -p tend-cli -p tendd`):
+the integration tests run them. The live rmux tests start private servers by
+label, outside the caller's job, so they run over SSH too.
+
+In `cargo test -p tend --lib` the last count was 23 of 1,229 failing, on Unix
+assumptions in fixtures: paths like `/tmp/...` that are not absolute without
+a drive prefix, so request validation rejects them, and bounded-command
+tests that run `sh`. CI runs on Linux and macOS only.
 
 ## What is left
 
-Teaching the test fixtures a second path grammar so Windows can join CI; the
-gaps listed above.
+Teaching `tend`'s own test fixtures a second path grammar, so Windows could
+join CI (an owner decision); the gaps listed above.
 
 [`PaneBackend`]: ../crates/tend/src/backend/mod.rs

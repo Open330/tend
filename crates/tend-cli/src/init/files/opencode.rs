@@ -684,19 +684,23 @@ mod tests {
 
     #[test]
     fn config_dir_follows_xdg_then_home_config_on_every_platform() {
+        // `/x` has no drive, so it is not absolute on Windows.
+        let root = if cfg!(windows) { r"C:\" } else { "/" };
+        let x = std::path::Path::new(root).join("x");
+        let h = std::path::Path::new(root).join("h");
         assert_eq!(
-            config_dir_from(Some("/x".into()), Some("/h".into())),
-            Some(PathBuf::from("/x/opencode"))
+            config_dir_from(Some(x.clone()), Some(h.clone())),
+            Some(x.join("opencode"))
         );
         // A relative XDG_CONFIG_HOME is invalid per the spec; opencode's
         // `||` would take it, but tend never writes to a cwd-relative path.
         assert_eq!(
-            config_dir_from(Some("rel".into()), Some("/h".into())),
-            Some(PathBuf::from("/h/.config/opencode"))
+            config_dir_from(Some("rel".into()), Some(h.clone())),
+            Some(h.join(".config/opencode"))
         );
         assert_eq!(
-            config_dir_from(None, Some("/h".into())),
-            Some(PathBuf::from("/h/.config/opencode"))
+            config_dir_from(None, Some(h.clone())),
+            Some(h.join(".config/opencode"))
         );
     }
 

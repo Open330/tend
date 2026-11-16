@@ -3009,8 +3009,21 @@ mod tests {
             host: HostKind::Tmux,
             socket: "__tend_reload_test_gone__".into(),
         });
-        assert!(control.socket.contains('/'), "{}", control.socket);
-        assert!(control.socket.ends_with("/__tend_reload_test_gone__"));
+        // A path in the platform's own grammar (`\` before the name on Windows).
+        let pinned = std::path::Path::new(&control.socket);
+        assert!(
+            pinned
+                .parent()
+                .is_some_and(|dir| !dir.as_os_str().is_empty()),
+            "{}",
+            control.socket
+        );
+        assert_eq!(
+            pinned.file_name(),
+            Some(std::ffi::OsStr::new("__tend_reload_test_gone__")),
+            "{}",
+            control.socket
+        );
         let explicit = control_endpoint(&BackendEndpoint {
             host: HostKind::Tmux,
             socket: "/tmp/tmux-501/work".into(),

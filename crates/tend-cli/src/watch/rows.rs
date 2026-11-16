@@ -388,9 +388,10 @@ mod pane_label_tests {
 
 #[cfg(test)]
 mod work_up_key_tests {
-    use super::super::input::{open_work_up_window, shell_quote, work_up_window_args};
+    use super::super::input::{open_work_up_window, shell_quote, work_up_window_args_in};
     use super::super::{handle_work_composer_event, Action, KeyCode, KeyModifiers, WorkComposer};
     use super::*;
+    use tend::shell::Dialect;
 
     /// `normalize_work_id` only rejects tabs, newlines and over-long input, so
     /// anything else a work id carries reaches a shell. It must arrive as one
@@ -398,7 +399,7 @@ mod work_up_key_tests {
     #[test]
     fn a_work_id_cannot_break_out_of_the_shell_command() {
         let nasty = "eng-1'; rm -rf ~; echo '";
-        let args = work_up_window_args("/usr/bin/tend", nasty);
+        let args = work_up_window_args_in(Dialect::Posix, "/usr/bin/tend", nasty);
         let command = args.last().expect("command").clone();
         // Every embedded quote is closed, escaped and reopened, so the whole
         // id stays one word.
@@ -406,18 +407,36 @@ mod work_up_key_tests {
         // The only `; printf` is the one this function wrote.
         assert_eq!(command.matches("; printf").count(), 1, "{command}");
         assert!(!command.contains("; rm -rf ~; echo ';"), "{command}");
+
+        // PowerShell (rmux on Windows) doubles each embedded quote instead.
+        let args = work_up_window_args_in(Dialect::PowerShell, "/usr/bin/tend", nasty);
+        let command = args.last().expect("command").clone();
+        assert!(
+            command.contains(" work up 'eng-1''; rm -rf ~; echo '''; Write-Host"),
+            "{command}"
+        );
+        assert_eq!(command.matches("; Write-Host").count(), 1, "{command}");
     }
 
     /// An install path with a space is ordinary on macOS.
     #[test]
     fn the_binary_path_is_quoted_too() {
-        let command = work_up_window_args("/Applications/My Tools/tend", "ENG-1")
-            .last()
-            .expect("command")
-            .clone();
+        let command = |dialect| {
+            work_up_window_args_in(dialect, "/Applications/My Tools/tend", "ENG-1")
+                .last()
+                .expect("command")
+                .clone()
+        };
+        let posix = command(Dialect::Posix);
         assert!(
-            command.starts_with("'/Applications/My Tools/tend' work up 'ENG-1'"),
-            "{command}",
+            posix.starts_with("'/Applications/My Tools/tend' work up 'ENG-1'"),
+            "{posix}",
+        );
+        // PowerShell reads a leading quoted program as a string: call it.
+        let powershell = command(Dialect::PowerShell);
+        assert!(
+            powershell.starts_with("& '/Applications/My Tools/tend' work up 'ENG-1'"),
+            "{powershell}",
         );
     }
 
@@ -433,9 +452,12 @@ mod work_up_key_tests {
     /// scrolls past before it can be read.
     #[test]
     fn the_window_waits_before_closing() {
-        let args = work_up_window_args("/usr/bin/tend", "ENG-1");
+        let args = work_up_window_args_in(Dialect::Posix, "/usr/bin/tend", "ENG-1");
         assert_eq!(args[0], "new-window");
         assert!(args.last().expect("command").ends_with("read _"));
+        let args = work_up_window_args_in(Dialect::PowerShell, "/usr/bin/tend", "ENG-1");
+        assert_eq!(args[0], "new-window");
+        assert!(args.last().expect("command").ends_with("$null = Read-Host"));
     }
 
     /// Enter on an empty field must not spawn anything.
