@@ -49,15 +49,17 @@ function hostsOf(fleet) {
   return Array.isArray(fleet?.hosts) ? fleet.hosts : [];
 }
 
-/// A host's live agents. An agent without a recorded cwd takes its pane's
-/// current path, as the Mac's projection does, so it still has a project.
+/// A host's live agents, each with `project_path`: its pane's current path
+/// first, then its recorded cwd, as the Mac's projection takes the repo
+/// (FleetBoard.work(for:)). `cwd` stays what the agent recorded, which is
+/// what a question's asker is grouped by (FleetDecisions.attachAskers).
 function agentsOf(host) {
   const agents = Array.isArray(host?.remote?.agents) ? host.remote.agents : [];
   const panes = Array.isArray(host?.remote?.panes) ? host.remote.panes : [];
   const pathOf = new Map(panes.map((pane) => [`${pane.socket || ""}\u0000${pane.pane_id}`, pane.current_path]));
   return agents
     .filter((agent) => !isPaneless(agent) && agent.state !== "stopped")
-    .map((agent) => (agent.cwd ? agent : { ...agent, cwd: pathOf.get(`${agent.tmux_socket || ""}\u0000${agent.pane}`) || null }));
+    .map((agent) => ({ ...agent, project_path: pathOf.get(`${agent.tmux_socket || ""}\u0000${agent.pane}`) || agent.cwd || null }));
 }
 
 /// Which product an agent is, for its mark: the logos Tend for Mac ships.
@@ -68,14 +70,34 @@ export function productOf(kind) {
   return null;
 }
 
-function agentTitle(agent) {
-  return (
-    firstLine(agent.ai_title) ||
-    firstLine(agent.recap) ||
-    firstLine(agent.last_prompt) ||
-    firstLine(agent.last_notification) ||
-    ""
-  );
+/// A prompt as a card title (FleetBoard.promptTitle): tend's delivery
+/// notices and Claude's background-task blocks read as what they are.
+export function promptTitle(prompt) {
+  const text = String(prompt || "").trimStart();
+  if (!text) return "";
+  if (text.startsWith("<task-notification>")) {
+    const summary = text.match(/<summary>([\s\S]*?)<\/summary>/);
+    const line = summary ? firstLine(summary[1]) : "";
+    return line ? `⟳ ${line}` : { key: "backgroundTask" };
+  }
+  if (!text.startsWith("[tend:") || !text.includes("]")) return firstLine(text);
+  const rest = text.slice(text.indexOf("]") + 1).trim();
+  const line = rest.split("\n")[0];
+  const reply = line.match(/(?:Completed )?reply from (\S+)/i);
+  if (reply) return { key: "replyReady", who: reply[1] };
+  return firstLine(line.split(".")[0]);
+}
+
+/// The title the Mac gives an agent on its own: its AI title, else its
+/// prompt as a title, else "<kind> on <host>".
+function agentTitle(agent, host) {
+  return firstLine(agent.ai_title) || promptTitle(agent.last_prompt) || { key: "kindOnHost", kind: kindName(agent.kind), host: host.alias };
+}
+
+/// What the agent is doing or did last (FleetBoard.statusLine).
+function statusLine(agent) {
+  const line = firstLine(agent.recap) || firstLine(agent.last_response);
+  return line ? { text: line } : { key: "state", state: agent.state };
 }
 
 function kindName(kind) {
@@ -202,30 +224,22 @@ function decisionUnit(item, host, index) {
 /// One agent as a one-stage unit.
 function agentUnit(agent, host, lane, overrides = {}) {
   const stage = lane === "needsYou" ? "needsYou" : lane === "running" ? "running" : "done";
-  const said = firstLine(agent.last_response);
-  const headline =
-    lane === "running"
-      ? { key: "state", state: agent.state }
-      : lane === "finished"
-        ? { text: said || firstLine(agent.last_prompt) }
-        : { text: "" };
   return {
     type: "work",
     lane,
     id: `${host.alias}:${agent.agent_session_id || agent.pane || ""}`,
     host: host.alias,
     remote: !host.local,
-    title: agentTitle(agent) || kindName(agent.kind),
-    headline,
+    title: agentTitle(agent, host),
+    headline: statusLine(agent),
     stages: [{ name: kindName(agent.kind), state: stage }],
     agentKind: agent.kind || null,
     product: productOf(agent.kind),
-    project: repoOf(agent.cwd),
+    project: repoOf(agent.project_path || agent.cwd),
     since: agent.state_entered_at || agent.last_activity_at || null,
     pane: agent.pane || null,
     socket: agent.tmux_socket || null,
     agents: [{ kind: agent.kind, name: kindName(agent.kind), product: productOf(agent.kind), state: agent.state, host: host.alias, pane: agent.pane || null, socket: agent.tmux_socket || null }],
-    limited: agent.state === "limited" || agent.usage_limit != null,
     ...overrides,
   };
 }

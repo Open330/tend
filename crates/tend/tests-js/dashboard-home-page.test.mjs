@@ -149,6 +149,32 @@ test("a refused optional read (a proxy or a paired device) keeps the page", asyn
   status.access = 200;
 });
 
+test("a credential that may only decide (a paired device: 401 on the Fleet read) keeps the queue", async () => {
+  status.fleet = 401;
+  status.access = 401;
+  await home.refresh();
+  assert.equal(document.getElementById("login").hidden, true, "not signed out");
+  assert.match(lanes().children[0].text, /Ship it\?/);
+  assert.doesNotMatch(lanes().text, /port the board/, "nothing from the refused read");
+  status.fleet = 200;
+  status.access = 200;
+  await home.refresh();
+});
+
+test("what a narrowed credential may no longer see goes at once, even under a draft", async () => {
+  await home.refresh();
+  assert.match(lanes().text, /port the board/);
+  // Someone is typing in a composer.
+  const typing = { value: "half an answer", closest: (sel) => (sel === ".composer" ? {} : null) };
+  document.activeElement = typing;
+  status.fleet = 403;
+  await home.refresh();
+  assert.doesNotMatch(lanes().text, /port the board/, "the Fleet data left the page");
+  document.activeElement = null;
+  status.fleet = 200;
+  await home.refresh();
+});
+
 test("a lost sign-in drops everything private and offers sign-in back to the card", async () => {
   status.decisions = 401;
   await home.refresh();
@@ -156,6 +182,9 @@ test("a lost sign-in drops everything private and offers sign-in back to the car
   const login = document.getElementById("login");
   assert.equal(login.hidden, false);
   assert.equal(login.href, `/auth/login?return_to=${encodeURIComponent("/home#item=req_9")}`);
+  assert.equal(document.getElementById("hosts-list").children.length, 0, "no host names left");
+  assert.equal(document.getElementById("filter-host").children.length, 0, "no filter options left");
+  assert.equal(document.getElementById("start-work").hidden, true);
   status.decisions = 200;
   await home.refresh();
   assert.equal(login.hidden, true, "back once the queue reads again");

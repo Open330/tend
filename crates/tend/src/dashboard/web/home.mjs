@@ -6,9 +6,8 @@
 // session cookie. Everything an agent wrote is set with textContent only.
 
 import { buildBoard, hostHue, LANES, TEND_PROJECT } from "./home-board.mjs";
-import { languageOf, relativeTime, stringsFor } from "./home-strings.mjs";
+import { languageOf, relativeTime, stringsFor, textOf } from "./home-strings.mjs";
 import { linkedItemOf } from "./needs-model.mjs";
-import { withPaneHash } from "./pane-drawer.mjs";
 
 const TOKEN_KEY = "tend.token";
 /// The card layout, a per-browser preference like the Mac's
@@ -18,6 +17,10 @@ export const REFRESH_MS = 5000;
 const LANG = languageOf(globalThis.navigator?.languages || [globalThis.navigator?.language || "en"]);
 const S = stringsFor(LANG);
 const $ = (id) => document.getElementById(id);
+const tx = (value) => textOf(S, value);
+/// Each read gives up after this long, so one slow host cannot hold the
+/// board (the next poll starts only when this one ended).
+const READ_TIMEOUT_MS = 8000;
 
 const state = {
   data: { decisions: null, history: null, fleet: null, access: null },
@@ -35,7 +38,7 @@ const state = {
   drafts: new Map(),
   busy: new Set(),
   results: new Map(),
-  revealed: false,
+  revealed: null,
   timer: null,
   board: null,
 };
@@ -79,7 +82,7 @@ class ApiError extends Error {
 async function read(path) {
   let resp;
   try {
-    resp = await fetch(path, { credentials: "same-origin", headers: authHeaders() });
+    resp = await fetch(path, { credentials: "same-origin", headers: authHeaders(), signal: AbortSignal.timeout?.(READ_TIMEOUT_MS) });
   } catch (error) {
     throw new ApiError(error.message || "network", 0);
   }
@@ -156,8 +159,12 @@ function when(iso) {
   return relativeTime(iso, Date.now(), LANG);
 }
 
-function paneLink(unit) {
-  return `/${withPaneHash("", { pane: unit.pane, socket: unit.socket })}`;
+/// The workbench's pane drawer deep link (pane-drawer.mjs parsePaneHash):
+/// pane ids repeat across tmux servers, so the socket picks the right one.
+export function paneLink(unit) {
+  const params = new URLSearchParams({ pane: unit.pane });
+  if (unit.socket) params.set("socket", unit.socket);
+  return `/#${params}`;
 }
 
 function localHost(alias) {
@@ -410,7 +417,7 @@ function decisionCard(unit, emphasis = state.layout === "emphasis") {
     if (busy) head.append(el("span", "when", S.sending));
     const menu = decisionMenu(unit);
     if (menu) head.append(menu);
-    card.append(head, el("div", "e-title", unit.title));
+    card.append(head, el("div", "e-title", tx(unit.title)));
     const inset = el("div", "inset");
     if (unit.checks) inset.append(checksBox(unit.checks));
     inset.append(...account(unit), ...answering(unit));
@@ -434,7 +441,7 @@ function decisionCard(unit, emphasis = state.layout === "emphasis") {
   if (menu) head.append(menu);
   card.append(head);
   if (unit.checks) card.append(checksBox(unit.checks));
-  card.append(el("div", "d-title", unit.title), ...account(unit), ...answering(unit));
+  card.append(el("div", "d-title", tx(unit.title)), ...account(unit), ...answering(unit));
   const result = resultLine(key);
   if (result) card.append(result);
   return card;
@@ -453,6 +460,7 @@ function stageBar(unit) {
 }
 
 function headlineText(unit) {
+  if (typeof unit.headline === "string") return unit.headline;
   if (unit.headline?.text) return unit.headline.text;
   if (unit.headline?.key === "state") return S.stateLabels[unit.headline.state] || unit.headline.state || "";
   if (unit.headline?.key) return S[unit.headline.key] || "";
@@ -465,7 +473,7 @@ function workCard(unit) {
   card.dataset.id = unit.id;
   card.setAttribute("aria-expanded", String(state.selected === unit.id));
   card.addEventListener("click", () => select(state.selected === unit.id ? null : unit.id));
-  card.append(el("div", "e-title", unit.title));
+  card.append(el("div", "e-title", tx(unit.title)));
   const single = unit.stages.length === 1;
   if (!(unit.lane === "finished" && single)) {
     card.append(stageBar(unit));
@@ -477,11 +485,6 @@ function workCard(unit) {
   const inset = el("div", "inset");
   const text = headlineText(unit);
   if (text) inset.append(el("div", "headline", text));
-  if (unit.limited) {
-    const flag = el("div", "flag");
-    flag.append(icon("hourglass"), el("span", null, S.rateLimited));
-    inset.append(flag);
-  }
   if (inset.children.length) card.append(inset);
   const mark = logo(unit.product);
   card.append(metaLine(unit.lane, [
@@ -504,7 +507,7 @@ function compactRow(unit) {
   row.addEventListener("click", () => select(state.selected === unit.id ? null : unit.id));
   row.append(el("span", "dot-c"));
   if (unit.type === "decision") row.append(icon("question", "kind-icon"));
-  row.append(el("span", "title", unit.title), el("span", "host", unit.host), el("span", "when", when(unit.since)));
+  row.append(el("span", "title", tx(unit.title)), el("span", "host", unit.host), el("span", "when", when(unit.since)));
   return row;
 }
 
@@ -513,7 +516,7 @@ function compactRow(unit) {
 function decidedCard(unit) {
   const card = el("article", `card decided emphasis finished ${unit.outcome}`);
   card.dataset.id = unit.id;
-  card.append(el("div", "e-title", unit.title));
+  card.append(el("div", "e-title", tx(unit.title)));
   const inset = el("div", "inset");
   const outcome = el("div", "outcome");
   const word = S[unit.outcome] || unit.outcome;
@@ -638,7 +641,7 @@ function renderInspector() {
   if (unit.type === "decided") return renderDecidedDetail(box, unit);
   const head = el("div", "ins-head");
   const titles = el("div", "titles");
-  titles.append(el("h2", null, unit.title), el("div", "sub", [unit.project, unit.host].filter(Boolean).join(" · ")));
+  titles.append(el("h2", null, tx(unit.title)), el("div", "sub", [unit.project, unit.host].filter(Boolean).join(" · ")));
   const close = button("", () => select(null), "btn icon-only", "xmark");
   close.setAttribute("aria-label", S.close);
   head.append(titles, close);
@@ -650,6 +653,7 @@ function renderInspector() {
   if (text) now.append(el("div", "text", text));
   const key = `reply:${cardKey(unit)}`;
   const replyable = Boolean(unit.pane) && !unit.remote && canWrite() && unit.lane !== "running";
+  const paneLinks = Boolean(state.data.access);
   if (replyable) {
     const area = el("textarea", "field");
     area.rows = 2;
@@ -679,7 +683,7 @@ function renderInspector() {
   }
   const result = resultLine(key);
   if (result) now.append(result);
-  if (unit.pane && !unit.remote) {
+  if (unit.pane && !unit.remote && paneLinks) {
     const row = el("div", "row");
     const open = el("a", replyable ? "btn" : "btn primary", unit.lane === "needsYou" && !replyable ? S.answerInPane : S.openPane);
     open.href = paneLink(unit);
@@ -717,7 +721,7 @@ function renderInspector() {
       const mark = logo(agent.product);
       if (mark) row.append(mark);
       row.append(el("span", "owner", agent.name || agent.kind || "agent"), el("span", "st", S.stateLabels[agent.state] || agent.state || ""));
-      if (agent.pane && !unit.remote) {
+      if (agent.pane && !unit.remote && paneLinks) {
         const open = el("a", "btn small", S.open);
         open.href = paneLink(agent);
         row.append(open);
@@ -738,7 +742,7 @@ function renderDecisionDetail(box, unit) {
   kind.append(icon(unit.decision === "question" ? "question" : "checklist"), el("span", "kind", unit.decision === "question" ? S.question : S.review));
   titles.append(kind, el("div", "sub", [unit.asker, unit.host, unit.project !== TEND_PROJECT ? unit.project : ""].filter(Boolean).join(" · ")));
   head.append(titles);
-  if (unit.pane && !unit.remote) {
+  if (unit.pane && !unit.remote && state.data.access) {
     const open = el("a", "btn", S.openAgent);
     open.href = paneLink(unit);
     head.append(open);
@@ -754,7 +758,7 @@ function renderDecisionDetail(box, unit) {
 function renderDecidedDetail(box, unit) {
   const head = el("div", "ins-head");
   const titles = el("div", "titles");
-  titles.append(el("h2", null, unit.title), el("div", "sub", unit.host));
+  titles.append(el("h2", null, tx(unit.title)), el("div", "sub", unit.host));
   const close = button("", () => select(null), "btn icon-only", "xmark");
   close.setAttribute("aria-label", S.close);
   head.append(titles, close);
@@ -873,27 +877,44 @@ function render() {
   renderHeader(board);
   renderStatus(board);
   const lanes = $("lanes");
-  const nothing = board.empty && !state.errors.decisions;
-  $("empty-board").hidden = !nothing || !state.data.decisions;
-  lanes.hidden = nothing && Boolean(state.data.decisions);
+  // "No work yet" only when every read answered and nothing is noted: an
+  // empty board beside a failed Fleet read is not an empty fleet.
+  const quiet = !Object.values(state.errors).some(Boolean) && LANES.every((lane) => !board.lanes[lane].notes.length);
+  const nothing = board.empty && quiet && Boolean(state.data.decisions);
+  $("empty-board").hidden = !nothing;
+  lanes.hidden = nothing;
   lanes.replaceChildren(...LANES.map((lane) => renderLane(lane, board.lanes[lane])));
   $("board").dataset.lane = state.lane;
   for (const option of document.querySelectorAll("#layout-toggle button")) {
     option.setAttribute("aria-checked", String(option.dataset.layout === state.layout));
   }
   for (const tab of document.querySelectorAll("#segments button")) tab.setAttribute("aria-selected", String(tab.dataset.lane === state.lane));
+  // Explore and pane links lead to the workbench, which only the full
+  // dashboard serves: hidden where /api/access is not answered (a paired
+  // device, the Windows app's scoped proxy).
+  $("rail-explore").hidden = !state.data.access;
   renderInspector();
   revealLinkedItem();
 }
 
+/// Brings the card a link names (`#item=<id>`) into view once per link:
+/// on the phone's Your turn segment, and opened beside the board in the
+/// compact list, whose rows answer nothing in place.
 function revealLinkedItem() {
   const id = linkedItemOf(window.location.hash);
-  if (!id || state.revealed) return;
-  const card = [...document.querySelectorAll(".lane.needsYou .card")].find((node) => node.dataset.id === id);
-  if (!card) return;
-  state.revealed = true;
-  card.classList.add("linked");
-  card.scrollIntoView?.({ block: "center" });
+  if (!id || state.revealed === id || !state.board) return;
+  const unit = findUnit(id);
+  if (!unit || unit.lane !== "needsYou") return;
+  state.revealed = id;
+  state.lane = "needsYou";
+  $("board").dataset.lane = "needsYou";
+  if (state.layout === "compact") {
+    state.selected = id;
+    render();
+  }
+  const node = [...document.querySelectorAll(".lane.needsYou [data-id]")].find((n) => n.dataset.id === id);
+  node?.classList.add("linked");
+  node?.scrollIntoView?.({ block: "center" });
 }
 
 /// Where sign-in comes back to: Home, and the linked card.
@@ -903,19 +924,35 @@ export function homeReturnPath(hash) {
 }
 
 /// Signed out, expired or downgraded: nothing private stays on the page,
-/// drafts included, and no older read may bring it back.
+/// drafts, host names, filters and an open sheet included, and no older
+/// read may bring it back.
 function lostAccess(error) {
   state.generation += 1;
   state.lost = true;
   state.drafts.clear();
+  state.results.clear();
   state.composer = null;
   state.selected = null;
-  state.data = { decisions: null, history: null, fleet: null, access: state.data.access };
+  state.filter = { host: "", project: "" };
+  state.data = { decisions: null, history: null, fleet: null, access: null };
   state.board = null;
   $("lanes").replaceChildren();
   $("inspector").replaceChildren();
   $("inspector").hidden = true;
   $("empty-board").hidden = true;
+  $("hosts-list").replaceChildren();
+  $("hosts-label").textContent = S.hosts;
+  for (const id of ["filter-host", "filter-project"]) {
+    $(id).replaceChildren();
+    delete $(id).dataset.signature;
+  }
+  $("filter-label").textContent = S.filter;
+  for (const menu of document.querySelectorAll("details.menu[open]")) menu.open = false;
+  $("start-work").hidden = true;
+  $("start-work-id").value = "";
+  $("start-body").value = "";
+  $("start-dialog").close?.();
+  $("rail-explore").hidden = true;
   $("status").textContent = error.message;
   const login = $("login");
   login.href = `/auth/login?return_to=${encodeURIComponent(homeReturnPath(window.location.hash))}`;
@@ -924,7 +961,27 @@ function lostAccess(error) {
   renderStatus(null);
 }
 
-export async function refresh() {
+/// One poll at a time: a slow host makes the next one wait rather than
+/// overtake it (each read also gives up after READ_TIMEOUT_MS).
+let inFlight = null;
+let again = false;
+
+export function refresh() {
+  if (inFlight) {
+    again = true;
+    return inFlight;
+  }
+  inFlight = poll().finally(() => {
+    inFlight = null;
+    if (again) {
+      again = false;
+      refresh();
+    }
+  });
+  return inFlight;
+}
+
+async function poll() {
   const generation = ++state.generation;
   const current = () => generation === state.generation;
   const [decisions, fleet, history, access] = await Promise.allSettled([
@@ -935,21 +992,22 @@ export async function refresh() {
   ]);
   if (!current()) return;
   // The queue is what Home is for: losing it (401/403) is losing access.
-  // The other reads may be refused to a paired device or a proxy that
-  // forwards only Home's routes; that leaves the lane empty, not the page.
+  // The other reads may be refused to a credential that may only decide (a
+  // paired device gets 401 there, the Windows app's proxy 403) while the
+  // queue still reads: that leaves those parts empty, not the page. A
+  // session that ended fails the queue read too.
   if (decisions.status === "rejected" && decisions.reason.auth) return lostAccess(decisions.reason);
-  for (const other of [fleet, history]) {
-    if (other.status === "rejected" && other.reason.status === 401) return lostAccess(other.reason);
-  }
   state.lost = false;
   $("login").hidden = true;
   const reached = [decisions, fleet, history].some((r) => r.status === "fulfilled" || r.reason?.status > 0);
   state.connection = reached ? "connected" : "failed";
+  let narrowed = false;
   const take = (name, result) => {
     if (result.status === "fulfilled") {
       state.data[name] = result.value;
       state.errors[name] = null;
-    } else if (result.reason.status === 403) {
+    } else if (result.reason.auth) {
+      narrowed ||= state.data[name] != null;
       state.data[name] = null;
       state.errors[name] = null;
     } else {
@@ -959,11 +1017,19 @@ export async function refresh() {
   take("decisions", decisions);
   take("fleet", fleet);
   take("history", history);
-  state.data.access = access.status === "fulfilled" ? access.value : null;
+  const accessNow = access.status === "fulfilled" ? access.value : null;
+  narrowed ||= Boolean(state.data.access && (!accessNow || (state.data.access.write_authorized !== false && accessNow.write_authorized === false)));
+  state.data.access = accessNow;
   $("status").textContent = state.connection === "failed" ? S.disconnected : "";
-  if (composing()) {
+  // While someone types, the board waits, unless what this credential may
+  // see or do just narrowed: then what it no longer may goes at once.
+  if (composing() && !narrowed) {
     renderStatus(buildBoard({ ...state.data, now: Date.now(), filter: state.filter }));
     return;
+  }
+  if (narrowed && !canWrite()) {
+    state.composer = null;
+    $("start-dialog").close?.();
   }
   render();
 }
@@ -1045,6 +1111,10 @@ export function start() {
   }
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && state.selected && !composing()) select(null);
+  });
+  window.addEventListener?.("hashchange", () => {
+    state.revealed = null;
+    revealLinkedItem();
   });
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) refresh();

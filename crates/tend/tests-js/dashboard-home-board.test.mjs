@@ -142,3 +142,24 @@ test("host identity colour is FNV-1a of the alias modulo 8, like TendTheme", () 
   assert.equal(productOf("codex"), "openai");
   assert.equal(productOf("gemini"), null);
 });
+
+test("an agent's title and line follow the Mac's solo projection", async () => {
+  const { promptTitle } = await import("../src/dashboard/web/home-board.mjs");
+  assert.equal(promptTitle("<task-notification><summary>Build finished\nmore</summary></task-notification>"), "⟳ Build finished");
+  assert.deepEqual(promptTitle("<task-notification>x</task-notification>"), { key: "backgroundTask" });
+  assert.deepEqual(promptTitle("[tend:reply] Completed reply from codex@%13 (abc) is ready. Read it"), { key: "replyReady", who: "codex@%13" });
+  assert.equal(promptTitle("[tend:review] Review from codex@%39. Read one: x"), "Review from codex@%39");
+  const board = buildBoard({
+    fleet: { hosts: [{ alias: "mba", local: true, state: "online", remote: {
+      agents: [{ agent_session_id: "a", kind: "codex", pane: "%1", tmux_socket: "s", cwd: "/w/old", state: "working", last_prompt: "new task", recap: "the previous turn's recap", state_entered_at: at(1) }],
+      panes: [{ pane_id: "%1", socket: "s", current_path: "/w/moved" }],
+    } }] },
+    now: NOW,
+  });
+  const unit = board.lanes.running.groups[0].units[0];
+  assert.equal(unit.title, "new task", "the prompt, not the recap, is the title");
+  assert.deepEqual(unit.headline, { text: "the previous turn's recap" }, "the recap is the status line");
+  assert.equal(unit.project, "moved", "the pane's current path wins over the recorded cwd");
+  const untitled = buildBoard({ fleet: { hosts: [{ alias: "mba", local: true, remote: { agents: [{ agent_session_id: "b", kind: "claude_code", pane: "%2", state: "working" }] } }] }, now: NOW });
+  assert.deepEqual(untitled.lanes.running.groups[0].units[0].title, { key: "kindOnHost", kind: "claude", host: "mba" });
+});

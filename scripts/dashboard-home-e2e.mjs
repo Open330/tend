@@ -65,6 +65,9 @@ async function run(name, contextOptions) {
       await rows.nth(i).click();
       const card = page.locator("#inspector .card.decision");
       if (await card.locator(".kind", { hasText: kind }).count()) return { card, id: await rows.nth(i).getAttribute("data-id") };
+      // On a phone the details cover the list: close them first.
+      await page.keyboard.press("Escape");
+      await page.locator("#inspector").waitFor({ state: "hidden", timeout: 5000 });
     }
     throw new Error(`no ${kind} in Your turn`);
   };

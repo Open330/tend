@@ -98,6 +98,9 @@ const EN = {
   layoutCompact: "Compact list",
   layoutHelp: "Card layout: status emphasis or compact list",
   openAgent: "Open Agent",
+  backgroundTask: "⟳ Background task",
+  replyReady: (v) => `Reply from ${v.who} is ready`,
+  kindOnHost: (v) => `${v.kind} on ${v.host}`,
 };
 
 const KO = {
@@ -192,7 +195,18 @@ const KO = {
   layoutCompact: "간결한 목록",
   layoutHelp: "카드 레이아웃: 상태 강조 또는 간결한 목록",
   openAgent: "에이전트 열기",
+  backgroundTask: "⟳ 백그라운드 작업",
+  replyReady: (v) => `${v.who}의 회신 도착`,
+  kindOnHost: (v) => `${v.host}의 ${v.kind}`,
 };
+
+/// A model text: a plain string, or `{ key, ... }` for words the page owns.
+export function textOf(strings, value) {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  const word = strings[value.key];
+  return typeof word === "function" ? word(value) : word || "";
+}
 
 export function languageOf(languages = []) {
   const first = String(languages[0] || "en").toLowerCase();

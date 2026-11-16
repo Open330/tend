@@ -4815,44 +4815,6 @@ mod tests {
                 "{uri}"
             );
         }
-        // Home runs under a strict policy: its own scripts and styles only.
-        for uri in [
-            "/needs",
-            "/home",
-            "/static/home.html",
-            "/static/v/any/home.html",
-        ] {
-            let page = get(app.clone(), uri, None).await;
-            assert_eq!(page.status(), StatusCode::OK, "{uri}");
-            assert_eq!(page.headers()[header::X_FRAME_OPTIONS], "DENY", "{uri}");
-            let policy = page.headers()[header::CONTENT_SECURITY_POLICY]
-                .to_str()
-                .unwrap()
-                .to_string();
-            for directive in [
-                "default-src 'self'",
-                "script-src 'self'",
-                "style-src 'self'",
-                "frame-ancestors 'none'",
-                "base-uri 'none'",
-            ] {
-                assert!(policy.contains(directive), "{uri}: {policy}");
-            }
-            assert!(!policy.contains("unsafe-inline"), "{uri}: {policy}");
-        }
-        let home = get(app.clone(), "/home", None).await;
-        let html = String::from_utf8(
-            axum::body::to_bytes(home.into_body(), usize::MAX)
-                .await
-                .unwrap()
-                .to_vec(),
-        )
-        .unwrap();
-        assert!(html.contains("/home.mjs"), "{html}");
-        assert!(
-            !html.contains("<script>") && !html.contains(" style=\""),
-            "Home carries no inline code"
-        );
     }
 
     #[tokio::test]
@@ -4952,6 +4914,54 @@ mod tests {
             .get("body")
             .is_none());
         assert!(invalid_pat["requests"][0]["reply"].get("body").is_none());
+    }
+
+    #[tokio::test]
+    async fn home_runs_under_a_strict_content_security_policy() {
+        let app = router(state_with_token("s3cret"));
+        let get = |app: Router, uri: &'static str| async move {
+            app.oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap()
+        };
+        // Home runs under a strict policy: its own scripts and styles only.
+        for uri in [
+            "/needs",
+            "/home",
+            "/static/home.html",
+            "/static/v/any/home.html",
+        ] {
+            let page = get(app.clone(), uri).await;
+            assert_eq!(page.status(), StatusCode::OK, "{uri}");
+            assert_eq!(page.headers()[header::X_FRAME_OPTIONS], "DENY", "{uri}");
+            let policy = page.headers()[header::CONTENT_SECURITY_POLICY]
+                .to_str()
+                .unwrap()
+                .to_string();
+            for directive in [
+                "default-src 'self'",
+                "script-src 'self'",
+                "style-src 'self'",
+                "frame-ancestors 'none'",
+                "base-uri 'none'",
+            ] {
+                assert!(policy.contains(directive), "{uri}: {policy}");
+            }
+            assert!(!policy.contains("unsafe-inline"), "{uri}: {policy}");
+        }
+        let home = get(app.clone(), "/home").await;
+        let html = String::from_utf8(
+            axum::body::to_bytes(home.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(html.contains("/home.mjs"), "{html}");
+        assert!(
+            !html.contains("<script>") && !html.contains(" style=\""),
+            "Home carries no inline code"
+        );
     }
 
     #[tokio::test]
