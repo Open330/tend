@@ -837,11 +837,55 @@ fn configure_worker_bootstrap_context(
     );
 }
 
+/// A queued Work (`Q-…` id) is created only by the Work queue's own
+/// launch, whose claims carry a generation; any other start into one is
+/// refused until the queue has released it. Released is final and nothing
+/// else creates such a Work, so the answer cannot go stale before the
+/// tmux calls below.
+fn refuse_leased_queue_work(request: &StartRequest) -> Result<()> {
+    let Some(work) = request.work.as_deref() else {
+        return Ok(());
+    };
+    if request.generation.is_some() || !tend::pipeline_run::is_queue_work_id(work) {
+        return Ok(());
+    }
+    let response = tend::ipc::blocking_call(
+        &request.socket,
+        &serde_json::json!({"protocol": tend::event::PROTOCOL_VERSION, "kind": "pipeline_runs"}),
+        std::time::Duration::from_secs(2),
+    );
+    let runs: Vec<tend::pipeline_run::PipelineRun> = response
+        .and_then(|response| serde_json::from_value(response["pipeline_runs"].clone()).ok())
+        .unwrap_or_default();
+    queue_work_released(&runs, work, request.workspace.as_deref())
+}
+
+/// Whether a start into queued Work `work` may go ahead: only once its Run
+/// exists and its lease is released.
+pub fn queue_work_released(
+    runs: &[tend::pipeline_run::PipelineRun],
+    work: &str,
+    workspace: Option<&str>,
+) -> Result<()> {
+    let released = runs.iter().any(|run| {
+        run.identity.work_id.eq_ignore_ascii_case(work)
+            && workspace.is_none_or(|w| run.identity.workspace_id.eq_ignore_ascii_case(w))
+            && !run.leased_against(None)
+    });
+    anyhow::ensure!(
+        released,
+        "{}: Work {work} is a queued Work the Work queue has not released; settle it in the queue first",
+        tend::pipeline_run::WORK_RESERVED_PREFIX
+    );
+    Ok(())
+}
+
 /// Start one allowlisted agent in a detached tmux surface and return its exact
 /// pane id. The operation is synchronous and should be wrapped in
 /// `spawn_blocking` by async callers.
 #[allow(clippy::too_many_lines)] // launch, metadata stamping, and rollback form one physical transaction
 pub fn start(mut request: StartRequest) -> Result<StartResult> {
+    refuse_leased_queue_work(&request)?;
     configure_worker_inbound(request.agent, request.purpose, &mut request.options);
     let bootstrap = tend::paths::data_dir().map(|root| root.join("tend/agent-integration"));
     configure_worker_bootstrap_context(

@@ -5,6 +5,17 @@ use super::{
     MAX_CONCURRENT_WORK_OPERATIONS, MAX_RETAINED_WORK_OPERATIONS,
 };
 
+/// Why a `work up` was not started. Nothing ran either way.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub(super) enum StartRefusal {
+    /// The request or its host is not acceptable; asking again will not help.
+    #[error("{0}")]
+    Invalid(String),
+    /// Too many operations right now; it may start later.
+    #[error("{0}")]
+    Busy(String),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkUpOperationState {
@@ -43,6 +54,8 @@ pub(super) struct WorkUpManager {
     /// Runs `work` argv on remote Fleet hosts. `None` while Fleet is not
     /// installed, in which case every non-local `host` is refused.
     pub(super) remote: Option<Arc<dyn RemoteWorkRunner>>,
+    /// Tests: runs local `work up` instead of the CLI (host `"local"`).
+    pub(super) local: Option<Arc<dyn RemoteWorkRunner>>,
     pub(super) next_id: AtomicU64,
     pub(super) operations: tokio::sync::Mutex<WorkUpOperations>,
     pub(super) commands: tokio::sync::Semaphore,
@@ -113,6 +126,20 @@ impl WorkUpManager {
         Self::with_remote(socket_path, None)
     }
 
+    /// A manager whose local `work up` runs on `runner` (tests).
+    #[cfg(test)]
+    pub(super) fn with_local(socket_path: PathBuf, runner: Arc<dyn RemoteWorkRunner>) -> Arc<Self> {
+        Arc::new(Self {
+            socket_path,
+            config_path: None,
+            remote: None,
+            local: Some(runner),
+            next_id: AtomicU64::new(1),
+            operations: tokio::sync::Mutex::new(WorkUpOperations::default()),
+            commands: tokio::sync::Semaphore::new(MAX_CONCURRENT_WORK_COMMANDS),
+        })
+    }
+
     pub(super) fn with_remote(
         socket_path: PathBuf,
         remote: Option<Arc<dyn RemoteWorkRunner>>,
@@ -121,6 +148,7 @@ impl WorkUpManager {
             socket_path,
             config_path: None,
             remote,
+            local: None,
             next_id: AtomicU64::new(1),
             operations: tokio::sync::Mutex::new(WorkUpOperations::default()),
             commands: tokio::sync::Semaphore::new(MAX_CONCURRENT_WORK_COMMANDS),
@@ -226,9 +254,27 @@ impl WorkUpManager {
         self: &Arc<Self>,
         request: WorkUpRequest,
     ) -> Result<WorkUpOperation, String> {
-        request.validate().map_err(|error| error.to_string())?;
+        self.start_typed(request)
+            .await
+            .map_err(|refusal| refusal.to_string())
+    }
+
+    /// [`Self::start`], telling a refusal that may pass (too many
+    /// operations running) from one that will not (an invalid request, an
+    /// unauthorized host). Either way nothing was started.
+    #[allow(clippy::too_many_lines)] // validate, dedupe, cap, record and spawn are one admission step
+    pub(super) async fn start_typed(
+        self: &Arc<Self>,
+        request: WorkUpRequest,
+    ) -> Result<WorkUpOperation, StartRefusal> {
+        request
+            .validate()
+            .map_err(|error| StartRefusal::Invalid(error.to_string()))?;
         let arguments = request.arguments();
-        let remote = self.remote_for(request.host.as_deref(), &arguments).await?;
+        let remote = self
+            .remote_for(request.host.as_deref(), &arguments)
+            .await
+            .map_err(StartRefusal::Invalid)?;
         let mut operations = self.operations.lock().await;
         if let Some(existing) = operations.values.values().find(|tracked| {
             tracked.operation.state == WorkUpOperationState::Running && tracked.request == request
@@ -241,9 +287,9 @@ impl WorkUpManager {
             .filter(|tracked| tracked.operation.state == WorkUpOperationState::Running)
             .count();
         if running >= MAX_CONCURRENT_WORK_OPERATIONS {
-            return Err(format!(
+            return Err(StartRefusal::Busy(format!(
                 "at most {MAX_CONCURRENT_WORK_OPERATIONS} Work operations may run at once"
-            ));
+            )));
         }
         while operations.values.len() >= MAX_RETAINED_WORK_OPERATIONS {
             let removable = operations.order.iter().position(|id| {
@@ -253,7 +299,9 @@ impl WorkUpManager {
                     .is_some_and(|tracked| tracked.operation.state != WorkUpOperationState::Running)
             });
             let Some(index) = removable else {
-                return Err("Work operation history is full of running operations".into());
+                return Err(StartRefusal::Busy(
+                    "Work operation history is full of running operations".into(),
+                ));
             };
             if let Some(id) = operations.order.remove(index) {
                 operations.values.remove(&id);
@@ -288,6 +336,11 @@ impl WorkUpManager {
         drop(operations);
 
         let manager = Arc::clone(self);
+        let remote = remote.or_else(|| {
+            self.local
+                .as_ref()
+                .map(|runner| ("local".to_string(), Arc::clone(runner)))
+        });
         tokio::spawn(async move {
             let outcome = match remote {
                 Some((host, runner)) => runner

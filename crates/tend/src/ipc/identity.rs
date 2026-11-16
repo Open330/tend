@@ -113,6 +113,10 @@ pub(super) struct CollaborationConnectionActor {
     pub(super) observed_pane: Option<String>,
     pub(super) pane_evidence: Option<CollaborationPaneEvidence>,
     pub(super) pane_observed: bool,
+    /// The observation ran to the end and the caller is not under a shared
+    /// Codex app-server (whose pane is borrowed). `false` means "could not
+    /// tell", never "no pane".
+    pub(super) pane_scan_ok: bool,
     /// The pane inventory the current request took while observing the
     /// caller, handed to participant discovery so one request scans once.
     /// Cleared before every request; never reused across requests.
@@ -129,15 +133,17 @@ impl CollaborationConnectionActor {
             return;
         };
         let pane_backends = backends.to_vec();
-        let Ok((observed, panes)) = tokio::task::spawn_blocking(move || {
+        let Ok((observed, panes, borrowed)) = tokio::task::spawn_blocking(move || {
+            let borrowed = crate::adapters::proc_ancestry::under_shared_codex_app_server(pid);
             let scan = RequestPaneScan::take(&pane_backends);
             let observed = observed_process_pane(pid, &pane_backends, &scan);
-            (observed, scan.into_panes())
+            (observed, scan.into_panes(), borrowed)
         })
         .await
         else {
             return;
         };
+        self.pane_scan_ok = !borrowed;
         self.request_panes = Some(panes);
         if let Some((pane, evidence)) = observed {
             self.observed_pane = Some(pane);
@@ -185,6 +191,7 @@ pub(super) fn observe_collaboration_actor(stream: &Stream) -> CollaborationConne
         observed_pane: None,
         pane_evidence: None,
         pane_observed: false,
+        pane_scan_ok: false,
         request_panes: None,
     }
 }

@@ -150,6 +150,71 @@ All mutations are committed to `pipeline-runs.json` before a successful
 response. The rendered prompts in this file are user content; the file and
 IPC socket are owner-only (`0600`).
 
+`pipeline_create_new_v1`: `pipeline_register` with `"create_new": true`
+refuses (`work_exists: …`), with nothing changed, when the Work already has
+a Run or the caller saw a window or panes for it.
+
+`pipeline_queue_lease_v1`: a Run may carry `queue_lease` (`item_id`,
+`holder`, `state`: `launching | suspended | released`). Work ids of the
+form `Q-<SLUG>-<YYYYMMDD>-<12 hex>` are the Work queue's; only the queue
+creates them, under a lease. Until the lease is `released`:
+
+- `pipeline_register` without the holder is refused (`work_reserved: …`);
+  `create_new` registers only with `"lease": "<holder>"`;
+- `pipeline_claim` returns no claims unless it carries `"lease":
+  "<holder>"` and the lease is `launching`. The reconciler, a manual
+  `work up` and an expired claim get nothing;
+- a `launching` lease reads back `suspended` after tendd restarts.
+
+A Run from before leases whose id matches the pattern loads as `released`.
+
+#### Work queue (`work_queue_v1`)
+
+tendd keeps a durable queue of prompts in `$XDG_DATA_HOME/tend/work-queue.json`
+(owner-only). An item targets an agent session (`agent`), one agent of a
+Work (`work`, by `alias` or its only agent), or a new Work (`new_work`,
+started with `work up` under a queue lease). tendd sends each item at most
+once on its own; an attempt whose effect it cannot know becomes
+`uncertain` and is never repeated without a person.
+
+| `kind` | Body | Response |
+| --- | --- | --- |
+| `work_queue_list` | `include_finished` | `work_queue`: `items` (in order, with `position` and `wait`), `revision`, `evaluated_at`, `fences`, `broken`, `unsaved` |
+| `work_queue_add` | `item`: `request_key`, `title?`, `prompt`, `target` | `work_queue_item` |
+| `work_queue_edit` | `id`, `expected_revision?`, `edit` (`title`, `prompt`, `target`) | `work_queue_item` |
+| `work_queue_move` | `id`, `expected_revision?`, `to` (0-based among unfinished) | `work_queue_item` |
+| `work_queue_cancel` | `id`, `expected_revision?` | `work_queue_item` |
+| `work_queue_remove` | `id`, `ack_duplicate_risk?` | `work_queue_item` |
+| `work_queue_run_now` | `id`, `expected_revision?`, `allow_duplicate?` | `work_queue_item` |
+| `work_queue_resolve` | `id`, `sent`, `ack_duplicate_risk?` | `work_queue_item` |
+| `work_queue_clear` | — | `work_queue_cleared` |
+
+States: `waiting`, `dispatching` (claimed; on disk before anything is
+typed or launched), `dispatched`, `uncertain`, `failed` (typed `reason`),
+`cancelled`.
+
+- `request_key` makes `add` idempotent: the same key, caller and payload
+  return the existing item; a different payload is `request key … was used
+  for a different item`. Keys are remembered for the last 1000 adds or 7
+  days, whichever is shorter, independent of clearing items.
+- A **fence** holds an agent session the queue typed to (or may have):
+  `in_flight` while sending, `delivered` once typed and submitted, and
+  `unresolved` when the outcome is unknown. Fences are stored apart from
+  the items and outlive clearing and trimming. A delivered fence ends only
+  when the provider reports a prompt from that same session at or after the
+  queue typed (`last_prompt_at`), or at once when the delivery's own hook
+  confirmed it. An unresolved fence ends only by `resolve`, `run_now` with
+  `allow_duplicate`, or `remove` with `ack_duplicate_risk`.
+- `resolve` with `sent: false` and `remove` of an item that may have reached
+  its agent need `ack_duplicate_risk: true`.
+- `run_now` goes ahead of the queue order and the launch throttle but never
+  past a safety gate (state, usage limit, open question, worker drain,
+  fence). An `uncertain` item needs `allow_duplicate`; a `failed` item with
+  `reason: identity_in_use` is final.
+- Only the person (a caller tendd places outside any tracked agent's pane)
+  may manage every item; an agent manages its own and may target only
+  worker agents or itself. A caller tendd cannot place may only list.
+
 #### `fleet_snapshot`
 
 Read tendd's per-physical-host cache, including the always-present `local`
