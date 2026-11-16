@@ -599,18 +599,21 @@ impl PipelineRunStore {
     /// Settle the lease item `item_id` holds on `identity`: `Released` (an
     /// ordinary Work from now on) or `Suspended` (unknown outcome). A lease
     /// someone else holds is left alone.
+    ///
+    /// `holder` fences it: given, only that attempt's lease changes, so a
+    /// stale settlement never touches a newer attempt's launch.
     pub async fn settle_lease(
         &self,
         identity: &WorkIdentity,
         item_id: &str,
+        holder: Option<&str>,
         state: QueueLeaseState,
     ) -> Result<(), PipelineRunError> {
         let mut inner = self.inner.lock().await;
-        if inner
-            .pending_leases
-            .get(identity)
-            .is_some_and(|pending| pending.item_id == item_id)
-        {
+        let held = |lease: &QueueLease| {
+            lease.item_id == item_id && holder.is_none_or(|holder| lease.holder == holder)
+        };
+        if inner.pending_leases.get(identity).is_some_and(held) {
             inner.pending_leases.remove(identity);
         }
         let Some(previous) = inner.runs.get(identity).cloned() else {
@@ -619,10 +622,7 @@ impl PipelineRunStore {
         let Some(lease) = previous.queue_lease.as_ref() else {
             return Ok(());
         };
-        if lease.item_id != item_id
-            || lease.state == state
-            || lease.state == QueueLeaseState::Released
-        {
+        if !held(lease) || lease.state == state || lease.state == QueueLeaseState::Released {
             return Ok(());
         }
         let now = OffsetDateTime::now_utc();
@@ -2050,15 +2050,30 @@ mod lease_tests {
         assert_eq!(claims.len(), 1);
 
         store
-            .settle_lease(&identity, "q-1", QueueLeaseState::Released)
+            .settle_lease(&identity, "q-1", None, QueueLeaseState::Released)
             .await
             .unwrap();
         // An ordinary Work now: a manual `work up` may change it.
         let rerun = store.register(changed).await.unwrap();
         assert!(rerun.generation > run.generation);
+        // A settlement for another attempt (stale) changes nothing.
+        let other = WorkIdentity::new("ws", "Q-OTHER-20261116-0123456789AB");
+        store.acquire_lease(&other, "q-9", "new").await.unwrap();
+        store
+            .register_new(queued("Q-OTHER-20261116-0123456789AB"), Some("new"))
+            .await
+            .unwrap();
+        store
+            .settle_lease(&other, "q-9", Some("old"), QueueLeaseState::Released)
+            .await
+            .unwrap();
+        assert_eq!(
+            store.lease(&other).await.unwrap().state,
+            QueueLeaseState::Launching
+        );
         // Released is final.
         store
-            .settle_lease(&identity, "q-1", QueueLeaseState::Suspended)
+            .settle_lease(&identity, "q-1", None, QueueLeaseState::Suspended)
             .await
             .unwrap();
         assert_eq!(

@@ -19,7 +19,6 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use super::dispatch::ServerCtx;
 use super::topology::{resolve_backend, send_prompt_endpoint};
 use super::work::{StartRefusal, WorkUpOperationState};
-use crate::pipeline_run::QueueLeaseState;
 use crate::prompt_delivery::{
     deliver_prompt_holding, idle_gate, lock_pane, DeliveryRefused, PromptDelivery,
 };
@@ -185,43 +184,24 @@ pub(super) async fn response(
         R::WorkQueueRemove {
             id,
             ack_duplicate_risk,
-        } => {
-            // A queued Work the person removes unsettled is theirs now. The
-            // lease goes first: if the removal then fails, the item stays
-            // and can be removed again; a released lease is never taken back.
-            let before = queue.get(&id).await;
-            if let Some(item) = before.as_ref().filter(|item| {
-                ack_duplicate_risk
-                    && actor.may_manage_item(item)
-                    && matches!(item.state, QueueState::Uncertain { .. })
-            }) {
-                if let Err(error) = release_lease(ctx, item).await {
-                    return ("work_queue_remove", super::Response::err(error));
-                }
-            }
-            (
-                "work_queue_remove",
-                item_response(queue.remove(&actor, &id, ack_duplicate_risk).await),
-            )
-        }
+        } => (
+            "work_queue_remove",
+            item_response(queue.remove(&actor, &id, ack_duplicate_risk).await),
+        ),
+        // The store writes any lease change with the item in one write; the
+        // executor applies it to the Run store on its next pass.
         R::WorkQueueResolve {
             id,
             sent,
             ack_duplicate_risk,
-        } => {
-            let resolved = queue
-                .resolve(&actor, &id, sent, ack_duplicate_risk, now())
-                .await;
-            // Marked started: an ordinary Work from here on. Marked not
-            // started: the lease stays suspended until the next attempt
-            // takes it over.
-            // A failed write leaves the lease suspended (nothing claims);
-            // the executor's next pass writes it again.
-            if let (Ok(item), true) = (&resolved, sent) {
-                let _ = release_lease(ctx, item).await;
-            }
-            ("work_queue_resolve", item_response(resolved))
-        }
+        } => (
+            "work_queue_resolve",
+            item_response(
+                queue
+                    .resolve(&actor, &id, sent, ack_duplicate_risk, now())
+                    .await,
+            ),
+        ),
         R::WorkQueueClear => (
             "work_queue_clear",
             match queue.clear(&actor).await {
@@ -266,20 +246,20 @@ pub(super) async fn response(
     }
 }
 
-async fn release_lease(ctx: &ServerCtx, item: &QueueItem) -> Result<(), String> {
-    let Some(identity) = item.target.new_work_identity() else {
-        return Ok(());
-    };
-    ctx.pipeline_runs
-        .settle_lease(&identity, &item.id, QueueLeaseState::Released)
-        .await
-        .map_err(|error| {
-            tracing::warn!(%error, "work queue: lease not released");
-            format!("the queued Work's lease could not be saved: {error}")
-        })
-}
-
 async fn add(ctx: &ServerCtx, actor: &QueueActor, request: QueueAddRequest) -> super::Response {
+    // A retry is answered from the key before anything is resolved again:
+    // a new Work gets a fresh id on every resolution, and an agent target
+    // may be gone by the time a lost reply is retried. Two retries racing
+    // both resolve, and the store keeps the first.
+    let print = crate::work_queue::request_fingerprint(&request, actor);
+    if let Some(existing) = ctx
+        .work_queue
+        .store
+        .existing_for_key(&request.request_key, &print)
+        .await
+    {
+        return item_response(existing);
+    }
     let target = match resolve_target(ctx, actor, request.target, &request.prompt, None).await {
         Ok(target) => target,
         Err(error) => return super::Response::err(error),
@@ -294,6 +274,7 @@ async fn add(ctx: &ServerCtx, actor: &QueueActor, request: QueueAddRequest) -> s
                     title: request.title,
                     prompt: request.prompt,
                     target,
+                    request_fingerprint: Some(print),
                 },
                 now(),
             )
@@ -538,7 +519,6 @@ struct InFlight {
     id: String,
     attempt: String,
     operation_id: String,
-    identity: WorkIdentity,
     /// The attempt took over a Run an earlier attempt of this item left
     /// suspended, so even a "Work exists" refusal may follow effects.
     took_over: bool,
@@ -658,7 +638,7 @@ impl Executor {
         let items = self.queue.items().await;
         // Leases follow the items' durable states; until every one is
         // written, nothing new is claimed.
-        let leases_settled = self.reconcile_leases(&items).await;
+        let leases_settled = self.apply_lease_intents().await;
         if !items
             .iter()
             .any(|item| matches!(item.state, QueueState::Waiting))
@@ -746,7 +726,7 @@ impl Executor {
                 .map_err(|error| error.to_string())?
         };
         let items = self.queue.items().await;
-        let leases_settled = self.reconcile_leases(&items).await;
+        let leases_settled = self.apply_lease_intents().await;
         let (agents, needs_person, draining, workers) = self.observe_inputs(&items).await;
         let fences = self.queue.fences().await;
         let frozen = self.queue.frozen().await || !leases_settled;
@@ -788,38 +768,32 @@ impl Executor {
         }
     }
 
-    /// Bring each queued Work's lease in line with its item's durable state:
-    /// released once dispatched, suspended otherwise (outside a launch
-    /// under way). `false` while a lease could not be written; the caller
-    /// then claims nothing, as for an unsaved queue outcome.
-    async fn reconcile_leases(&self, items: &[QueueItem]) -> bool {
+    /// Write the lease changes the queue recorded with its outcomes to the
+    /// Run store, then forget them. `false` while one could not be written;
+    /// the caller then claims nothing, as for an unsaved queue outcome.
+    async fn apply_lease_intents(&self) -> bool {
         let mut settled = true;
-        for item in items {
-            let Some(identity) = item.target.new_work_identity() else {
-                continue;
-            };
-            let want = match item.state {
-                QueueState::Dispatching { .. } => continue,
-                QueueState::Dispatched { .. } => QueueLeaseState::Released,
-                _ => QueueLeaseState::Suspended,
-            };
-            let Some(lease) = self.ctx.pipeline_runs.lease(&identity).await else {
-                continue;
-            };
-            if lease.item_id != item.id
-                || lease.state == want
-                || lease.state == QueueLeaseState::Released
-            {
-                continue;
-            }
-            if let Err(error) = self
+        for intent in self.queue.lease_intents().await {
+            let written = self
                 .ctx
                 .pipeline_runs
-                .settle_lease(&identity, &item.id, want)
-                .await
-            {
-                tracing::warn!(%error, "work queue: lease not saved; holding new claims");
-                settled = false;
+                .settle_lease(
+                    &intent.identity,
+                    &intent.item_id,
+                    intent.holder.as_deref(),
+                    intent.state,
+                )
+                .await;
+            match written {
+                Ok(()) => {
+                    if let Err(error) = self.queue.lease_applied(&intent).await {
+                        tracing::warn!(%error, "work queue: applied lease not recorded");
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "work queue: lease not saved; holding new claims");
+                    settled = false;
+                }
             }
         }
         settled
@@ -924,13 +898,6 @@ impl Executor {
         request.body = Some(item.prompt.clone());
         request.new_only = true;
         request.queue_lease = Some(attempt.to_string());
-        let suspend = || async {
-            let _ = self
-                .ctx
-                .pipeline_runs
-                .settle_lease(&identity, &item.id, QueueLeaseState::Suspended)
-                .await;
-        };
         match self.ctx.work_up.start_typed(request).await {
             Ok(operation) => {
                 let operation_id = operation.operation_id.clone();
@@ -949,21 +916,36 @@ impl Executor {
                     id: item.id.clone(),
                     attempt: attempt.to_string(),
                     operation_id,
-                    identity: identity.clone(),
                     took_over,
                 });
                 self.poll_launch().await;
             }
             Err(StartRefusal::Busy(reason)) => {
                 tracing::debug!(%reason, "work queue: launch deferred");
-                suspend().await;
                 let _ = self
                     .queue
                     .release(&item.id, attempt, Some(now() + BUSY_RETRY), false, now())
                     .await;
             }
+            Err(StartRefusal::Invalid(reason)) if took_over => {
+                // Nothing new ran, but the earlier attempt may have left
+                // part of the Work: still the person's call.
+                let attempt_id = attempt.to_string();
+                let _ = self
+                    .queue
+                    .record(&item.id, attempt, now(), FenceChange::Keep, |item| {
+                        item.state = QueueState::Uncertain {
+                            attempt: attempt_id,
+                            at: now(),
+                            resolved: None,
+                            reason: format!(
+                                "could not start it again ({reason}); the Work may be partly started"
+                            ),
+                        };
+                    })
+                    .await;
+            }
             Err(StartRefusal::Invalid(reason)) => {
-                suspend().await;
                 let _ = self
                     .queue
                     .record(
@@ -985,7 +967,6 @@ impl Executor {
         let operation = self.ctx.work_up.status(&flight.operation_id).await;
         let at = now();
         let attempt = flight.attempt.clone();
-        let identity = flight.identity.clone();
         let took_over = flight.took_over;
         let state = match operation {
             Some(operation) if operation.state == WorkUpOperationState::Running => return,
@@ -1015,21 +996,8 @@ impl Executor {
         };
         let id = flight.id.clone();
         self.launch = None;
-        // The lease first: a crash after it and before the record leaves
-        // the item uncertain, which a person settles either way.
-        let lease = if matches!(state, QueueState::Dispatched { .. }) {
-            QueueLeaseState::Released
-        } else {
-            QueueLeaseState::Suspended
-        };
-        if let Err(error) = self
-            .ctx
-            .pipeline_runs
-            .settle_lease(&identity, &id, lease)
-            .await
-        {
-            tracing::warn!(%error, "work queue: launch lease not settled");
-        }
+        // The record carries the lease change (released, or suspended) in
+        // the same write; the next pass applies it to the Run store.
         if let Err(error) = self
             .queue
             .record(&id, &attempt, at, FenceChange::Keep, |item| {
@@ -1044,8 +1012,9 @@ impl Executor {
     /// Type the prompt, re-checking everything under the pane's input guard.
     #[allow(clippy::too_many_lines)] // one guarded delivery, every check in order
     async fn deliver(&mut self, item: &QueueItem, attempt: &str, target: ResolvedTarget) {
+        let store = Arc::clone(&self.queue);
         let release = |retry: time::Duration, failure: bool| {
-            let queue = Arc::clone(&self.queue);
+            let queue = Arc::clone(&store);
             let id = item.id.clone();
             let attempt = attempt.to_string();
             async move {
@@ -1055,7 +1024,7 @@ impl Executor {
             }
         };
         let fail = |reason: FailReason, detail: String| {
-            let queue = Arc::clone(&self.queue);
+            let queue = Arc::clone(&store);
             let id = item.id.clone();
             let attempt = attempt.to_string();
             async move {
@@ -1147,6 +1116,14 @@ impl Executor {
                 )
                 .await;
             }
+        }
+        // The whole target decided again from fresh reads, still under the
+        // guard: for a Work, every member's gates, its membership and the
+        // chosen alias, which may have changed while this waited for the
+        // guard. Anything but the same agent puts the item back.
+        if !self.still_the_target(item, &target).await {
+            tracing::debug!(id = %item.id, "work queue: target changed under the pane guard");
+            return release(REFUSED_RETRY, false).await;
         }
         let stamp = IdleStamp::of(&row);
         let typed_at = now();
@@ -1245,6 +1222,34 @@ impl Executor {
                 }
             }
         }
+    }
+
+    /// Whether planning `item` now, from fresh reads (panes scanned again),
+    /// picks exactly `target`. Its own in-flight fence is not counted.
+    async fn still_the_target(&mut self, item: &QueueItem, target: &ResolvedTarget) -> bool {
+        self.panes_at = None;
+        let items = vec![QueueItem {
+            state: QueueState::Waiting,
+            ..item.clone()
+        }];
+        let (agents, needs_person, draining, workers) = self.observe_inputs(&items).await;
+        let fences = self.queue.fences().await;
+        let obs = Observation {
+            now: now(),
+            agents: &agents,
+            panes: &self.panes,
+            needs_person: &needs_person,
+            draining_panes: &draining,
+            workers: &workers,
+            launch_in_flight: false,
+            max_busy: self.max_busy,
+            frozen: false,
+        };
+        let (verdict, _) = plan::run_now(&items[0], &fences, &obs);
+        matches!(
+            verdict,
+            Verdict::Go(Some(now)) if now.session_id == target.session_id && now.pane == target.pane
+        )
     }
 
     /// An attempt whose effect is unknown: kept, with its fence, until a

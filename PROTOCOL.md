@@ -166,7 +166,12 @@ creates them, under a lease. Until the lease is `released`:
   `work up` and an expired claim get nothing;
 - a `launching` lease reads back `suspended` after tendd restarts.
 
-A Run from before leases whose id matches the pattern loads as `released`.
+A Run from before leases whose id matches the pattern loads as `released`. The queue writes
+each lease change it owes (release on success, cancel or remove; suspend
+on any other outcome) into `work-queue.json` with the outcome itself, and
+applies it to the Run store on its next pass, fenced by the attempt that
+holds the lease. Until every such change is applied, nothing new is
+claimed.
 
 #### Work queue (`work_queue_v1`)
 
@@ -194,7 +199,7 @@ typed or launched), `dispatched`, `uncertain`, `failed` (typed `reason`),
 `cancelled`.
 
 - `request_key` makes `add` idempotent: the same key, caller and payload
-  return the existing item; a different payload is `request key … was used
+  (as sent, before tendd resolves the target) return the existing item; a different payload is `request key … was used
   for a different item`. Keys are remembered for the last 1000 adds or 7
   days, whichever is shorter, independent of clearing items.
 - A **fence** holds an agent session the queue typed to (or may have):

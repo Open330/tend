@@ -555,6 +555,7 @@ impl FlakyDisk {
                 items: file.items,
                 request_keys: file.request_keys,
                 fences: file.fences,
+                lease_intents: file.lease_intents,
                 ..Inner::default()
             },
         )
@@ -563,6 +564,7 @@ impl FlakyDisk {
 
 fn add(prompt: &str, target: QueueTarget) -> QueueAdd {
     QueueAdd {
+        request_fingerprint: None,
         request_key: uuid::Uuid::new_v4().to_string(),
         title: None,
         prompt: prompt.into(),
@@ -1273,4 +1275,101 @@ fn only_the_two_pre_launch_refusals_are_clean_launch_failures() {
     ] {
         assert!(launch_refusal(other).is_none(), "{other}");
     }
+}
+
+/// Lease changes ride on the queue write that caused them and outlive the
+/// item: clearing, trimming and a restart keep them until applied.
+#[tokio::test]
+async fn lease_intents_are_written_with_outcomes_and_outlive_the_item() {
+    use crate::pipeline_run::QueueLeaseState;
+    let disk = Arc::new(FlakyDisk::default());
+    let store = WorkQueueStore::with_items(Box::new(Flaky(disk.clone())), Vec::new());
+    let queued = store
+        .add(&QueueActor::Operator, add("start it", new_work("w1")), NOW)
+        .await
+        .unwrap();
+    let claim = store
+        .claim(&queued.id, queued.revision, None, false, NOW)
+        .await
+        .unwrap();
+    assert!(
+        store.lease_intents().await.is_empty(),
+        "none while launching"
+    );
+    let attempt = claim.attempt.clone();
+    store
+        .record(&queued.id, &claim.attempt, NOW, FenceChange::Keep, |item| {
+            item.state = QueueState::Dispatched {
+                attempt,
+                at: NOW,
+                resolved: None,
+                evidence: Evidence::default(),
+                work: None,
+                detail: None,
+            };
+        })
+        .await
+        .unwrap();
+    let intents = store.lease_intents().await;
+    assert_eq!(intents.len(), 1);
+    assert_eq!(intents[0].state, QueueLeaseState::Released);
+    assert_eq!(intents[0].holder.as_deref(), Some(claim.attempt.as_str()));
+    assert_eq!(store.clear(&QueueActor::Operator).await.unwrap(), 1);
+    let restarted = disk.reload();
+    assert_eq!(restarted.lease_intents().await, intents);
+    restarted.lease_applied(&intents[0]).await.unwrap();
+    assert!(restarted.lease_intents().await.is_empty());
+}
+
+#[tokio::test]
+async fn a_stale_remove_cannot_touch_a_newer_attempt() {
+    use crate::pipeline_run::QueueLeaseState;
+    let disk = Arc::new(FlakyDisk::default());
+    let store = WorkQueueStore::with_items(Box::new(Flaky(disk.clone())), Vec::new());
+    let queued = store
+        .add(&QueueActor::Operator, add("start it", new_work("w1")), NOW)
+        .await
+        .unwrap();
+    let first = store
+        .claim(&queued.id, queued.revision, None, false, NOW)
+        .await
+        .unwrap();
+    // A restart: uncertain, its lease to be suspended for that attempt.
+    let store = disk.reload();
+    store.recover(NOW).await.unwrap();
+    let intents = store.lease_intents().await;
+    assert_eq!(intents[0].state, QueueLeaseState::Suspended);
+    assert_eq!(intents[0].holder.as_deref(), Some(first.attempt.as_str()));
+    // run-now with the duplicate accepted takes it again...
+    let current = store.get(&queued.id).await.unwrap();
+    let second = store
+        .claim(&queued.id, current.revision, None, true, NOW)
+        .await
+        .unwrap();
+    assert_ne!(second.attempt, first.attempt);
+    // ...so a remove made from the old (uncertain) view is refused, with
+    // nothing written for the lease.
+    assert!(matches!(
+        store.remove(&QueueActor::Operator, &queued.id, true).await,
+        Err(QueueError::WrongState { .. })
+    ));
+    assert_eq!(store.lease_intents().await, intents);
+}
+
+#[tokio::test]
+async fn cancelling_or_removing_a_queued_work_releases_its_lease() {
+    use crate::pipeline_run::QueueLeaseState;
+    let store = WorkQueueStore::in_memory();
+    let queued = store
+        .add(&QueueActor::Operator, add("start it", new_work("w1")), NOW)
+        .await
+        .unwrap();
+    store
+        .cancel(&QueueActor::Operator, &queued.id, None, NOW)
+        .await
+        .unwrap();
+    let intents = store.lease_intents().await;
+    assert_eq!(intents.len(), 1);
+    assert_eq!(intents[0].state, QueueLeaseState::Released);
+    assert_eq!(intents[0].holder, None);
 }

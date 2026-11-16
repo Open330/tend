@@ -303,6 +303,23 @@ impl Fence {
     }
 }
 
+/// A queued Work's lease change the queue still has to write to the Run
+/// store. Kept in the queue file with the outcome that caused it, apart
+/// from the items, so clearing or trimming an item never loses it; the
+/// executor applies it and then drops it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LeaseIntent {
+    pub identity: WorkIdentity,
+    pub item_id: String,
+    /// The attempt whose lease this settles; a lease another attempt has
+    /// taken over since is left alone. `None`: whichever attempt of this
+    /// item holds it (the item is gone or cancelled, so no newer one can
+    /// come).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub holder: Option<String>,
+    pub state: crate::pipeline_run::QueueLeaseState,
+}
+
 /// What an outcome does to the attempt's fence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FenceChange {
@@ -548,6 +565,12 @@ pub struct QueueAdd {
     pub title: Option<String>,
     pub prompt: String,
     pub target: QueueTarget,
+    /// The fingerprint of the request as the client sent it
+    /// ([`request_fingerprint`]), so a retry matches before its target is
+    /// resolved again (a new Work id is minted on every resolution). `None`
+    /// fingerprints this resolved add.
+    #[serde(skip)]
+    pub request_fingerprint: Option<String>,
 }
 
 /// A partial edit of a waiting item. `None` keeps a field; an empty title
@@ -856,14 +879,32 @@ fn new_id(prefix: &str) -> String {
 }
 
 fn fingerprint(add: &QueueAdd, creator: &QueueActor) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    let payload = serde_json::json!({
+    if let Some(print) = &add.request_fingerprint {
+        return print.clone();
+    }
+    hash_payload(&serde_json::json!({
         "creator": creator,
         "title": add.title,
         "prompt": add.prompt,
         "target": add.target,
-    });
+    }))
+}
+
+/// What identifies one client add for idempotency: the caller and the
+/// request exactly as sent, before tendd resolves its target.
+#[must_use]
+pub fn request_fingerprint(request: &QueueAddRequest, creator: &QueueActor) -> String {
+    hash_payload(&serde_json::json!({
+        "creator": creator,
+        "title": request.title,
+        "prompt": request.prompt,
+        "target": request.target,
+    }))
+}
+
+fn hash_payload(payload: &serde_json::Value) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
     hasher.update(payload.to_string().as_bytes());
     hasher
         .finalize()
@@ -898,6 +939,8 @@ struct QueueFile {
     request_keys: Vec<RequestKeyRecord>,
     #[serde(default)]
     fences: Vec<Fence>,
+    #[serde(default)]
+    lease_intents: Vec<LeaseIntent>,
 }
 
 #[derive(Debug, Default)]
@@ -905,6 +948,7 @@ struct Inner {
     items: Vec<QueueItem>,
     request_keys: Vec<RequestKeyRecord>,
     fences: Vec<Fence>,
+    lease_intents: Vec<LeaseIntent>,
     /// Why the file could not be read; every mutation is refused.
     broken: Option<String>,
     /// An outcome is in memory but not on disk.
@@ -921,7 +965,45 @@ impl Inner {
             items: self.items.clone(),
             request_keys: self.request_keys.clone(),
             fences: self.fences.clone(),
+            lease_intents: self.lease_intents.clone(),
         }
+    }
+
+    /// Note the lease change `item`'s state calls for (a queued Work only):
+    /// released once dispatched, suspended for any other settled state.
+    fn intend_lease(&mut self, item: &QueueItem, holder: &str) {
+        use crate::pipeline_run::QueueLeaseState;
+        let state = match item.state {
+            QueueState::Dispatching { .. } => return,
+            QueueState::Dispatched { .. } => QueueLeaseState::Released,
+            _ => QueueLeaseState::Suspended,
+        };
+        self.push_lease_intent(item, Some(holder.to_string()), state);
+    }
+
+    /// The person let go of a queued Work (cancelled or removed its item):
+    /// whatever of it exists is an ordinary Work from now on.
+    fn release_lease_of(&mut self, item: &QueueItem) {
+        self.push_lease_intent(item, None, crate::pipeline_run::QueueLeaseState::Released);
+    }
+
+    fn push_lease_intent(
+        &mut self,
+        item: &QueueItem,
+        holder: Option<String>,
+        state: crate::pipeline_run::QueueLeaseState,
+    ) {
+        let Some(identity) = item.target.new_work_identity() else {
+            return;
+        };
+        self.lease_intents
+            .retain(|intent| intent.item_id != item.id);
+        self.lease_intents.push(LeaseIntent {
+            identity,
+            item_id: item.id.clone(),
+            holder,
+            state,
+        });
     }
 
     fn fence_of(&self, item_id: &str) -> Option<usize> {
@@ -1101,6 +1183,7 @@ impl WorkQueueStore {
                     items: file.items,
                     request_keys: file.request_keys,
                     fences: file.fences,
+                    lease_intents: file.lease_intents,
                     ..Inner::default()
                 },
                 Ok(file) => Inner {
@@ -1163,6 +1246,7 @@ impl WorkQueueStore {
             items: inner.items.clone(),
             request_keys: inner.request_keys.clone(),
             fences: inner.fences.clone(),
+            lease_intents: inner.lease_intents.clone(),
             broken: inner.broken.clone(),
             dirty: inner.dirty,
             revision: inner.revision,
@@ -1206,6 +1290,23 @@ impl WorkQueueStore {
     /// The fences, for planning.
     pub async fn fences(&self) -> Vec<Fence> {
         self.inner.lock().await.fences.clone()
+    }
+
+    /// Lease changes not yet written to the Run store.
+    pub async fn lease_intents(&self) -> Vec<LeaseIntent> {
+        self.inner.lock().await.lease_intents.clone()
+    }
+
+    /// Forget `intent` once the Run store has it (a newer one for the same
+    /// item stays).
+    pub async fn lease_applied(&self, intent: &LeaseIntent) -> Result<(), QueueError> {
+        let mut inner = self.inner.lock().await;
+        if !inner.lease_intents.contains(intent) {
+            return Ok(());
+        }
+        let mut next = Self::cloned(&inner);
+        next.lease_intents.retain(|kept| kept != intent);
+        self.commit(&mut inner, next)
     }
 
     /// Drop delivered fences whose session has shown a turn since. Unknown
@@ -1254,6 +1355,34 @@ impl WorkQueueStore {
                 )
                 && item.target.new_work_identity().as_ref() == Some(identity)
         })
+    }
+
+    /// The item an earlier add with `key` made, when this is a retry of it
+    /// (same caller and payload, by `fingerprint`); a conflict when the key
+    /// was used for something else; `None` for a new key.
+    pub async fn existing_for_key(
+        &self,
+        key: &str,
+        fingerprint: &str,
+    ) -> Option<Result<QueueItem, QueueError>> {
+        let key = key.trim();
+        let inner = self.inner.lock().await;
+        let record = inner.request_keys.iter().find(|r| r.key == key)?;
+        if record.fingerprint != fingerprint {
+            return Some(Err(QueueError::RequestKeyConflict(key.to_string())));
+        }
+        Some(
+            inner
+                .items
+                .iter()
+                .find(|item| item.id == record.item_id)
+                .cloned()
+                .ok_or_else(|| {
+                    QueueError::Invalid(format!(
+                        "request key {key} was already used for an item that has since been cleared"
+                    ))
+                }),
+        )
     }
 
     pub async fn add(
@@ -1499,6 +1628,8 @@ impl WorkQueueStore {
             now,
             |inner, index| {
                 inner.items[index].state = QueueState::Cancelled { at: now };
+                let item = inner.items[index].clone();
+                inner.release_lease_of(&item);
                 Ok(())
             },
         )
@@ -1546,6 +1677,9 @@ impl WorkQueueStore {
         if unresolved {
             next.fences.retain(|fence| fence.item_id != id);
         }
+        // A queued Work the person removes is theirs now: an ordinary
+        // Work, its lease released, in the same write.
+        next.release_lease_of(&item);
         self.commit(&mut inner, next)?;
         Ok(item)
     }
@@ -1630,10 +1764,16 @@ impl WorkQueueStore {
         } else {
             next.fences.retain(|fence| fence.item_id != id);
         }
+        let holder = attempt.clone();
         next.items[index].state = state;
         next.items[index].retry = RetryState::default();
         next.items[index].touch(now);
         let item = next.items[index].clone();
+        // Marked started: released. Not started: stays suspended until the
+        // next attempt takes it over.
+        if sent {
+            next.intend_lease(&item, &holder);
+        }
         self.commit(&mut inner, next)?;
         Ok(item)
     }
@@ -1823,6 +1963,7 @@ impl WorkQueueStore {
         update(item);
         item.touch(now);
         let item = item.clone();
+        inner.intend_lease(&item, attempt);
         let owned = |fence: &Fence| fence.item_id == id && fence.attempt == attempt;
         match fence {
             FenceChange::Keep => {}
@@ -1959,6 +2100,7 @@ impl WorkQueueStore {
         }
         let mut next = Self::cloned(&inner);
         let mut count = 0;
+        let mut intents = Vec::new();
         for item in &mut next.items {
             if let QueueState::Dispatching {
                 attempt, resolved, ..
@@ -1971,6 +2113,7 @@ impl WorkQueueStore {
                     ),
                     _ => "tendd stopped while sending; check whether the agent got it".into(),
                 };
+                let holder = attempt.clone();
                 item.state = QueueState::Uncertain {
                     attempt: attempt.clone(),
                     at: now,
@@ -1978,8 +2121,12 @@ impl WorkQueueStore {
                     reason,
                 };
                 item.touch(now);
+                intents.push((item.clone(), holder));
                 count += 1;
             }
+        }
+        for (item, holder) in intents {
+            next.intend_lease(&item, &holder);
         }
         for fence in &mut next.fences {
             if fence.kind == FenceKind::InFlight {

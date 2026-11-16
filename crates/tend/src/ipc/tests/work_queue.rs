@@ -67,17 +67,46 @@ enum Pane {
 struct QueuePane {
     mode: Pane,
     keys: Arc<Mutex<Vec<String>>>,
+    /// Panes it shows besides the one that makes the caller observable.
+    panes: Vec<PaneInfo>,
 }
 
 fn queue_pane(mode: Pane) -> (Arc<QueuePane>, Arc<Mutex<Vec<String>>>) {
+    queue_pane_with(mode, Vec::new())
+}
+
+fn queue_pane_with(mode: Pane, panes: Vec<PaneInfo>) -> (Arc<QueuePane>, Arc<Mutex<Vec<String>>>) {
     let keys = Arc::new(Mutex::new(Vec::new()));
     (
         Arc::new(QueuePane {
             mode,
             keys: keys.clone(),
+            panes,
         }),
         keys,
     )
+}
+
+/// A pane of Work `work` in workspace `workspace`, as tmux tags it.
+fn work_pane(id: &str, workspace: &str, work: &str, alias: &str) -> PaneInfo {
+    serde_json::from_value(serde_json::json!({
+        "pane_id": id,
+        "session_id": "$1",
+        "session": "tend",
+        "window_id": "@2",
+        "window_name": work,
+        "window_index": "2",
+        "pane_index": "0",
+        "tty": "/dev/ttys002",
+        "current_command": "codex",
+        "title": "",
+        "pane_pid": 0,
+        "socket": "default",
+        "workspace_id": workspace,
+        "work_id": work,
+        "agent_alias": alias,
+    }))
+    .expect("pane fixture")
 }
 
 impl PaneBackend for QueuePane {
@@ -85,21 +114,25 @@ impl PaneBackend for QueuePane {
         HostKind::Tmux
     }
     fn list_panes(&self) -> Vec<PaneInfo> {
-        vec![serde_json::from_value(serde_json::json!({
-            "pane_id": "%9001",
-            "session_id": "$1",
-            "session": "tend",
-            "window_id": "@1",
-            "window_name": "w",
-            "window_index": "1",
-            "pane_index": "0",
-            "tty": "/dev/ttys001",
-            "current_command": "zsh",
-            "title": "",
-            "pane_pid": 0,
-            "socket": "default",
-        }))
-        .expect("pane fixture")]
+        let mut panes = self.panes.clone();
+        panes.push(
+            serde_json::from_value(serde_json::json!({
+                "pane_id": "%9001",
+                "session_id": "$1",
+                "session": "tend",
+                "window_id": "@1",
+                "window_name": "w",
+                "window_index": "1",
+                "pane_index": "0",
+                "tty": "/dev/ttys001",
+                "current_command": "zsh",
+                "title": "",
+                "pane_pid": 0,
+                "socket": "default",
+            }))
+            .expect("pane fixture"),
+        );
+        panes
     }
     fn resolve_pane(&self, _: &str) -> Option<PaneInfo> {
         None
@@ -175,16 +208,19 @@ fn to_pane(pane: &str, prompt: &str) -> QueueAddRequest {
 }
 
 async fn wait_for(client: &Client, id: &str, done: impl Fn(&QueueItem) -> bool) -> QueueItem {
-    for _ in 0..100 {
+    let mut last = None;
+    // Up to 10 s: a retry waits out its delay and the executor's tick.
+    for _ in 0..200 {
         let snapshot = client.work_queue_list(true).await.unwrap();
         if let Some(view) = snapshot.items.iter().find(|view| view.item.id == id) {
             if done(&view.item) {
                 return view.item.clone();
             }
+            last = Some((view.item.state.clone(), view.wait));
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    panic!("item {id} did not reach the expected state");
+    panic!("item {id} did not reach the expected state; last {last:?}");
 }
 
 /// The item's reason once it reads `expected` (reasons from a pass made
@@ -552,6 +588,9 @@ enum Launch {
     FailsAfterRegistering,
     /// Refuses at registration: the Work was started elsewhere first.
     FindsItStarted,
+    /// Starts, then breaks the Run store's directory (a file where it
+    /// was), so writing the lease release fails.
+    StartsThenBreaksStore,
 }
 
 /// Stands in for the `tend work up` CLI against the server's Run store,
@@ -560,6 +599,8 @@ struct FakeWorkUp {
     runs: Arc<PipelineRunStore>,
     mode: Launch,
     manual: Mutex<Vec<String>>,
+    /// The Run store's directory, for `StartsThenBreaksStore`.
+    runs_dir: Option<std::path::PathBuf>,
 }
 
 fn arg<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
@@ -638,6 +679,11 @@ impl RemoteWorkRunner for FakeWorkUp {
             if self.mode == Launch::FailsAfterRegistering {
                 return Ok(fail("Error: launch codex: tmux split-window failed"));
             }
+            if self.mode == Launch::StartsThenBreaksStore {
+                let dir = self.runs_dir.as_ref().unwrap();
+                std::fs::rename(dir, dir.with_extension("away")).unwrap();
+                std::fs::write(dir, b"not a directory").unwrap();
+            }
             Ok(WorkCommandOutput {
                 exit_code: 0,
                 stdout: serde_json::json!({"work": work, "workspace": workspace}).to_string(),
@@ -647,43 +693,86 @@ impl RemoteWorkRunner for FakeWorkUp {
     }
 }
 
-async fn serve_launches(
+struct Launches {
+    client: Client,
+    runs: Arc<PipelineRunStore>,
+    queue: Arc<WorkQueueStore>,
+    fake: Arc<FakeWorkUp>,
+    tx: broadcast::Sender<()>,
+    handle: tokio::task::JoinHandle<()>,
+}
+
+async fn serve_launches(dir: &Path, mode: Launch) -> Launches {
+    serve_launches_on(dir, mode, PipelineRunStore::in_memory(), None).await
+}
+
+async fn serve_launches_on(
     dir: &Path,
     mode: Launch,
-) -> (
-    Client,
-    Arc<PipelineRunStore>,
-    Arc<FakeWorkUp>,
-    broadcast::Sender<()>,
-    tokio::task::JoinHandle<()>,
-) {
+    runs: Arc<PipelineRunStore>,
+    runs_dir: Option<std::path::PathBuf>,
+) -> Launches {
     let sock = dir.join("tend-queue-launch.sock");
-    let runs = PipelineRunStore::in_memory();
     let fake = Arc::new(FakeWorkUp {
         runs: runs.clone(),
         mode,
         manual: Mutex::new(Vec::new()),
+        runs_dir,
     });
+    let queue = WorkQueueStore::load(Some(dir.join("work-queue.json")));
     let (backend, _keys) = queue_pane(Pane::Takes);
     let mut server = Server::new(sock.clone(), Store::shared())
         .with_backends(vec![backend as SharedBackend])
         .with_pipeline_runs(runs.clone())
-        .with_work_queue(WorkQueueStore::in_memory(), 3);
+        .with_work_queue(queue.clone(), 3);
     server.work_up = super::super::work::WorkUpManager::with_local(sock.clone(), fake.clone());
     let (tx, rx) = broadcast::channel(1);
     let handle = tokio::spawn(async move { server.run(rx).await.unwrap() });
     wait_for_socket(&sock).await;
-    (Client::new(sock), runs, fake, tx, handle)
+    Launches {
+        client: Client::new(sock),
+        runs,
+        queue,
+        fake,
+        tx,
+        handle,
+    }
+}
+
+impl Launches {
+    async fn stop(self) {
+        self.tx.send(()).unwrap();
+        self.handle.await.unwrap();
+    }
 }
 
 fn identity_of(item: &QueueItem) -> WorkIdentity {
     item.target.new_work_identity().unwrap()
 }
 
+/// The lease once it reads `state` (the executor writes it on its next
+/// pass), else panic.
+async fn wait_lease(runs: &PipelineRunStore, identity: &WorkIdentity, state: QueueLeaseState) {
+    for _ in 0..100 {
+        if runs.lease(identity).await.map(|lease| lease.state) == Some(state) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("lease of {} never became {state:?}", identity.key());
+}
+
 #[tokio::test]
 async fn a_queued_work_starts_under_its_lease_and_is_released_after() {
     let dir = tempdir().unwrap();
-    let (client, runs, fake, tx, handle) = serve_launches(dir.path(), Launch::Starts).await;
+    let Launches {
+        client,
+        runs,
+        fake,
+        tx,
+        handle,
+        ..
+    } = serve_launches(dir.path(), Launch::Starts).await;
     let item = client
         .work_queue_add(&new_work_request("k1", Some("/repo/webapp")))
         .await
@@ -708,10 +797,7 @@ async fn a_queued_work_starts_under_its_lease_and_is_released_after() {
     assert_eq!(manual.len(), 1);
     assert!(manual[0].starts_with("work_reserved"), "{manual:?}");
     // Released: an ordinary Work from now on.
-    assert_eq!(
-        runs.lease(&identity).await.unwrap().state,
-        QueueLeaseState::Released
-    );
+    wait_lease(&runs, &identity, QueueLeaseState::Released).await;
 
     tx.send(()).unwrap();
     handle.await.unwrap();
@@ -720,8 +806,13 @@ async fn a_queued_work_starts_under_its_lease_and_is_released_after() {
 #[tokio::test]
 async fn a_launch_that_fails_after_registering_is_uncertain_and_suspended() {
     let dir = tempdir().unwrap();
-    let (client, runs, _fake, tx, handle) =
-        serve_launches(dir.path(), Launch::FailsAfterRegistering).await;
+    let Launches {
+        client,
+        runs,
+        tx,
+        handle,
+        ..
+    } = serve_launches(dir.path(), Launch::FailsAfterRegistering).await;
     let item = client
         .work_queue_add(&new_work_request("k1", Some("/repo/webapp")))
         .await
@@ -735,10 +826,7 @@ async fn a_launch_that_fails_after_registering_is_uncertain_and_suspended() {
         reason.contains("may have started part of the Work"),
         "{reason}"
     );
-    assert_eq!(
-        runs.lease(&identity).await.unwrap().state,
-        QueueLeaseState::Suspended
-    );
+    wait_lease(&runs, &identity, QueueLeaseState::Suspended).await;
     // Nothing reconciles it meanwhile: no claims, no manual registration.
     let run = runs.get(&identity).await.unwrap();
     for _ in 0..2 {
@@ -773,10 +861,7 @@ async fn a_launch_that_fails_after_registering_is_uncertain_and_suspended() {
         .work_queue_resolve(&item.id, true, false)
         .await
         .unwrap();
-    assert_eq!(
-        runs.lease(&identity).await.unwrap().state,
-        QueueLeaseState::Released
-    );
+    wait_lease(&runs, &identity, QueueLeaseState::Released).await;
 
     tx.send(()).unwrap();
     handle.await.unwrap();
@@ -785,8 +870,13 @@ async fn a_launch_that_fails_after_registering_is_uncertain_and_suspended() {
 #[tokio::test]
 async fn a_work_started_elsewhere_first_fails_cleanly_and_is_final() {
     let dir = tempdir().unwrap();
-    let (client, runs, _fake, tx, handle) =
-        serve_launches(dir.path(), Launch::FindsItStarted).await;
+    let Launches {
+        client,
+        runs,
+        tx,
+        handle,
+        ..
+    } = serve_launches(dir.path(), Launch::FindsItStarted).await;
     let item = client
         .work_queue_add(&new_work_request("k1", Some("/repo/webapp")))
         .await
@@ -804,6 +894,142 @@ async fn a_work_started_elsewhere_first_fails_cleanly_and_is_final() {
         .to_string();
     assert!(refused.contains("new Work id"), "{refused}");
     assert!(runs.lease(&identity_of(&item)).await.is_none());
+
+    tx.send(()).unwrap();
+    handle.await.unwrap();
+}
+
+#[tokio::test]
+async fn a_retried_new_work_add_returns_the_first_item() {
+    let dir = tempdir().unwrap();
+    let launches = serve_launches(dir.path(), Launch::Starts).await;
+    let client = &launches.client;
+    // A fresh Work id is minted per resolution; the retry still matches.
+    let request = new_work_request("same-key", Some("/repo/webapp"));
+    let (first, second) = tokio::join!(
+        client.work_queue_add(&request),
+        client.work_queue_add(&request)
+    );
+    let (first, second) = (first.unwrap(), second.unwrap());
+    assert_eq!(first.id, second.id);
+    let third = client.work_queue_add(&request).await.unwrap();
+    assert_eq!(third.id, first.id);
+    assert_eq!(identity_of(&third), identity_of(&first));
+    // The same key for a different request is a conflict.
+    let mut other = request.clone();
+    other.prompt = "something else".into();
+    let conflict = client.work_queue_add(&other).await.unwrap_err().to_string();
+    assert!(conflict.contains("different item"), "{conflict}");
+    launches.stop().await;
+}
+
+/// The release of a started Work's lease cannot be written: the item is
+/// sent and may be cleared, but the release is kept in the queue file and
+/// written once the Run store works again.
+#[tokio::test]
+async fn a_lease_release_that_failed_survives_clearing_and_is_written_later() {
+    let dir = tempdir().unwrap();
+    let runs_dir = dir.path().join("runs");
+    let runs = PipelineRunStore::load(Some(runs_dir.join("pipeline-runs.json"))).unwrap();
+    let launches = serve_launches_on(
+        dir.path(),
+        Launch::StartsThenBreaksStore,
+        runs,
+        Some(runs_dir.clone()),
+    )
+    .await;
+    let client = &launches.client;
+    let item = client
+        .work_queue_add(&new_work_request("k1", Some("/repo/webapp")))
+        .await
+        .unwrap();
+    let identity = identity_of(&item);
+    wait_for(client, &item.id, |item| item.state.label() == "dispatched").await;
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    assert_eq!(
+        launches.runs.lease(&identity).await.unwrap().state,
+        QueueLeaseState::Launching,
+        "the release could not be written"
+    );
+    // Clearing the finished item keeps the pending release.
+    assert_eq!(client.work_queue_clear().await.unwrap(), 1);
+    assert_eq!(launches.queue.lease_intents().await.len(), 1);
+    let on_disk = std::fs::read_to_string(dir.path().join("work-queue.json")).unwrap();
+    assert!(on_disk.contains("lease_intents"), "{on_disk}");
+    // Storage recovers: the next pass writes it and forgets it.
+    std::fs::remove_file(&runs_dir).unwrap();
+    std::fs::rename(runs_dir.with_extension("away"), &runs_dir).unwrap();
+    client
+        .work_queue_add(&to_pane("%404", "nudge a pass"))
+        .await
+        .ok();
+    wait_lease(&launches.runs, &identity, QueueLeaseState::Released).await;
+    for _ in 0..40 {
+        if launches.queue.lease_intents().await.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(launches.queue.lease_intents().await.is_empty());
+    launches.stop().await;
+}
+
+/// A Work target re-decided under the pane guard: another member got busy
+/// while the delivery waited for the guard, so nothing is typed.
+#[tokio::test]
+async fn a_work_member_that_got_busy_while_waiting_for_the_guard_stops_the_send() {
+    let dir = tempdir().unwrap();
+    let sock = dir.path().join("tend-queue-work.sock");
+    let store = Store::shared();
+    let (impl_id, review_id) = (agent_id("s-impl", "%1"), agent_id("s-review", "%2"));
+    for id in [&impl_id, &review_id] {
+        working(&store, id).await;
+        idle(&store, id).await;
+    }
+    let (backend, keys) = queue_pane_with(
+        Pane::Takes,
+        vec![
+            work_pane("%1", "web", "W1", "impl"),
+            work_pane("%2", "web", "W1", "review"),
+        ],
+    );
+    let server = Server::new(sock.clone(), store.clone())
+        .with_backends(vec![backend as SharedBackend])
+        .with_work_queue(WorkQueueStore::in_memory(), 3);
+    let collaboration = server.collaboration.clone();
+    let (tx, rx) = broadcast::channel(1);
+    let handle = tokio::spawn(async move { server.run(rx).await.unwrap() });
+    wait_for_socket(&sock).await;
+    let client = Client::new(sock);
+
+    let held = collaboration.worker_action_guard("%1").await;
+    let item = client
+        .work_queue_add(&QueueAddRequest {
+            request_key: "w1".into(),
+            title: None,
+            prompt: "please implement".into(),
+            target: QueueTargetSpec::Work {
+                workspace: "web".into(),
+                work: "W1".into(),
+                alias: Some("impl".into()),
+            },
+        })
+        .await
+        .unwrap();
+    wait_for(&client, &item.id, |item| {
+        item.state.label() == "dispatching"
+    })
+    .await;
+    // The other member starts a turn while the send waits for the guard.
+    working(&store, &review_id).await;
+    drop(held);
+    let back = wait_for(&client, &item.id, |item| item.state.label() == "waiting").await;
+    assert!(back.retry.retry_after.is_some());
+    assert!(keys.lock().unwrap().is_empty(), "nothing typed");
+    // Once the whole Work is idle, it goes to the named member, once.
+    idle(&store, &review_id).await;
+    wait_for(&client, &item.id, |item| item.state.label() == "dispatched").await;
+    assert_eq!(*keys.lock().unwrap(), ["please implement", "\r"]);
 
     tx.send(()).unwrap();
     handle.await.unwrap();
