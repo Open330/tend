@@ -11,7 +11,7 @@ a ground according to a *variant*. `apply` writes the variant into the repo;
 Launchpad, browser tab, Windows taskbar) into a directory, plus a
 self-contained HTML comparison sheet.
 
-    uv run scripts/brand/tend_icons.py apply B
+    uv run scripts/brand/tend_icons.py apply D
     uv run scripts/brand/tend_icons.py preview --out /tmp/tend-icons
     uv run scripts/brand/tend_icons.py measure some-icon-1024.png ...
 
@@ -21,10 +21,16 @@ What `apply` writes (nothing else is touched):
     apps/tend-ios/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png
     assets/icon.svg, assets/brand/tend/appicon-states.svg, appicon-states-1024.png
     crates/tend/src/dashboard/web/landing/mac-icon.webp
+    crates/tend/src/dashboard/web/favicon.svg, manifest.webmanifest, pwa/*.png
+    crates/tend-app/assets/tend.ico (embedded in tend-app.exe by its build.rs)
 
-The bare mark (favicon `crates/tend/src/dashboard/web/icon.svg`, the macOS
-menu bar, the Windows tray and window icon) has no ground and is the same in
-every variant, so it is not written here.
+Outside Apple's platforms the icon is the variant's square with corners
+rounded at 22.5% of its side, the same shape `crates/tend-app/src/mark.rs`
+draws for the Windows tray and window icon.
+
+The bare mark of the macOS menu bar (BrandMark.swift) and the in-page logo
+(`crates/tend/src/dashboard/web/icon.svg`) have no ground and are not
+written here.
 
 `preview` uses Apple's own renderers when they are present (macOS with
 Xcode): `actool` compiles each variant's Icon Composer bundle into a probe
@@ -286,6 +292,41 @@ def bare_mark(size: int, working: str) -> Image.Image:
     return big.resize((size, size), Image.LANCZOS)
 
 
+CORNER = 0.225  # corner radius of the icon outside Apple's platforms, as a fraction of the side
+
+
+def rounded(v: Variant, size: int, ss: int = 4) -> Image.Image:
+    """The variant's square with rounded corners and transparent outside them."""
+    big = size * ss
+    mask = Image.new("L", (big, big), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, big - 1, big - 1), radius=CORNER * big, fill=255)
+    out = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    out.paste(render_square(v, size).convert("RGB"), (0, 0), mask.resize((size, size), Image.LANCZOS))
+    return out
+
+
+def ico(images: list[Image.Image]) -> bytes:
+    """A Windows .ico with one PNG-compressed entry per size (Vista and later)."""
+    import struct
+
+    blobs = []
+    for im in images:
+        buf = io.BytesIO()
+        im.save(buf, "PNG", optimize=True)
+        blobs.append((im.width, buf.getvalue()))
+    data = b""
+    entries = b""
+    offset = 6 + 16 * len(blobs)
+    for width, blob in blobs:
+        # A width or height of 256 is written as 0.
+        entries += struct.pack("<BBBBHHII", width % 256, width % 256, 0, 0, 1, 32, len(blob), offset + len(data))
+        data += blob
+    return struct.pack("<HHH", 0, 1, len(blobs)) + entries + data
+
+
+ICO_SIZES = [16, 20, 24, 32, 40, 48, 64, 256]
+
+
 def flat_mac(v: Variant, size: int) -> Image.Image:
     """macOS-style icon (squircle at 80.5% of the canvas) without Apple's renderer."""
     return masked(render_square(v, size), inset=(1 - 0.805) / 2)
@@ -430,6 +471,27 @@ def apply(v: Variant, root: Path, mac_icon: Image.Image | None = None) -> list[P
     put("apps/tend-ios/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png", png(square.convert("RGB"), optimize=True))
     landing = mac_icon if mac_icon is not None else flat_mac(v, 256)
     put("crates/tend/src/dashboard/web/landing/mac-icon.webp", png(landing.resize((256, 256), Image.LANCZOS), "WEBP", quality=92, method=6))
+
+    # The web: the tab icon, and the icons of the dashboard installed as an
+    # app. Manifest icon URLs are relative so they inherit the build-versioned
+    # path the pages give the manifest (/static/v/<build>/).
+    web = "crates/tend/src/dashboard/web"
+    put(f"{web}/favicon.svg", svg + "\n")
+    for size in (192, 512):
+        put(f"{web}/pwa/icon-{size}.png", png(rounded(v, size), optimize=True))
+    put(f"{web}/pwa/maskable-512.png", png(render_square(v, 512).convert("RGB"), optimize=True))
+    put(f"{web}/pwa/apple-touch-icon.png", png(render_square(v, 180).convert("RGB"), optimize=True))
+    put(f"{web}/manifest.webmanifest", json.dumps({
+        "name": "tend", "short_name": "tend", "start_url": "/", "display": "standalone",
+        "background_color": "#16181D", "theme_color": "#16181D",
+        "icons": [
+            {"src": "pwa/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+            {"src": "pwa/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+            {"src": "pwa/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+        ],
+    }, indent=2) + "\n")
+    # Windows: tend-app.exe's icon (Explorer, Start, the taskbar before launch).
+    put("crates/tend-app/assets/tend.ico", ico([rounded(v, s) for s in ICO_SIZES]))
     return written
 
 
@@ -614,7 +676,7 @@ def preview(out: Path) -> dict:
         results["variants"][v.key]["files"] = sorted(p.name for p in vd.glob("*.png"))
         results["variants"][v.key]["_images"] = {"mac": mac, "ios": ios, "styles": styles, "scenes": scenes}
 
-    # The bare mark shared by every variant: favicon, menu bar, Windows tray.
+    # The bare mark shared by every variant: the macOS menu bar, the in-page logo.
     results["_neighbours"] = neighbours
     summaries(out, results)
     write_sheet(out, results)
@@ -718,7 +780,7 @@ img{{image-rendering:auto}} table{{border-collapse:collapse}} td,th{{padding:2px
 <h1>Tend icon variants</h1>
 <p>Generated by <code>scripts/brand/tend_icons.py preview</code>. macOS images are drawn by macOS itself (actool + NSWorkspace) when available: {results['apple_renderer']}.</p>
 <h2>Peer icons measured the same way</h2><table><tr><th>App</th><th>Glyph / plate</th><th>Margin</th></tr>{table}</table>
-<section><h2>Shared by every variant: the bare mark</h2><p>The favicon, the macOS menu bar and the Windows tray and window icon draw the four rooms with no ground, edge to edge (100% of their box). They already are the owner's "square without a background" and stay as they are.</p><div class="row">{bare}</div></section>
+<section><h2>Shared by every variant: the bare mark</h2><p>The macOS menu bar (BrandMark.swift) and the dashboard's in-page logo (icon.svg) draw the four rooms with no ground, edge to edge. They are not written by <code>apply</code>. The favicon, the web app icons and the Windows icons are written by <code>apply</code> from the chosen variant (see "In place").</p><div class="row">{bare}</div></section>
 {('<section><h2>iOS home screen (simulator, real install)</h2><p>Probe apps Tend A to E installed next to the real Tend (today = A).</p><div class=row>' + ios_shots + '</div></section>') if ios_shots else ''}
 {''.join(rows)}
 """
