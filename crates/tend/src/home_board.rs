@@ -504,6 +504,13 @@ fn hosted_agents<'a>(
 ) -> Vec<Hosted<'a>> {
     let mut out = Vec::new();
     for host in &input.hosts {
+        // Panes by id, once per host, not one scan per agent.
+        let mut by_id: HashMap<&str, Vec<&Value>> = HashMap::new();
+        for pane in &host.panes {
+            if let Some(id) = str_of(pane, "pane_id") {
+                by_id.entry(id).or_default().push(pane);
+            }
+        }
         for agent in &host.agents {
             if str_of(agent, "state") == Some("stopped") {
                 continue;
@@ -513,11 +520,7 @@ fn hosted_agents<'a>(
             };
             let pane = str_of(agent, "pane").and_then(|pane_id| {
                 let socket = str_of(agent, "tmux_socket");
-                let same: Vec<&Value> = host
-                    .panes
-                    .iter()
-                    .filter(|p| str_of(p, "pane_id") == Some(pane_id))
-                    .collect();
+                let same: &[&Value] = by_id.get(pane_id).map_or(&[], Vec::as_slice);
                 same.iter()
                     .find(|p| socket.is_some() && str_of(p, "socket") == socket)
                     .copied()
@@ -649,21 +652,15 @@ fn participant_order(a: &Hosted, b: &Hosted) -> std::cmp::Ordering {
         .priority()
         .cmp(&b.status.priority())
         .then(b.host.local.cmp(&a.host.local))
-        .then_with(|| alias_of(a).cmp(alias_of(b)))
+        .then_with(|| a.host.alias.cmp(&b.host.alias))
         .then(a.id.cmp(&b.id))
-}
-
-fn alias_of<'a>(hosted: &Hosted<'a>) -> &'a str {
-    hosted
-        .pane
-        .and_then(|p| str_of(p, "agent_alias"))
-        .unwrap_or("")
 }
 
 // ---------------------------------------------------------------- text --
 
 /// A prompt as a card title (`FleetBoard.promptTitle`).
 pub fn prompt_title(prompt: &str) -> Option<Text> {
+    const MARKER: &str = "reply from ";
     let text = prompt.trim_start();
     if text.starts_with("<task-notification>") {
         if let (Some(start), Some(end)) = (text.find("<summary>"), text.find("</summary>")) {
@@ -684,12 +681,15 @@ pub fn prompt_title(prompt: &str) -> Option<Text> {
     };
     let rest = rest.trim();
     let line = rest.split('\n').next().unwrap_or(rest);
-    let lower = line.to_lowercase();
-    if let Some(at) = lower.find("reply from ") {
-        let who = line[at + "reply from ".len()..]
-            .split_whitespace()
-            .next()
-            .unwrap_or("");
+    // `(?:Completed )?reply from \S+`, case-insensitively, found in the
+    // line itself: lowercasing first would move byte offsets.
+    let found = line.char_indices().find_map(|(at, _)| {
+        line.get(at..at + MARKER.len())
+            .filter(|candidate| candidate.eq_ignore_ascii_case(MARKER))
+            .map(|_| at + MARKER.len())
+    });
+    if let Some(start) = found {
+        let who = line[start..].split_whitespace().next().unwrap_or("");
         if !who.is_empty() {
             return Some(Text::with("reply_ready", vec![("who", Text::plain(who))]));
         }
@@ -824,6 +824,12 @@ fn desired_alias_of(group: &Group, hosted: &Hosted) -> Option<String> {
         .iter()
         .find(|(_, state)| str_of(state, "pane") == Some(pane_id))
         .map(|(key, _)| key.clone())
+        // Only an alias the pipeline asks for (WorkModels.desiredAgent).
+        .filter(|alias| {
+            desired
+                .iter()
+                .any(|d| str_of(d, "alias") == Some(alias.as_str()))
+        })
 }
 
 #[allow(clippy::too_many_lines)] // FleetBoard.work(for: group), rule for rule in its order
@@ -917,10 +923,13 @@ fn managed_unit(group: &Group, agents: &[Hosted]) -> Unit {
             .iter()
             .position(|d| d.as_deref() == Some(key.as_str()))
     });
-    let focus = attention
-        .or(blocked_participant)
-        .or(active)
-        .or((!participants.is_empty()).then_some(0));
+    // attention ?? (blocked ? its participant : active ?? first): a blocked
+    // stage with nobody on it has no focus, never another stage's agent.
+    let focus = attention.or(if blocked.is_some() {
+        blocked_participant
+    } else {
+        active.or((!participants.is_empty()).then_some(0))
+    });
     let headline = if let Some(i) = attention {
         question(participants[i])
     } else if let Some((key, state)) = &blocked {
@@ -1135,6 +1144,15 @@ fn regex_lite_handover(line: &str) -> Option<String> {
     None
 }
 
+/// `host|socket|pane` from a pane the scan resolved (or `pane` on that
+/// pane's server), never from the agent's own unverified pane fields.
+fn resolved_pane_key(h: &Hosted, pane: Option<&str>) -> Option<String> {
+    let resolved = h.pane?;
+    let socket = str_of(resolved, "socket").unwrap_or("");
+    let pane = pane.or_else(|| str_of(resolved, "pane_id"))?;
+    Some(format!("{}|{socket}|{pane}", h.host.alias))
+}
+
 struct HelperIndex {
     parent: HashMap<usize, usize>,
     helpers: HashSet<usize>,
@@ -1146,15 +1164,8 @@ impl HelperIndex {
         let mut by_pane: HashMap<String, Vec<usize>> = HashMap::new();
         for (i, h) in agents.iter().enumerate() {
             by_session.entry(h.session()).or_default().push(i);
-            if let Some(pane) = h.pane_id() {
-                by_pane
-                    .entry(format!(
-                        "{}|{}|{pane}",
-                        h.host.alias,
-                        h.socket().unwrap_or("")
-                    ))
-                    .or_default()
-                    .push(i);
+            if let Some(key) = resolved_pane_key(h, None) {
+                by_pane.entry(key).or_default().push(i);
             }
         }
         let mut index = HelperIndex {
@@ -1174,16 +1185,18 @@ impl HelperIndex {
                     .get(session.as_str())
                     .cloned()
                     .unwrap_or_default()
-            } else if let (Some(label), Some(_)) = (&request.label, h.pane_id()) {
-                let pane = label.rsplit_once('@').map_or("", |(_, p)| p);
-                by_pane
-                    .get(&format!(
-                        "{}|{}|{pane}",
-                        h.host.alias,
-                        h.socket().unwrap_or("")
-                    ))
-                    .cloned()
-                    .unwrap_or_default()
+            } else if let (Some(label), Some(key)) = (
+                &request.label,
+                // A label names a pane on the helper's own server: only a
+                // helper whose pane the scan resolved can be placed.
+                request
+                    .label
+                    .as_deref()
+                    .and_then(|label| label.rsplit_once('@'))
+                    .and_then(|(_, pane)| resolved_pane_key(h, Some(pane))),
+            ) {
+                let _ = label;
+                by_pane.get(&key).cloned().unwrap_or_default()
             } else {
                 Vec::new()
             };
@@ -1197,19 +1210,47 @@ impl HelperIndex {
 
     /// The top of a helper chain: the first ancestor with no parent; none
     /// for a loop or an agent that helps no one found.
-    fn root(&self, of: usize) -> Option<usize> {
-        let mut seen = HashSet::new();
-        let mut current = *self.parent.get(&of)?;
-        seen.insert(of);
-        loop {
-            if !seen.insert(current) {
-                return None;
+    /// Every agent's root: the first ancestor with no parent, or none for
+    /// an agent that helps no one found or whose chain loops. Each chain is
+    /// walked once (`FleetBoard` memoizes the same way).
+    fn roots(&self, count: usize) -> Vec<Option<usize>> {
+        let mut done = vec![false; count];
+        let mut on_path = vec![false; count];
+        let mut out = vec![None; count];
+        for start in 0..count {
+            if done[start] {
+                continue;
             }
-            match self.parent.get(&current) {
-                Some(next) => current = *next,
-                None => return Some(current),
+            let mut path = Vec::new();
+            let mut current = start;
+            let top = loop {
+                if done[current] {
+                    break if self.parent.contains_key(&current) {
+                        out[current]
+                    } else {
+                        Some(current)
+                    };
+                }
+                if on_path[current] {
+                    break None;
+                }
+                on_path[current] = true;
+                path.push(current);
+                match self.parent.get(&current) {
+                    None => break Some(current),
+                    Some(next) => current = *next,
+                }
+            };
+            for node in path {
+                out[node] = if self.parent.contains_key(&node) {
+                    top
+                } else {
+                    None
+                };
+                done[node] = true;
             }
         }
+        out
     }
 }
 
@@ -1373,7 +1414,16 @@ fn decisions(input: &BoardInput, agents: &[Hosted]) -> Vec<Decision> {
                 continue;
             }
             // The asker's checkout names the project (attachAskers).
-            let repo = str_of(&item, "from_session_id").and_then(|session| {
+            // The asker: who filed the question, or the session a result
+            // is about (FleetDecision.askerSessionID).
+            let asker = match str_of(&item, "kind") {
+                Some("review") => item
+                    .get("target")
+                    .filter(|t| str_of(t, "kind") == Some("session"))
+                    .and_then(|t| str_of(t, "session_id")),
+                _ => str_of(&item, "from_session_id"),
+            };
+            let repo = asker.and_then(|session| {
                 agents
                     .iter()
                     .find(|h| h.host.alias == host && h.session() == session)
@@ -1419,8 +1469,13 @@ fn unit_json(
         if !host_aliases.contains(&h.host.alias) {
             host_aliases.push(h.host.alias.clone());
         }
-        if programs.insert(program_of(h.kind())) {
-            kinds.push(h.kind().to_owned());
+    }
+    host_aliases.sort();
+    // The marks of the stages, planned ones included, in stage order
+    // (FleetWork.agentKinds): a helper does not add a mark.
+    for kind in unit.stages.iter().filter_map(|stage| stage.kind.as_deref()) {
+        if programs.insert(program_of(kind)) {
+            kinds.push(kind.to_owned());
         }
     }
     json!({
@@ -1557,13 +1612,14 @@ pub fn build(input: &BoardInput) -> Value {
         .flat_map(|g| g.participants.iter().copied())
         .collect();
     let index = HelperIndex::new(&agents);
+    let roots = index.roots(agents.len());
     let mut by_root: HashMap<usize, Vec<usize>> = HashMap::new();
     let mut folded = HashSet::new();
-    for i in 0..agents.len() {
+    for (i, root) in roots.iter().enumerate() {
         if managed.contains(&i) {
             continue;
         }
-        if let Some(root) = index.root(i) {
+        if let Some(root) = *root {
             by_root.entry(root).or_default().push(i);
             folded.insert(i);
         }
@@ -1675,8 +1731,42 @@ pub fn build(input: &BoardInput) -> Value {
         "backlog": backlog_json(input, &units),
         "projects": projects,
         "reviewed_marks": input.reviewed.is_some(),
+        // What each host's queue covers and could not read, so a client can
+        // tell an empty Your turn from one it could not see.
+        "decision_hosts": input.decisions.iter().map(|section| json!({
+            "alias": section.get("alias"),
+            "local": section.get("local"),
+            "control": section.get("control"),
+            "decides_reviews": section.get("decides_reviews"),
+            "covers": section.get("covers"),
+            "truncated": section.pointer("/queue/truncated"),
+            "unavailable": section.get("unavailable"),
+        })).collect::<Vec<_>>(),
         "agent_count": agents.len(),
     })
+}
+
+/// The review keys of the board's finished units, to look their marks up.
+#[must_use]
+pub fn finished_keys(board: &Value) -> Vec<String> {
+    board
+        .pointer("/lanes/finished/groups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .flat_map(|group| {
+            group
+                .get("items")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+        })
+        .filter_map(|item| {
+            item.get("review_key")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .collect()
 }
 
 /// The `home:` keys of Home's accepted review records, read from review
@@ -1717,7 +1807,7 @@ pub fn host_from_snapshot(snapshot: &Value) -> BoardHost {
 }
 
 mod sources;
-pub use sources::HomeSources;
+pub use sources::{accepted, HomeSources, BOARD_REUSE};
 
 #[cfg(test)]
 mod tests;

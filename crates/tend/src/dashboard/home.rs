@@ -70,16 +70,34 @@ async fn board_hosts(state: &AppState) -> Vec<BoardHost> {
     }]
 }
 
+/// The board, built now: everything gathered, then the finished units'
+/// reviewed marks looked up by their exact keys.
 pub(super) async fn board(state: &AppState, limit: usize) -> Value {
     let (hosts, decisions) = tokio::join!(
         board_hosts(state),
         super::decisions::queue_sections(state, limit)
     );
-    let input = state
-        .home_sources
-        .gather(hosts, decisions, &state.reviews)
-        .await;
+    let mut input = state.home_sources.gather(hosts, decisions).await;
+    let keys = home_board::finished_keys(&home_board::build(&input));
+    input.reviewed = home_board::accepted(&state.reviews, keys).await;
     home_board::build(&input)
+}
+
+/// The board for a read: the one built in the last
+/// [`home_board::BOARD_REUSE`] when there is one, so readers polling
+/// together build it once.
+async fn shared_board(state: &AppState, limit: usize) -> Value {
+    let mut last = state.home_sources.last_board.lock().await;
+    if let Some((at, board)) = last.as_ref() {
+        if limit == DEFAULT_LIMIT && at.elapsed() < home_board::BOARD_REUSE {
+            return board.clone();
+        }
+    }
+    let board = board(state, limit).await;
+    if limit == DEFAULT_LIMIT {
+        *last = Some((std::time::Instant::now(), board.clone()));
+    }
+    board
 }
 
 /// `GET /api/home`: the board.
@@ -87,7 +105,7 @@ pub(super) async fn board_handler(
     State(state): State<AppState>,
     Query(query): Query<HomeQuery>,
 ) -> Response {
-    Json(board(&state, query.limit.unwrap_or(DEFAULT_LIMIT)).await).into_response()
+    Json(shared_board(&state, query.limit.unwrap_or(DEFAULT_LIMIT)).await).into_response()
 }
 
 #[derive(Debug, Deserialize)]
@@ -95,6 +113,10 @@ pub(super) async fn board_handler(
 pub(super) struct Reviewed {
     /// The unit's id as the board names it (`work:…` or `agent:…`).
     id: String,
+    /// The `review_key` of the result the person looked at. A unit that
+    /// changed since (another turn finished) has another key and is
+    /// refused (409), so a mark never accepts a result nobody saw.
+    review_key: String,
 }
 
 fn finished_unit(board: &Value, id: &str) -> Option<Value> {
@@ -112,10 +134,16 @@ fn finished_unit(board: &Value, id: &str) -> Option<Value> {
         .find(|item| item.get("id").and_then(Value::as_str) == Some(id))
 }
 
+fn refusal(status: StatusCode, message: &str) -> Response {
+    (status, Json(json!({ "error": message }))).into_response()
+}
+
 /// `POST /api/home/reviewed`: "Looks Good" on a finished unit. The mark is
 /// the review record Tend for Mac writes (`home:` + SHA-256 of the unit's
 /// id and revision), so a unit marked here is marked on the Mac too, and a
-/// unit that changes after the mark shows again.
+/// unit that changes after the mark shows again. The unit, its target and
+/// its key come from the board tendd builds now; the person's `review_key`
+/// only has to match it.
 pub(super) async fn reviewed_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -123,40 +151,82 @@ pub(super) async fn reviewed_handler(
 ) -> Response {
     let (by, account) = super::decisions::operator_identity(&state, &headers, None);
     let board = board(&state, DEFAULT_LIMIT).await;
-    let Some(unit) = finished_unit(&board, &body.id) else {
-        return (
+    let (status, outcome, result) = match finished_unit(&board, &body.id) {
+        None => (
             StatusCode::NOT_FOUND,
-            Json(json!({"error": "no finished unit with that id"})),
-        )
-            .into_response();
+            "no finished unit with that id".to_owned(),
+            None,
+        ),
+        Some(unit) => {
+            let key = unit
+                .get("review_key")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned();
+            if key == body.review_key {
+                match state
+                    .reviews
+                    .record(
+                        new_review(&unit, &key, &by),
+                        crate::review::DispositionKind::Accepted,
+                        None,
+                    )
+                    .await
+                {
+                    Ok(item) => (StatusCode::OK, "recorded".to_owned(), Some((item, key))),
+                    Err(error) => (StatusCode::CONFLICT, error.to_string(), None),
+                }
+            } else {
+                (
+                    StatusCode::CONFLICT,
+                    "this result changed since it was shown; look again".to_owned(),
+                    None,
+                )
+            }
+        }
     };
+    super::decisions::audit(
+        state.decision_audit.as_ref(),
+        json!({
+            "at": time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).ok(),
+            "by": by, "account": account, "action": "home_reviewed", "id": body.id,
+            "key": body.review_key, "outcome": outcome, "status": status.as_u16(),
+        }),
+    )
+    .await;
+    *state.home_sources.last_board.lock().await = None;
+    match result {
+        Some((item, key)) => Json(json!({"review": item, "review_key": key})).into_response(),
+        None => refusal(status, &outcome),
+    }
+}
+
+/// The review record for a unit: on its Work or its agent's session,
+/// summarized by its line (or title), under the Mac's key.
+fn new_review(unit: &Value, key: &str, by: &str) -> crate::review::NewReview {
     let source = unit.get("source").cloned().unwrap_or(Value::Null);
-    let target = match source.get("kind").and_then(Value::as_str) {
-        Some("work") => crate::review::ReviewTarget::Work {
-            workspace: source
-                .get("workspace")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_owned(),
-            work: source
-                .get("work")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_owned(),
+    let field = |name: &str| {
+        source
+            .get(name)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned()
+    };
+    let target = if source.get("kind").and_then(Value::as_str) == Some("work") {
+        crate::review::ReviewTarget::Work {
+            workspace: field("workspace"),
+            work: field("work"),
             alias: None,
             pipeline_generation: None,
-        },
-        _ => crate::review::ReviewTarget::Session {
+        }
+    } else {
+        crate::review::ReviewTarget::Session {
             provider: unit
                 .pointer("/focus/kind")
                 .and_then(Value::as_str)
                 .map(str::to_owned),
-            session_id: source
-                .get("session_id")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_owned(),
-        },
+            session_id: field("session_id"),
+        }
     };
     let summary = unit
         .get("headline")
@@ -165,43 +235,16 @@ pub(super) async fn reviewed_handler(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .unwrap_or("Reviewed in Home");
-    let summary = truncate(summary, MAX_SUMMARY_BYTES);
-    let key = unit
-        .get("review_key")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_owned();
-    let new = crate::review::NewReview {
+    crate::review::NewReview {
         target,
-        summary,
+        summary: truncate(summary, MAX_SUMMARY_BYTES),
         anchor: None,
-        idempotency_key: Some(key.clone()),
+        idempotency_key: Some(key.to_owned()),
         requested_by: crate::review::ReviewActor {
             kind: crate::review::ActorKind::User,
-            label: Some(by.clone()),
+            label: Some(by.to_owned()),
         },
         decision: None,
-    };
-    let result = state
-        .reviews
-        .record(new, crate::review::DispositionKind::Accepted, None)
-        .await;
-    let (status, outcome) = match &result {
-        Ok(_) => (StatusCode::OK, "recorded".to_owned()),
-        Err(error) => (StatusCode::CONFLICT, error.to_string()),
-    };
-    super::decisions::audit(
-        state.decision_audit.as_ref(),
-        json!({
-            "at": time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).ok(),
-            "by": by, "account": account, "action": "home_reviewed", "id": body.id, "key": key,
-            "outcome": outcome, "status": status.as_u16(),
-        }),
-    )
-    .await;
-    match result {
-        Ok(item) => Json(json!({"review": item, "review_key": key})).into_response(),
-        Err(error) => (status, Json(json!({"error": error.to_string()}))).into_response(),
     }
 }
 

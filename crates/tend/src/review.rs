@@ -533,6 +533,36 @@ impl ReviewStore {
         .await
     }
 
+    /// Which of `keys` name an accepted review: Home's reviewed marks for
+    /// the units on its board, looked up exactly by idempotency key (the
+    /// column is unique), however many other records were filed since.
+    pub async fn accepted_keys(
+        &self,
+        keys: Vec<String>,
+    ) -> Result<std::collections::HashSet<String>, ReviewError> {
+        self.with(move |connection| {
+            let mut statement =
+                connection.prepare("SELECT body FROM review_items WHERE idempotency_key = ?1")?;
+            let mut accepted = std::collections::HashSet::new();
+            for key in keys {
+                let body: Option<String> = statement
+                    .query_row(params![key], |row| row.get(0))
+                    .optional()?;
+                let Some(body) = body else { continue };
+                let item: ReviewItem = serde_json::from_str(&body)?;
+                if item
+                    .disposition
+                    .as_ref()
+                    .is_some_and(|d| d.kind == DispositionKind::Accepted)
+                {
+                    accepted.insert(key);
+                }
+            }
+            Ok(accepted)
+        })
+        .await
+    }
+
     /// Every item filed on one Work, any alias, oldest first: the result
     /// records and their dispositions, for `tend work show`.
     /// With `newest`, the newest `limit` items instead (still returned

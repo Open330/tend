@@ -369,3 +369,146 @@ fn first_line_caps_at_160_characters() {
     assert!(line.ends_with('…'));
     assert_eq!(first_line("\n  \n hello \n"), Some("hello".into()));
 }
+
+#[test]
+fn a_unicode_prompt_title_never_panics() {
+    assert_eq!(
+        prompt_title("[tend:req_abcd] İreply from é"),
+        Some(Text::with("reply_ready", vec![("who", Text::plain("é"))]))
+    );
+    assert_eq!(
+        prompt_title("[tend:x] Ünïcode only."),
+        Some(Text::plain("Ünïcode only"))
+    );
+    assert_eq!(
+        prompt_title("[tend:x] REPLY FROM codex@%2 is ready"),
+        Some(Text::with(
+            "reply_ready",
+            vec![("who", Text::plain("codex@%2"))]
+        ))
+    );
+}
+
+fn run(desired: Value, aliases: Value) -> Value {
+    json!({
+        "identity": {"workspace_id": "tend", "work_id": "w"}, "pipeline": "p", "cwd": "/w/tend", "generation": 1,
+        "desired": desired, "aliases": aliases,
+    })
+}
+
+fn stamped(id: &str, alias: &str) -> Value {
+    let mut p = pane(id, "/w/tend");
+    p["workspace_id"] = json!("tend");
+    p["work_id"] = json!("w");
+    p["agent_alias"] = json!(alias);
+    p
+}
+
+#[test]
+fn a_blocked_stage_with_nobody_on_it_has_no_focus() {
+    let b = board(BoardInput {
+        hosts: vec![host(
+            "mba",
+            true,
+            vec![agent("i", "%1", "working", "impl", 1)],
+            vec![stamped("%1", "impl")],
+        )],
+        runs: vec![run(
+            json!([{"alias": "impl", "program": "claude"}, {"alias": "review", "program": "codex"}]),
+            json!({"impl": {"alias": "impl", "status": "running"}, "review": {"alias": "review", "status": "blocked", "error": "review crashed"}}),
+        )],
+        ..Default::default()
+    });
+    let unit = &items(&b, "needs_you")[0];
+    assert_eq!(unit["headline"], "review crashed");
+    assert!(unit["focus"].is_null(), "not impl's pane: {unit}");
+    // The planned Codex stage's mark shows, though no Codex agent runs yet.
+    assert_eq!(unit["agent_kinds"], json!(["claude_code", "codex"]));
+}
+
+#[test]
+fn a_reviews_target_session_names_its_project() {
+    let mut asker = agent("s1", "%2", "idle", "fix", 5);
+    asker["cwd"] = json!("/w/site");
+    let decisions = vec![json!({"alias": "mba", "local": true, "queue": {"items": [
+        {"kind": "review", "id": "rv", "summary": "r", "requested_at": at(4), "target": {"kind": "session", "session_id": "s1"}},
+    ]}})];
+    let b = board(BoardInput {
+        hosts: vec![host("mba", true, vec![asker], vec![])],
+        decisions,
+        ..Default::default()
+    });
+    let review = items(&b, "needs_you")
+        .into_iter()
+        .find(|i| i["type"] == "decision")
+        .unwrap();
+    assert_eq!(review["repo"], "site");
+}
+
+#[test]
+fn a_label_only_helper_with_no_resolved_pane_stays_an_orphan() {
+    let b = board(BoardInput {
+        hosts: vec![host(
+            "mba",
+            true,
+            vec![
+                agent("a", "%1", "working", "parent work", 2),
+                agent(
+                    "b",
+                    "%2",
+                    "working",
+                    "[tend:req_abcd_1] Review from codex@%1.",
+                    1,
+                ),
+            ],
+            vec![],
+        )],
+        ..Default::default()
+    });
+    let running = items(&b, "running");
+    assert_eq!(running.len(), 2, "no pane scan, no folding by label");
+    assert!(running.iter().any(|u| u["orphan_helper"] == true));
+}
+
+#[test]
+fn decision_sources_that_could_not_be_read_are_reported() {
+    let decisions = vec![
+        json!({"alias": "mba", "local": true, "unavailable": ["review database failed"], "queue": {"items": [], "truncated": true}}),
+    ];
+    let b = board(BoardInput {
+        decisions,
+        ..Default::default()
+    });
+    assert_eq!(
+        b["decision_hosts"][0]["unavailable"][0],
+        "review database failed"
+    );
+    assert_eq!(b["decision_hosts"][0]["truncated"], true);
+}
+
+#[test]
+fn a_long_helper_chain_resolves_to_its_root() {
+    let claimed = |from: &str| {
+        format!(
+            "[tend] Claimed; x\n--- peer request ---\n{}\n--- end peer request ---",
+            json!({"from": {"agent_session_id": from}})
+        )
+    };
+    let mut agents = vec![agent("s0", "%0", "idle", "root work", 100)];
+    for i in 1..200 {
+        agents.push(agent(
+            &format!("s{i}"),
+            &format!("%{i}"),
+            "idle",
+            &claimed(&format!("s{}", i - 1)),
+            100 - i / 2,
+        ));
+    }
+    let b = board(BoardInput {
+        hosts: vec![host("mba", true, agents, vec![])],
+        ..Default::default()
+    });
+    let finished = items(&b, "finished");
+    assert_eq!(finished.len(), 1);
+    assert_eq!(finished[0]["helpers"].as_array().unwrap().len(), 199);
+}

@@ -1,20 +1,25 @@
 //! Where the board's inputs come from in tendd: the daemon stores the IPC
 //! handlers read (`pipeline_runs`, `automation_list`, `swap_health`,
-//! `work_backlog`, `review_list`), gathered once per board read.
+//! `work_backlog`, review records), gathered once per board read.
 
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
+use tokio::sync::Mutex;
 
-use super::{reviewed_keys, BoardHost, BoardInput};
+use super::{BoardHost, BoardInput};
 
-/// How many of the newest review items are scanned for Home's reviewed
-/// marks (the Mac reads at most 10 pages of 500 back to its oldest finished
-/// unit; a board read keeps the same bound).
-const REVIEWED_SCAN: usize = 5000;
 const SWAP_HEALTH_TIMEOUT: Duration = Duration::from_millis(500);
+/// Swap readiness is asked at most once a minute (the Mac's cadence), so a
+/// slow health check never piles up blocking jobs.
+const SWAP_READY_REUSE: Duration = Duration::from_secs(60);
+/// How long one built board is served to every reader: several tabs (and
+/// the apps) polling at once build it once.
+pub const BOARD_REUSE: Duration = Duration::from_secs(2);
+
+type Cached<T> = Arc<Mutex<Option<(Instant, T)>>>;
 
 /// The daemon's stores the board reads besides agents and decisions.
 #[derive(Clone, Default)]
@@ -23,6 +28,27 @@ pub struct HomeSources {
     pub automation: Option<Arc<crate::automation::AutomationStore>>,
     pub swap: Option<Arc<dyn crate::swap_api::SwapJobs>>,
     pub work_store: Option<crate::dashboard::work_store::SharedWorkStore>,
+    swap_ready: Cached<Option<bool>>,
+    /// The last board built and when.
+    pub last_board: Cached<Value>,
+}
+
+impl HomeSources {
+    #[must_use]
+    pub fn new(
+        pipeline_runs: Option<Arc<crate::pipeline_run::PipelineRunStore>>,
+        automation: Option<Arc<crate::automation::AutomationStore>>,
+        swap: Option<Arc<dyn crate::swap_api::SwapJobs>>,
+        work_store: Option<crate::dashboard::work_store::SharedWorkStore>,
+    ) -> Self {
+        Self {
+            pipeline_runs,
+            automation,
+            swap,
+            work_store,
+            ..Self::default()
+        }
+    }
 }
 
 impl std::fmt::Debug for HomeSources {
@@ -32,18 +58,13 @@ impl std::fmt::Debug for HomeSources {
             .field("automation", &self.automation.is_some())
             .field("swap", &self.swap.is_some())
             .field("work_store", &self.work_store.is_some())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
 impl HomeSources {
-    /// Everything the board needs, read now.
-    pub async fn gather(
-        &self,
-        hosts: Vec<BoardHost>,
-        decisions: Vec<Value>,
-        reviews: &crate::review::ReviewStore,
-    ) -> BoardInput {
+    /// Everything the board needs besides the reviewed marks, read now.
+    pub async fn gather(&self, hosts: Vec<BoardHost>, decisions: Vec<Value>) -> BoardInput {
         let now = time::OffsetDateTime::now_utc();
         let runs = match &self.pipeline_runs {
             Some(store) => store
@@ -56,20 +77,6 @@ impl HomeSources {
         };
         let automation = match &self.automation {
             Some(store) => serde_json::to_value(store.views(now).await).ok(),
-            None => None,
-        };
-        let swap_ready = match self.swap.clone() {
-            Some(swap) => {
-                let check = tokio::task::spawn_blocking(move || swap.health());
-                match tokio::time::timeout(SWAP_HEALTH_TIMEOUT, check).await {
-                    Ok(Ok(health)) => serde_json::to_value(&health).ok().and_then(|v| {
-                        v.get("readiness")
-                            .and_then(Value::as_str)
-                            .map(|r| r == "ready")
-                    }),
-                    _ => None,
-                }
-            }
             None => None,
         };
         let backlog = match &self.work_store {
@@ -88,28 +95,41 @@ impl HomeSources {
             runs,
             decisions,
             automation,
-            swap_ready,
-            reviewed: read_reviewed(reviews).await,
+            swap_ready: self.swap_ready().await,
+            reviewed: None,
             backlog,
             now: Some(now),
         }
     }
+
+    async fn swap_ready(&self) -> Option<bool> {
+        let swap = self.swap.clone()?;
+        let mut cached = self.swap_ready.lock().await;
+        if let Some((at, ready)) = *cached {
+            if at.elapsed() < SWAP_READY_REUSE {
+                return ready;
+            }
+        }
+        let check = tokio::task::spawn_blocking(move || swap.health());
+        let ready = match tokio::time::timeout(SWAP_HEALTH_TIMEOUT, check).await {
+            Ok(Ok(health)) => serde_json::to_value(&health).ok().and_then(|v| {
+                v.get("readiness")
+                    .and_then(Value::as_str)
+                    .map(|r| r == "ready")
+            }),
+            _ => None,
+        };
+        *cached = Some((Instant::now(), ready));
+        ready
+    }
 }
 
-async fn read_reviewed(reviews: &crate::review::ReviewStore) -> Option<HashSet<String>> {
-    let page = reviews
-        .list(crate::review::ReviewQuery {
-            open_only: false,
-            oldest_first: false,
-            limit: REVIEWED_SCAN,
-            offset: 0,
-        })
-        .await
-        .ok()?;
-    let items: Vec<Value> = page
-        .items
-        .iter()
-        .filter_map(|item| serde_json::to_value(item).ok())
-        .collect();
-    Some(reviewed_keys(&items))
+/// Home's reviewed marks for exactly these keys (the board's finished
+/// units), however many other review records exist; `None` when the store
+/// cannot be read.
+pub async fn accepted(
+    reviews: &crate::review::ReviewStore,
+    keys: Vec<String>,
+) -> Option<HashSet<String>> {
+    reviews.accepted_keys(keys).await.ok()
 }

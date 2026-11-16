@@ -4946,6 +4946,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)] // one board, then each Looks Good outcome in turn
     async fn home_board_is_operator_only_and_looks_good_marks_a_finished_unit() {
         let state =
             state_with_token("s3cret").with_reviews(crate::review::ReviewStore::in_memory());
@@ -5017,7 +5018,20 @@ mod tests {
         assert!(key.starts_with("home:"));
         // Looks Good: anonymous is refused, an unknown unit is 404, the
         // unit itself is recorded under the Mac's key.
-        let body = json!({"id": unit});
+        // A mark names the result the person saw: another key is refused.
+        let seen_before = json!({"id": unit, "review_key": "home:00"});
+        assert_eq!(
+            call(
+                "POST",
+                "/api/home/reviewed",
+                Some("s3cret"),
+                Some(seen_before)
+            )
+            .await
+            .status(),
+            StatusCode::CONFLICT
+        );
+        let body = json!({"id": unit, "review_key": key});
         assert_eq!(
             call("POST", "/api/home/reviewed", None, Some(body.clone()))
                 .await
@@ -5029,7 +5043,7 @@ mod tests {
                 "POST",
                 "/api/home/reviewed",
                 Some("s3cret"),
-                Some(json!({"id": "agent:nope"}))
+                Some(json!({"id": "agent:nope", "review_key": "home:00"}))
             )
             .await
             .status(),
