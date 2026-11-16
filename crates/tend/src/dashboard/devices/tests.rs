@@ -929,7 +929,7 @@ async fn an_operate_device_reads_one_agents_output_and_nothing_else() {
     );
     let (token, device) = pair_with(&app, "phone", Some("operate"), Some("operate")).await;
     let (_, me) = call(&app, "GET", "/api/device", Some(&token), None).await;
-    assert_eq!(me["features"], json!(["capture", "work"]));
+    assert_eq!(me["features"], json!(["home", "capture", "work"]));
     let body = |session: &str| Some(json!({"host": "mini", "session_id": session}));
 
     let (status, out) = call(
@@ -1561,4 +1561,75 @@ async fn a_retry_gets_its_outcome_even_after_starting_is_turned_off() {
     .await;
     assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
     assert_eq!(launched.lock().unwrap().len(), 1);
+
+#[tokio::test]
+async fn an_operate_device_reads_homes_board_without_panes_and_a_deciding_one_does_not() {
+    let (runtime, _asked) = fleet_with_an_agent().await;
+    let app = router(state(Some(TOKEN)).with_fleet(Some(runtime)));
+    let (operate, _) = pair_with(&app, "phone", Some("operate"), Some("operate")).await;
+    let (decide, _) = pair(&app, "watch").await;
+    let (status, _) = call(&app, "GET", "/api/device/home", Some(&decide), None).await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "a device that may only decide"
+    );
+    let (status, _) = call(&app, "GET", "/api/home", Some(&operate), None).await;
+    assert_ne!(
+        status,
+        StatusCode::OK,
+        "the operator route refuses every device"
+    );
+    let (status, board) = call(&app, "GET", "/api/device/home", Some(&operate), None).await;
+    assert_eq!(status, StatusCode::OK, "{board}");
+    let text = board.to_string();
+    assert!(board["lanes"]["running"].is_object(), "{board}");
+    assert!(
+        !text.contains("\"pane\"") && !text.contains("\"socket\""),
+        "no pane ids or sockets: {text}"
+    );
+    let units: Vec<&Value> = ["needs_you", "running", "finished"]
+        .iter()
+        .flat_map(|lane| {
+            board["lanes"][lane]["groups"]
+                .as_array()
+                .into_iter()
+                .flatten()
+        })
+        .flat_map(|group| group["items"].as_array().into_iter().flatten())
+        .collect();
+    assert!(!units.is_empty(), "{board}");
+    for unit in units.iter().filter(|u| u["kind"] == "unit") {
+        for agent in unit["agents"].as_array().unwrap() {
+            assert!(
+                agent["host"].is_string() && agent["session_id"].is_string(),
+                "{agent}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_device_board_fixture_is_the_projection_of_the_board_fixture() {
+    // apps/shared/Fixtures/home-board.json is a recorded GET /api/home;
+    // device-home.json is what a device gets for it. UPDATE_FIXTURES=1
+    // rewrites the second after a deliberate change.
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/shared/Fixtures");
+    let board: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("home-board.json")).unwrap())
+            .unwrap();
+    let history: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("decisions-history.json")).unwrap())
+            .unwrap();
+    let projected = super::operate::device_board(&board, Some(&history));
+    let path = dir.join("device-home.json");
+    if std::env::var_os("UPDATE_FIXTURES").is_some() {
+        std::fs::write(
+            &path,
+            serde_json::to_string_pretty(&projected).unwrap() + "\n",
+        )
+        .unwrap();
+    }
+    let recorded: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(projected, recorded);
 }

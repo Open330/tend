@@ -58,6 +58,8 @@ async fn board_hosts(state: &AppState) -> Vec<BoardHost> {
         local: true,
         state: "online".into(),
         error: None,
+        mode: None,
+        tend_version: None,
         agents: agents
             .iter()
             .filter_map(|a| serde_json::to_value(a).ok())
@@ -72,7 +74,7 @@ async fn board_hosts(state: &AppState) -> Vec<BoardHost> {
 
 /// The board, built now: everything gathered, then the finished units'
 /// reviewed marks looked up by their exact keys.
-pub(super) async fn board(state: &AppState, limit: usize) -> Value {
+pub(in crate::dashboard) async fn board(state: &AppState, limit: usize) -> Value {
     let (hosts, decisions) = tokio::join!(
         board_hosts(state),
         super::decisions::queue_sections(state, limit)

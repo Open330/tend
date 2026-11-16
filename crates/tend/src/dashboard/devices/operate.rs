@@ -826,4 +826,193 @@ async fn run_and_record(
         detail,
         ..start
     })
+
+/// A unit's fields an `operate` device reads: no pane ids or sockets (a
+/// capture names the agent by host and session).
+const UNIT_FIELDS: &[&str] = &[
+    "id",
+    "source",
+    "title",
+    "repo",
+    "lane",
+    "stages",
+    "headline",
+    "since",
+    "last_change",
+    "shown_time",
+    "host_aliases",
+    "agent_kinds",
+    "handled_limit",
+    "orphan_helper",
+    "probable_helper",
+    "empty_session",
+    "recent",
+    "reviewed",
+    "requested_by_person",
+];
+
+/// An agent reference's fields a device reads.
+const AGENT_REF_FIELDS: &[&str] = &[
+    "host",
+    "local",
+    "session_id",
+    "kind",
+    "name",
+    "owner",
+    "state",
+    "status",
+    "needs_attention",
+    "state_entered_at",
+];
+
+/// A Text (a string, or `{key, …}` the app words) or a list of stages:
+/// passed through when small, strings capped like every other field.
+fn bounded_tree(value: &Value) -> Value {
+    match value {
+        Value::String(_) => bounded("", value).unwrap_or(Value::Null),
+        Value::Array(items) => Value::Array(items.iter().map(bounded_tree).collect()),
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(k, v)| (k.clone(), bounded_tree(v)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+fn agent_ref(value: &Value) -> Value {
+    value.as_object().map_or(Value::Null, |agent| {
+        let mut out = Map::new();
+        for field in AGENT_REF_FIELDS {
+            if let Some(v) = agent.get(*field) {
+                out.insert((*field).to_owned(), bounded_tree(v));
+            }
+        }
+        Value::Object(out)
+    })
+}
+
+fn device_unit(item: &Map<String, Value>) -> Value {
+    let mut out = Map::new();
+    out.insert("kind".into(), json!("unit"));
+    for field in UNIT_FIELDS {
+        if let Some(v) = item.get(*field) {
+            out.insert((*field).to_owned(), bounded_tree(v));
+        }
+    }
+    for list in ["agents", "helpers"] {
+        let refs: Vec<Value> = item
+            .get(list)
+            .and_then(Value::as_array)
+            .map(|agents| agents.iter().map(agent_ref).collect())
+            .unwrap_or_default();
+        out.insert(list.into(), Value::Array(refs));
+    }
+    out.insert(
+        "focus".into(),
+        item.get("focus").map_or(Value::Null, agent_ref),
+    );
+    Value::Object(out)
+}
+
+/// A decision as the queue lists it (the shared decoder reads it), plus the
+/// host it is on and whether it can be decided from here.
+fn device_decision(item: &Map<String, Value>) -> Value {
+    let mut entry = item
+        .get("entry")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    for field in ["host", "actionable", "repo", "system"] {
+        if let Some(v) = item.get(field) {
+            entry.insert(field.to_owned(), v.clone());
+        }
+    }
+    bounded_tree(&Value::Object(entry))
+}
+
+/// The board as an `operate` device sees it: units with only the fields
+/// the app shows and no pane ids or sockets, decisions as the queue lists
+/// them (`kind` `human_request` / `review`), units as `kind: unit`, and the
+/// decided items from the history for Finished.
+pub(super) fn device_board(board: &Value, history: Option<&Value>) -> Value {
+    let lane = |name: &str| {
+        let groups: Vec<Value> = board
+            .pointer(&format!("/lanes/{name}/groups"))
+            .and_then(Value::as_array)
+            .map(|groups| {
+                groups
+                    .iter()
+                    .map(|group| {
+                        let items: Vec<Value> = group
+                            .get("items")
+                            .and_then(Value::as_array)
+                            .map(|items| {
+                                items
+                                    .iter()
+                                    .filter_map(Value::as_object)
+                                    .map(|item| match item.get("type").and_then(Value::as_str) {
+                                        Some("decision") => device_decision(item),
+                                        _ => device_unit(item),
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        json!({"project": group.get("project"), "system": group.get("system"), "items": items})
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        json!({"count": board.pointer(&format!("/lanes/{name}/count")), "groups": groups})
+    };
+    let hosts: Vec<Value> = board
+        .get("hosts")
+        .and_then(Value::as_array)
+        .map(|hosts| {
+            hosts
+                .iter()
+                .filter_map(Value::as_object)
+                .map(|host| {
+                    Value::Object(pick(
+                        host,
+                        &["alias", "local", "state", "error", "mode", "tend_version"],
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let decided: Vec<Value> = history
+        .and_then(|h| h.get("hosts"))
+        .and_then(Value::as_array)
+        .map(|hosts| {
+            hosts
+                .iter()
+                .map(|host| {
+                    json!({
+                        "alias": host.get("alias"),
+                        "local": host.get("local"),
+                        "unavailable": host.get("unavailable"),
+                        "items": host.pointer("/history/items").map(bounded_tree),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    json!({
+        "generated_at": board.get("generated_at"),
+        "hosts": hosts,
+        "lanes": {"needs_you": lane("needs_you"), "running": lane("running"), "finished": lane("finished")},
+        "decided": decided,
+        "decision_hosts": board.get("decision_hosts").map(bounded_tree),
+        "agent_count": board.get("agent_count"),
+    })
+}
+
+/// `GET /api/device/home`: Home's board for an `operate` device.
+pub(super) async fn home(State(state): State<AppState>) -> Response {
+    let (board, history) = tokio::join!(
+        crate::dashboard::home::board(&state, 100),
+        crate::dashboard::decisions::history_json(&state, 100)
+    );
+    Json(device_board(&board, Some(&history))).into_response()
 }

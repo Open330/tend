@@ -19,3 +19,12 @@ them when those documents change.
   `scratch-tendd.sh seed` and `seed-home`. Folder paths rewritten to
   `/Users/dev/work/…`. The web Home's lane rules (`home-model.mjs`) and the
   iOS app's (`Fleet.swift`) both read this shape.
+
+- `home-board.json`: `GET /api/home`, Home's board as tendd computes it
+  (recorded from the same scratch tendd on 2026-11-16, paths replaced).
+- `device-home.json`: `GET /api/device/home`, the same board as an
+  `operate` device gets it (no pane ids or sockets, decisions as queue
+  items, units as `kind: unit`, the history in `decided`). Generated from
+  the two files above by a Rust test
+  (`the_device_board_fixture_is_the_projection_of_the_board_fixture`,
+  `UPDATE_FIXTURES=1` rewrites it).

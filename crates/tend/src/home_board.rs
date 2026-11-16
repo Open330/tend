@@ -40,6 +40,8 @@ pub struct BoardHost {
     pub local: bool,
     pub state: String,
     pub error: Option<String>,
+    pub mode: Option<String>,
+    pub tend_version: Option<String>,
     pub agents: Vec<Value>,
     pub panes: Vec<Value>,
 }
@@ -1730,6 +1732,7 @@ pub fn build(input: &BoardInput) -> Value {
         "generated_at": format_time(Some(now)),
         "hosts": input.hosts.iter().map(|h| json!({
             "alias": h.alias, "local": h.local, "state": h.state, "error": h.error,
+            "mode": h.mode, "tend_version": h.tend_version,
         })).collect::<Vec<_>>(),
         "lanes": {
             "needs_you": {"count": needs_count, "groups": needs_you},
@@ -1809,6 +1812,8 @@ pub fn host_from_snapshot(snapshot: &Value) -> BoardHost {
             .unwrap_or(false),
         state: str_of(snapshot, "state").unwrap_or("unknown").to_owned(),
         error: str_of(snapshot, "error").map(str::to_owned),
+        mode: str_of(snapshot, "mode").map(str::to_owned),
+        tend_version: str_of(snapshot, "tend_version").map(str::to_owned),
         agents: list("agents"),
         panes: list("panes"),
     }

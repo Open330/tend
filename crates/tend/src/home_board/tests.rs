@@ -31,6 +31,8 @@ fn host(alias: &str, local: bool, agents: Vec<Value>, panes: Vec<Value>) -> Boar
         local,
         state: "online".into(),
         error: None,
+        mode: None,
+        tend_version: None,
         agents,
         panes,
     }

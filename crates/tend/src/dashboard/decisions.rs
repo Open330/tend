@@ -298,10 +298,18 @@ pub(super) async fn history_handler(
     Query(query): Query<DecisionsQuery>,
 ) -> Response {
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT);
+    Json(history_json(&state, limit).await).into_response()
+}
+
+/// Past decisions per host, as `GET /api/decisions/history` returns them.
+pub(in crate::dashboard) async fn history_json(
+    state: &AppState,
+    limit: usize,
+) -> serde_json::Value {
     let history =
         crate::decision_queue::read_history(&state.reviews, &state.collaboration, limit, true)
             .await;
-    let fleet_hosts = fleet_hosts(&state).await;
+    let fleet_hosts = fleet_hosts(state).await;
     let covers = local_alias(&fleet_hosts);
     let mut hosts = vec![json!({
         "alias": covers, "local": true, "unavailable": history.unavailable.clone(),
@@ -318,8 +326,7 @@ pub(super) async fn history_handler(
         hosts.extend(sections);
     }
     // `history` stays this host's, for a page from before per-host history.
-    Json(json!({ "covers": covers, "history": hosts[0]["history"].clone(), "hosts": hosts }))
-        .into_response()
+    json!({ "covers": covers, "history": hosts[0]["history"].clone(), "hosts": hosts })
 }
 
 /// One Fleet host's past decisions.
