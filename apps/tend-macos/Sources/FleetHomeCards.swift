@@ -179,6 +179,7 @@ struct FleetWorkCard: View {
                         .transition(.opacity)
                 }
             }
+            .animation(FleetBoard.moveMarkAnimation(movedFrom), value: movedFrom)
             if work.lane != .finished || work.stages.count > 1 {
                 FleetStageBar(work: work)
             }
@@ -207,6 +208,7 @@ struct FleetWorkCard: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .strokeBorder(work.lane.tint, lineWidth: 2)
                 .opacity(movedFrom == nil ? 0 : 0.9)
+                .animation(FleetBoard.moveMarkAnimation(movedFrom), value: movedFrom)
                 .allowsHitTesting(false)
         )
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -288,6 +290,7 @@ struct FleetCompactRow: View {
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(tint)
                     .help(String(localized: "From \(movedFrom.title)"))
+                    .transition(.opacity)
             }
             if let host {
                 Text(verbatim: host)
@@ -307,6 +310,7 @@ struct FleetCompactRow: View {
                     .fixedSize()
             }
         }
+        .animation(FleetBoard.moveMarkAnimation(movedFrom), value: movedFrom)
         .padding(.horizontal, 8)
         .frame(minHeight: 30)
         .background(
@@ -392,5 +396,18 @@ struct FleetDecisionDetail: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+    }
+}
+
+extension FleetBoard {
+    /// How cards glide when one changes lane.
+    static let moveAnimation = Animation.spring(response: 0.5, dampingFraction: 0.86)
+
+    /// How a card's "From …" mark goes away a few seconds after a move: a
+    /// short fade inside the card. Animating that fade for the whole board
+    /// redrew every card each frame. It appears as before, set right after
+    /// the move outside its animation.
+    static func moveMarkAnimation(_ movedFrom: FleetLane?) -> Animation? {
+        movedFrom == nil ? .easeOut(duration: 0.4) : nil
     }
 }
