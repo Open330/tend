@@ -1,7 +1,8 @@
 # Tend on iPhone and iPad
 
-Status: proposal (2026-11-15), wave 5 `ios-app` stream. Phase 1 is being
-built alongside this document; see [Plan](#plan).
+Status: phase 1 built (wave 5, 2026-11-15); wave 6 adds the whole Home and
+a wider, opt-in device scope (2026-11-16), see
+[Wave 6](#wave-6-the-whole-home-and-a-wider-device-scope) and [Plan](#plan).
 
 ## Owner decisions
 
@@ -17,6 +18,9 @@ the simulator and against a scratch daemon.
 | 4 | Who holds the APNs key (phase 2). | The owner's `.p8` key lives on the host that serves the dashboard (jiun-mini), mode 0600, named by path in config; no relay service. See [Push](#push-phase-2). | Push not built. |
 | 5 | What a notification shows on the lock screen (phase 2). | Nothing from the agent: "Tend: 2 need you" and the host alias. The question is fetched after unlock. | Push not built. |
 | 6 | Keep the iOS CI job phase 1 adds (build + unit tests on a GitHub macOS runner, only when `apps/**` changes; free on a public repository, a few minutes per run). | Keep it: the shared models are edited from the Mac side, and only a full iOS build catches what that breaks. | Added with the iOS app PR; removing it is deleting one job. |
+| 7 | Let a paired phone see hosts and agents, read agents' recent output and start new work (the `operate` scope, [Wave 6](#wave-6-the-whole-home-and-a-wider-device-scope)). A started agent can do anything on its host. | Yes, opt-in per device: chosen on the phone, ticked separately by the operator at approval, Face ID before every Start, and **Limit to deciding** without unpairing. | Built and tested against a scratch daemon only; existing phones stay decide-only until paired again. |
+| 8 | Turn on `[dashboard] allow_work_start = true` on jiun-mini. It is off today, so neither the web nor the phone can start work through the dashboard. | Turn it on once the owner wants to start work from the phone; it applies to operators and `operate` devices alike. | Off. The app shows "Starting work is turned off on this dashboard" and keeps the rest. |
+| 9 | Expiry for `operate` devices. | The same as `decide` (30 days unused, 90 days in all); shorter would mean pairing the phone again every few weeks. | 30 / 90 days. |
 
 ## What the owner uses today
 
@@ -312,6 +316,130 @@ terminal, start-work editors) never land on iOS. The iOS app is held to
 the decision loop plus read-only status, so it does not multiply the work
 of every Mac feature.
 
+## Wave 6: the whole Home, and a wider device scope
+
+Build 0.1.0 (1) went to TestFlight on 2026-11-16. The owner's verdict: the
+type and layout look raw, only **Your turn** is visible (no hosts, no other
+lanes), and new work cannot be started. Phase 1's "decide only" is not what
+the owner wants to use, so phase 3's read-only Home and a start-work slice
+move ahead of push. Push stays phase 2 in substance and follows.
+
+### What the app shows
+
+The same Home as Tend for Mac, in its words and order (lanes from
+`FleetLane` in `apps/tend-macos/Sources/FleetHome.swift`, rules shared with
+the web Home's `home-model.mjs`):
+
+- **Your turn**: the decision queue (`/api/decisions`), as in phase 1.
+- **In progress**: agents that are working or starting, per host.
+- **Finished**: decided items (`/api/decisions/history`) and agents that
+  went idle in the last 24 hours.
+- **Hosts**: every Fleet host with its state, the agents on it, and an
+  agent's recent output on request.
+- **New work**: host, project, request, Start.
+
+The lanes, hosts and agents come from `GET /api/fleet`, the same snapshot
+the web Home reads. On iPad: a sidebar (Home, each host, Settings) and the
+three lanes side by side, as on the Mac. On iPhone: Home has a lane strip at
+the top with the three lanes and their counts, always visible; tapping a
+lane or swiping sideways switches the list below. A count is the at-a-glance
+part (what needs me, how much is running); three stacked lists would push
+Finished off the screen and a tab per lane would hide the counts. Hosts and
+New work are tabs of their own.
+
+Visual parity is held to a test, not a description: the Mac app and the iOS
+app are screenshotted side by side for each screen (iPhone and iPad, light
+and dark) and a reviewer names any place iOS looks rawer. The design
+tokens (state colours, type roles, spacing, radii) come from one file
+shared with the web Home, not a second copy.
+
+### The scope change
+
+A phase 1 device token reaches only the decision routes. Hosts, agents,
+output and starting work need more, and **an existing token is never
+widened**: a device keeps the scope it was approved with.
+
+**Two scopes.** Every device has exactly one:
+
+| Scope | Routes it adds | What it means |
+| --- | --- | --- |
+| `decide` (phase 1, the default) | `GET /api/decisions`, `GET /api/decisions/history`, `POST /api/decisions/requests/{id}`, `POST /api/decisions/reviews/{id}`, its own `/api/device*` | Read every covered host's questions and evidence and answer them. |
+| `operate` (new, opt-in) | everything in `decide`, plus `GET /api/fleet`, `POST /api/fleet/{host}/capture`, `GET /api/fleet/{host}/work-options`, `POST /api/work-control/up` | Also see every host, its agents and their state, read an agent's recent output, and **start new agents, which run with the host's permissions bypassed**. |
+
+`operate` is close to operator authority for the one thing it adds: a
+started agent can do anything on that host. It is therefore not a "read
+more" scope, and the words at approval say so.
+
+Still refused to every device, whatever its scope: typing into panes
+(`/api/panes/{pane}/prompt`, `send_keys`), Ctrl-C and abort, terminal
+sessions, the generic `POST /api/fleet/{host}/command`, Work prompt and
+abort, Work metadata writes, worktree changes, collaboration send/reply,
+shares, operator, viewer and device management. The test that already
+walks every operator route with a decide token gets a second pass with an
+operate token and the list above as the only additions.
+
+**Two narrow routes instead of the generic Fleet command.** Pane output
+and a host's Work options are today reached through
+`POST /api/fleet/{host}/command` with a `capture` or `work_command`
+operation. That route takes any operation (`send_prompt`, `send_keys`,
+`worktree_change`, …), so a device must not reach it, and filtering the
+body by device would be a policy hidden in a handler. Instead:
+
+- `POST /api/fleet/{host}/capture {pane}` runs exactly `capture` on that
+  host, under `[fleet] capture_policy` (`never` refuses it, as it does for
+  operators) and the existing Fleet audit line.
+- `GET /api/fleet/{host}/work-options` runs exactly
+  `tend work options --json` there.
+
+Both are operator routes too (the web Home can use them), are additive, and
+change no IPC or Fleet protocol.
+
+**Starting work** goes through the existing `POST /api/work-control/up`,
+with every check it has today: `[dashboard] allow_work_start = true` must be
+set on the dashboard host (default off; off on jiun-mini today, see owner
+decision 8), and a remote `host` must be a Fleet host in control mode. The
+app sends `work`, `workspace`, `cwd`, `body` and `host`, never `pipeline`
+flags or argv. On the phone, **Start asks for Face ID or the passcode**
+(LocalAuthentication, `.deviceOwnerAuthentication`) every time, so an
+unlocked phone left on a table does not start agents with one tap.
+
+**Granted at approval, not by the device.**
+
+1. In the app, the person chooses "Decide only" or "Decide, see hosts and
+   start work" before pairing; the request carries `scope`.
+2. The access dialog shows the requested scope in plain words next to the
+   device name. For `operate` it shows a separate, unticked checkbox:
+   "Also let this device see every host and agent, read their recent
+   output, and start new agents (they run with this host's permissions)".
+   Approving without ticking it issues a `decide` token.
+3. The issued scope is the lesser of what was asked and what was ticked; the
+   token response and `GET /api/device` name it, and the app shows only
+   what it may do.
+
+To widen a `decide` device the person pairs it again (a new device id); the
+app offers this from Settings and forgets the old key once the new one is
+issued. There is no "upgrade this token" route.
+
+**Narrowing and revocation.** Remove, Remove all and the app's Sign out work
+as in phase 1. In addition, **Limit to deciding** on an `operate` device
+drops it to `decide` at once without unpairing it. Expiry stays 30 days
+unused / 90 days in all for both scopes (owner decision 9).
+
+**Audit.** Every device action on these routes is a line in
+`dashboard-decisions.jsonl` with the device id, its label
+`app:<name>#<id8>`, the scope and who approved it: work starts (host,
+workspace, work id, the request's length but not its text) and captures
+(host, pane). Fleet reads are not audited (the app polls them).
+Approvals record the scope granted; Limit to deciding records who limited
+it.
+
+**Storage and compatibility.** One `scope TEXT NOT NULL DEFAULT 'decide'`
+column (schema version 2, added in place on open), so every phase 1 device
+stays `decide`. `/api/access` reports `capabilities.device_scopes`. An
+older daemon ignores `scope` in the request and issues a `decide` token;
+the app reads the issued scope and says the host needs a newer tend for
+the rest.
+
 ## Plan
 
 **Phase 1: decide from the phone** (this wave). The owner's brief fixes
@@ -341,6 +469,24 @@ a plain split view.
    unavailable Fleet host; XCUITests drive a scratch daemon seeded with a
    question and a result.
 
+**Wave 6: the whole Home** (before push, at the owner's request after
+build 1). In order, each its own PR with screenshots:
+
+1. Server: the `operate` scope, the two narrow Fleet routes, approval UI,
+   Limit to deciding, audit, schema version 2; Rust tests for the route
+   table under both scopes, approval granting less than asked, narrowing,
+   and the old store opening as `decide`.
+2. App, built alongside 1: visual parity and the three lanes. Mac type
+   roles, system state colours, lane columns and cards, Markdown where the
+   Mac renders it, both colour schemes; the iPhone lane strip and the iPad
+   lanes. In progress and the agents half of Finished need `operate`; a
+   `decide` device shows Your turn and decided items, and says what pairing
+   again adds. The coordinator is told as soon as 1 and 2 are on main, for
+   the next TestFlight build.
+3. App: Hosts (states, agents, recent output) and New work (host, project,
+   request, Face ID, Start), with XCUITests against a scratch daemon with
+   `allow_work_start = true` and a seeded agent.
+
 **Phase 2: notifications.** First a real-device vertical slice (needs
 decisions 1 and 4): a question on a host, a content-free push, unlock, the
 item opens, answer, Decided. Then actionable notifications with Face ID
@@ -348,12 +494,11 @@ and the badge count; `simctl push` tests. In parallel, a short PWA + Web
 Push spike on `/needs` to compare for people without an Apple team.
 Optional: RFC 8252 sign-in that mints the same device credential.
 
-**Phase 3: the rest of Home, read-only first.** In progress / finished
-lanes, hosts, a widget and Lock Screen count, App Intents; read-only pane
-output behind a separate, explicit device scope.
+**Phase 3: around Home.** A widget and Lock Screen count, App Intents.
+(The lanes, hosts, pane output and starting work moved to wave 6.)
 
-Not planned: terminal, settings, automation, account swap, files, changes,
-start-work editors.
+Not planned: terminal, typing into panes, settings, automation, account
+swap, files, changes, pipeline and preset editors.
 
 ## Follow-ups outside this stream
 
