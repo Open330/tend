@@ -5,13 +5,32 @@
 //! `GET /api/device/fleet` is `/api/fleet` cut down to what the app shows:
 //! the same JSON shape, so one decoder reads both, without SSH targets,
 //! labels, annotations, capabilities, backends or panes without an agent.
+//!
+//! `POST /api/device/capture {host, session_id}` is the recent output of the
+//! pane of one agent in the current snapshot. The server resolves the pane
+//! from the snapshot (a pane without an agent cannot be named) and runs
+//! exactly `FleetOperation::Capture` through the Fleet manager, so the host
+//! lookup and `[fleet] capture_policy` are the operators' own. The answer is
+//! the sanitized text only, bounded; one capture per device at a time; each
+//! one, refused or not, is an audit line.
+use super::DeviceAuth;
 use crate::dashboard::server::AppState;
+use crate::fleet::FleetOperation;
 use axum::{
+    body::Bytes,
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Json, Response},
+    Extension,
 };
+use serde::Deserialize;
 use serde_json::{json, Map, Value};
+use std::time::Duration;
+
+/// Most lines and bytes of output a capture answers with.
+const CAPTURE_LINES: usize = 400;
+const CAPTURE_BYTES: usize = 64 * 1024;
+const CAPTURE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// A host's fields the app reads.
 const HOST_FIELDS: &[&str] = &[
@@ -129,4 +148,184 @@ pub(super) async fn fleet(State(state): State<AppState>) -> Response {
         )
             .into_response(),
     }
+}
+
+fn refuse(status: StatusCode, message: &str) -> Response {
+    (status, Json(json!({ "error": message }))).into_response()
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CaptureBody {
+    host: String,
+    session_id: String,
+}
+
+/// The last lines of `text`, at most [`CAPTURE_LINES`] and
+/// [`CAPTURE_BYTES`], cut at a line or character boundary.
+pub(super) fn tail(text: &str) -> String {
+    let lines: Vec<&str> = text.trim_end_matches('\n').lines().collect();
+    let mut out = lines[lines.len().saturating_sub(CAPTURE_LINES)..].join("\n");
+    if out.len() > CAPTURE_BYTES {
+        let mut start = out.len() - CAPTURE_BYTES;
+        while !out.is_char_boundary(start) {
+            start += 1;
+        }
+        out = out[start..].to_owned();
+        if let Some(newline) = out.find('\n') {
+            out = out[newline + 1..].to_owned();
+        }
+    }
+    out
+}
+
+/// The one pane that is this agent's. With a socket, the pane on that
+/// endpoint (compared as the backend identifies endpoints: a tmux short
+/// name and its full path are one server; rmux and cmux keep full paths).
+/// Without one, a pane id that exists once. Anything else is ambiguous.
+pub(super) fn agent_pane<'a>(
+    panes: &'a [crate::tmux::PaneInfo],
+    pane_id: &str,
+    socket: Option<&str>,
+) -> Option<&'a crate::tmux::PaneInfo> {
+    let mut candidates = panes.iter().filter(|pane| {
+        pane.pane_id == pane_id
+            && match socket {
+                Some(socket) => pane.socket.as_deref().is_some_and(|observed| {
+                    crate::backend::pane_endpoints_match(Some(pane_id), socket, observed)
+                }),
+                None => true,
+            }
+    });
+    let pane = candidates.next()?;
+    candidates.next().is_none().then_some(pane)
+}
+
+/// Releases a device's capture slot when the capture ends.
+struct Slot<'a>(&'a super::Devices, String);
+
+impl Drop for Slot<'_> {
+    fn drop(&mut self) {
+        self.0.end_capture(&self.1);
+    }
+}
+
+/// Who a device line names: the label, the device and who approved it.
+pub(super) fn device_actor(device: &DeviceAuth) -> Value {
+    json!({
+        "by": super::Device::label(&device.name, &device.id),
+        "account": { "credential": "device", "device": device.id, "approved_by": device.approved_by },
+        "scope": device.scope,
+    })
+}
+
+pub(super) async fn capture(
+    State(state): State<AppState>,
+    Extension(device): Extension<DeviceAuth>,
+    body: Result<Bytes, axum::extract::rejection::BytesRejection>,
+) -> Response {
+    // A body refused before it was read (too large) is an attempt too.
+    let parsed = match &body {
+        Ok(bytes) => {
+            serde_json::from_slice::<CaptureBody>(bytes).map_err(|_| StatusCode::BAD_REQUEST)
+        }
+        Err(rejection) => Err(rejection.status()),
+    };
+    let outcome = match &parsed {
+        Ok(body) => capture_for(&state, &device, body).await,
+        Err(status) => Err((
+            *status,
+            "expected {\"host\": \"...\", \"session_id\": \"...\"}".to_owned(),
+        )),
+    };
+    let (host, session) = parsed.as_ref().map_or((None, None), |body| {
+        (Some(&body.host), Some(&body.session_id))
+    });
+    let status = match &outcome {
+        Ok(_) => StatusCode::OK,
+        Err((status, _)) => *status,
+    };
+    let mut entry = device_actor(&device);
+    entry["action"] = json!("device_capture");
+    entry["host"] = json!(host);
+    entry["session_id"] = json!(session);
+    entry["status"] = json!(status.as_u16());
+    super::routes::audit_entry(&state, entry).await;
+    match outcome {
+        Ok(text) => Json(json!({ "capture": text })).into_response(),
+        Err((status, message)) => refuse(status, &message),
+    }
+}
+
+async fn capture_for(
+    state: &AppState,
+    device: &DeviceAuth,
+    body: &CaptureBody,
+) -> Result<String, (StatusCode, String)> {
+    let Some(fleet) = &state.fleet else {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "fleet manager is not enabled".into(),
+        ));
+    };
+    let snapshot = fleet.store.snapshot_selected(None).await;
+    let not_found = || {
+        (
+            StatusCode::NOT_FOUND,
+            "no agent with that session on that host".to_owned(),
+        )
+    };
+    let host = snapshot
+        .hosts
+        .iter()
+        .find(|host| host.alias == body.host)
+        .ok_or_else(not_found)?;
+    let remote = host.remote.as_ref().ok_or_else(not_found)?;
+    let agent = remote
+        .agents
+        .iter()
+        .find(|agent| !body.session_id.is_empty() && agent.session_id == body.session_id)
+        .ok_or_else(not_found)?;
+    let pane_id = agent.pane.as_deref().ok_or_else(not_found)?;
+    let pane = agent_pane(&remote.panes, pane_id, agent.tmux_socket.as_deref()).ok_or((
+        StatusCode::CONFLICT,
+        "this agent's pane cannot be told apart from another; read it on a computer".to_owned(),
+    ))?;
+    let kind = crate::backend::pane_id_host_kind(&pane.pane_id).ok_or_else(not_found)?;
+    let key = crate::topology::PaneKey::from_pane(kind, pane);
+    let Some(_slot) = state
+        .devices
+        .begin_capture(&device.id)
+        .then(|| Slot(&state.devices, device.id.clone()))
+    else {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            "this device is already reading output; try again in a moment".into(),
+        ));
+    };
+    // Recorded before the host is asked, so an interrupted capture still
+    // leaves a line naming the device and the agent.
+    let mut intent = device_actor(device);
+    intent["action"] = json!("device_capture_requested");
+    intent["host"] = json!(host.alias);
+    intent["session_id"] = json!(body.session_id);
+    intent["pane"] = json!(pane.pane_id);
+    super::routes::audit_entry(state, intent).await;
+    let result = fleet
+        .execute(
+            host.alias.clone(),
+            FleetOperation::Capture { pane: key },
+            CAPTURE_TIMEOUT,
+        )
+        .await
+        .map_err(|error| (StatusCode::CONFLICT, error))?;
+    if !result.accepted {
+        return Err((
+            StatusCode::CONFLICT,
+            result
+                .message
+                .unwrap_or_else(|| "the host refused the capture".into()),
+        ));
+    }
+    Ok(tail(result.capture.as_deref().unwrap_or("")))
 }
