@@ -16,6 +16,10 @@ struct WorkStartView: View {
     @State private var host = ""
     @AppStorage("nativeWorkDirectory") private var cwd = ""
     @State private var remoteFolder = ""
+    /// The daemon keeps a Work queue (`work_queue_v1`).
+    @State private var queueSupported = false
+    @State private var isQueueing = false
+    @State private var queueError: String?
 
     private var isLocalHost: Bool { model.isLocalHost(host) }
 
@@ -230,12 +234,28 @@ struct WorkStartView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
+            if let queueError {
+                Label(queueError, systemImage: "exclamationmark.triangle.fill")
+                    .font(TendType.detail)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             Divider()
 
             HStack {
                 Spacer()
                 Button("Cancel") { isPresented = false }
-                    .disabled(model.isStartingWork)
+                    .disabled(model.isStartingWork || isQueueing)
+                if queueSupported {
+                    Button("Add to Queue") { addToQueue() }
+                        .buttonStyle(.tendSecondary)
+                        .disabled(!canQueue)
+                        .help(queueHelp)
+                }
                 Button(dryRun ? "Build Plan" : "Start Work") { submit() }
                     .buttonStyle(.tendPrimary)
                     .disabled(!canSubmit)
@@ -244,6 +264,10 @@ struct WorkStartView: View {
             .padding(16)
         }
         .frame(width: 620, height: 640)
+        .task {
+            let client = model.client
+            queueSupported = await client.supports(tendWorkQueueCapability)
+        }
         // Templates open over this sheet, so the form above is kept.
         .sheet(isPresented: $model.isPresentingTemplates) {
             WorkTemplatesSheet(model: model)
@@ -437,6 +461,64 @@ struct WorkStartView: View {
             }
         } else {
             TextField("Message skill (optional)", text: $skill)
+        }
+    }
+
+    /// Queueing starts a new Work on this Mac only, and never as a plan.
+    private var canQueue: Bool {
+        isLocalHost && !dryRun && !isQueueing && !model.isStartingWork
+            && !taskBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && canSubmit
+    }
+
+    private var queueHelp: String {
+        if !isLocalHost { return String(localized: "Only this Mac's tendd keeps a queue") }
+        if dryRun { return String(localized: "A plan is not queued; turn off Plan only") }
+        return String(localized: "tendd starts this Work when the queue's turn and a free slot come")
+    }
+
+    /// The folder the queued Work starts in: tendd needs an absolute one.
+    /// Never guessed: the typed folder, else the matching route's.
+    private var queueDirectory: String? {
+        let candidates: [String?] = [effectiveDirectory, matchedRoute?.cwd]
+        return candidates
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .map { ($0 as NSString).expandingTildeInPath }
+            .first { !$0.isEmpty }
+    }
+
+    private func addToQueue() {
+        guard canQueue else { return }
+        guard let cwd = queueDirectory, cwd.hasPrefix("/") else {
+            queueError = String(localized: "Choose an absolute folder to queue this Work")
+            return
+        }
+        let typedWork = work.trimmingCharacters(in: .whitespacesAndNewlines)
+        let item = TendQueueNewWork(
+            prompt: taskBody,
+            work: typedWork.isEmpty ? nil : typedWork,
+            workspace: workspace,
+            cwd: cwd,
+            pipeline: pipeline,
+            external: external,
+            skill: skill,
+            context: context
+        )
+        let client = model.client
+        let model = model
+        isQueueing = true
+        queueError = nil
+        Task {
+            defer { isQueueing = false }
+            do {
+                try await client.makeWorkQueueClient().add(item)
+                isPresented = false
+                let line = taskBody.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+                model.reportAgentActionDone(String(localized: "Queued: \(typedWork.isEmpty ? line : typedWork)"))
+                NotificationCenter.default.post(name: .tendWorkQueued, object: nil)
+            } catch {
+                queueError = error.localizedDescription
+            }
         }
     }
 
