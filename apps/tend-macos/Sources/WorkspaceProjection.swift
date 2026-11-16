@@ -36,7 +36,12 @@ struct TendHostedAgentIndex: Sendable {
     private(set) var bySession: [String: TendHostedAgent] = [:]
     /// What a decision takes from its asking agent (id and checkout), by
     /// host and session: the decisions change only when this does.
-    private(set) var askers: [String: String] = [:]
+    private(set) var askers: [String: Asker] = [:]
+
+    struct Asker: Hashable, Sendable {
+        let id: String
+        let cwd: String?
+    }
 
     init(_ agents: [TendHostedAgent] = []) {
         for hosted in agents {
@@ -44,7 +49,7 @@ struct TendHostedAgentIndex: Sendable {
             let key = Self.key(host: hosted.host.alias, session: hosted.agent.agentSessionID)
             if bySession[key] == nil {
                 bySession[key] = hosted
-                askers[key] = "\(hosted.id)\u{0}\(hosted.agent.cwd ?? "")"
+                askers[key] = Asker(id: hosted.id, cwd: hosted.agent.cwd)
             }
         }
     }
@@ -84,7 +89,7 @@ struct TendWorkspaceProjection: Sendable {
     /// `works`.
     func changes(
         fromAgents agents: [TendHostedAgent], groups: [TendWorkGroup], works: [FleetWork],
-        board: [FleetWork]? = nil, askers: [String: String]? = nil
+        board: [FleetWork]? = nil, askers: [String: TendHostedAgentIndex.Asker]? = nil
     ) -> Changes {
         var changed: Changes = []
         if let board, !TendProjectionEquality.same(self.works, board, by: TendProjectionEquality.sameOnHome) {
