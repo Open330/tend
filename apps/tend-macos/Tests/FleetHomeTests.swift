@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 @testable import Tend
@@ -928,4 +929,22 @@ private func claimed(from session: String, label: String = "claude@%1") -> Strin
     // Not asking: no context block.
     let idle = try agent(["state": "idle", "last_response": response], id: "c")
     #expect(FleetAskedContext.context(for: idle) == nil)
+}
+
+@Test func reviewKeysStayByteForByteWhatTenddStores() {
+    // The formula tendd's stored "Looks Good" keys were made with.
+    func legacy(_ id: String, _ revision: String) -> String {
+        let digest = SHA256.hash(data: Data("\(id)\n\(revision)".utf8))
+        return "home:" + digest.map { String(format: "%02x", $0) }.joined()
+    }
+    for (id, revision) in [("work:ws/fleet-home", "a|idle|2026-11-12T00:00:00Z;gen:1"), ("agent:mini|%3", ""), ("유휴", "é\n✳")] {
+        #expect(FleetReviewKeyCache.compute(id: id, revision: revision) == legacy(id, revision))
+    }
+
+    let cache = FleetReviewKeyCache()
+    let first = cache.key(id: "u", revision: "r1")
+    #expect(cache.key(id: "u", revision: "r1") == first)
+    let moved = cache.key(id: "u", revision: "r2")
+    #expect(moved != first)
+    #expect(moved == legacy("u", "r2"))
 }

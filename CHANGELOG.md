@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Home in the Mac app does far less work per redraw. Each finished card's
+  review key (a SHA-256 hex string) was recomputed about four times per
+  render; it is now cached per card and revision and hex-encoded without
+  `String(format:)`, and the board decides which cards are hidden in one
+  pass. Reading a large tendd response no longer rescans the whole buffer
+  after every 16 KB read. A 15 s CPU sample of the idle app showed these
+  paths at the top.
+
+### Fixed
+
 - CI builds with `--locked`, so a PR whose `Cargo.lock` is out of date fails
   instead of breaking `cargo install --locked` after release (v0.10.19
   shipped such a lock). Release binaries are built `--locked` too, matching

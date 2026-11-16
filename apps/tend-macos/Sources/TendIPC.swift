@@ -2538,12 +2538,17 @@ enum UnixSocket {
 
     fileprivate static func readLine(descriptor: Int32, buffered: inout Data) throws -> Data {
         var buffer = [UInt8](repeating: 0, count: 16 * 1024)
+        // Bytes already searched for a newline. A large response arrives in
+        // 16 KB reads; searching only what each read added keeps this linear
+        // rather than rescanning the whole buffer every time.
+        var scanned = 0
         while true {
-            if let newline = buffered.firstIndex(of: 0x0A) {
-                let line = Data(buffered.prefix(upTo: newline))
-                buffered.removeSubrange(...newline)
+            if let newline = newlineIndex(in: buffered, from: scanned) {
+                let line = Data(buffered[buffered.startIndex..<newline])
+                buffered.removeSubrange(buffered.startIndex...newline)
                 return line
             }
+            scanned = buffered.count
             let count = Darwin.read(descriptor, &buffer, buffer.count)
             if count < 0, errno == EINTR { continue }
             if count < 0 {
@@ -2560,6 +2565,18 @@ enum UnixSocket {
         let trailing = buffered
         buffered.removeAll(keepingCapacity: true)
         return trailing
+    }
+
+    /// The first `\n` in `data` at or after `offset` bytes, found with
+    /// `memchr` rather than a per-byte generic search.
+    static func newlineIndex(in data: Data, from offset: Int) -> Data.Index? {
+        guard offset < data.count else { return nil }
+        let found: Int? = data.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress,
+                  let hit = memchr(base + offset, 0x0A, raw.count - offset) else { return nil }
+            return base.distance(to: UnsafeRawPointer(hit))
+        }
+        return found.map { data.startIndex + $0 }
     }
 }
 

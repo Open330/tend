@@ -319,8 +319,11 @@ struct FleetHomeView: View {
         let all = FleetBoard.filter(allWorks, host: hostFilter, project: projectFilter)
         let decisions = decisions
         let marks = marks
-        let works = all.filter { showsReviewed || !marks.hides($0) }
-        let hiddenCount = all.filter { marks.hides($0) }.count
+        // One pass: whether a unit is hidden decides both the list and the
+        // "reviewed" count.
+        let hidden = Set(all.lazy.filter { marks.hides($0) }.map(\.id))
+        let works = showsReviewed ? all : all.filter { !hidden.contains($0.id) }
+        let hiddenCount = hidden.count
         let selected = all.first { $0.id == selectedID }
         return GeometryReader { geometry in
             // Beside the board while all three lanes keep a readable width;
