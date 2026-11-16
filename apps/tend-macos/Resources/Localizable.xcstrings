@@ -23702,6 +23702,56 @@
           }
         }
       }
+    },
+    "Status emphasis" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "상태 강조"
+          }
+        }
+      }
+    },
+    "Compact list" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "간결한 목록"
+          }
+        }
+      }
+    },
+    "Card layout" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "카드 레이아웃"
+          }
+        }
+      }
+    },
+    "Card layout: status emphasis or compact list" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "카드 레이아웃: 상태 강조 또는 간결한 목록"
+          }
+        }
+      }
+    },
+    "Status emphasis shows each item as a card with its question and choices. Compact list shows one row per item and opens the details beside the board." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "상태 강조는 항목마다 질문과 선택지를 담은 카드로 보여 줍니다. 간결한 목록은 항목마다 한 줄로 보여 주고, 고르면 보드 옆에 자세한 내용을 엽니다."
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

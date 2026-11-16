@@ -616,7 +616,28 @@ struct FleetDecisionCard: View {
     private var answerText: String { composing ?? initialAnswer ?? "" }
     private var isComposing: Bool { composing != nil || initialAnswer != nil }
 
+    @Environment(\.fleetCardEmphasis) private var emphasis
+
     var body: some View {
+        Group {
+            if emphasis {
+                emphasisBody
+            } else {
+                plainBody
+            }
+        }
+        .disabled(busy)
+        .contextMenu {
+            if let openAsker {
+                Button("Open Agent", action: openAsker)
+            }
+            if case .review = decision.source {
+                Button("Withdraw") { Task { _ = await decide(.withdrawn, nil) } }
+            }
+        }
+    }
+
+    private var plainBody: some View {
         VStack(alignment: .leading, spacing: 7) {
             header
             // What tend checked itself comes first; the asker's account
@@ -629,40 +650,9 @@ struct FleetDecisionCard: View {
                 .lineLimit(4)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
-            if let detail = decision.detail {
-                Text(verbatim: detail)
-                    .font(TendType.detail)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(3)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            if let recommendation = decision.recommendation {
-                Label {
-                    Text(verbatim: recommendation)
-                        .lineLimit(3)
-                } icon: {
-                    Image(systemName: "lightbulb")
-                        .foregroundStyle(.orange)
-                }
-                .font(TendType.detail)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .help(String(localized: "What the asker recommends"))
-            }
-            if !decision.evidence.isEmpty {
-                FleetEvidenceChips(decision: decision, openRevision: openRevision)
-            }
-            if isComposing {
-                composer
-            } else {
-                actions
-            }
-            if let failure {
-                Label(failure, systemImage: "exclamationmark.circle")
-                    .font(TendType.meta)
-                    .foregroundStyle(.red)
-                    .lineLimit(3)
-            }
+            account
+            answering
+            failureLabel
         }
         .padding(12)
         .background(TendSurfacePalette.workspace(for: colorScheme), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -670,14 +660,104 @@ struct FleetDecisionCard: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .strokeBorder(Color.orange.opacity(0.45), lineWidth: 1)
         )
-        .disabled(busy)
-        .contextMenu {
-            if let openAsker {
-                Button("Open Agent", action: openAsker)
+    }
+
+    /// Status emphasis: the kind, the question as a bold title, everything
+    /// to decide with in an inset box, who and when on one line under it.
+    private var emphasisBody: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 5) {
+                Image(systemName: decision.isHumanRequest ? "questionmark.bubble.fill" : "checklist")
+                Text(decision.isHumanRequest ? String(localized: "Question") : String(localized: "Review"))
+                Spacer(minLength: 4)
+                if busy { ProgressView().controlSize(.mini) }
             }
-            if case .review = decision.source {
-                Button("Withdraw") { Task { _ = await decide(.withdrawn, nil) } }
+            .font(.system(size: 11, weight: .bold))
+            .foregroundStyle(.orange)
+            Text(verbatim: decision.title)
+                .font(.system(size: 14.5, weight: .bold))
+                .lineLimit(4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+            FleetInsetBox {
+                if let verification = decision.verification {
+                    FleetVerificationChecks(verification: verification)
+                }
+                account
+                answering
             }
+            failureLabel
+            HStack(spacing: 6) {
+                if let asker = decision.asker {
+                    Text(verbatim: asker)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Text(verbatim: decision.host.alias)
+                    .lineLimit(1)
+                if let repo = decision.repo {
+                    Text(verbatim: "· \(repo)")
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                if let since = decision.since {
+                    Text(since, format: .relative(presentation: .numeric, unitsStyle: .abbreviated))
+                        .monospacedDigit()
+                        .fixedSize()
+                }
+            }
+            .font(TendType.meta)
+            .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .modifier(FleetEmphasisCardFrame(lane: .needsYou))
+    }
+
+    /// The asker's account: the summary under the question, the
+    /// recommendation, the evidence.
+    @ViewBuilder
+    private var account: some View {
+        if let detail = decision.detail {
+            Text(verbatim: detail)
+                .font(TendType.detail)
+                .foregroundStyle(.secondary)
+                .lineLimit(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        if let recommendation = decision.recommendation {
+            Label {
+                Text(verbatim: recommendation)
+                    .lineLimit(3)
+            } icon: {
+                Image(systemName: "lightbulb")
+                    .foregroundStyle(.orange)
+            }
+            .font(TendType.detail)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .help(String(localized: "What the asker recommends"))
+        }
+        if !decision.evidence.isEmpty {
+            FleetEvidenceChips(decision: decision, openRevision: openRevision)
+        }
+    }
+
+    @ViewBuilder
+    private var answering: some View {
+        if isComposing {
+            composer
+        } else {
+            actions
+        }
+    }
+
+    @ViewBuilder
+    private var failureLabel: some View {
+        if let failure {
+            Label(failure, systemImage: "exclamationmark.circle")
+                .font(TendType.meta)
+                .foregroundStyle(.red)
+                .lineLimit(3)
         }
     }
 
