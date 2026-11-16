@@ -593,14 +593,41 @@ pub(super) async fn work(
         }
     };
 
-    match prepare(&state, &body).await {
+    // A key already used answers with what happened then, whatever today's
+    // settings are: the caller needs the outcome most when it is unsure.
+    let print = fingerprint(&body);
+    if uuid::Uuid::parse_str(&body.idempotency_key).is_ok() {
+        match state.devices.find_start(&device.id, &body.idempotency_key) {
+            Some(start) if start.fingerprint == print => return started_answer(&start),
+            Some(_) => {
+                return refuse(
+                    StatusCode::CONFLICT,
+                    "this idempotency_key was used for another request",
+                )
+            }
+            None => {}
+        }
+    }
+    // The one id this start can launch, checked against the routes as is.
+    let work = mint_work_id();
+    match prepare(&state, &body, &work).await {
         Err((status, message)) => {
             super::routes::audit_entry(&state, audit_refusal(status, &message, Some(&body.host)))
                 .await;
             refuse(status, &message)
         }
         Ok((fleet_target, pipeline)) => {
-            dispatch(&state, &device, who, body, fleet_target, pipeline).await
+            dispatch(
+                &state,
+                &device,
+                who,
+                body,
+                fleet_target,
+                pipeline,
+                work,
+                print,
+            )
+            .await
         }
     }
 }
@@ -610,6 +637,7 @@ pub(super) async fn work(
 async fn prepare(
     state: &AppState,
     body: &WorkBody,
+    work: &str,
 ) -> Result<(Target, String), (StatusCode, String)> {
     if !state.config.allow_work_start {
         return Err((
@@ -652,13 +680,12 @@ async fn prepare(
             "pipeline must be one of the host's pipelines".into(),
         ));
     }
-    // The minted id's form is fixed: a route that would match any id of it
-    // and choose the folder itself refuses the start.
-    let probe = mint_work_id();
+    // A route that would match this start's own id and choose the folder
+    // itself refuses the start.
     if options
         .routes
         .iter()
-        .any(|route| route.moves_the_agents() && route.matches(&probe))
+        .any(|route| route.moves_the_agents() && route.matches(work))
     {
         return Err((
             StatusCode::CONFLICT,
@@ -668,6 +695,7 @@ async fn prepare(
     Ok((target, body.pipeline.clone()))
 }
 
+#[allow(clippy::too_many_arguments)] // one start, every part named
 async fn dispatch(
     state: &AppState,
     device: &DeviceAuth,
@@ -675,9 +703,9 @@ async fn dispatch(
     body: WorkBody,
     target: Target,
     pipeline: String,
+    work: String,
+    print: Vec<u8>,
 ) -> Response {
-    let work = mint_work_id();
-    let print = fingerprint(&body);
     let reservation =
         match state
             .devices
@@ -774,14 +802,12 @@ async fn run_and_record(
         Some(run) => run(request).await,
         None => crate::work_control::execute_work_up(&request, None).await,
     };
+    // Only a request refused before anything ran is "failed". Any other
+    // error can come after the Run was registered or an agent launched (a
+    // nonzero exit, a lost answer): it may have started.
     let (end, detail) = match &outcome {
         Ok(_) => ("started", None),
-        // Nothing ran: refused before, or the CLI could not be started.
-        Err(WorkUpError::Invalid(message) | WorkUpError::Failed(message)) => {
-            ("failed", Some(message.clone()))
-        }
-        Err(WorkUpError::Spawn(error)) => ("failed", Some(error.to_string())),
-        // It ran and its answer was lost or cut: it may have started.
+        Err(WorkUpError::Invalid(message)) => ("failed", Some(message.clone())),
         Err(error) => ("unknown", Some(error.to_string())),
     };
     state

@@ -1434,3 +1434,131 @@ async fn an_uncertain_start_is_never_dispatched_again() {
         other => panic!("expected the earlier start, got {other:?}"),
     }
 }
+
+fn failed_after_running() -> Result<Value, crate::work_control::WorkUpError> {
+    Err(crate::work_control::WorkUpError::Failed(
+        "second agent did not start".into(),
+    ))
+}
+
+#[tokio::test]
+async fn the_route_check_sees_the_id_that_is_launched() {
+    // Matches about half of all minted ids: a check of one id and a launch
+    // of another would let some matching launches through.
+    let routes = json!([{"match": "[0-7]$", "cwd": "/elsewhere"}]);
+    let (app, launched) = work_app(true, routes, started, None, None).await;
+    let (token, _) = pair_with(&app, "phone", Some("operate"), Some("operate")).await;
+    let pattern = regex::Regex::new("[0-7]$").unwrap();
+    let mut refused = 0;
+    for _ in 0..24 {
+        let key = uuid::Uuid::new_v4().to_string();
+        let (status, _) = call(
+            &app,
+            "POST",
+            "/api/device/work",
+            Some(&token),
+            Some(start_body(&key)),
+        )
+        .await;
+        if status == StatusCode::CONFLICT {
+            refused += 1;
+        }
+    }
+    let sent = launched.lock().unwrap();
+    assert!(
+        refused > 0 && !sent.is_empty(),
+        "both outcomes should occur in 24 starts"
+    );
+    for request in sent.iter() {
+        assert!(
+            !pattern.is_match(&request.work),
+            "{} launched past a route that matches it",
+            request.work
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_unknown_start_survives_any_age_in_the_registry() {
+    let devices = Devices::memory();
+    let (app, launched) = work_app(true, json!([]), timed_out, None, Some(devices.clone())).await;
+    let (token, _) = pair_with(&app, "phone", Some("operate"), Some("operate")).await;
+    let (_, first) = call(
+        &app,
+        "POST",
+        "/api/device/work",
+        Some(&token),
+        Some(start_body(KEY)),
+    )
+    .await;
+    assert_eq!(first["state"], "unknown");
+    devices.age_starts(400 * 24 * 3600);
+    let (_, again) = call(
+        &app,
+        "POST",
+        "/api/device/work",
+        Some(&token),
+        Some(start_body(KEY)),
+    )
+    .await;
+    assert_eq!(again["state"], "unknown");
+    assert_eq!(again["work"], first["work"]);
+    assert_eq!(
+        launched.lock().unwrap().len(),
+        1,
+        "an unknown start ran again"
+    );
+}
+
+#[tokio::test]
+async fn a_failure_after_launching_is_unknown_not_failed() {
+    let (app, _) = work_app(true, json!([]), failed_after_running, None, None).await;
+    let (token, _) = pair_with(&app, "phone", Some("operate"), Some("operate")).await;
+    let (_, answer) = call(
+        &app,
+        "POST",
+        "/api/device/work",
+        Some(&token),
+        Some(start_body(KEY)),
+    )
+    .await;
+    assert_eq!(answer["state"], "unknown", "{answer}");
+}
+
+#[tokio::test]
+async fn a_retry_gets_its_outcome_even_after_starting_is_turned_off() {
+    let devices = Devices::memory();
+    let (on, launched) = work_app(true, json!([]), started, None, Some(devices.clone())).await;
+    let (token, _) = pair_with(&on, "phone", Some("operate"), Some("operate")).await;
+    let (_, first) = call(
+        &on,
+        "POST",
+        "/api/device/work",
+        Some(&token),
+        Some(start_body(KEY)),
+    )
+    .await;
+    assert_eq!(first["state"], "started");
+    let (off, _) = work_app(false, json!([]), started, None, Some(devices)).await;
+    let (status, again) = call(
+        &off,
+        "POST",
+        "/api/device/work",
+        Some(&token),
+        Some(start_body(KEY)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(again["work"], first["work"]);
+    // A new key, though, is refused with starting off.
+    let (status, _) = call(
+        &off,
+        "POST",
+        "/api/device/work",
+        Some(&token),
+        Some(start_body(KEY2)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
+    assert_eq!(launched.lock().unwrap().len(), 1);
+}

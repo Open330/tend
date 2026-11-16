@@ -87,9 +87,10 @@ const TOUCH_INTERVAL: i64 = 3600;
 const MAX_NAME_CHARS: usize = 64;
 /// Starts per device per hour.
 const MAX_STARTS_PER_HOUR: usize = 20;
-/// How long a settled start is kept, and an unknown one.
+/// How long a settled start is kept. An unknown or reserved one is kept
+/// until its device is removed: it may have run, so its key must never run
+/// again.
 const SETTLED_START_KEPT: i64 = 7 * 24 * 3600;
-const UNKNOWN_START_KEPT: i64 = 30 * 24 * 3600;
 /// No vowels (no words), no 0/O/1/I.
 const USER_CODE_ALPHABET: &[u8] = b"BCDFGHJKLMNPQRSTVWXZ23456789";
 const USER_CODE_LEN: usize = 8;
@@ -732,8 +733,7 @@ impl Devices {
         {
             let mut starts = self.start_list();
             starts.retain(|start| match start.state.as_str() {
-                "reserved" => true,
-                "unknown" => at - start.created_at < UNKNOWN_START_KEPT,
+                "reserved" | "unknown" => true,
                 _ => at - start.created_at < SETTLED_START_KEPT,
             });
             if let Some(start) = starts.iter().find(|s| s.device == device && s.key == key) {
@@ -762,11 +762,19 @@ impl Devices {
             updated_at: at,
         };
         if let Some(storage) = self.storage()? {
-            let _ = storage.prune_starts(at - SETTLED_START_KEPT, at - UNKNOWN_START_KEPT);
+            let _ = storage.prune_starts(at - SETTLED_START_KEPT);
             storage.reserve(&start)?;
         }
         self.start_list().push(start.clone());
         Ok(Reservation::New(start))
+    }
+
+    /// The start this device made with this key, if any.
+    pub(in crate::dashboard) fn find_start(&self, device: &str, key: &str) -> Option<Start> {
+        self.start_list()
+            .iter()
+            .find(|start| start.device == device && start.key == key)
+            .cloned()
     }
 
     /// Record how a reserved start ended. A store that cannot be written
@@ -810,6 +818,13 @@ impl Devices {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(id);
+    }
+
+    #[cfg(test)]
+    pub(in crate::dashboard) fn age_starts(&self, seconds: i64) {
+        for start in self.start_list().iter_mut() {
+            start.created_at -= seconds;
+        }
     }
 
     #[cfg(test)]

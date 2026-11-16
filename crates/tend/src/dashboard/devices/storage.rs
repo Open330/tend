@@ -273,14 +273,14 @@ impl Storage {
             .map_err(io::Error::other)
     }
 
-    /// Drop starts that settled before `settled` and unknown ones from
-    /// before `unknown`; a reserved start is never dropped.
-    pub(super) fn prune_starts(&self, settled: i64, unknown: i64) -> io::Result<()> {
+    /// Drop starts that settled before `settled`. A reserved or unknown
+    /// start is never dropped (only with its device).
+    pub(super) fn prune_starts(&self, settled: i64) -> io::Result<()> {
         self.connection()?
             .execute(
-                "DELETE FROM device_starts WHERE (state IN ('started', 'failed', 'refused') \
-                 AND created_at < ?1) OR (state = 'unknown' AND created_at < ?2)",
-                params![settled, unknown],
+                "DELETE FROM device_starts WHERE state IN ('started', 'failed', 'refused') \
+                 AND created_at < ?1",
+                [settled],
             )
             .map(drop)
             .map_err(io::Error::other)
