@@ -23742,6 +23742,16 @@
           }
         }
       }
+    },
+    "From tend itself" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "tend가 직접 연 항목"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

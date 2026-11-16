@@ -17,6 +17,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was to type an answer. An agent's question that has waited over ten
   minutes and whose session its host does not list is marked **Asker not
   listed**: the agent may have exited.
+- On Home in the Mac app, the side bar's divider no longer runs up through
+  the traffic-light buttons. With the lists folded away, the activity rail
+  sat in a split view whose divider spans the window's full height; the rail
+  now sits beside it and draws its edge only below the title bar row.
+- A decision card in Home's Your turn shows every option in full. Options
+  were buttons cut to two lines and 240 pt; each option is now a full-width
+  row with its number and its whole text wrapped beside it. The choice panel
+  in the inspector wraps long options the same way.
+- Home's Your turn lists the decisions from tendd's queue and the units whose
+  agents wait in one order, the longest wait first, instead of every decision
+  above every unit. In progress orders by each unit's latest change (a helper
+  or a second stage moving counts) and Finished by when the unit finished,
+  newest first.
 - Home in the Mac app does far less work per redraw. Each finished card's
   review key (a SHA-256 hex string) was recomputed about four times per
   render; it is now cached per card and revision and hex-encoded without
@@ -28,6 +41,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   process lists for every running or idle agent before discarding those rows.
   The daemon copies only agents whose state or question needs a person;
   the decision ordering, limits and contents stay the same.
+- A "Tend cannot verify the recipient binding" question no longer stays in
+  Your turn forever when the agent that sent the original request is still
+  running. The worker it went to had vanished (no agent row, nothing a
+  person could unblock), but the item only closed once the sender was gone
+  too, so a live coordinator kept it open indefinitely; some were weeks old.
+  After the usual week with the recipient still gone it now closes as
+  stale, recorded on the item. The sender's request itself is untouched and
+  stays listed as interrupted for it. Requests a person sent, and
+  recipients that are still there but failing, keep their item as before.
+- The "reply arrived but its sender is gone" item pointed at
+  `tend msg show`, which does not exist; it now names
+  `tend msg list --scope all --request-id <id> --full`.
 - Typing `exit` in the live tour while a step was opening could end the tour
   on a tmux error and a backtrace, without the closing summary. The tour
   checked once per poll that the sandbox server was alive, then made several
