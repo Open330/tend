@@ -34,12 +34,18 @@ final class TendCoalescedProjection<Value: Sendable> {
 struct TendHostedAgentIndex: Sendable {
     private(set) var byID: [String: TendHostedAgent] = [:]
     private(set) var bySession: [String: TendHostedAgent] = [:]
+    /// What a decision takes from its asking agent (id and checkout), by
+    /// host and session: the decisions change only when this does.
+    private(set) var askers: [String: String] = [:]
 
     init(_ agents: [TendHostedAgent] = []) {
         for hosted in agents {
             if byID[hosted.id] == nil { byID[hosted.id] = hosted }
             let key = Self.key(host: hosted.host.alias, session: hosted.agent.agentSessionID)
-            if bySession[key] == nil { bySession[key] = hosted }
+            if bySession[key] == nil {
+                bySession[key] = hosted
+                askers[key] = "\(hosted.id)\u{0}\(hosted.agent.cwd ?? "")"
+            }
         }
     }
 
@@ -67,13 +73,24 @@ struct TendWorkspaceProjection: Sendable {
         static let agents = Changes(rawValue: 1 << 0)
         static let groups = Changes(rawValue: 1 << 1)
         static let works = Changes(rawValue: 1 << 2)
-        static let all: Changes = [.agents, .groups, .works]
+        /// Home's units changed in a way Home shows.
+        static let board = Changes(rawValue: 1 << 3)
+        /// An asking agent's id or checkout changed.
+        static let askers = Changes(rawValue: 1 << 4)
+        static let all: Changes = [.agents, .groups, .works, .board, .askers]
     }
 
     /// What differs between `self` and the published `agents`, `groups` and
     /// `works`.
-    func changes(fromAgents agents: [TendHostedAgent], groups: [TendWorkGroup], works: [FleetWork]) -> Changes {
+    func changes(
+        fromAgents agents: [TendHostedAgent], groups: [TendWorkGroup], works: [FleetWork],
+        board: [FleetWork]? = nil, askers: [String: String]? = nil
+    ) -> Changes {
         var changed: Changes = []
+        if let board, !TendProjectionEquality.same(self.works, board, by: TendProjectionEquality.sameOnHome) {
+            changed.insert(.board)
+        }
+        if let askers, index.askers != askers { changed.insert(.askers) }
         if !TendProjectionEquality.same(self.agents, agents, by: TendProjectionEquality.same) { changed.insert(.agents) }
         if !TendProjectionEquality.same(self.groups, groups, by: TendProjectionEquality.same) { changed.insert(.groups) }
         if !TendProjectionEquality.same(self.works, works, by: TendProjectionEquality.same) { changed.insert(.works) }
@@ -113,13 +130,58 @@ enum TendProjectionEquality {
     static let fleetWorkFields = 16
 
     static func same(_ lhs: FleetWork, _ rhs: FleetWork) -> Bool {
-        lhs.source == rhs.source && lhs.title == rhs.title && lhs.repo == rhs.repo
+        same(lhs, rhs, agents: same)
+    }
+
+    /// The same, as far as Home shows: an agent's `lastActivityAt` is only
+    /// a fallback for `stateEnteredAt` there, and its workload is not shown,
+    /// so a heartbeat that moves only those does not redraw the board.
+    static func sameOnHome(_ lhs: FleetWork, _ rhs: FleetWork) -> Bool {
+        same(lhs, rhs, agents: sameOnHome)
+    }
+
+    static func sameOnHome(_ lhs: TendHostedAgent, _ rhs: TendHostedAgent) -> Bool {
+        guard lhs.host == rhs.host, lhs.pane == rhs.pane else { return false }
+        return lhs.agent == rhs.agent || lhs.agent.shownOnHome == rhs.agent.shownOnHome
+    }
+
+    private static func same(
+        _ lhs: FleetWork, _ rhs: FleetWork, agents same: (TendHostedAgent, TendHostedAgent) -> Bool
+    ) -> Bool {
+        func sameFocus(_ lhs: TendHostedAgent?, _ rhs: TendHostedAgent?) -> Bool {
+            switch (lhs, rhs) {
+            case (nil, nil): true
+            case let (lhs?, rhs?): same(lhs, rhs)
+            default: false
+            }
+        }
+        return lhs.source == rhs.source && lhs.title == rhs.title && lhs.repo == rhs.repo
             && lhs.lane == rhs.lane && lhs.stages == rhs.stages && lhs.headline == rhs.headline
             && lhs.since == rhs.since && lhs.handledLimit == rhs.handledLimit
             && lhs.revision == rhs.revision && lhs.lastChange == rhs.lastChange
             && lhs.isOrphanHelper == rhs.isOrphanHelper && lhs.isProbableHelper == rhs.isProbableHelper
             && lhs.isEmptySession == rhs.isEmptySession
-            && same(lhs.focus, rhs.focus)
-            && same(lhs.agents, rhs.agents, by: same) && same(lhs.helpers, rhs.helpers, by: same)
+            && sameFocus(lhs.focus, rhs.focus)
+            && Self.same(lhs.agents, rhs.agents, by: same) && Self.same(lhs.helpers, rhs.helpers, by: same)
+    }
+}
+
+extension TendAgent {
+    /// This agent with what Home never shows cleared: the workload, and
+    /// `lastActivityAt` when `stateEnteredAt` (which Home reads first) is
+    /// set. Every field is passed, so a new one cannot be forgotten here.
+    var shownOnHome: TendAgent {
+        TendAgent(
+            kind: kind, agentSessionID: agentSessionID, pane: pane, tmuxSocket: tmuxSocket,
+            tmuxSession: tmuxSession, cwd: cwd, state: state, lastPrompt: lastPrompt,
+            lastPromptOrigin: lastPromptOrigin, lastPromptAt: lastPromptAt, lastResponse: lastResponse,
+            recap: recap, aiTitle: aiTitle, lastNotification: lastNotification, model: model,
+            contextUsedPercent: contextUsedPercent, costUSD: costUSD,
+            rateLimit5hPercent: rateLimit5hPercent, rateLimit5hResetsAt: rateLimit5hResetsAt,
+            rateLimit7dPercent: rateLimit7dPercent, rateLimit7dResetsAt: rateLimit7dResetsAt,
+            rateLimitedUntil: rateLimitedUntil, rateLimitScope: rateLimitScope, rateLimitSource: rateLimitSource,
+            startedAt: startedAt, lastActivityAt: stateEnteredAt == nil ? lastActivityAt : nil,
+            stateEnteredAt: stateEnteredAt, workload: nil, subagents: subagents, awaitingReply: awaitingReply
+        )
     }
 }

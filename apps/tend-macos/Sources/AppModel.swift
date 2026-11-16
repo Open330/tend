@@ -115,6 +115,11 @@ final class AppModel: ObservableObject {
     /// Bumped whenever `hostedAgents` or `operatorMessages` is published, so
     /// a projection of them can tell it is current without comparing.
     private(set) var hostedAgentsRevision: UInt64 = 0
+    /// Bumped when an asking agent's id or checkout changes (all a decision
+    /// reads from its asker).
+    private(set) var askersRevision: UInt64 = 0
+    /// What Home's board draws, published only when that changes.
+    let homeBoard = FleetHomeBoard()
     private(set) var operatorMessagesRevision: UInt64 = 0
     /// Materialized off the main actor, once per workspace projection.
     @Published private(set) var homeWorks: [FleetWork] = []
@@ -337,6 +342,7 @@ final class AppModel: ObservableObject {
                 Task { @MainActor [weak self] in await self?.rebuildWorkspaceProjections() }
             }
         if TendPerf.isEnabled { installPerfCounters() }
+        homeBoard.follow(self)
     }
 
     /// Test seam. The app ingests execution snapshots through `refresh`, which
@@ -956,6 +962,7 @@ final class AppModel: ObservableObject {
             let connection = connectionGeneration
             let snapshot = executionSnapshot, runs = pipelineRuns
             let published = (agents: hostedAgents, groups: workGroups, works: homeWorks)
+            let board = homeBoard.works, askers = hostedAgentIndex.askers
             let now = Date()
             TendPerf.count("projection.built")
             return await Task.detached(priority: .userInitiated) {
@@ -974,7 +981,8 @@ final class AppModel: ObservableObject {
                     works: FleetBoard.works(groups: groups, agents: agents, now: now),
                     builtAt: now, connection: connection)
                 projection.changed = projection.changes(
-                    fromAgents: published.agents, groups: published.groups, works: published.works
+                    fromAgents: published.agents, groups: published.groups, works: published.works,
+                    board: board, askers: askers
                 )
                 return projection
             }.value
@@ -992,6 +1000,11 @@ final class AppModel: ObservableObject {
             }
             if result.changed.contains(.groups) { workGroups = result.groups }
             if result.changed.contains(.works) { homeWorks = result.works }
+            if result.changed.contains(.askers) {
+                askersRevision &+= 1
+                homeBoard.decisionsChanged()
+            }
+            if result.changed.contains(.board) { homeBoard.setWorks(result.works) }
         })
     }
 
