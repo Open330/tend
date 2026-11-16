@@ -188,14 +188,43 @@ impl ValidatedLaunch {
 }
 
 #[cfg(all(test, unix))]
-mod tests {
-    use super::*;
-    use std::os::unix::fs::{symlink, PermissionsExt};
+mod test_files {
+    use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
-    fn script(path: &Path, body: &str) {
-        std::fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
+
+    /// Put a copy of `from` at `to` through a `cp` child, never through a
+    /// writable descriptor in this process. A child another test forks at
+    /// that moment inherits such a descriptor until it execs, and Linux
+    /// then refuses to exec the file (`ETXTBSY`), which `validate` reports
+    /// as "probe could not start". std forks rather than `posix_spawn`s a
+    /// command whose `PATH` it changed (`accounts.rs` does). Reproduced in a
+    /// Linux container: 70 of 2000 execs after `std::fs::copy` failed with
+    /// `ETXTBSY` while such commands ran, none after a `cp` child.
+    pub fn copy_by_child(from: impl AsRef<Path>, to: &Path) {
+        assert!(std::process::Command::new("/bin/cp")
+            .arg(from.as_ref())
+            .arg(to)
+            .status()
+            .unwrap()
+            .success());
+    }
+
+    /// Write an executable shell script at `path` the same way. The body
+    /// goes to a sibling file that is never executed, so only `cp` ever
+    /// holds `path` open for writing.
+    pub fn script(path: &Path, body: &str) {
+        let source = path.with_extension("body");
+        std::fs::write(&source, format!("#!/bin/sh\n{body}\n")).unwrap();
+        copy_by_child(&source, path);
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::test_files::script;
+    use super::*;
+    use std::os::unix::fs::symlink;
     #[tokio::test]
     async fn validation_pins_binary_and_rejects_failure_config_changes_and_timeouts() {
         let dir = tempfile::tempdir().unwrap();
@@ -232,25 +261,10 @@ mod tests {
 
 #[cfg(all(test, target_os = "linux"))]
 mod pinned_tests {
+    use super::test_files::copy_by_child;
     use super::*;
     use std::os::unix::process::CommandExt;
 
-    /// Put a copy of `from` at `to` through a `cp` child, never through a
-    /// writable descriptor in this process. A child another test forks at
-    /// that moment inherits such a descriptor until it execs, and Linux
-    /// then refuses to exec the file (`ETXTBSY`), which `validate` reports
-    /// as "probe could not start". std forks rather than `posix_spawn`s a
-    /// command whose `PATH` it changed (`accounts.rs` does). Reproduced in a
-    /// Linux container: 70 of 2000 execs after `std::fs::copy` failed with
-    /// `ETXTBSY` while such commands ran, none after a `cp` child.
-    fn copy_by_child(from: &str, to: &std::path::Path) {
-        assert!(std::process::Command::new("/bin/cp")
-            .arg(from)
-            .arg(to)
-            .status()
-            .unwrap()
-            .success());
-    }
     #[tokio::test]
     async fn atomic_replacement_executes_validated_inode_and_in_place_writes_are_refused() {
         let dir = tempfile::tempdir().unwrap();
