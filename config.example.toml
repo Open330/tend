@@ -147,6 +147,11 @@
 # retention_days    = 90 # default; 0 retains indefinitely. Prunes eligible whole
 #                        # terminal threads at daemon startup and hourly
 
+# Work queue (`tend work queue`): start a queued new Work only while fewer
+# agents than this are busy on this host. Limits the queue only.
+# [work_queue]
+# max_busy_agents = 3
+
 # Caps on files that otherwise only grow. 0 turns a cap off.
 # [storage]
 # audit_max_bytes = 8388608 # rotate collaboration-audit.ndjson to .1 at 8 MiB

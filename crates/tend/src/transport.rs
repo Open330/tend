@@ -522,7 +522,16 @@ mod imp {
         // An instance exists only while the daemon holds it, so a successful
         // open is the liveness answer. `ERROR_PIPE_BUSY` means every instance
         // is momentarily taken — also live.
-        match ClientOptions::new().open(pipe_name(endpoint)) {
+        //
+        // Opened as a plain file, not through `ClientOptions`: tokio's client
+        // registers with the current runtime and panics outside one, and
+        // callers include synchronous code such as `tend init`'s detection.
+        // The handle is dropped at once, so its blocking mode never matters.
+        match std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(pipe_name(endpoint))
+        {
             Ok(_) => true,
             Err(e) => e.raw_os_error() == Some(ERROR_PIPE_BUSY),
         }
@@ -626,6 +635,27 @@ mod imp {
             // Only the leading `\\.\pipe\` may contain backslashes.
             assert_eq!(text.matches('\\').count(), 4);
             assert!(!text.contains(' '));
+        }
+
+        /// `tend init`'s detection probes the daemon from synchronous code.
+        #[test]
+        fn liveness_probe_needs_no_runtime() {
+            let endpoint = std::env::temp_dir().join(format!(
+                "tend-probe-{}-{}.sock",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            assert!(!probe_live(&endpoint));
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let listener = runtime.block_on(async { Listener::bind(&endpoint) });
+            let _listener = listener.unwrap();
+            assert!(probe_live(&endpoint));
         }
     }
 }

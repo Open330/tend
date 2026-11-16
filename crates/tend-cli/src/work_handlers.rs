@@ -64,6 +64,7 @@ pub(super) async fn run_work_cmd(
         }
         WorkCmd::Start(args) => agent_launch::run_work_start(args, client.socket(), cfg),
         WorkCmd::Plan(args) => work_backlog::run_plan(args, client).await,
+        WorkCmd::Queue(cmd) => crate::work_queue_cmd::run(cmd, client, cfg).await,
         WorkCmd::Link(args) => work_external::run_link(args, client).await,
         WorkCmd::Refresh(args) => work_external::run_refresh(args, client).await,
         WorkCmd::List(args) => match args.stage {

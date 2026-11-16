@@ -491,6 +491,9 @@ esac
         assert_eq!(selected_endpoint(), before);
     }
 
+    // Runs the POSIX quoting through `/bin/sh`; the PowerShell dialect has
+    // its own test below.
+    #[cfg(unix)]
     #[test]
     fn popup_arguments_survive_shell_metacharacters() {
         let quoted = posix_command(&["a path/tend", "it's $HOME; $(false)", ""]);

@@ -1,7 +1,8 @@
 # Tend on iPhone and iPad
 
-Status: proposal (2026-11-15), wave 5 `ios-app` stream. Phase 1 is being
-built alongside this document; see [Plan](#plan).
+Status: phase 1 built (wave 5, 2026-11-15); wave 6 adds the whole Home and
+a wider, opt-in device scope (2026-11-16), see
+[Wave 6](#wave-6-the-whole-home-and-a-wider-device-scope) and [Plan](#plan).
 
 ## Owner decisions
 
@@ -17,6 +18,9 @@ the simulator and against a scratch daemon.
 | 4 | Who holds the APNs key (phase 2). | The owner's `.p8` key lives on the host that serves the dashboard (jiun-mini), mode 0600, named by path in config; no relay service. See [Push](#push-phase-2). | Push not built. |
 | 5 | What a notification shows on the lock screen (phase 2). | Nothing from the agent: "Tend: 2 need you" and the host alias. The question is fetched after unlock. | Push not built. |
 | 6 | Keep the iOS CI job phase 1 adds (build + unit tests on a GitHub macOS runner, only when `apps/**` changes; free on a public repository, a few minutes per run). | Keep it: the shared models are edited from the Mac side, and only a full iOS build catches what that breaks. | Added with the iOS app PR; removing it is deleting one job. |
+| 7 | Let a paired phone see hosts and agents, read agents' recent output and start new agents (the `operate` scope). The token is an ordinary bearer credential: whoever holds it (a phished approval, a stolen phone) can start agents with bypassed permissions on every covered control-mode host until it is removed or expires. | Yes, accepting that risk, opt-in per device: chosen on the phone, looked up then ticked separately by the operator, create-only starts in projects agents already use, audit before dispatch, **Limit to deciding** and Remove. | Built and tested against a scratch daemon only; existing phones stay decide-only until paired again. |
+| 8 | Turn on `[dashboard] allow_work_start = true` on jiun-mini. It is off today, so neither the web nor the phone can start work through the dashboard. | Turn it on only after the start-work slice (plan step 4) has passed its tests, and when the owner wants to start work from the phone. Tests on a scratch daemon are not a reason to turn it on. | Off. The app shows "Starting work is turned off on this dashboard" and keeps the rest. |
+| 9 | Expiry for `operate` devices. A token in daily use lasts the full lifetime whoever uses it. | The same as `decide` (30 days unused, 90 days in all); shorter would mean pairing the phone again every few weeks. Removal is the real defence. | 30 / 90 days. |
 
 ## What the owner uses today
 
@@ -312,6 +316,212 @@ terminal, start-work editors) never land on iOS. The iOS app is held to
 the decision loop plus read-only status, so it does not multiply the work
 of every Mac feature.
 
+## Wave 6: the whole Home, and a wider device scope
+
+Build 0.1.0 (1) went to TestFlight on 2026-11-16. The owner's verdict: the
+type and layout look raw, only **Your turn** is visible (no hosts, no other
+lanes), and new work cannot be started. Phase 1's "decide only" is not what
+the owner wants to use, so phase 3's read-only Home and a start-work slice
+move ahead of push. Push stays phase 2 in substance and follows.
+
+### What the app shows
+
+The same Home as Tend for Mac, in its words and order (lanes from
+`FleetLane` in `apps/tend-macos/Sources/FleetHome.swift`, rules shared with
+the web Home's `home-model.mjs`):
+
+- **Your turn**: the decision queue (`/api/decisions`), as in phase 1.
+- **In progress**: agents that are working or starting, per host.
+- **Finished**: decided items (`/api/decisions/history`) and agents that
+  went idle in the last 24 hours.
+- **Hosts**: every Fleet host with its state, the agents on it, and an
+  agent's recent output on request.
+- **New work**: host, project, request, Start.
+
+The lanes, hosts and agents come from the Fleet snapshot the web Home
+reads (`/api/fleet`), served to a device through its own cut-down route
+(below). On iPad: a sidebar (Home, each host, Settings) and the
+three lanes side by side, as on the Mac. On iPhone: Home has a lane strip at
+the top with the three lanes and their counts, always visible; tapping a
+lane or swiping sideways switches the list below. A count is the at-a-glance
+part (what needs me, how much is running); three stacked lists would push
+Finished off the screen and a tab per lane would hide the counts. Hosts and
+New work are tabs of their own.
+
+Visual parity is held to a test, not a description: the Mac app and the iOS
+app are screenshotted side by side for each screen (iPhone and iPad, light
+and dark) and a reviewer names any place iOS looks rawer. The design
+tokens (state colours, type roles, spacing, radii) come from one file
+shared with the web Home, not a second copy.
+
+### The scope change
+
+A phase 1 device token reaches only the decision routes. Hosts, agents,
+output and starting work need more, and **an existing token is never
+widened**: a device keeps the scope it was approved with, or less.
+
+**Two scopes.** Every device has exactly one:
+
+| Scope | What it adds | What it means |
+| --- | --- | --- |
+| `decide` (phase 1, the default) | `GET /api/decisions`, `GET /api/decisions/history`, `POST /api/decisions/requests/{id}`, `POST /api/decisions/reviews/{id}`, its own `GET /api/device`, `POST /api/device/forget` | Read every covered host's questions and evidence and answer them. |
+| `operate` (new, opt-in) | everything in `decide`, plus four device-only routes: `GET /api/device/fleet`, `POST /api/device/capture`, `GET /api/device/work-options`, `POST /api/device/work` | Also see every host and its agents, read an agent's recent output, and **start new agents, which run with permissions bypassed on any covered control-mode host**. |
+
+`operate` is remote execution on the owner's hosts by whoever holds the
+token. Face ID on the phone (below) protects against someone using the
+unlocked app; it does not protect the token itself, which is an ordinary
+bearer credential like the dashboard token. A token phished at approval or
+lifted from the phone can start agents until it expires or is removed.
+Owner decision 7 is whether to accept that.
+
+**Device-only routes, not the operator ones.** The operator routes are
+wider than the phone needs, and filtering them per caller would be policy
+hidden in handlers:
+
+- `POST /api/work-control/up` is not "start new work": given an existing
+  Work id it reconciles and re-prompts that Work's agents
+  (`work_up::apply_durable`), and it accepts `pipeline`, `skill`,
+  `context`, `external`, `no_ticket`, `dry_run` (which is not
+  side-effect free: ticket lookup, worktree creation) and any `cwd`.
+- `POST /api/fleet/{host}/command` takes any Fleet operation.
+- `GET /api/fleet` carries SSH targets, labels, capabilities and every
+  pane, and must keep its anonymous behaviour in `public_read` mode.
+
+So `operate` reaches none of them. It gets four exact routes, each with its
+own typed request (`deny_unknown_fields`), its own minimal response, and
+`Cache-Control: no-store`. They live in a router of their own behind an
+`operate` gate, are matched as exact paths (never by prefix: `/api/device`
+also prefixes `/api/devices`), and change neither the operator routes nor
+`operator::authenticate`.
+
+- `GET /api/device/fleet`: the same JSON shape as `/api/fleet`, so one
+  decoder reads both, cut to what the app shows: per host the alias,
+  local, mode, state, version, last error and last seen; per agent its
+  kind, session id, pane, state, title, recap, last prompt, response and
+  notification, folder, model and times. No SSH target, labels,
+  annotations, capabilities, backends or agentless panes.
+- `POST /api/device/capture {host, session_id}`: the recent output of the
+  pane of **one agent in the current snapshot**, named by its agent session
+  id. The server builds the exact `PaneKey` from the snapshot and runs
+  exactly `FleetOperation::Capture` through the Fleet manager, so the
+  configured-host lookup, `[fleet] capture_policy` (`never` refuses, as for
+  operators) and the observe/control checks are the existing ones. A pane
+  with no agent cannot be named. The answer is the sanitized text only (no
+  raw base64), at most 400 lines and 64 KiB; at most one capture per device
+  in flight. Each capture, refused or not, is an audit line.
+- `GET /api/device/work-options?host=` runs exactly
+  `tend work options --json` (no stdin, no other argv) on that host and
+  answers only: whether starting work is allowed here (`allow_work_start`),
+  the pipelines by name and description, and the project folders this
+  phone may choose (below). No config path, prompts or provider options.
+- `POST /api/device/work {idempotency_key, host, project, pipeline, request}`
+  starts **new** work, and only that:
+  - **Create-only by construction.** The server mints the Work id
+    (`phone-MMdd-` plus 12 random characters); the phone cannot name one, so
+    it cannot reach an existing Work. The server also refuses if that id is
+    already known on the target, before dispatch.
+  - **Fixed launcher input.** The server builds the `WorkUpRequest` itself:
+    the minted id, the request text as `body`, the chosen `pipeline`
+    (must be one `work-options` listed for that host), `cwd` = the chosen
+    project, `host`, `no_ticket = true`, `dry_run = false`, and nothing
+    else (no workspace, skill, context or external reference).
+  - **A project is required, from the server's own list.** `project` must
+    be, byte for byte, one of the folders `work-options` listed for that
+    host: folders an agent on that host has worked in, as the current
+    snapshot shows. There is no empty or default project: with no `cwd`,
+    `tend work up` would fall back to its own working directory
+    (`resolve_cwd`), which no one chose. If the host's config has a route
+    that would match the minted id and set its own `cwd`, a worktree or a
+    `prepare` command, the start is refused before dispatch rather than
+    letting the route move the agents elsewhere; the minted prefix
+    `phone-` is chosen so ordinary routes do not match it. The folder the
+    agents get is recorded in the audit line. (A folder limits where agents
+    start, not what an agent with bypassed permissions can reach.)
+  - **The existing gates still apply:** `[dashboard] allow_work_start` on
+    the dashboard host (default off; off on jiun-mini today, see owner
+    decision 8) and a control-mode target host.
+  - **Idempotent, durably.** `idempotency_key` is a UUID the app makes per
+    Start. Before anything is dispatched, the server **reserves** it in the
+    device store (a `device_starts` table, unique on device id and key):
+    the request's fingerprint (SHA-256 of host, project, pipeline and
+    text), the minted Work id and the state `reserved`, written with
+    `synchronous=FULL`. Only then is `tend work up` run; the state becomes
+    `started` or `failed` with the operation id when it answers, or
+    `unknown` when it times out. A retry with the same key and fingerprint
+    returns that entry's state and never dispatches again; the same key
+    with another fingerprint is refused (409); a concurrent duplicate sees
+    the reservation and gets its state. After a restart, every entry still
+    `reserved` is marked `unknown` and is **never dispatched again**: a
+    second `work up` with that id could now find the Work the first one
+    created and re-prompt it. An `unknown` start is shown as such on the
+    phone and in the audit; a person checks the host. Entries are kept for
+    7 days and an unresolved one is never dropped before it is resolved
+    (removing the device removes its entries). One start per device in
+    flight; at most 20 per device per hour.
+  - **Audited before and after.** An intent line (device id and label,
+    scope, approver, idempotency key, fingerprint, host, project, pipeline,
+    minted Work id, request length but not its text) is written **before**
+    dispatch; if it or the reservation cannot be written, nothing starts
+    (503). A result line follows with the outcome (started, refused,
+    failed, unknown) and the operation id.
+
+**Granted at approval, not by the device.**
+
+1. In the app, the person chooses "Decide only" or "Decide, see hosts and
+   start work" before pairing; the request carries that scope, fixed for
+   the life of the request.
+2. The access dialog no longer approves on the code alone. Entering the
+   code first **looks it up without granting anything** (`POST
+   /api/devices/lookup {user_code}`: name, platform, requested scope, when
+   it asked). The operator then approves that exact request
+   (`POST /api/devices/approve {user_code, scope}`). For `operate` the
+   dialog shows, unticked: "Also let this device see every host and agent,
+   read their recent output, and start agents that run with permissions
+   bypassed on every covered control-mode host. Only tick this for a code
+   on a device you are holding right now." Approving without the tick
+   issues `decide`.
+3. The issued scope is the lesser of what was asked and what was granted;
+   the token response and `GET /api/device` name it, and the app shows only
+   what it may do.
+
+To widen a `decide` device the person pairs it again: the app first signs
+the old device out on the dashboard (the existing Sign out, which removes
+it there), and only when that succeeded starts a new request. There is no
+"upgrade this token" or "replace device X" route, so an old key never
+becomes a way to get a wider one.
+
+**Narrowing and revocation.** Remove, Remove all and the app's Sign out
+work as in phase 1. **Limit to deciding** drops an `operate` device to
+`decide` without unpairing it; it is irreversible for that token. It is
+serialized with issuance and removal (the `transitions` lock), persisted
+before it reports success, and read on every request (the registry is
+consulted per request, never a cached session). A request already admitted
+when the limit lands may finish; neither narrowing nor removal undoes an
+agent already started or what it did.
+
+**Expiry.** 30 days unused / 90 days in all for both scopes (owner
+decision 9). Every use counts, so a token in daily use, by the owner or by
+someone who stole it, lasts the full 90 days: idle expiry is not a defence
+against an actively used stolen token. Removal is.
+
+**On the phone.** Start asks for Face ID or the passcode every time
+(LocalAuthentication, `.deviceOwnerAuthentication`). That is protection
+for the unlocked phone left on a table, not for the token, as said above.
+
+**Storage and compatibility.** One `scope TEXT NOT NULL DEFAULT 'decide'`
+column (schema version 2, added in place on open), so every phase 1 device
+stays `decide`; a value other than `decide` or `operate` reads as `decide`.
+`/api/access` reports `capabilities.device_scopes`. An older daemon ignores
+`scope` in the request and issues a `decide` token; the app reads the
+issued scope and says the host needs a newer tend for the rest. A device
+without `operate` gets 403 from the four routes (never 401, which the app
+reads as "removed"). No IPC or Fleet protocol change.
+
+**Shared with the web Home.** The web Home keeps reading the operator
+routes. The design tokens and the lane rules are shared (one tokens file,
+one fixture both test against); the device routes are device-only on
+purpose, because their limits are the point.
+
 ## Plan
 
 **Phase 1: decide from the phone** (this wave). The owner's brief fixes
@@ -341,6 +551,37 @@ a plain split view.
    unavailable Fleet host; XCUITests drive a scratch daemon seeded with a
    question and a result.
 
+**Wave 6: the whole Home** (before push, at the owner's request after
+build 1). In order, each its own PR with screenshots:
+
+1. Server, scope plumbing: the `operate` scope, lookup-then-approve with
+   the scope tick, Limit to deciding, schema version 2, and
+   `GET /api/device/fleet`. Rust tests: the route table under both scopes
+   (every operator route still refuses an `operate` token, including the
+   generic Fleet command, `/api/work-control/up` and `/api/fleet`), public
+   modes unchanged, approval granting less than asked, narrowing racing a
+   request, unknown scope values, the v1 store opening as `decide`.
+2. App: visual parity and the three lanes, alongside 1. Mac type roles,
+   system state colours, lane columns and cards, Markdown where the Mac
+   renders it, both colour schemes; the iPhone lane strip and the iPad
+   lanes. In progress and the agents half of Finished need `operate`; a
+   `decide` device shows Your turn and decided items and says what pairing
+   again adds. The coordinator is told when 1 and 2 are on main, for the
+   next TestFlight build; that build does not yet start work.
+3. Hosts and output: `POST /api/device/capture` and the app's Hosts, host
+   and agent screens. Tests: agent-only panes, stale and cross-host
+   sessions, `capture_policy = never` locally and remotely, size limits.
+4. Start work: `GET /api/device/work-options`, `POST /api/device/work` and
+   the app's Start Work with Face ID. Tests: raw bodies with extra fields,
+   an empty project, a project not in the list, `..` and symlinked paths,
+   a pipeline not listed, a route that would match the minted id with its
+   own cwd, worktree or prepare; concurrent same-key requests, a restart
+   before dispatch and after dispatch but before the result (never
+   dispatched twice), a timed-out retry, conflicting reuse, the audit line
+   or reservation failing closed, `allow_work_start` off; an XCUITest that
+   starts work on a scratch daemon whose pipeline runs a harmless stand-in
+   agent.
+
 **Phase 2: notifications.** First a real-device vertical slice (needs
 decisions 1 and 4): a question on a host, a content-free push, unlock, the
 item opens, answer, Decided. Then actionable notifications with Face ID
@@ -348,12 +589,11 @@ and the badge count; `simctl push` tests. In parallel, a short PWA + Web
 Push spike on `/needs` to compare for people without an Apple team.
 Optional: RFC 8252 sign-in that mints the same device credential.
 
-**Phase 3: the rest of Home, read-only first.** In progress / finished
-lanes, hosts, a widget and Lock Screen count, App Intents; read-only pane
-output behind a separate, explicit device scope.
+**Phase 3: around Home.** A widget and Lock Screen count, App Intents.
+(The lanes, hosts, pane output and starting work moved to wave 6.)
 
-Not planned: terminal, settings, automation, account swap, files, changes,
-start-work editors.
+Not planned: terminal, typing into panes, settings, automation, account
+swap, files, changes, pipeline and preset editors.
 
 ## Follow-ups outside this stream
 

@@ -1137,7 +1137,11 @@ pub(super) fn work_up_window_args(exe: &str, work: &str) -> Vec<String> {
 /// [`work_up_window_args`] for one shell dialect: rmux on Windows runs the
 /// window's command through `PowerShell`, which has neither `printf` nor
 /// `read`, and reads a leading quoted program as a string.
-fn work_up_window_args_in(dialect: tend::shell::Dialect, exe: &str, work: &str) -> Vec<String> {
+pub(super) fn work_up_window_args_in(
+    dialect: tend::shell::Dialect,
+    exe: &str,
+    work: &str,
+) -> Vec<String> {
     use tend::shell::Dialect;
     let (exe, work) = (dialect.quote(exe), dialect.quote(work));
     let command = match dialect {

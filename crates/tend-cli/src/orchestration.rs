@@ -90,7 +90,18 @@ fn save(path: &Path, record: &Record) -> Result<()> {
     f.write_all(&serde_json::to_vec(record)?)?;
     f.sync_all()?;
     std::fs::rename(temp, path)?;
-    std::fs::File::open(path.parent().context("journal parent missing")?)?.sync_all()?;
+    sync_parent(path)?;
+    Ok(())
+}
+/// Make a new or renamed journal entry durable. Windows cannot open a
+/// directory as a file (`File::open` fails with "access denied"), and NTFS
+/// journals the rename itself, so only Unix syncs the directory.
+#[cfg_attr(not(unix), allow(clippy::unnecessary_wraps))]
+fn sync_parent(path: &Path) -> Result<()> {
+    let parent = path.parent().context("journal parent missing")?;
+    #[cfg(unix)]
+    std::fs::File::open(parent)?.sync_all()?;
+    let _ = parent;
     Ok(())
 }
 /// Exclusive marker deliberately survives a crash: absence of an ack is not cancellation.
@@ -103,7 +114,7 @@ fn reserve(path: &Path, record: &Record) -> Result<()> {
         .context("dispatch already reserved; read dispatch-status instead of launching again")?;
     f.write_all(&serde_json::to_vec(record)?)?;
     f.sync_all()?;
-    std::fs::File::open(path.parent().context("journal parent missing")?)?.sync_all()?;
+    sync_parent(path)?;
     Ok(())
 }
 fn coordinator(cfg: &Config, explicit: bool) -> Result<Option<&str>> {
@@ -643,7 +654,7 @@ pub async fn execute(
             pipeline: Some(plan.pipeline.clone()), workspace: Some(plan.request.workspace.clone()),
             cwd: Some(paths.run.clone()), skill: None, body: Some(plan.request.body.clone()),
             context: Some(format!("Dispatch {}. Input commit {}. Write deliverables to {}. Report verification and resulting commit; launching is not completion.", plan.request.dispatch_id, plan.request.commit, paths.artifacts.display())),
-            no_ticket: true, dry_run: false, new_only: false, queue_lease: None, host: None,
+            no_ticket: true, dry_run: false, new_only: false, queue_lease: None, route_key: None, host: None,
         };
         let mut command_args = request.arguments();
         if let Some(config) = config { command_args.splice(0..0, ["--config".into(), config.display().to_string()]); }

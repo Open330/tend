@@ -115,7 +115,11 @@ struct TendSidebar: View {
         }
     }
 
-    @ObservedObject var model: AppModel
+    /// Read, not observed: the side bar redraws when `inputs` changes, which
+    /// holds everything its rail and its showing list draw from the model
+    /// (`TendSidebarInputs`).
+    let model: AppModel
+    @ObservedObject var inputs: TendChromeSlice<TendSidebarInputs>
     let chrome: TitleBarMetrics
     let openPinnedSession: (TendWatchSessionIdentity) -> Void
     let openPinnedPane: (TendWatchPaneIdentity) -> Void
@@ -167,7 +171,7 @@ struct TendSidebar: View {
                 }
 
                 HStack(spacing: 0) {
-                    SidebarActivityRail(model: model, attention: model.attention)
+                    SidebarActivityRail(model: model, inputs: inputs.value, attention: model.attention)
 
                     TendTheme.border(colorScheme).frame(width: 1)
 
@@ -218,12 +222,12 @@ struct TendSidebar: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onChange(of: model.sidebarMode) { _ in
+        .onChange(of: inputs.value.mode) { _ in
             filterText = ""
             statusScope = .all
             remoteShellError = nil
         }
-        .onChange(of: model.sessions) { sessions in
+        .onReceive(model.$sessions) { sessions in
             dismissedShellIDs = dismissedShellIDs.filter { id in
                 sessions.contains { $0.id == id }
             }
@@ -337,8 +341,11 @@ struct TendSidebar: View {
         model.openInLiveWatch(participant)
     }
 
-    private func openRemoteShell(on host: TendFleetHost) {
+    private func openRemoteShell(on listed: TendFleetHost) {
         guard !isOpeningRemoteShell else { return }
+        // The menu was built when the host list last changed; launch with
+        // the host as it is now (its SSH target may have moved since).
+        let host = model.remoteShellHosts.first { $0.alias == listed.alias } ?? listed
         isOpeningRemoteShell = true
         remoteShellError = nil
         Task {
@@ -957,7 +964,9 @@ struct TendSidebar: View {
 }
 
 private struct SidebarActivityRail: View {
-    @ObservedObject var model: AppModel
+    /// For its actions; the badges come from `inputs`.
+    let model: AppModel
+    let inputs: TendSidebarInputs
     @ObservedObject var attention: TendAgentAttentionCenter // WS-A
 
     var body: some View {
@@ -967,9 +976,8 @@ private struct SidebarActivityRail: View {
             ActivityRailItem(
                 systemImage: "house",
                 title: String(localized: "Home"),
-                active: model.isSidebarListCollapsed,
-                badge: model.homeWorks.lazy
-                    .filter { $0.lane == .needsYou }.count,
+                active: inputs.isListCollapsed,
+                badge: inputs.homeNeedsYou,
                 select: { model.showHome() }
             )
             TendTheme.border(colorScheme)
@@ -979,7 +987,7 @@ private struct SidebarActivityRail: View {
                 ActivityRailItem(
                     systemImage: mode.systemImage,
                     title: mode.title,
-                    active: model.sidebarMode == mode && !model.isSidebarListCollapsed,
+                    active: inputs.mode == mode && !inputs.isListCollapsed,
                     badge: attentionCount(for: mode),
                     select: { model.show(mode) }
                 )
@@ -997,14 +1005,14 @@ private struct SidebarActivityRail: View {
     private func attentionCount(for mode: TendSidebarMode) -> Int {
         switch mode {
         case .work:
-            return model.workGroups.lazy.filter { $0.attentionCount > 0 }.count
+            return inputs.workAttention
         case .watch:
             return attention.summary.unreadPanes // WS-A
         case .inbox:
             return attention.summary.needsYou
         case .ask:
             // A question still being answered is the one thing worth a dot.
-            return model.askEntries.lazy.filter { $0.status == "running" }.count
+            return inputs.askRunning
         case .shells, .files:
             return 0
         }

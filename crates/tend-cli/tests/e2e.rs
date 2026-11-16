@@ -13,13 +13,33 @@ use std::time::{Duration, Instant};
 fn bin(name: &str) -> PathBuf {
     // Cargo only supplies paths for this package's binaries. Use the CLI as
     // the anchor so custom CARGO_TARGET_DIR and non-debug profiles also work.
-    Path::new(env!("CARGO_BIN_EXE_tend")).with_file_name(name)
+    Path::new(env!("CARGO_BIN_EXE_tend"))
+        .with_file_name(format!("{name}{}", std::env::consts::EXE_SUFFIX))
+}
+
+/// Whether the daemon serves `path`. A Windows named pipe leaves no file;
+/// a Unix socket file can outlive its daemon, so Unix keeps asking for the
+/// file the daemon unlinks on a clean stop.
+fn endpoint_exists(path: &Path) -> bool {
+    if cfg!(unix) {
+        path.exists()
+    } else {
+        tend::transport::endpoint_is_live(path)
+    }
+}
+
+/// A TOML literal string: Windows paths carry `\`, which a basic string
+/// would read as escapes.
+fn toml_path(path: &Path) -> String {
+    let text = path.display().to_string();
+    assert!(!text.contains('\''), "{text}");
+    format!("'{text}'")
 }
 
 fn wait_for_socket(path: &Path, deadline: Duration) {
     let start = Instant::now();
     while start.elapsed() < deadline {
-        if path.exists() {
+        if endpoint_exists(path) {
             return;
         }
         std::thread::sleep(Duration::from_millis(20));
@@ -103,26 +123,26 @@ impl Daemon {
         // Default config that isolates persisted state into the per-test tempdir.
         // Tests that want richer config concatenate their own TOML body.
         let mut toml = format!(
-            r#"
+            r"
 [history]
-path = "{}"
+path = {}
 
 [state]
-path = "{}"
+path = {}
 
 [activity]
-path = "{}"
+path = {}
 
 [session_activity]
-path = "{}"
+path = {}
 
 [reconciler]
 enabled = false
-"#,
-            history_path.display(),
-            state_path.display(),
-            activity_path.display(),
-            session_activity_path.display()
+",
+            toml_path(&history_path),
+            toml_path(&state_path),
+            toml_path(&activity_path),
+            toml_path(&session_activity_path)
         );
         if let Some(extra) = extra_toml {
             toml.push_str(extra);
@@ -568,7 +588,7 @@ fn daemon_lifecycle_commands_round_trip() {
     );
     assert!(String::from_utf8_lossy(&stop.stdout).contains("tendd stopped"));
     daemon.wait_for_exit(Duration::from_secs(5));
-    assert!(!daemon.socket.exists());
+    assert!(!endpoint_exists(&daemon.socket));
 
     let status = daemon
         .cli()
@@ -589,9 +609,16 @@ fn claude_statusline_forward_passes_stdin_to_command() {
 
     let payload = br#"{"session_id":"sess-fwd","cwd":"/tmp","model":{"display_name":"Opus"}}"#;
 
+    // Windows forwards through PowerShell, whose `cat` is `Get-Content` and
+    // reads no stdin; this is its byte-for-byte passthrough.
+    let passthrough = if cfg!(windows) {
+        "[Console]::Out.Write([Console]::In.ReadToEnd())"
+    } else {
+        "cat"
+    };
     let mut child = d
         .cli()
-        .args(["hook", "claude-statusline", "--forward", "cat"])
+        .args(["hook", "claude-statusline", "--forward", passthrough])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -672,23 +699,23 @@ fn spawn_dashboard(token: Option<&str>) -> Option<DashboardDaemon> {
     std::fs::write(
         &cfg_path,
         format!(
-            r#"
+            r"
 [history]
-path = "{}"
+path = {}
 
 [state]
-path = "{}"
+path = {}
 
 [activity]
-path = "{}"
+path = {}
 
 [session_activity]
-path = "{}"
-{}"#,
-            history_path.display(),
-            state_path.display(),
-            activity_path.display(),
-            session_activity_path.display(),
+path = {}
+{}",
+            toml_path(&history_path),
+            toml_path(&state_path),
+            toml_path(&activity_path),
+            toml_path(&session_activity_path),
             dashboard_auth,
         ),
     )
@@ -763,7 +790,7 @@ fn curl_status(url: &str, header: Option<&str>) -> u16 {
     cmd.args([
         "-s",
         "-o",
-        "/dev/null",
+        if cfg!(windows) { "NUL" } else { "/dev/null" },
         "-w",
         "%{http_code}",
         "--max-time",

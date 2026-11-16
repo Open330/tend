@@ -1,0 +1,40 @@
+[package]
+name = "tend-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Tend for Windows: the tray app around a local tendd's Home."
+publish = false
+
+[[bin]]
+name = "tend-app"
+path = "src/main.rs"
+
+[dependencies]
+# Cross-platform core (settings, the verified dashboard client, the scoped
+# proxy, the decision-queue diff, the tray mark), tested on every CI host.
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+dirs = { workspace = true }
+subtle = { workspace = true }
+uuid = { workspace = true }
+url = { workspace = true }
+hmac = "0.12"
+sha2 = "0.10"
+httparse = "1"
+
+[target.'cfg(windows)'.dependencies]
+# The shell: event loop and window, WebView2, the notification-area icon,
+# toasts through the WinRT projection (safe calls), and HKCU registry.
+tao = "0.34"
+wry = "0.53"
+tray-icon = "0.21"
+winreg = "0.55"
+windows = { version = "0.61", features = ["Foundation", "Data_Xml_Dom", "UI_Notifications"] }
+
+[lints]
+workspace = true

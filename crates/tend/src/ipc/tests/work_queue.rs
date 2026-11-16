@@ -575,6 +575,7 @@ fn new_work_request(key: &str, cwd: Option<&str>) -> QueueAddRequest {
             external: None,
             skill: None,
             context: None,
+            route_key: Some("ENG-42".into()),
         },
     }
 }
@@ -627,6 +628,8 @@ impl RemoteWorkRunner for FakeWorkUp {
             let workspace = arg(&args, "--workspace").unwrap().to_string();
             let lease = arg(&args, "--queue-lease").map(str::to_string);
             assert!(args.iter().any(|a| a == "--new-only"));
+            // It routes by the name it was queued under, not the minted id.
+            assert_eq!(arg(&args, "--route-key"), Some("ENG-42"));
             let identity = WorkIdentity::new(workspace.clone(), work.clone());
             let registration = PipelineRunRegistration {
                 identity: identity.clone(),

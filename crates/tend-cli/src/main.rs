@@ -29,6 +29,7 @@ mod mcp_output;
 mod mcp_reload;
 mod mcp_revision;
 mod mcp_surface;
+mod mcp_work_queue;
 mod message_skill;
 mod mux_popup;
 mod onboarding;
@@ -59,6 +60,7 @@ mod work_external;
 mod work_init;
 mod work_options;
 mod work_pipeline;
+mod work_queue_cmd;
 mod work_up_cmd;
 mod worker_cmd;
 mod worktrees_cmd;
@@ -993,6 +995,10 @@ enum WorkCmd {
     /// external issue, route the Work, and create missing agent sessions.
     /// Re-running converges instead of duplicating.
     Up(work_up::UpArgs),
+    /// Queue a prompt for an agent once it is free, or a new Work for when
+    /// fewer agents are busy. tendd sends each item at most once on its own.
+    #[command(subcommand)]
+    Queue(work_queue_cmd::QueueCmd),
     /// Add or edit a planned Work in the backlog without launching it.
     /// `tend work up WORK` later starts it from the plan.
     Plan(work_backlog::PlanArgs),

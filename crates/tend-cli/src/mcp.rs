@@ -688,6 +688,7 @@ fn tool_definitions(config: &tend::config::Config) -> Vec<Value> {
                 "additionalProperties": false
             },
         }),
+        crate::mcp_work_queue::definition(),
         json!({
             "name": "tend_swap_account",
             "description": "Move Claude/Codex agents to another account and resume each conversation in its pane (stop, relaunch on the account with the same session, answer startup dialogs, continue only cut-off turns). Default targets: agents stopped by a usage cap. dry_run=true shows the plan. CLI: `tend swap`.",
@@ -1822,6 +1823,10 @@ async fn call_tool_inner(
         }
         "tend_call_peer" => Ok(call_peer(client, &args, config).await),
         "tend_start_work" => Ok(start_work(client, &args, config).await),
+        "tend_work_queue" => Ok(match crate::mcp_work_queue::call(client, &args).await {
+            Ok(value) => json_result(&value),
+            Err(error) => error_result(&error),
+        }),
         "tend_swap_account" => Ok(swap_account(client, &args, config).await),
         "tend_peer_report" => Ok(peer_report(client, &args).await),
         "tend_set_identity" => {
@@ -3218,7 +3223,9 @@ fn persist_peer_dispatch(
         Ok(mut file) => {
             file.write_all(&serde_json::to_vec(&value)?)?;
             file.sync_all()?;
-            std::fs::File::open(dir)?.sync_all()?;
+            // Windows cannot open a directory as a file; NTFS journals the create.
+            #[cfg(unix)]
+            std::fs::File::open(&dir)?.sync_all()?;
         }
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
             let existing: Value = serde_json::from_slice(&std::fs::read(path)?)?;
@@ -3755,6 +3762,7 @@ async fn start_work(client: &Client, args: &Value, config: &tend::config::Config
         dry_run: flag("dry_run"),
         new_only: false,
         queue_lease: None,
+        route_key: None,
         show_prompts: false,
         yes: true,
         no_ticket: flag("no_ticket"),
@@ -6544,6 +6552,9 @@ mod tests {
     use std::path::Path;
     use std::sync::{Arc, Mutex};
     use std::time::Instant;
+    /// An absolute working directory on this platform: `/repo` has no drive
+    /// on Windows, so execute requests addressed there could not be reserved.
+    const TEST_REPO: &str = if cfg!(windows) { r"C:\repo" } else { "/repo" };
     use tend::backend::{BackendCaps, HostKind, PaneBackend, SharedBackend};
     use tend::event::AgentEvent;
     use tend::ipc::Server;
@@ -6653,7 +6664,7 @@ mod tests {
             tty: String::new(),
             current_command: "agent".into(),
             title: String::new(),
-            current_path: "/repo".into(),
+            current_path: TEST_REPO.into(),
             pane_pid: 0,
             socket: Some("default".into()),
         }
@@ -6855,7 +6866,7 @@ mod tests {
                         surface: None,
                         pane: Some(pane.into()),
                         tmux_socket: origin.socket.clone(),
-                        cwd: Some("/repo".into()),
+                        cwd: Some(TEST_REPO.into()),
                     },
                     at: time::OffsetDateTime::now_utc(),
                 })
@@ -7034,7 +7045,7 @@ mod tests {
                         surface: None,
                         pane: Some(pane.into()),
                         tmux_socket: origin.socket.clone(),
-                        cwd: Some("/repo".into()),
+                        cwd: Some(TEST_REPO.into()),
                     },
                     at: time::OffsetDateTime::now_utc(),
                 })
@@ -7511,7 +7522,7 @@ mod tests {
             surface: None,
             pane: Some("%1".into()),
             tmux_socket: Some("default".into()),
-            cwd: Some("/repo".into()),
+            cwd: Some(TEST_REPO.into()),
         };
         store
             .apply(&AgentEvent::Started {
@@ -7551,7 +7562,7 @@ mod tests {
                     surface: None,
                     pane: Some("%2".into()),
                     tmux_socket: Some("default".into()),
-                    cwd: Some("/repo".into()),
+                    cwd: Some(TEST_REPO.into()),
                 },
                 at: time::OffsetDateTime::now_utc(),
             })
@@ -7575,7 +7586,7 @@ mod tests {
                     surface: None,
                     pane: Some("%1".into()),
                     tmux_socket: Some("default".into()),
-                    cwd: Some("/repo".into()),
+                    cwd: Some(TEST_REPO.into()),
                 },
                 prompt: "close registration stream".into(),
                 at: time::OffsetDateTime::now_utc(),
@@ -7623,6 +7634,7 @@ mod tests {
                 "tend_status",
                 "tend_start_agent",
                 "tend_start_work",
+                "tend_work_queue",
                 "tend_swap_account",
                 "tend_manage_tmux",
                 "tend_send_prompt",
@@ -9591,7 +9603,14 @@ mod tests {
     }
     #[test]
     fn peer_context_is_bounded_deduplicated_and_before_flag_separator() {
-        let root = tempfile::tempdir().unwrap();
+        // Windows' temp directory is under `~\AppData`, which is never peer
+        // context; the test binary's own directory is outside it.
+        let root = if cfg!(windows) {
+            let exe = std::env::current_exe().unwrap();
+            tempfile::tempdir_in(exe.parent().unwrap()).unwrap()
+        } else {
+            tempfile::tempdir().unwrap()
+        };
         let cwd = root.path().join("cwd");
         let inputs = root.path().join("inputs");
         std::fs::create_dir_all(&cwd).unwrap();

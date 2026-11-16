@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Tend for Windows** (`tend-app.exe`, `crates/tend-app`): the tray app
+  around a local tendd's Home, like Tend for Mac's menu bar. Notification
+  area icon with the Tend mark, the dashboard's Home in a WebView2 window,
+  toasts for new questions and results on every Fleet host, start with
+  Windows. It sends the dashboard token only to a server that proved it
+  knows it and never hands it to the page. See docs/WINDOWS.md.
 - Home in the Mac app has two card layouts, chosen in Settings → General →
   Home or with the toggle in Home's header. Status emphasis (the default)
   leads each card with its lane's colour stripe and a bold title, puts the
@@ -30,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mid-send, a paste that failed after reaching the pane, Enter that was not
   confirmed, and a launch that failed partway. This release adds the daemon
   side; the CLI, MCP and Home come next.
+- `tend work queue add|list|edit|move|cancel|rm|run-now|resolve|clear`
+  manages the queue from the terminal. `add` takes `--agent`, `--work
+  WORKSPACE/WORK[@ALIAS]` or `--new --cwd DIR`, and prints a request key so
+  a retried add is not added twice. Agents get the same through the
+  `tend_work_queue` MCP tool (add, list, cancel, run now). See
+  docs/WORK_MODEL.md.
 - A queued Work gets an id in a reserved form, `Q-<NAME>-<DATE>-<12 hex>`, and
   is started under a lease on its pipeline Run (`pipeline_queue_lease_v1`).
   Until the queue releases the lease, `tend work up`, the pipeline
@@ -47,10 +59,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was to type an answer. An agent's question that has waited over ten
   minutes and whose session its host does not list is marked **Asker not
   listed**: the agent may have exited.
+- Windows: `tend init` can replace and remove its agent skill links. A
+  directory symlink or junction was removed as a file, which Windows refuses
+  with "access denied", so upgrading or uninstalling the skill failed.
+- Windows: `tend work dispatch` and durable cross-host peer calls (with a
+  `dispatch_id`) can journal their dispatch. Making the record durable opened
+  its directory as a file, which Windows refuses, so every such dispatch
+  failed before it was sent.
 - A prompt send that tmux did not confirm is no longer reported as "nothing
   was sent". A paste that failed or timed out after tmux received it, or a
   backend that crashed mid-send, may already have typed the text. Those now
   say "it may have been typed" instead of offering a safe retry.
+- The Mac app's window chrome (the root view, the side bar, the tab strips
+  and the status bar) no longer redraws for every fleet heartbeat. Each
+  observed the whole app model; they now draw from small inputs published
+  only when what they show changes: the side bar's rail badges and, with a
+  list open, that list's rows; the open tabs' titles, state dots and unread
+  panes; the status bar's counts and usage text. With no workbench window
+  on screen (hidden, minimized, covered, on another Space) the side bar,
+  tabs and status bar wait, and catch up when a window is shown again; the
+  window's own sheets still follow at once. Measured on optimized copies
+  over the same 235 s of a live fleet, with the window shown, minimized,
+  covered and hidden in turn: root view, side bar and status bar bodies
+  went from 312 each to 5, 16 and 5; while minimized or hidden, from 68
+  each to 0.
 
 ## [0.10.20] - 2026-11-16
 

@@ -48,6 +48,10 @@ const FILE_VERSION: u8 = 1;
 /// Work already existed. The queue reads it as a clean failure; every other
 /// launch failure may have left part of a Work behind.
 pub const WORK_EXISTS_BEFORE_START: &str = "work_exists_before_start";
+/// Marker of a queued launch refused before anything ran because no
+/// directory was given and the route chosen now does not provide one: tendd
+/// never starts a queued Work in its own working directory.
+pub const NO_DIRECTORY_BEFORE_START: &str = "queue_no_directory_before_start";
 
 /// Longest prompt one item may carry.
 pub const MAX_PROMPT_BYTES: usize = 64 * 1024;
@@ -614,8 +618,9 @@ pub enum QueueTargetSpec {
         work: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         workspace: Option<String>,
-        /// Absolute directory to start in (required: tendd's own working
-        /// directory is never a project).
+        /// Absolute directory to start in. Without one the route provides
+        /// it (a worktree or prepare step) and `workspace` is required:
+        /// tendd's own working directory is never a project.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cwd: Option<PathBuf>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -626,6 +631,10 @@ pub enum QueueTargetSpec {
         skill: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         context: Option<String>,
+        /// What `[[route]]` rules match against (the Work id the person
+        /// would have used); the queue mints the Work id itself.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        route_key: Option<String>,
     },
     /// An agent, by session id or by the pane it runs in.
     Agent {
@@ -821,6 +830,42 @@ pub fn make_work_id(hint: &str, now: OffsetDateTime) -> String {
     )
 }
 
+/// A Work identity as `work up` normalises one: the workspace trimmed and
+/// lowercased, the Work id trimmed and uppercased.
+#[must_use]
+pub fn normalized_identity(workspace: &str, work: &str) -> WorkIdentity {
+    WorkIdentity::new(
+        workspace.trim().to_ascii_lowercase(),
+        work.trim().to_ascii_uppercase(),
+    )
+}
+
+impl QueueTargetSpec {
+    /// One agent of an existing Work, from `WORKSPACE/WORK[@ALIAS]`, with
+    /// the identity normalised as `work up` does (the alias keeps its
+    /// case). Shared by the CLI and the MCP tool.
+    pub fn work_path(path: &str) -> Result<Self, String> {
+        let usage = "a Work target is WORKSPACE/WORK or WORKSPACE/WORK@ALIAS";
+        let (path, alias) = match path.split_once('@') {
+            Some((path, alias)) => (path, Some(alias.trim().to_string())),
+            None => (path, None),
+        };
+        let (workspace, work) = path.split_once('/').ok_or(usage)?;
+        let identity = normalized_identity(workspace, work);
+        if identity.workspace_id.is_empty()
+            || identity.work_id.is_empty()
+            || alias.as_deref().is_some_and(str::is_empty)
+        {
+            return Err(usage.into());
+        }
+        Ok(Self::Work {
+            workspace: identity.workspace_id,
+            work: identity.work_id,
+            alias,
+        })
+    }
+}
+
 /// The workspace a queued Work starts in, fixed when it is queued: the
 /// one named, else the directory's name, normalised as `work up` does
 /// (`tend_work::tmux_work::workspace_id_for_cwd`).
@@ -845,14 +890,15 @@ pub fn queued_workspace(given: Option<&str>, cwd: &Path) -> Result<String, Strin
 
 /// The refusals a new-only `work up` makes before it starts any agent:
 /// the Work existed before the launch looked, or its registration found
-/// one. `Some(detail)` for those; `None` for every other failure, which
-/// may have started part of the Work.
+/// one (`IdentityInUse`, final), or it had no directory to start in
+/// (`LaunchRefused`). `Some` for those; `None` for every other failure,
+/// which may have started part of the Work.
 ///
 /// The message is the operation's, `tend work up failed: ` and the last
 /// line the CLI printed, which may carry an anyhow chain index (`1: `);
 /// only the first token after those is compared.
 #[must_use]
-pub fn launch_refusal(message: &str) -> Option<&'static str> {
+pub fn launch_refusal(message: &str) -> Option<(FailReason, &'static str)> {
     let line = message.trim();
     let line = line
         .strip_prefix(crate::work_control::WORK_UP_FAILED_PREFIX)
@@ -866,9 +912,20 @@ pub fn launch_refusal(message: &str) -> Option<&'static str> {
     };
     let code = line.split(':').next().unwrap_or_default().trim();
     if code == WORK_EXISTS_BEFORE_START {
-        Some("the Work already existed; nothing was started. Queue it again under a new Work id")
+        Some((
+            FailReason::IdentityInUse,
+            "the Work already existed; nothing was started. Queue it again under a new Work id",
+        ))
     } else if code == crate::pipeline_run::WORK_EXISTS_PREFIX {
-        Some("the Work was started elsewhere first; no agent was started for this item (a worktree may have been prepared). Queue it again under a new Work id")
+        Some((
+            FailReason::IdentityInUse,
+            "the Work was started elsewhere first; no agent was started for this item (a worktree may have been prepared). Queue it again under a new Work id",
+        ))
+    } else if code == NO_DIRECTORY_BEFORE_START {
+        Some((
+            FailReason::LaunchRefused,
+            "no directory to start in: none was queued and the route chosen now provides none; nothing was started",
+        ))
     } else {
         None
     }

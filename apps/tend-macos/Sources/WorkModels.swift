@@ -1,6 +1,6 @@
 import Foundation
 
-struct TendWorkGroup: Identifiable, Sendable {
+struct TendWorkGroup: Identifiable, Equatable, Sendable {
     let identity: TendWorkIdentity
     let pipelineRun: TendPipelineRun?
     let participants: [TendHostedAgent]
@@ -89,7 +89,7 @@ enum TendModuleRoute: Codable, Hashable, Sendable {
     case fleetPane(TendWatchPaneIdentity)
 }
 
-struct TendWatchPane: Identifiable, Sendable {
+struct TendWatchPane: Identifiable, Equatable, Sendable {
     let host: TendFleetHostIdentity
     let pane: TendPaneInfo
     let agent: TendAgent?
@@ -103,7 +103,7 @@ struct TendWatchPane: Identifiable, Sendable {
     }
 }
 
-struct TendWatchWindow: Identifiable, Sendable {
+struct TendWatchWindow: Identifiable, Equatable, Sendable {
     let hostAlias: String
     let socket: String
     let sessionID: String
@@ -124,7 +124,7 @@ struct TendWatchWindow: Identifiable, Sendable {
     }
 }
 
-struct TendWatchSession: Identifiable, Sendable {
+struct TendWatchSession: Identifiable, Equatable, Sendable {
     let hostAlias: String
     let socket: String
     let sessionID: String
@@ -142,7 +142,7 @@ struct TendWatchSession: Identifiable, Sendable {
     }
 }
 
-struct TendWatchHost: Identifiable, Sendable {
+struct TendWatchHost: Identifiable, Equatable, Sendable {
     let host: TendFleetHost
     let sessions: [TendWatchSession]
 

@@ -700,7 +700,7 @@ struct TendFleetHostIdentity: Hashable, Sendable {
     let mode: String
 }
 
-struct TendHostedAgent: Identifiable, Sendable {
+struct TendHostedAgent: Identifiable, Equatable, Sendable {
     let host: TendFleetHostIdentity
     let agent: TendAgent
     let pane: TendPaneInfo?
