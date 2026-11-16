@@ -14,7 +14,7 @@ const POLL_MS = 1500;
 
 export function mountExplore(root, deps) {
   const { S, el, icon, button, logo, hostBadge, when, read, write, authHeaders, canWrite } = deps;
-  const view = { show: "all", query: "", grouping: "host", fleet: null, open: null, stream: null, poll: null, sending: null, drafts: new Map(), collapsed: new Set(), closed: false, syncComposer: null, hash: null };
+  const view = { show: "all", query: "", grouping: "host", fleet: null, open: null, stream: null, poll: null, sending: new Set(), drafts: new Map(), collapsed: new Set(), closed: false, syncComposer: null, hash: null };
 
   const sidebar = el("aside", "ex-side");
   const viewer = el("section", "ex-view");
@@ -238,7 +238,7 @@ export function mountExplore(root, deps) {
     // A draft belongs to its pane: text for one pane never goes to another.
     const key = item.id;
     area.value = view.drafts.get(key) || "";
-    area.disabled = view.sending === key;
+    area.disabled = view.sending.has(key);
     area.maxLength = 16384;
     const send = button(S.send, () => submit(), "btn primary");
     const interrupt = button(S.interrupt, async () => {
@@ -250,14 +250,15 @@ export function mountExplore(root, deps) {
       }
     }, "btn ghost danger");
     const sync = () => {
-      area.disabled = view.sending === key;
-      send.disabled = !area.value.trim() || view.sending === key;
+      area.disabled = view.sending.has(key);
+      send.disabled = !area.value.trim() || view.sending.has(key);
     };
     view.syncComposer = sync;
     async function submit() {
       const text = area.value;
-      if (!text.trim() || view.sending === key || view.open?.id !== key) return;
-      view.sending = key;
+      if (!text.trim() || view.sending.has(key) || view.open?.id !== key) return;
+      // One send per pane at a time; other panes stay usable.
+      view.sending.add(key);
       // Frozen while sending, so nothing typed now is lost when it clears.
       area.disabled = true;
       sync();
@@ -271,7 +272,7 @@ export function mountExplore(root, deps) {
       } catch (error) {
         status.textContent = error.message;
       } finally {
-        if (view.sending === key) view.sending = null;
+        view.sending.delete(key);
         // Whichever pane is open now gets its composer back.
         view.syncComposer?.();
       }
@@ -313,10 +314,13 @@ export function mountExplore(root, deps) {
         view.suspended = false;
         drawViewer();
       }
-      if ((changed || !view.open) && wanted && fleet && !(view.open && view.open.pane === wanted.pane && view.open.socket === wanted.socket)) {
+      if ((changed || !view.open) && wanted && fleet) {
         const rows = exploreSections(fleet, { show: "all" }).sections.flatMap((s) => s.rows);
-        const found = rows.find((r) => r.pane === wanted.pane && (!wanted.socket || r.socket === wanted.socket) && (!wanted.host || r.host === wanted.host));
-        if (found) openPane(found, { push: false });
+        // A link without a host names this host's pane (paneHash).
+        const found = rows.find(
+          (r) => r.pane === wanted.pane && (!wanted.socket || r.socket === wanted.socket) && (wanted.host ? r.host === wanted.host : r.local),
+        );
+        if (found && found.id !== view.open?.id) openPane(found, { push: false });
       }
     },
     /// Off screen (another page of the shell): no live stream or poll for a

@@ -48,10 +48,15 @@ const deps = {
 };
 // No live stream in a unit test: an unsupported route falls back to polling.
 globalThis.fetch = async () => ({ status: 404, body: null });
-const fleet = { hosts: [{ alias: "mba", local: true, state: "online", remote: { agents: [], panes: [
-  { pane_id: "%1", socket: "s", session: "a", window_index: "0", window_name: "one", current_command: "zsh" },
-  { pane_id: "%2", socket: "s", session: "a", window_index: "1", window_name: "two", current_command: "zsh" },
-] } }] };
+const fleet = { hosts: [
+  { alias: "mba", local: true, state: "online", remote: { agents: [], panes: [
+    { pane_id: "%1", socket: "s", session: "a", window_index: "0", window_name: "one", current_command: "zsh" },
+    { pane_id: "%2", socket: "s", session: "a", window_index: "1", window_name: "two", current_command: "zsh" },
+  ] } },
+  { alias: "mini", local: false, state: "online", remote: { agents: [], panes: [
+    { pane_id: "%1", socket: "s", session: "a", window_index: "0", window_name: "one", current_command: "zsh" },
+  ] } },
+] };
 const root = new Node("div");
 const view = mountExplore(root, deps);
 view.update(fleet);
@@ -102,6 +107,46 @@ test("switching panes while a send is pending leaves the new pane usable", async
   composer().value = "for two";
   composer().fire("input");
   assert.equal(find(root, (n) => n.tag === "button" && n.text.includes("send"))?.disabled, false);
+});
+
+test("two panes sending at once: each stays locked until its own answer", async () => {
+  let releaseOne;
+  let releaseTwo;
+  row("%1").click();
+  composer().value = "one";
+  composer().fire("input");
+  gate = new Promise((r) => (releaseOne = r));
+  composer().fire("keydown", { key: "Enter" });
+  await settle();
+  row("%2").click();
+  composer().value = "two";
+  composer().fire("input");
+  gate = new Promise((r) => (releaseTwo = r));
+  composer().fire("keydown", { key: "Enter" });
+  await settle();
+  row("%1").click();
+  assert.equal(composer().disabled, true, "pane one is still sending");
+  const before = posts.length;
+  composer().fire("keydown", { key: "Enter" });
+  await settle();
+  assert.equal(posts.length, before, "no second copy of pane one's instruction");
+  gate = null;
+  releaseOne();
+  releaseTwo();
+  await settle();
+  assert.equal(composer().disabled, false);
+});
+
+test("a pane link names the host: the same pane id on another host opens that one", async () => {
+  row("%1").click();
+  window.location.hash = "#pane=%251&socket=s&host=mini";
+  view.update(fleet);
+  assert.ok(find(root, (n) => n.textContent === "mini"), "mini's pane is open");
+  assert.equal(composer(), null, "another host's pane has no composer here");
+  window.location.hash = "#pane=%251&socket=s";
+  view.update(fleet);
+  assert.ok(composer(), "back on this host's pane");
+  window.location.hash = "";
 });
 
 test("destroy leaves nothing private behind", () => {
