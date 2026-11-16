@@ -588,8 +588,11 @@ two scopes:
   board (`/api/home`, below) with only the fields the app shows: no pane
   ids or sockets in its agent references (a capture names the agent by
   host and session), decisions exactly as the queue lists them, units as
-  `"kind": "unit"`, and what was decided in `decided` (with each host's
-  `truncated`). `GET /api/device` lists what the dashboard serves the
+  `"kind": "unit"`, what was decided in `decided` (with each host's
+  `truncated`), and the planned Work in `backlog` (title, line, priority,
+  pipeline, project; no ticket reference). A device only shows the
+  backlog: starting a planned Work names an existing Work, which only the
+  operator routes do. `GET /api/device` lists what the dashboard serves the
   device in `features` (`home` always, `capture` and `work` when Fleet
   runs). It also serves
   starting new work, which runs agents with permissions bypassed:

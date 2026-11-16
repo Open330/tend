@@ -57,7 +57,7 @@ struct HomeView: View {
                 .padding(.bottom, 10)
             Divider()
             TabView(selection: $lane) {
-                ForEach(Lane.allCases) { lane in
+                ForEach(model.lanes) { lane in
                     ScrollView {
                         LaneContent(lane: lane)
                             .padding(16)
@@ -68,13 +68,15 @@ struct HomeView: View {
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
         }
+        // The backlog emptied while it was shown.
+        .onChange(of: model.lanes) { if !model.lanes.contains(lane) { lane = .yourTurn } }
     }
 
     // MARK: iPad
 
     private var board: some View {
         HStack(alignment: .top, spacing: 12) {
-            ForEach(Lane.allCases) { lane in
+            ForEach(model.lanes) { lane in
                 LaneColumn(lane: lane)
             }
         }
@@ -88,8 +90,8 @@ struct LaneStrip: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        HStack(spacing: 8) {
-            ForEach(Lane.allCases) { lane in
+        HStack(spacing: model.lanes.count > 3 ? 6 : 8) {
+            ForEach(model.lanes) { lane in
                 let selected = lane == selection
                 let count = model.count(lane)
                 Button {
@@ -101,16 +103,19 @@ struct LaneStrip: View {
                             .monospacedDigit()
                             .foregroundStyle(lane == .yourTurn && count > 0 ? lane.tint : Color.primary)
                         HStack(spacing: 5) {
-                            Circle().fill(lane.tint).frame(width: 7, height: 7)
+                            // Four lanes leave no room for the dot.
+                            if model.lanes.count <= 3 {
+                                Circle().fill(lane.tint).frame(width: 7, height: 7)
+                            }
                             Text(lane.title)
                                 .font(TendType.meta.weight(.semibold))
                                 .lineLimit(1)
-                                .minimumScaleFactor(0.8)
+                                .minimumScaleFactor(0.75)
                         }
                         .foregroundStyle(selected ? Color.primary : Color.secondary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, model.lanes.count > 3 ? 9 : 12)
                     .padding(.vertical, 10)
                     .background(
                         selected ? lane.tint.opacity(0.12) : TendSurface.workspace,
@@ -188,10 +193,22 @@ struct LaneContent: View {
                 }
             }
             notices
-            switch lane {
-            case .yourTurn: yourTurn
-            case .inProgress: inProgress
-            case .finished: finished
+            if let board = model.visibleBoard {
+                switch lane {
+                case .backlog: backlog(board)
+                case .yourTurn: BoardYourTurn(board: board)
+                case .inProgress: BoardLaneItems(board: board, lane: .inProgress)
+                case .finished:
+                    BoardLaneItems(board: board, lane: .finished)
+                    decidedItems(showsEmpty: FoldedLane(board, lane: .finished).count == 0)
+                }
+            } else {
+                switch lane {
+                case .backlog: EmptyView()
+                case .yourTurn: yourTurn
+                case .inProgress: inProgress
+                case .finished: finished
+                }
             }
         }
         .frame(maxWidth: 760, alignment: .leading)
@@ -203,14 +220,61 @@ struct LaneContent: View {
         if lane == .yourTurn, let outcome = model.outcome {
             Label(outcome, systemImage: "checkmark.circle.fill")
                 .font(TendType.body.weight(.semibold))
-                .foregroundStyle(.green)
+                .foregroundStyle(TendPalette.green)
                 .accessibilityIdentifier("outcome")
         }
         if let problem = model.problem {
             Label(problem, systemImage: "exclamationmark.triangle")
                 .font(TendType.meta)
-                .foregroundStyle(.red)
+                .foregroundStyle(TendPalette.red)
                 .accessibilityIdentifier("problem")
+        }
+    }
+
+    // MARK: Backlog
+
+    @ViewBuilder
+    private func backlog(_ board: DeviceHome) -> some View {
+        if board.backlog.isEmpty { Empty(text: lane.empty) }
+        ForEach(board.backlog) { BacklogCard(record: $0) }
+        if !board.backlog.isEmpty {
+            Text("Planned Work starts from Tend for Mac or the dashboard; here you can start new work.")
+                .font(TendType.meta)
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// Finished's decided items (from the history), after the board's units.
+    @ViewBuilder
+    private func decidedItems(showsEmpty: Bool) -> some View {
+        let decided = model.past
+        let recent = model.recentPast
+        let older = decided.count - recent.count
+        if !model.historyLoaded {
+            ProgressView().frame(maxWidth: .infinity).padding(.top, 16)
+        } else if showsEmpty, recent.isEmpty, older == 0 {
+            Empty(text: lane.empty)
+        }
+        ForEach(model.history.filter { !$0.history.isComplete || !$0.unavailable.isEmpty }) { section in
+            Label(historyGap(section), systemImage: "exclamationmark.triangle")
+                .font(TendType.meta)
+                .foregroundStyle(.secondary)
+        }
+        if !recent.isEmpty {
+            DecidedHeader(count: recent.count)
+            ForEach(recent) { DecidedCard(past: $0) }
+        }
+        if older > 0 {
+            Button(showsOlder ? String(localized: "Hide older") : String(localized: "\(older) older decided")) {
+                withAnimation { showsOlder.toggle() }
+            }
+            .font(TendType.meta.weight(.medium))
+            .buttonStyle(.borderless)
+            .accessibilityIdentifier("showOlderDecided")
+            if showsOlder {
+                ForEach(decided.filter { !recent.contains($0) }) { DecidedCard(past: $0) }
+            }
         }
     }
 
@@ -285,13 +349,11 @@ struct LaneContent: View {
 
     // MARK: Finished
 
-    private var recentWindow: TimeInterval { FleetLanes.finishedWindow }
 
     @ViewBuilder
     private var finished: some View {
-        let now = Date()
         let decided = model.past
-        let recent = decided.filter { $0.at.map { now.timeIntervalSince($0) <= recentWindow } ?? false }
+        let recent = model.recentPast
         let older = decided.count - recent.count
         let agents = model.finishedAgents
         let items: [FinishedItem] = (recent.map(FinishedItem.decided) + agents.map(FinishedItem.agent))
@@ -412,7 +474,7 @@ struct HostsSummary: View {
         if let fleet = model.visibleFleet {
             let online = fleet.hosts.filter(\.online).count
             HStack(spacing: 5) {
-                Circle().fill(online == fleet.hosts.count ? Color.green : Color.orange).frame(width: 7, height: 7)
+                Circle().fill(online == fleet.hosts.count ? TendPalette.green : TendPalette.orange).frame(width: 7, height: 7)
                 Text("Hosts \(online)/\(fleet.hosts.count)")
                     .font(TendType.meta.weight(.medium))
                     .monospacedDigit()

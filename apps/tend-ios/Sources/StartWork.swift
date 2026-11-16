@@ -102,7 +102,7 @@ struct StartWorkView: View {
                             if options.pipelines.isEmpty {
                                 Label(String(localized: "\(host) has no pipeline configured. Add one to its tend config to start work there."), systemImage: "exclamationmark.triangle")
                                     .font(TendType.meta)
-                                    .foregroundStyle(.orange)
+                                    .foregroundStyle(TendPalette.orange)
                             } else {
                                 Picker(String(localized: "Pipeline"), selection: $pipeline) {
                                     ForEach(options.pipelines) { pipeline in
@@ -123,7 +123,7 @@ struct StartWorkView: View {
                     if let problem {
                         Section {
                             Label(problem, systemImage: "exclamationmark.circle")
-                                .foregroundStyle(.red)
+                                .foregroundStyle(TendPalette.red)
                                 .accessibilityIdentifier("workProblem")
                         }
                     }

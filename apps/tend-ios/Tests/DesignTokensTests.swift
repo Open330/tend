@@ -47,17 +47,11 @@ final class DesignTokensTests: XCTestCase {
         assertPair(TendSurface.inputBorder, t.color["input-border"], "input-border")
     }
 
-    /// States wear the system colour the tokens name for them. The hex
-    /// values in tokens.json are Apple's classic ones; the system palette
-    /// changes with the OS (iOS and macOS 26 drew orange #FF8D28, not
-    /// #FF9500), and Tend for Mac draws the system colour, so the app does
-    /// too: the check is by name, not by hex.
+    /// States wear the colour tokens.json names for them, at that colour's
+    /// value there (the macOS/iOS 26 system palette), on every iOS this app
+    /// runs on, not the device's own system colour.
     func testStatesWearTheColoursTheTokensName() throws {
         let t = try tokens()
-        let system: [String: UIColor] = [
-            "orange": .systemOrange, "blue": .systemBlue, "green": .systemGreen,
-            "red": .systemRed, "purple": .systemPurple, "mint": .systemMint,
-        ]
         let ours: [String: Color] = [
             "error": AgentStatus.error.color, "needs-input": AgentStatus.needsInput.color,
             "asked": AgentStatus.asked.color, "limited": AgentStatus.limited.color,
@@ -67,11 +61,14 @@ final class DesignTokensTests: XCTestCase {
         ]
         for (state, color) in ours {
             let name = try XCTUnwrap(t.state[state], "tokens.json names no colour for \(state)")
-            let expected = try XCTUnwrap(system[name], "\(state) wears \(name)")
-            for dark in [false, true] {
-                XCTAssertEqual(hex(color, dark: dark), hex(Color(uiColor: expected), dark: dark), "\(state) (\(dark ? "dark" : "light"))")
-            }
+            assertPair(color, t.color[name], "\(state) (\(name))")
         }
+        let palette: [String: Color] = [
+            "orange": TendPalette.orange, "blue": TendPalette.blue, "green": TendPalette.green,
+            "red": TendPalette.red, "purple": TendPalette.purple, "mint": TendPalette.mint,
+        ]
+        for (name, color) in palette { assertPair(color, t.color[name], name) }
+        assertPair(TendPalette.accent, t.color["accent"], "accent")
     }
 
     func testTheMarkAndHostColoursAreTheSharedTokens() throws {

@@ -61,7 +61,7 @@ final class StartWorkUITests: XCTestCase {
         if app.buttons["lane-inProgress"].waitForExistence(timeout: 10) {
             app.buttons["lane-inProgress"].tap()
         }
-        let card = app.staticTexts["Add idempotency keys to the refund endpoint"].firstMatch
+        let card = app.scrolledText("Add idempotency keys to the refund endpoint")
         XCTAssertTrue(card.waitForExistence(timeout: 15))
         card.tap()
         let show = app.buttons["showOutput"]

@@ -82,15 +82,15 @@ final class HomeUITests: XCTestCase {
         } else {
             attach(app, "home-your-turn")
             app.buttons["lane-inProgress"].tap()
-            XCTAssertTrue(app.staticTexts["Add idempotency keys to the refund endpoint"].firstMatch.waitForExistence(timeout: 15))
+            XCTAssertTrue(app.scrolledText("Add idempotency keys to the refund endpoint").exists)
             attach(app, "home-in-progress")
             app.buttons["lane-finished"].tap()
-            XCTAssertTrue(app.staticTexts["Cut the cache warm-up time in half"].firstMatch.waitForExistence(timeout: 10))
+            XCTAssertTrue(app.scrolledText("Cut the cache warm-up time in half").exists)
             attach(app, "home-finished")
         }
 
         // An agent: its last result, rendered from Markdown.
-        app.staticTexts["Cut the cache warm-up time in half"].firstMatch.tap()
+        app.scrolledText("Cut the cache warm-up time in half").tap()
         let summary = app.staticTexts["agentSummary"].firstMatch
         XCTAssertTrue(summary.waitForExistence(timeout: 10))
         XCTAssertTrue(summary.label.contains("41 s to 17 s"), summary.label)

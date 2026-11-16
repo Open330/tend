@@ -866,6 +866,17 @@ const AGENT_REF_FIELDS: &[&str] = &[
     "state_entered_at",
 ];
 
+/// A backlog record's fields a device reads (no ticket reference).
+const BACKLOG_FIELDS: &[&str] = &[
+    "workspace",
+    "work",
+    "title",
+    "line",
+    "priority",
+    "pipeline",
+    "project",
+];
+
 /// A Text (a string, or `{key, …}` the app words) or a list of stages:
 /// passed through when small, strings capped like every other field.
 fn bounded_tree(value: &Value) -> Value {
@@ -1005,9 +1016,23 @@ pub(super) fn device_board(board: &Value, history: Option<&Value>) -> Value {
                 .collect()
         })
         .unwrap_or_default();
+    // Planned Work, to look at: a device cannot start one (that would name
+    // an existing Work, which only the operator routes do).
+    let backlog: Vec<Value> = board
+        .get("backlog")
+        .and_then(Value::as_array)
+        .map(|records| {
+            records
+                .iter()
+                .filter_map(Value::as_object)
+                .map(|record| Value::Object(pick(record, BACKLOG_FIELDS)))
+                .collect()
+        })
+        .unwrap_or_default();
     json!({
         "generated_at": board.get("generated_at"),
         "hosts": hosts,
+        "backlog": backlog,
         "lanes": {"needs_you": lane("needs_you"), "running": lane("running"), "finished": lane("finished")},
         "decided": decided,
         "decision_hosts": board.get("decision_hosts").map(bounded_tree),

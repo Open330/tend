@@ -77,7 +77,7 @@ seed() {
 
 # Agents for Home's other lanes: three at work and two that finished, each
 # in its own pane and project folder, driven by the same hooks a real agent
-# fires. Nothing runs but `sleep`.
+# fires, and one planned Work in the backlog. Nothing runs but `sleep`.
 seed_home() {
   eval "$("$SANDBOX" env --name "$NAME")"
   local n; n=$(date +%s)
@@ -99,6 +99,10 @@ seed_home() {
     "Done. Warm-up now loads the hot keys first and the rest in the background: **41 s to 17 s** on the staging snapshot.\n\n- \`cache::warm\` takes a priority list\n- added a test for the ordering"
   agent i18n web-app idle "Translate the onboarding screens to Korean" \
     "All 14 onboarding strings are translated and reviewed against the glossary. Two need a product call: *workspace* and *run*."
+  # Planned Work for Home's Backlog, never started.
+  mkdir -p "$WRAP/work/tend"
+  (cd "$WRAP/work/tend" && "$WRAP/tend" work plan "tend/retry-docs-$n" --title "Document the retry path" \
+    --goal "The retry path is written up in docs/IPC.md" --pipeline solo --priority 1 >/dev/null)
   local waited=0
   until [ "$(curl -fsS -H "Authorization: Bearer $(token)" "http://127.0.0.1:$PORT/api/fleet" | grep -o "ios-[a-z0-9]*-$n" | sort -u | wc -l)" -ge 5 ]; do
     waited=$((waited + 1)); [ "$waited" -lt 50 ] || die "the seeded agents never reached the snapshot"

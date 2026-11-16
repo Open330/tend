@@ -101,6 +101,29 @@ struct PendingDecision: Identifiable, Hashable, Sendable {
         }
     }
 
+    /// A queue entry; `decidable` as its host's queue says (the board's
+    /// `actionable`).
+    init(_ item: TendPendingItem, host: String, hostIsLocal: Bool, decidable: Bool) {
+        let kind: Kind = switch item {
+        case .humanRequest(let entry): .question(entry)
+        case .review(let review): .result(review)
+        case .agentWaiting(let entry): .waiting(entry)
+        }
+        // An agent waiting in its pane is answered there.
+        if case .waiting = kind {
+            self.init(kind: kind, host: host, hostIsLocal: hostIsLocal, decidable: false)
+        } else {
+            self.init(kind: kind, host: host, hostIsLocal: hostIsLocal, decidable: decidable)
+        }
+    }
+
+    init(kind: Kind, host: String, hostIsLocal: Bool, decidable: Bool) {
+        self.kind = kind
+        self.host = host
+        self.hostIsLocal = hostIsLocal
+        self.decidable = decidable
+    }
+
     static func from(_ section: HostQueue) -> [PendingDecision] {
         section.queue.items.map { item in
             switch item {
@@ -208,6 +231,10 @@ final class AppModel {
     /// Every host and its agents; nil until read, or when this device may
     /// only decide.
     private(set) var fleet: FleetSnapshot?
+    /// Home's board (`/api/device/home`) when this device operates and the
+    /// dashboard serves it; then the lanes, Your turn included, come from
+    /// it, as on the Mac. nil otherwise: lanes from the queue and Fleet.
+    private(set) var board: DeviceHome?
     /// What this device may do, as the dashboard last said.
     private(set) var scope: DeviceScope = .decide
     /// Why the hosts could not be read (the queue may still be fine).
@@ -258,6 +285,10 @@ final class AppModel {
     var canCapture: Bool { operates && features.contains("capture") }
     /// Whether it can start work here.
     var canStartWork: Bool { operates && features.contains("work") }
+    /// Whether Home reads the daemon's board.
+    var readsBoard: Bool { operates && features.contains("home") }
+    /// The board, only while this device may read it.
+    var visibleBoard: DeviceHome? { readsBoard ? board : nil }
 
     /// Re-read what the dashboard says this device is and may do. Scope
     /// only ever narrows for one key: an answer can never widen it, and an
@@ -271,9 +302,18 @@ final class AppModel {
             guard session == mine, capability == generation else { return }
             if info.scope == .decide, scope == .operate {
                 narrow()
+                await refresh()
                 return
             }
-            features = scope == .operate ? info.features : []
+            let next = scope == .operate ? info.features : []
+            let leavesBoard = readsBoard && !next.contains("home")
+            features = next
+            if leavesBoard {
+                // The queue was not being read: never show its empty
+                // fallback as all clear. Read it now.
+                leaveBoard()
+                await refresh()
+            }
         } catch is CancellationError {
             return
         } catch {
@@ -291,7 +331,7 @@ final class AppModel {
         pairing.map { DashboardClient(origin: $0.origin, token: $0.token) }
     }
 
-    var pending: [PendingDecision] { hosts.flatMap(PendingDecision.from) }
+    var pending: [PendingDecision] { visibleBoard?.decisions ?? hosts.flatMap(PendingDecision.from) }
 
     /// "Nothing needs you" only when every host was read in full, every
     /// entry decoded, and none is waiting: an item this app cannot read, a
@@ -412,6 +452,7 @@ final class AppModel {
         hosts = []
         history = []
         fleet = nil
+        board = nil
         fleetProblem = nil
         features = []
         scope = .decide
@@ -450,6 +491,14 @@ final class AppModel {
             guard let client else { return }
             let mine = session
             async let fleetRead: Void = refreshFleet(client, session: mine)
+            if readsBoard {
+                await refreshBoard(client, session: mine)
+                // Still on the board (not narrowed while reading): done.
+                if readsBoard {
+                    await fleetRead
+                    continue
+                }
+            }
             do {
                 let read = try await client.queue()
                 guard session == mine else { await fleetRead; return }
@@ -489,12 +538,44 @@ final class AppModel {
         }
     }
 
+    /// Read Home's board. Your turn comes from it too, so a failure is
+    /// shown like a failed queue read; the last good board stays.
+    private func refreshBoard(_ client: DashboardClient, session mine: UUID) async {
+        let generation = capability
+        do {
+            let read = try await client.home()
+            guard session == mine, capability == generation, readsBoard else { return }
+            if board != read { board = read }
+            loaded = true
+            problem = nil
+        } catch DashboardError.notAllowed {
+            guard session == mine else { return }
+            narrow()
+        } catch is CancellationError {
+            return
+        } catch {
+            guard session == mine else { return }
+            problem = handle(error, session: mine)
+        }
+    }
+
+    /// Home stops reading the board: the queue it skipped is unknown, so
+    /// Your turn waits for it instead of showing an empty queue as clear.
+    private func leaveBoard() {
+        board = nil
+        hosts = []
+        loaded = false
+        refreshAgain = refreshing
+    }
+
     /// The dashboard limited this device to deciding.
     private func narrow() {
+        if readsBoard { leaveBoard() }
         capability = UUID()
         scope = .decide
         features = []
         fleet = nil
+        board = nil
         fleetProblem = DashboardError.notAllowed.localizedDescription
         if var pairing {
             pairing.scope = .decide
@@ -509,15 +590,45 @@ final class AppModel {
     var inProgress: [LaneAgent] { visibleFleet.map(FleetLanes.inProgress) ?? [] }
     var finishedAgents: [LaneAgent] { visibleFleet.map { FleetLanes.finished($0) } ?? [] }
 
+    /// Home's lanes: the backlog first when there is planned Work.
+    var lanes: [Lane] {
+        (visibleBoard?.backlog.isEmpty == false ? [.backlog] : []) + Lane.board
+    }
+
+    /// Decisions taken within the Finished window.
+    var recentPast: [PastDecision] {
+        let now = Date()
+        return past.filter { $0.at.map { now.timeIntervalSince($0) <= FleetLanes.finishedWindow } ?? false }
+    }
+
     func count(_ lane: Lane) -> Int {
+        if let board = visibleBoard {
+            switch lane {
+            case .backlog: return board.backlog.count
+            // Every decided item, the older ones behind their fold too
+            // (fromServerBoard counts them).
+            case .finished: return FoldedLane(board, lane: lane).count + past.count
+            default: return FoldedLane(board, lane: lane).count
+            }
+        }
         switch lane {
-        case .yourTurn: pending.count
-        case .inProgress: inProgress.count
-        case .finished: past.filter { $0.at.map { Date().timeIntervalSince($0) <= FleetLanes.finishedWindow } ?? false }.count + finishedAgents.count
+        case .backlog: return 0
+        case .yourTurn: return pending.count
+        case .inProgress: return inProgress.count
+        case .finished: return recentPast.count + finishedAgents.count
         }
     }
 
     // MARK: Agents and work
+
+    /// The Fleet record of an agent a unit names, to open its detail.
+    func laneAgent(_ ref: BoardAgent) -> LaneAgent? {
+        guard let session = ref.sessionID,
+              let host = visibleFleet?.hosts.first(where: { $0.alias == ref.host }),
+              let agent = host.agents.first(where: { $0.sessionID == session })
+        else { return nil }
+        return LaneAgent(agent: agent, host: host.alias, hostIsLocal: host.local)
+    }
 
     func capture(_ agent: LaneAgent) async throws -> String {
         guard let client, !agent.agent.sessionID.isEmpty else { return "" }

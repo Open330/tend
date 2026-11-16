@@ -1,6 +1,17 @@
 {
     "agent_count": 4,
-    "backlog": [],
+    "backlog": [
+        {
+            "external": null,
+            "line": "Write the retry path into docs/IPC.md",
+            "pipeline": "solo",
+            "priority": 1,
+            "project": "tend",
+            "title": "Document the retry path",
+            "work": "retry-docs",
+            "workspace": "tend"
+        }
+    ],
     "decision_hosts": [
         {
             "alias": "local",

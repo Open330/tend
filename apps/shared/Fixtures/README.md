@@ -21,7 +21,8 @@ them when those documents change.
   iOS app's (`Fleet.swift`) both read this shape.
 
 - `home-board.json`: `GET /api/home`, Home's board as tendd computes it
-  (recorded from the same scratch tendd on 2026-11-16, paths replaced).
+  (recorded from the same scratch tendd on 2026-11-16, paths replaced); one
+  backlog record added by hand, since the scratch daemon plans no Work).
 - `device-home.json`: `GET /api/device/home`, the same board as an
   `operate` device gets it (no pane ids or sockets, decisions as queue
   items, units as `kind: unit`, the history in `decided`). Generated from

@@ -82,7 +82,7 @@ struct PairingView: View {
             if let problem = model.pairingProblem {
                 Label(problem, systemImage: "exclamationmark.circle")
                     .font(.callout)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(TendPalette.red)
                     .accessibilityIdentifier("pairingProblem")
             }
             Button(action: start) {
