@@ -30,6 +30,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   With an older tendd it lays out the queue and agents itself, as before.
 
+- The iPhone and iPad app looks and reads like Tend for Mac's Home. It has
+  the Mac's surfaces, type roles, state colours and cards, in light and dark
+  mode with Dynamic Type. **Your turn**, **In progress** and **Finished**
+  sit side by side on a wide iPad, as on the Mac. On iPhone a lane strip
+  shows all three counts above the chosen lane. **Hosts** shows each host's
+  state and agents, and an agent's latest result is rendered from Markdown.
+  Seeing agents needs a device paired with hosts (`operate`); a device that
+  only decides says how to pair again.
+
 ## [0.10.21] - 2026-11-16
 
 ### Added

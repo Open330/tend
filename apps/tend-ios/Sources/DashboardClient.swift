@@ -75,6 +75,10 @@ enum DashboardError: Error, Equatable, LocalizedError {
     case server(Int, String)
     case transport(String)
     case undecodable(String)
+    /// This device's scope does not cover it.
+    case notAllowed
+    /// The dashboard does not allow starting work (`allow_work_start`).
+    case workStartOff
 
     var errorDescription: String? {
         switch self {
@@ -84,6 +88,8 @@ enum DashboardError: Error, Equatable, LocalizedError {
         case .server(_, let message): message
         case .transport(let message): message
         case .undecodable(let message): String(localized: "Unexpected answer from the dashboard: \(message)")
+        case .notAllowed: String(localized: "This device may only decide. Pair it again with hosts and new work to see this.")
+        case .workStartOff: String(localized: "Starting work is turned off on this dashboard ([dashboard] allow_work_start).")
         }
     }
 }
@@ -107,7 +113,112 @@ struct PairedDevice: Codable, Hashable, Sendable {
 
 enum PairingPoll: Sendable {
     case pending
-    case issued(PairedDevice, token: String)
+    case issued(PairedDevice, token: String, scope: DeviceScope)
+}
+
+/// What a paired device may do. An older dashboard names no scope: decide.
+enum DeviceScope: String, Codable, Sendable, Hashable {
+    /// Read and answer what needs the person.
+    case decide
+    /// Also see every host and agent, read recent output, start new work.
+    case operate
+
+    init(names: [String]?) {
+        self = names?.contains("operate") == true ? .operate : .decide
+    }
+}
+
+/// `GET /api/device`.
+struct DeviceInfo: Decodable, Sendable {
+    let device: PairedDevice
+    let scope: DeviceScope
+    /// What this dashboard serves an `operate` device beyond the hosts:
+    /// `capture` (recent output), `work` (start work). Absent on a dashboard
+    /// that has neither yet.
+    let features: Set<String>
+
+    enum CodingKeys: String, CodingKey { case device, scope, features }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        device = try values.decode(PairedDevice.self, forKey: .device)
+        scope = DeviceScope(names: try? values.decodeIfPresent([String].self, forKey: .scope))
+        features = Set(((try? values.decodeIfPresent([String].self, forKey: .features)) ?? nil) ?? [])
+    }
+}
+
+/// What a host offers new work from the phone (`GET
+/// /api/device/work-options`): whether it is allowed, the pipelines (teams)
+/// and the project folders.
+struct WorkOptions: Decodable, Sendable, Equatable {
+    struct Pipeline: Decodable, Sendable, Equatable, Hashable, Identifiable {
+        let name: String
+        let description: String?
+        let agents: Int
+        var id: String { name }
+
+        enum CodingKeys: String, CodingKey { case name, description, agents }
+
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            name = try values.decode(String.self, forKey: .name)
+            description = (try? values.decodeIfPresent(String.self, forKey: .description)) ?? nil
+            struct Any_: Decodable, Sendable {}
+            agents = ((try? values.decodeIfPresent([TendLenient<Any_>].self, forKey: .agents)) ?? nil)?.count ?? 0
+        }
+
+        init(name: String, description: String? = nil, agents: Int = 1) {
+            self.name = name
+            self.description = description
+            self.agents = agents
+        }
+    }
+
+    let pipelines: [Pipeline]
+    /// The folders new work may start in there: folders its agents use.
+    let projects: [String]
+    /// Whether the dashboard allows starting work at all.
+    let allowed: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case pipelines, projects
+        case allowed = "allow_work_start"
+    }
+
+    init(pipelines: [Pipeline], projects: [String], allowed: Bool = true) {
+        self.pipelines = pipelines
+        self.projects = projects
+        self.allowed = allowed
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let listed = ((try? values.decodeIfPresent([TendLenient<Pipeline>].self, forKey: .pipelines)) ?? nil) ?? []
+        pipelines = listed.compactMap(\.value)
+        projects = ((try? values.decodeIfPresent([String].self, forKey: .projects)) ?? nil) ?? []
+        allowed = ((try? values.decodeIfPresent(Bool.self, forKey: .allowed)) ?? nil) ?? false
+    }
+}
+
+/// `POST /api/device/work`, as the phone sends it: what to do, where and
+/// with which team. The dashboard mints the Work id.
+struct StartWorkRequest: Sendable, Equatable {
+    /// One per Start; a retry sends the same key.
+    var idempotencyKey: String
+    var host: String
+    var project: String
+    var pipeline: String
+    var request: String
+
+    var bodyJSON: [String: Any] {
+        ["idempotency_key": idempotencyKey, "host": host, "project": project, "pipeline": pipeline, "request": request]
+    }
+}
+
+struct StartedWork: Decodable, Sendable {
+    /// `started`, `failed`, `unknown` (it may have started; check the host).
+    let state: String
+    let work: String?
 }
 
 /// One host's part of `GET /api/decisions`.
@@ -253,8 +364,8 @@ struct DashboardClient: Sendable {
 
     // MARK: Pairing
 
-    func requestPairing(name: String, platform: String) async throws -> PairingRequest {
-        let (status, data) = try await send("POST", "/auth/devices/request", body: ["name": name, "platform": platform], authorized: false)
+    func requestPairing(name: String, platform: String, scope: DeviceScope) async throws -> PairingRequest {
+        let (status, data) = try await send("POST", "/auth/devices/request", body: ["name": name, "platform": platform, "scope": scope.rawValue], authorized: false)
         switch status {
         case 201: return try decode(PairingRequest.self, data)
         case 404, 405: throw DashboardError.pairingUnavailable
@@ -267,9 +378,9 @@ struct DashboardClient: Sendable {
         switch status {
         case 202: return .pending
         case 201:
-            struct Issued: Decodable { let device: PairedDevice; let token: String }
+            struct Issued: Decodable { let device: PairedDevice; let token: String; let scope: [String]? }
             let issued = try decode(Issued.self, data)
-            return .issued(issued.device, token: issued.token)
+            return .issued(issued.device, token: issued.token, scope: DeviceScope(names: issued.scope))
         case 404, 405: throw DashboardError.pairingUnavailable
         default: throw DashboardError.server(status, Self.message(data, status))
         }
@@ -312,6 +423,59 @@ struct DashboardClient: Sendable {
         if let host { body["host"] = host }
         let (status, data) = try await send("POST", "/api/decisions/reviews/\(Self.segment(id))", body: body, authorized: true)
         try check(status, data)
+    }
+
+    // MARK: The device
+
+    /// `GET /api/device`: who this device is and what it may do.
+    func device() async throws -> DeviceInfo {
+        let (status, data) = try await send("GET", "/api/device", authorized: true)
+        try check(status, data)
+        return try decode(DeviceInfo.self, data)
+    }
+
+    // MARK: Hosts, agents, work (the `operate` scope)
+
+    /// `GET /api/device/fleet`: every host and its agents, cut down for a
+    /// device. 403 means this device may only decide (never "signed out").
+    func fleet() async throws -> FleetSnapshot {
+        let (status, data) = try await send("GET", "/api/device/fleet", authorized: true)
+        if status == 403 { throw DashboardError.notAllowed }
+        try check(status, data)
+        return try decode(FleetSnapshot.self, data)
+    }
+
+    /// `POST /api/device/capture`: the recent output of one agent's pane,
+    /// named by its session id.
+    func capture(host: String, sessionID: String) async throws -> String {
+        let body: [String: Any] = ["host": host, "session_id": sessionID]
+        let (status, data) = try await send("POST", "/api/device/capture", body: body, authorized: true)
+        if status == 403 { throw DashboardError.notAllowed }
+        try check(status, data)
+        struct Capture: Decodable { let capture: String? }
+        return try decode(Capture.self, data).capture ?? ""
+    }
+
+    /// `GET /api/device/work-options`: the projects and pipelines new work
+    /// can start with on that host.
+    func workOptions(host: String) async throws -> WorkOptions {
+        let query = host.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? host
+        let (status, data) = try await send("GET", "/api/device/work-options?host=\(query)", authorized: true)
+        if status == 403 { throw DashboardError.notAllowed }
+        try check(status, data)
+        return try decode(WorkOptions.self, data)
+    }
+
+    /// `POST /api/device/work`: start new work. 501 means the dashboard
+    /// does not allow starting work.
+    func startWork(_ request: StartWorkRequest) async throws -> StartedWork {
+        let (status, data) = try await send("POST", "/api/device/work", body: request.bodyJSON, authorized: true)
+        switch status {
+        case 403: throw DashboardError.notAllowed
+        case 501: throw DashboardError.workStartOff
+        default: try check(status, data)
+        }
+        return try decode(StartedWork.self, data)
     }
 
     private static func segment(_ id: String) -> String {
