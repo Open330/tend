@@ -40,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   process list moves), the hosts' names and states, the connection, and
   what its decisions are built from, plus a 15-second clock so "5 min ago"
   and the day-old fold keep moving.
+- While the Mac app's window is hidden, minimized, fully covered or on
+  another Space, Home pauses its decision (5 s) and backlog (15 s) polls,
+  holds new board state and stops its clock. Showing the window again
+  applies what arrived and reads both feeds at once. Notifications, the menu
+  bar and unread tracking keep running from the app model.
 
 ### Fixed
 

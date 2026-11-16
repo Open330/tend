@@ -1,5 +1,6 @@
+import AppKit
 import Combine
-import Foundation
+import SwiftUI
 
 /// Everything Home's board draws from the app model, published only when
 /// what Home shows changes. Home observes this instead of the whole
@@ -24,6 +25,25 @@ final class FleetHomeBoard: ObservableObject {
     /// model's constant publishes.
     @Published private(set) var clock: UInt64 = 0
     static let clockPeriod: TimeInterval = 15
+    /// Whether any window showing Home is on screen (not hidden, minimized,
+    /// fully covered, or on another Space), as each Home's
+    /// `TendWindowVisibilityReader` reports it; true while no Home is
+    /// mounted. While it is false, the board holds new units back, the
+    /// clock stops, and Home pauses its decision and backlog polls; showing
+    /// a window again applies what arrived and reloads once. Menu-bar,
+    /// notification and attention inputs come from the model and keep
+    /// running.
+    @Published private(set) var isVisible = true
+    /// The latest units from the projection, published or held. The
+    /// projection compares against this, never against `works`, so a hidden
+    /// change that returns to what is on screen still replaces what is held.
+    private(set) var latestWorks: [FleetWork] = []
+    /// `latestWorks` is newer than `works`.
+    private var worksHeld = false
+    /// Each mounted Home's window, and whether it is on screen.
+    private var readers: [ObjectIdentifier: Bool] = [:]
+    /// A decisions change that arrived while the window was off screen.
+    private var heldDecisions = false
 
     var localHostAlias: String {
         hosts.first(where: \.local)?.alias ?? "local"
@@ -50,11 +70,54 @@ final class FleetHomeBoard: ObservableObject {
             model.$operatorMessages.dropFirst()
                 .sink { [weak self] _ in self?.decisionsChanged() },
             Timer.publish(every: Self.clockPeriod, tolerance: 2, on: .main, in: .common).autoconnect()
-                .sink { [weak self] _ in self?.clock &+= 1 },
+                .sink { [weak self] _ in self?.tick() },
         ]
     }
 
+    /// One Home's window went on or off screen.
+    func setVisible(_ visible: Bool, reader: ObjectIdentifier) {
+        readers[reader] = visible
+        updateVisibility()
+    }
+
+    /// That Home is gone.
+    func removeReader(_ reader: ObjectIdentifier) {
+        guard readers.removeValue(forKey: reader) != nil else { return }
+        updateVisibility()
+    }
+
+    private func updateVisibility() {
+        setVisible(readers.isEmpty || readers.values.contains(true))
+    }
+
+    private func setVisible(_ visible: Bool) {
+        guard visible != isVisible else { return }
+        TendPerf.count(visible ? "board.shown" : "board.hidden")
+        if visible, worksHeld {
+            worksHeld = false
+            works = latestWorks
+        }
+        if visible, heldDecisions {
+            heldDecisions = false
+            decisionsRevision &+= 1
+        }
+        isVisible = visible
+        // Whatever the clock moved while hidden shows at once.
+        if visible { clock &+= 1 }
+    }
+
+    func tick() {
+        guard isVisible else { return }
+        clock &+= 1
+    }
+
     func setWorks(_ works: [FleetWork]) {
+        latestWorks = works
+        guard isVisible else {
+            TendPerf.count("board.held")
+            worksHeld = true
+            return
+        }
         TendPerf.count("board.works")
         self.works = works
     }
@@ -72,6 +135,105 @@ final class FleetHomeBoard: ObservableObject {
     }
 
     func decisionsChanged() {
+        guard isVisible else { heldDecisions = true; return }
         decisionsRevision &+= 1
+    }
+}
+
+/// Reports whether the window this view is in is on screen: shown, not
+/// minimized, not fully covered or on another Space, and the app not
+/// hidden. Reports on attaching to a window and on each change, and nil
+/// when it leaves its window or is removed.
+struct TendWindowVisibilityReader: NSViewRepresentable {
+    let board: FleetHomeBoard
+
+    func makeNSView(context: Context) -> ReaderView {
+        let view = ReaderView()
+        view.changed = Self.report(to: board, from: view)
+        return view
+    }
+
+    func updateNSView(_ view: ReaderView, context: Context) {
+        view.changed = Self.report(to: board, from: view)
+    }
+
+    /// Each reader is one entry in the board's set of Home windows.
+    private static func report(to board: FleetHomeBoard, from view: ReaderView) -> (Bool?) -> Void {
+        let reader = ObjectIdentifier(view)
+        return { [weak board] visible in
+            guard let board else { return }
+            if let visible { board.setVisible(visible, reader: reader) } else { board.removeReader(reader) }
+        }
+    }
+
+    static func dismantleNSView(_ view: ReaderView, coordinator: ()) {
+        view.detach()
+    }
+
+    final class ReaderView: NSView {
+        var changed: ((Bool?) -> Void)?
+        private var observers: [NSObjectProtocol] = []
+        private var reported: Bool?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            stopObserving()
+            // Each attachment states its window afresh.
+            reported = nil
+            guard let window else {
+                changed?(nil)
+                return
+            }
+            let center = NotificationCenter.default
+            let windowEvents: [Notification.Name] = [
+                NSWindow.didChangeOcclusionStateNotification, NSWindow.didMiniaturizeNotification,
+                NSWindow.didDeminiaturizeNotification,
+            ]
+            let appEvents: [Notification.Name] = [NSApplication.didHideNotification, NSApplication.didUnhideNotification]
+            for name in windowEvents {
+                observers.append(center.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.report() }
+                })
+            }
+            for name in appEvents {
+                observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.report() }
+                })
+            }
+            // Out of the view update that attached it, unless it was
+            // detached or moved again by then.
+            attachment &+= 1
+            let current = attachment
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.attachment == current, self.isAttached else { return }
+                self.report()
+            }
+        }
+
+        /// Bumped on each attachment and detach, so a queued first report
+        /// from an earlier one is dropped.
+        private var attachment: UInt64 = 0
+        private var isAttached: Bool { !observers.isEmpty }
+
+        func detach() {
+            stopObserving()
+            attachment &+= 1
+            reported = nil
+            changed?(nil)
+        }
+
+        func stopObserving() {
+            for observer in observers { NotificationCenter.default.removeObserver(observer) }
+            observers.removeAll()
+        }
+
+        private func report() {
+            guard isAttached, let window else { return }
+            let visible = window.isVisible && !window.isMiniaturized && !NSApp.isHidden
+                && window.occlusionState.contains(.visible)
+            guard visible != reported else { return }
+            reported = visible
+            changed?(visible)
+        }
     }
 }
