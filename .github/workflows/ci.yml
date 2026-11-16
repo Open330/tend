@@ -186,7 +186,7 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
-          arguments: --all-features --target ${{ matrix.target }}
+          arguments: --all-features --locked --target ${{ matrix.target }}
 
   windows:
     name: windows
@@ -218,10 +218,21 @@ jobs:
           Invoke-WebRequest -UseBasicParsing "https://github.com/Helvesec/rmux/releases/download/v0.10.0/rmux-0.10.0-windows-x86_64.zip" -OutFile $zip
           $sum = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
           if ($sum -ne "e315e2d51d927ba9621732812c0f932c862d05f4b677dbf3cab76f0d27372a70") { throw "rmux zip checksum $sum" }
-          $dir = Join-Path $env:RUNNER_TEMP "rmux"
-          Expand-Archive $zip $dir
-          (Get-ChildItem $dir -Recurse -Filter rmux.exe | Select-Object -First 1).DirectoryName >> $env:GITHUB_PATH
-      - run: rmux -V
+          $root = Join-Path $env:RUNNER_TEMP "rmux"
+          Expand-Archive $zip $root
+          # The archive's top level holds the client and its daemon (a second
+          # rmux.exe sits under libexec): name the directory, do not search.
+          $dir = Join-Path $root "rmux-0.10.0-windows-x86_64"
+          foreach ($exe in "rmux.exe", "rmux-daemon.exe") { if (-not (Test-Path (Join-Path $dir $exe))) { throw "no $exe in $dir" } }
+          $dir >> $env:GITHUB_PATH
+      - name: rmux is the pinned one
+        shell: pwsh
+        run: |
+          $source = (Get-Command rmux).Source
+          if (-not $source.StartsWith((Join-Path $env:RUNNER_TEMP "rmux"))) { throw "rmux resolves to $source" }
+          $version = (rmux -V)
+          if ($version -ne "rmux 0.10.0") { throw "rmux -V: $version" }
+          "$source $version"
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       # The integration tests run the tend and tendd binaries.
       - run: cargo build --locked --bins -p tend-cli -p tendd
