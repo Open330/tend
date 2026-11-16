@@ -200,6 +200,8 @@ final class TendAgentAttentionCenter: ObservableObject {
     private var messages: [TendOperatorMessage] = []
     private var coverageObserver: NSObjectProtocol?
     private var humanNotified: [String: Date] = [:]
+    /// The receipts as last written to (or read from) the defaults.
+    private var storedHumanNotified: [String: Date]?
     static let humanPersistenceKey = "tend.attention.human-notified.v1"
     /// A pane a notification click asked to open; the workbench consumes it.
     /// A notification's Switch Account… asked for this pane's swap sheet.
@@ -250,6 +252,7 @@ final class TendAgentAttentionCenter: ObservableObject {
         if let data = defaults?.data(forKey: Self.humanPersistenceKey),
            let stored = try? JSONDecoder().decode([String: Date].self, from: data) {
             humanNotified = stored
+            storedHumanNotified = stored
         }
         if let data = defaults?.data(forKey: Self.persistenceKey),
            let stored = try? JSONDecoder().decode([String: TendSeenRecord].self, from: data) {
@@ -350,10 +353,15 @@ final class TendAgentAttentionCenter: ObservableObject {
             }
         }
         // Bound local receipts without re-alerting unresolved requests.
-        humanNotified = humanNotified.filter { active.contains($0.key) || date.timeIntervalSince($0.value) < Self.pruneAfter }
-        if let data = try? JSONEncoder().encode(humanNotified) {
+        let receipts = humanNotified.filter { active.contains($0.key) || date.timeIntervalSince($0.value) < Self.pruneAfter }
+        // Every inbox read lands here; write the receipts only when they
+        // changed (a new request notified, or an old one pruned).
+        if receipts != storedHumanNotified, let data = try? JSONEncoder().encode(receipts) {
+            TendPerf.count("attention.persistHuman")
             defaults?.set(data, forKey: Self.humanPersistenceKey)
+            storedHumanNotified = receipts
         }
+        humanNotified = receipts
         recompute()
     }
 

@@ -404,3 +404,29 @@ func humanAttentionHonorsPreferencesWithoutHidingThePendingDecision() throws {
     h.center.ingestHumanRequests([message])
     #expect(h.poster.posted.count == 1)
 }
+
+private final class CountingDefaults: UserDefaults, @unchecked Sendable {
+    var humanWrites = 0
+    override func set(_ value: Any?, forKey key: String) {
+        if key == "tend.attention.human-notified.v1" { humanWrites += 1 }
+        super.set(value, forKey: key)
+    }
+}
+
+@Test @MainActor
+func humanReceiptsAreWrittenOnlyWhenTheyChange() throws {
+    let defaults = try #require(CountingDefaults(suiteName: "tend.attention.tests.\(UUID().uuidString)"))
+    let h = Harness(defaults: defaults)
+    let message = try humanAttentionMessage(host: "local")
+    h.center.ingestHumanRequests([message])
+    #expect(defaults.humanWrites == 1)
+    // Every inbox read lands here; an unchanged inbox writes nothing.
+    h.center.ingestHumanRequests([message])
+    h.center.ingestHumanRequests([message])
+    #expect(defaults.humanWrites == 1)
+    h.center.ingestHumanRequests([message, try humanAttentionMessage(host: "rtzr")])
+    #expect(defaults.humanWrites == 2)
+    h.relaunch()
+    h.center.ingestHumanRequests([message, try humanAttentionMessage(host: "rtzr")])
+    #expect(defaults.humanWrites == 2, "the stored receipts are already current")
+}

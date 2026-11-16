@@ -140,6 +140,7 @@ struct TendSidebar: View {
     }
 
     var body: some View {
+        let _ = TendPerf.count("sidebar.body")
         ZStack {
             background
 

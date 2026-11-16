@@ -2,7 +2,10 @@
 import SwiftUI
 
 struct FleetHomeView: View {
-    @ObservedObject var model: AppModel
+    /// Not observed: Home redraws from `homeBoard`, which publishes only what
+    /// it shows. Read the model's other state in actions, not in `body`.
+    let model: AppModel
+    @ObservedObject var homeBoard: FleetHomeBoard
     @Environment(\.colorScheme) private var colorScheme
 
     @State private var selectedID: String?
@@ -35,7 +38,7 @@ struct FleetHomeView: View {
     @State private var movedFrom: [String: FleetLane] = [:]
 
     private var allWorks: [FleetWork] {
-        model.homeWorks
+        homeBoard.works
     }
 
     /// What hides a finished result: tendd's record of Looks Good when the
@@ -96,28 +99,34 @@ struct FleetHomeView: View {
     }
 
     var body: some View {
+        let _ = TendPerf.count("home.body")
         VStack(spacing: 0) {
             header
             Divider()
             board
         }
         .background(TendSurfacePalette.workspace(for: colorScheme).ignoresSafeArea())
+        .background(TendWindowVisibilityReader(board: homeBoard))
         .sheet(item: $approvalSeed) { seed in
             FleetApprovalRuleSheet(model: model, seed: seed)
         }
         .sheet(item: $revisionTarget) { target in
             ChangesRevisionView(repo: target.repo, revision: target.revision)
         }
-        .task {
+        // Both polls pause while the window is off screen and restart, with
+        // a read at once, when it is shown again.
+        .task(id: homeBoard.isVisible) {
             // Decisions made elsewhere (the CLI, an agent, another window)
             // leave the queue while Home stays open.
+            guard homeBoard.isVisible else { return }
             while !Task.isCancelled {
                 await decisionFeed.load(model.client, works: allWorks)
                 try? await Task.sleep(for: FleetDecisionFeed.refreshEvery)
             }
         }
-        .task {
+        .task(id: homeBoard.isVisible) {
             // Work planned with `tend work plan` shows up while Home is open.
+            guard homeBoard.isVisible else { return }
             while !Task.isCancelled {
                 await backlogFeed.load(model.client)
                 try? await Task.sleep(for: FleetBacklogFeed.refreshEvery)
@@ -174,7 +183,7 @@ struct FleetHomeView: View {
                 Label("Start Work", systemImage: "play.fill")
             }
             .buttonStyle(.tendPrimary)
-            .disabled(!model.isConnected || model.isStartingWork)
+            .disabled(!homeBoard.isConnected || homeBoard.isStartingWork)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
@@ -213,7 +222,7 @@ struct FleetHomeView: View {
         let all = allWorks
         // Planned Work counts too: a project with only a plan can be picked.
         let planned = backlogFeed.shown(on: all)
-        let hosts = Array(Set(all.flatMap(\.hostAliases) + (planned.isEmpty ? [] : [model.localHostAlias]))).sorted()
+        let hosts = Array(Set(all.flatMap(\.hostAliases) + (planned.isEmpty ? [] : [homeBoard.localHostAlias]))).sorted()
         let projects = Array(Set(all.compactMap(\.repo) + planned.compactMap(\.project))).sorted()
         let active = hostFilter != nil || projectFilter != nil
         return Menu {
@@ -251,7 +260,7 @@ struct FleetHomeView: View {
     }
 
     private var hostsButton: some View {
-        let hosts = model.fleetHosts
+        let hosts = homeBoard.hosts
         let online = hosts.filter { $0.state == "online" }.count
         return Button {
             showsHosts.toggle()
@@ -269,7 +278,7 @@ struct FleetHomeView: View {
         .popover(isPresented: $showsHosts, arrowEdge: .bottom) {
             FleetHostsPopover(hosts: hosts, select: { host in
                 showsHosts = false
-                model.select(.host(host.id))
+                model.select(.host(host.alias))
             }, showLeftovers: {
                 showsHosts = false
                 showsLeftovers = true
@@ -282,6 +291,8 @@ struct FleetHomeView: View {
     /// The decisions Home shows under the same host and project filters as
     /// the cards.
     private var decisions: [FleetDecision] {
+        // `homeBoard.decisionsRevision` redraws Home for a new operator message
+        // or asker; the feed caches the merge itself.
         decisionFeed.decisions(model).filter { decision in
             (hostFilter == nil || decision.host.alias == hostFilter)
                 && (projectFilter == nil || decision.repo == projectFilter)
@@ -291,7 +302,7 @@ struct FleetHomeView: View {
     /// Planned Work under the same filters as the cards: this Mac's backlog,
     /// by the project its plan starts in.
     private var backlog: [TendWorkRecord] {
-        guard hostFilter == nil || hostFilter == model.localHostAlias else { return [] }
+        guard hostFilter == nil || hostFilter == homeBoard.localHostAlias else { return [] }
         return backlogFeed.shown(on: allWorks).filter { record in
             projectFilter == nil || record.project == projectFilter
         }
@@ -302,7 +313,7 @@ struct FleetHomeView: View {
     func decisionCard(_ decision: FleetDecision, openRevision: @escaping (FleetRevisionTarget) -> Void) -> FleetDecisionCard {
         let feed = decisionFeed
         let model = model
-        let asker = decision.askerAgentID.flatMap { id in model.hostedAgents.first { $0.id == id } }
+        let asker = decision.askerAgentID.flatMap(model.hostedAgent(id:))
         return FleetDecisionCard(
             decision: decision,
             busy: feed.busy.contains(decision.id),
@@ -311,11 +322,12 @@ struct FleetHomeView: View {
             answer: { text in await feed.answer(decision, text: text, model: model) },
             decide: { disposition, note in await feed.decide(decision, disposition, note: note, model: model) },
             openAsker: asker.map { hosted in { open(hosted) } },
-            draft: feed.draft(for: decision.id)
+            draft: feed.drafts.row(for: decision.id)
         )
     }
 
     private var board: some View {
+        let _ = TendPerf.count("home.board")
         let all = FleetBoard.filter(allWorks, host: hostFilter, project: projectFilter)
         let decisions = decisions
         let marks = marks
@@ -433,7 +445,7 @@ struct FleetHomeView: View {
     /// Types `text` into the agent the draft was written for, after checking
     /// that the same session is still at its pane, at the same question.
     private func send(_ text: String, to target: FleetReplyTarget) async throws {
-        guard let hosted = model.hostedAgents.first(where: { $0.id == target.agentID }),
+        guard let hosted = model.hostedAgent(id: target.agentID),
               let paneID = TendAgentAttentionCenter.paneIdentity(for: hosted),
               let current = model.executionSnapshot.watchPane(id: paneID),
               target.matches(current.agent) else {
@@ -464,7 +476,7 @@ struct FleetHomeView: View {
             let backlog = backlog
             if FleetBoard.showsEmptyBoard(visible: works.count + decisions.count + backlog.count + problem, reviewed: reviewedCount) {
                 FleetEmptyBoard(
-                    isConnected: model.isConnected,
+                    isConnected: homeBoard.isConnected,
                     newAgent: { model.presentNewAgent() },
                     startWork: { model.presentWorkStart() }
                 )
@@ -525,6 +537,16 @@ struct FleetHomeView: View {
         } else {
             model.select(.agent(hosted.id))
         }
+    }
+}
+
+extension FleetHomeView: @MainActor Equatable {
+    /// Home's inputs are its two objects; everything else it shows comes
+    /// through their publishes or its own state. Without this, SwiftUI
+    /// cannot compare the `@StateObject`/`@AppStorage` wrappers and
+    /// re-evaluates Home whenever ContentView redraws (every model publish).
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.model === rhs.model && lhs.homeBoard === rhs.homeBoard
     }
 }
 
@@ -1210,8 +1232,8 @@ private struct FleetStageRow: View {
 // MARK: - Hosts and empty board
 
 private struct FleetHostsPopover: View {
-    let hosts: [TendFleetHost]
-    let select: (TendFleetHost) -> Void
+    let hosts: [TendFleetHostIdentity]
+    let select: (TendFleetHostIdentity) -> Void
     var showLeftovers: () -> Void = {}
 
     var body: some View {
@@ -1222,7 +1244,7 @@ private struct FleetHostsPopover: View {
                 Text("No hosts yet.")
                     .foregroundStyle(.secondary)
             }
-            ForEach(hosts) { host in
+            ForEach(hosts, id: \.alias) { host in
                 Button {
                     select(host)
                 } label: {

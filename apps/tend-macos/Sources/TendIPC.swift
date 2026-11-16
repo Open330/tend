@@ -403,6 +403,22 @@ struct TendAgentWorkload: Decodable, Hashable, Sendable {
         helperCount = try values.decodeIfPresent(Int.self, forKey: .helperCount) ?? 0
         preview = try values.decodeIfPresent([TendAgentProcess].self, forKey: .preview) ?? []
     }
+
+    /// Two workloads are the same when the counts are: no view shows the
+    /// process preview, and its pids and commands churn every few seconds
+    /// on a busy host, which would otherwise make each fleet event a new
+    /// snapshot (`TendExecutionSnapshot.hasSameSource`) and redraw the app.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.processCount == rhs.processCount && lhs.shellCount == rhs.shellCount
+            && lhs.subagentCount == rhs.subagentCount && lhs.helperCount == rhs.helperCount
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(processCount)
+        hasher.combine(shellCount)
+        hasher.combine(subagentCount)
+        hasher.combine(helperCount)
+    }
 }
 
 struct TendAgentProcess: Decodable, Hashable, Identifiable, Sendable {
