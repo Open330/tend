@@ -38,25 +38,41 @@ Write-Output "window: $($win.Current.Name)"
 $deadline = (Get-Date).AddSeconds(30)
 while ((Get-Date) -lt $deadline -and (Buttons $win "Send answer").Count -eq 0) { Start-Sleep -Milliseconds 500 }
 
+# The page re-renders when it reads the queue again (0.8 s after a decision,
+# and on its own timer), which can replace a button between finding and
+# pressing it: such an attempt is retried with freshly found buttons.
+function Gone($err) { "$($err.Exception)" -match "ElementNotAvailable" }
+
 $answered = 0
-for ($i = 0; $i -lt 10; $i++) {
+for ($i = 0; $i -lt 20; $i++) {
     $yes = Buttons $win "yes"
     $send = Buttons $win "Send answer"
     if ($yes.Count -eq 0 -or $send.Count -eq 0) { break }
-    Press $yes[0]
-    Start-Sleep -Milliseconds 400
-    Press $send[0]
+    try {
+        Press $yes[0]
+        Start-Sleep -Milliseconds 400
+        Press (Buttons $win "Send answer")[0]
+    } catch {
+        if (-not (Gone $_)) { throw }
+        Write-Output "re-rendered while answering; retrying"
+        Start-Sleep -Seconds 1
+        continue
+    }
     $answered++
     Write-Output "answered question $answered"
-    # The page reads the queue again 0.8 s after a decision.
     Start-Sleep -Seconds 3
 }
 
 $accepted = 0
-for ($i = 0; $i -lt 10; $i++) {
+for ($i = 0; $i -lt 20; $i++) {
     $good = Buttons $win "Looks good"
     if ($good.Count -eq 0) { break }
-    Press $good[0]
+    try { Press $good[0] } catch {
+        if (-not (Gone $_)) { throw }
+        Write-Output "re-rendered while accepting; retrying"
+        Start-Sleep -Seconds 1
+        continue
+    }
     $accepted++
     Write-Output "accepted result $accepted"
     Start-Sleep -Seconds 3

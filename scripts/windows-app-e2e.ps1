@@ -135,8 +135,11 @@ try {
         $envs = NodeEnv $name
         foreach ($d in $envs.Values) { New-Item -ItemType Directory -Force "$d\tend" | Out-Null }
         Detached "`"$rmux`" -L $($label[$name]) new-session -d -s hold `"pwsh -NoProfile -Command Start-Sleep 3600`"" | Out-Null
-        Start-Sleep 2
-        $sockets[$name] = (& $rmux -L $label[$name] display-message -p -t hold '#{socket_path}').Trim()
+        # A cold rmux server can take seconds to answer on a small machine.
+        $socket = $null
+        $null = WaitFor { $script:socket = (& $rmux -L $label[$name] display-message -p -t hold '#{socket_path}' 2>$null); [bool]$script:socket } 30 "$name rmux server"
+        if (-not $socket) { throw "the $name rmux server did not start" }
+        $sockets[$name] = "$socket".Trim()
         Say "$name rmux server $($sockets[$name])"
     }
 
