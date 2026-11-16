@@ -197,28 +197,38 @@ private func message(host: TendFleetHostIdentity, id: String, created: String, s
         #expect(attached[0].repo == "tend")
     }
 
-    @Test func aQuestionWhoseAskerItsHostNoLongerListsIsMarkedGone() throws {
+    @Test func aQuestionWhoseAskerItsHostDoesNotListIsFlaggedOnlyAfterAGrace() throws {
         let messages = [
             try message(host: remote, id: "req_live", created: "2026-11-12T00:00:00Z", session: "s-live"),
             try message(host: remote, id: "req_dead", created: "2026-11-12T00:00:01Z", session: "s-dead"),
             try message(host: remote, id: "req_pending", created: "2026-11-12T00:00:02Z", session: "pending-pane:default:%50"),
             try message(host: remote, id: "req_wake", created: "2026-11-12T00:00:03Z", session: "tend:reply-wake"),
             try message(host: local, id: "req_local", created: "2026-11-12T00:00:04Z", session: "s-dead"),
+            // A new live asker whose question arrived before the board
+            // snapshot that lists it.
+            try message(host: remote, id: "req_new", created: "2026-11-12T01:00:00Z", session: "s-new"),
         ]
         let decisions = FleetDecisions.merge(queue: nil, reviews: [], messages: messages, localHost: local)
         let agent = try JSONDecoder().decode(TendAgent.self, from: Data("""
         {"kind":"codex","agent_session_id":"s-live","cwd":"/src/tend","state":"idle"}
         """.utf8))
         // Only `mini`'s agents are known: `mac` lists none (disconnected or
-        // not loaded yet), so nothing there is called gone.
+        // not loaded yet), so nothing there is flagged.
         let attached = FleetDecisions.attachAskers(decisions, agents: [TendHostedAgent(host: remote, agent: agent, pane: nil)])
-        let gone = Dictionary(uniqueKeysWithValues: attached.map { ($0.id, $0.askerGone) })
-        #expect(gone["human:mini:req_live"] == false)
-        #expect(gone["human:mini:req_dead"] == true)
-        #expect(gone["human:mini:req_pending"] == false, "a pending address has no agent row yet")
-        #expect(gone["human:mini:req_wake"] == false, "tendd's own items are not an agent's question")
-        #expect(gone["human:mac:req_local"] == false)
-        #expect(FleetDecisions.attachAskers(decisions, agents: []).allSatisfy { !$0.askerGone })
+        let now = try #require(TendUsageTimestamp.parse("2026-11-12T01:05:00Z"))
+        let shown = Dictionary(uniqueKeysWithValues: attached.map { ($0.id, $0.asksUnlisted(at: now)) })
+        #expect(shown["human:mini:req_live"] == false)
+        #expect(shown["human:mini:req_dead"] == true)
+        #expect(shown["human:mini:req_pending"] == false, "a pending address has no agent row yet")
+        #expect(shown["human:mini:req_wake"] == false, "tendd's own items are not an agent's question")
+        #expect(shown["human:mac:req_local"] == false)
+        // Unlisted, but asked five minutes ago: the board may not have
+        // caught up with a new agent yet, so nothing is said.
+        let fresh = try #require(attached.first { $0.id == "human:mini:req_new" })
+        #expect(fresh.askerUnlisted)
+        #expect(!fresh.asksUnlisted(at: now))
+        #expect(fresh.asksUnlisted(at: now.addingTimeInterval(FleetDecision.unlistedGrace)))
+        #expect(FleetDecisions.attachAskers(decisions, agents: []).allSatisfy { !$0.askerUnlisted })
     }
 
     @Test(.enabled(if: GitRunner.shared != nil))

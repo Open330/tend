@@ -34,9 +34,22 @@ struct FleetDecision: Identifiable, Hashable, Sendable {
     /// The asking agent as Home sees it, when it is on the board.
     var askerAgentID: String?
     var askerCwd: String?
-    /// The asking agent's session is no longer on its host's board: nobody
-    /// is left to read an answer, so the question is stale.
-    var askerGone = false
+    /// The asking agent's session is not on its host's board as Home last
+    /// read it. Not proof that it exited (a new asker can be missing from a
+    /// board read before it started), so see `asksUnlisted(at:)`.
+    var askerUnlisted = false
+
+    /// How long a question must have waited before an unlisted asker is
+    /// shown: longer than any board refresh, so a fresh asker is not
+    /// flagged before its first snapshot.
+    static let unlistedGrace: TimeInterval = 10 * 60
+
+    /// Whether to tell the person the asker is not listed: unlisted, and
+    /// asked longer ago than any board refresh takes.
+    func asksUnlisted(at now: Date) -> Bool {
+        guard askerUnlisted, let since else { return false }
+        return now.timeIntervalSince(since) >= Self.unlistedGrace
+    }
 
     /// The asking agent's project, for Home's project filter.
     var repo: String? {

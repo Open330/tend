@@ -389,7 +389,7 @@ extension FleetDecisions {
             guard let session = decision.askerSessionID else { return decision }
             var decision = decision
             guard let agent = index.agent(host: decision.host.alias, session: session) else {
-                decision.askerGone = isGone(decision, session: session, index: index)
+                decision.askerUnlisted = isUnlisted(decision, session: session, index: index)
                 return decision
             }
             decision.askerAgentID = agent.id
@@ -398,11 +398,11 @@ extension FleetDecisions {
         }
     }
 
-    /// An agent's own question whose session its host no longer lists. Only
+    /// An agent's own question whose session its host does not list. Only
     /// on a host whose agents Home has (a disconnected host lists none), and
     /// never for tendd's own items or an address still waiting for its
     /// session (`pending-pane:`), which no agent row carries.
-    static func isGone(_ decision: FleetDecision, session: String, index: TendHostedAgentIndex) -> Bool {
+    static func isUnlisted(_ decision: FleetDecision, session: String, index: TendHostedAgentIndex) -> Bool {
         decision.isHumanRequest && !decision.isSystemAsk
             && !session.hasPrefix("pending-pane:")
             && index.hosts.contains(decision.host.alias)
@@ -738,11 +738,11 @@ struct FleetDecisionCard: View {
                 Text(verbatim: decision.host.alias)
                     .lineLimit(1)
             }
-            if decision.askerGone {
-                Text("Asker gone")
+            if decision.asksUnlisted(at: Date()) {
+                Text("Asker not listed")
                     .foregroundStyle(.orange)
                     .lineLimit(1)
-                    .help(String(localized: "The agent that asked is no longer running; nobody is waiting for this answer. Dismiss it if it no longer matters."))
+                    .help(String(localized: "The agent that asked is not listed on its host; it may have exited. Dismiss the question if it no longer matters."))
             }
             Spacer(minLength: 4)
             if busy {
@@ -778,7 +778,7 @@ struct FleetDecisionCard: View {
                 .buttonStyle(decision.options.isEmpty ? TendButtonStyle.tendSecondary : TendButtonStyle.tendGhost)
                 if let dismiss {
                     Button("Dismiss") { Task { _ = await dismiss() } }
-                        .buttonStyle(decision.askerGone ? TendButtonStyle.tendSecondary : TendButtonStyle.tendGhost)
+                        .buttonStyle(decision.asksUnlisted(at: Date()) ? TendButtonStyle.tendSecondary : TendButtonStyle.tendGhost)
                         .help(String(localized: "Close this question without answering it"))
                 }
             case .review:

@@ -14,9 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   holds it. It is recorded there as declined, so it leaves every client's
   queue. The asking agent, if it is still running, reads that the person
   dismissed it. Before, the only way to clear a wrong or outdated question
-  was to type an answer. An agent's question whose session its host no
-  longer lists is marked **Asker gone**, because nobody is waiting for that
-  answer.
+  was to type an answer. An agent's question that has waited over ten
+  minutes and whose session its host does not list is marked **Asker not
+  listed**: the agent may have exited.
 - Home in the Mac app does far less work per redraw. Each finished card's
   review key (a SHA-256 hex string) was recomputed about four times per
   render; it is now cached per card and revision and hex-encoded without
