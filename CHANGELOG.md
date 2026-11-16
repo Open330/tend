@@ -34,9 +34,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was sent". A paste that failed or timed out after tmux received it, or a
   backend that crashed mid-send, may already have typed the text. Those now
   say "it may have been typed" instead of offering a safe retry.
-
-### Fixed
-
 - The Mac app's window chrome (the root view, the side bar, the tab strips
   and the status bar) no longer redraws for every fleet heartbeat. Each
   observed the whole app model; they now draw from small inputs published
