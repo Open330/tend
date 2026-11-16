@@ -520,8 +520,11 @@ says them in its own language. The read is operator-only, like the decision
 queue: a viewer gets 403, an anonymous visitor 401. A paired device does not
 reach it.
 
-`POST /api/home/reviewed` with `{"id": "<unit id>"}` is **Looks Good** on a
-finished unit. It records the same review mark Tend for Mac records (an
+`POST /api/home/reviewed` with `{"id": "<unit id>", "review_key": "<the
+unit's review_key>"}` is **Looks Good** on a finished unit. The key names
+the result the person saw: if the unit changed since (another turn
+finished), tendd answers 409 and records nothing, so a mark never accepts a
+result nobody looked at. It records the same review mark Tend for Mac records (an
 accepted review whose idempotency key is `home:` plus the SHA-256 of the
 unit's id and revision), so a unit marked on the web is marked on the Mac
 too, and shows again once it changes. It is a control write (the token, or

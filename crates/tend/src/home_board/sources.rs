@@ -12,8 +12,9 @@ use tokio::sync::Mutex;
 use super::{BoardHost, BoardInput};
 
 const SWAP_HEALTH_TIMEOUT: Duration = Duration::from_millis(500);
-/// Swap readiness is asked at most once a minute (the Mac's cadence), so a
-/// slow health check never piles up blocking jobs.
+/// Swap readiness is asked at most once a minute (the Mac's cadence), which
+/// bounds how often a health check starts (one stuck longer than a minute
+/// can still overlap the next).
 const SWAP_READY_REUSE: Duration = Duration::from_secs(60);
 /// How long one built board is served to every reader: several tabs (and
 /// the apps) polling at once build it once.
