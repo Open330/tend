@@ -548,6 +548,10 @@ async fn send_prompt(
                             Err(DeliveryRefused::NotSent) => {
                                 Response::err("send_text failed: pane gone or host unreachable")
                             }
+                            // The paste was issued and not confirmed.
+                            Err(DeliveryRefused::Unknown) => Response::err(
+                                "send_text failed after the text was sent to the pane; it may have been typed",
+                            ),
                             Ok(delivered) => {
                                 let submitted = delivered.submitted;
                                 tracing::debug!(submit, submitted, "send_prompt");

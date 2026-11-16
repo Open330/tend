@@ -481,6 +481,18 @@ impl Default for BackendCaps {
 ///
 /// Implementors must be `Send + Sync + 'static` because the daemon
 /// stashes them on background tasks that own their own runtimes.
+/// What one prompt injection did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextSend {
+    /// The backend reports the text landed.
+    Sent,
+    /// Refused before anything reached the pane.
+    Refused,
+    /// The command was issued and did not report success: the text may or
+    /// may not be in the pane.
+    Unknown,
+}
+
 pub trait PaneBackend: Send + Sync + 'static {
     /// Which host this backend talks to. Cheap; safe to call per event.
     fn kind(&self) -> HostKind;
@@ -584,6 +596,23 @@ pub trait PaneBackend: Send + Sync + 'static {
     /// the application's paste state. Control keys must use `send_text_on`.
     fn send_prompt_text_on(&self, socket: Option<&str>, pane_id: &str, text: &str) -> bool {
         text.is_empty() || self.send_text_on(socket, pane_id, text)
+    }
+
+    /// [`Self::send_prompt_text_on`] telling a refusal made before anything
+    /// reached the pane ([`TextSend::Refused`]) from a failure after the
+    /// command was issued ([`TextSend::Unknown`]: the text may be there).
+    /// The default cannot tell, so every failure is `Unknown`.
+    fn send_prompt_text_checked(
+        &self,
+        socket: Option<&str>,
+        pane_id: &str,
+        text: &str,
+    ) -> TextSend {
+        if self.send_prompt_text_on(socket, pane_id, text) {
+            TextSend::Sent
+        } else {
+            TextSend::Unknown
+        }
     }
 
     /// Like [`Self::capture_pane`] but targeting the pane on the specific host
@@ -710,6 +739,14 @@ impl<T: PaneBackend + ?Sized> PaneBackend for Arc<T> {
     }
     fn send_prompt_text_on(&self, socket: Option<&str>, pane_id: &str, text: &str) -> bool {
         (**self).send_prompt_text_on(socket, pane_id, text)
+    }
+    fn send_prompt_text_checked(
+        &self,
+        socket: Option<&str>,
+        pane_id: &str,
+        text: &str,
+    ) -> TextSend {
+        (**self).send_prompt_text_checked(socket, pane_id, text)
     }
     fn remain_on_exit_override(
         &self,

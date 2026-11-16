@@ -120,6 +120,7 @@ pub mod mux_snapshot_control;
 pub mod work_complete;
 pub mod work_pipeline_spec;
 pub mod work_presets;
+pub mod work_queue;
 pub mod work_verify;
 pub mod worker_startup;
 pub mod worker_stop;
@@ -133,7 +134,7 @@ pub mod worktree_receipt;
 
 pub use backend::{
     active_backends, default_backend, identity_backend, rmux::RmuxBackend, tmux::TmuxBackend,
-    zellij::ZellijBackend, BackendCaps, HostKind, PaneBackend, SharedBackend,
+    zellij::ZellijBackend, BackendCaps, HostKind, PaneBackend, SharedBackend, TextSend,
 };
 pub use config::Config;
 pub use error::CoreError as Error;

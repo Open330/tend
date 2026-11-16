@@ -643,7 +643,7 @@ pub async fn execute(
             pipeline: Some(plan.pipeline.clone()), workspace: Some(plan.request.workspace.clone()),
             cwd: Some(paths.run.clone()), skill: None, body: Some(plan.request.body.clone()),
             context: Some(format!("Dispatch {}. Input commit {}. Write deliverables to {}. Report verification and resulting commit; launching is not completion.", plan.request.dispatch_id, plan.request.commit, paths.artifacts.display())),
-            no_ticket: true, dry_run: false, host: None,
+            no_ticket: true, dry_run: false, new_only: false, queue_lease: None, host: None,
         };
         let mut command_args = request.arguments();
         if let Some(config) = config { command_args.splice(0..0, ["--config".into(), config.display().to_string()]); }

@@ -4336,6 +4336,20 @@ impl CollaborationStore {
         requests
     }
 
+    /// Agent sessions with an open request for the person (attention,
+    /// questions, recovery decisions): they are waiting on a human even when
+    /// their row reads Idle.
+    pub async fn sessions_awaiting_person(&self) -> HashSet<String> {
+        self.requests
+            .read()
+            .await
+            .values()
+            .filter(|request| request.needs_human_response())
+            .map(|request| request.from.agent_session_id.clone())
+            .filter(|session| !session.is_empty())
+            .collect()
+    }
+
     /// Human attention has its own delivery queue; never wake a pane for it.
     pub async fn pending_human_notifications(&self) -> Vec<CollaborationRequest> {
         let _transaction = self.transaction_lock.lock().await;

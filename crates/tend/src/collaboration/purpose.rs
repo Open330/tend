@@ -350,6 +350,26 @@ impl CollaborationStore {
         Ok(())
     }
 
+    /// Sessions whose current purpose is worker: the latest consumed
+    /// (process-fenced) grant for each session decides, as
+    /// [`Self::enrich_launch_purposes`] reads it. Everything else is a
+    /// protected primary.
+    pub async fn worker_sessions(&self) -> HashSet<String> {
+        let grants = self.purposes.read().await;
+        let mut latest: std::collections::HashMap<&str, LaunchPurpose> =
+            std::collections::HashMap::new();
+        for grant in grants.iter() {
+            if let Some(session) = grant.consumed_by.as_deref() {
+                latest.insert(session, grant.purpose);
+            }
+        }
+        latest
+            .into_iter()
+            .filter(|(_, purpose)| *purpose == LaunchPurpose::Worker)
+            .map(|(session, _)| session.to_string())
+            .collect()
+    }
+
     /// Explicit self-session purpose changes never affect a later /new session.
     pub async fn set_purpose(
         &self,

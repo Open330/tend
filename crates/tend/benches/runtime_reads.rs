@@ -101,7 +101,7 @@ async fn pipeline_reads(count: usize) {
             .unwrap();
         // No early exit: every Run has an active claim during the measurement.
         store
-            .claim_ready(&run.identity, run.generation)
+            .claim_ready(&run.identity, run.generation, None)
             .await
             .unwrap();
     }
