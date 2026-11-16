@@ -414,9 +414,10 @@ struct FleetHomeView: View {
         movedFrom.merge(moves) { _, new in new }
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 4_000_000_000)
-            withAnimation(.easeOut(duration: 0.4)) {
-                for (id, lane) in moves where movedFrom[id] == lane { movedFrom[id] = nil }
-            }
+            // Not `withAnimation`: that animated the whole board for the
+            // fade, every card redrawn each frame. Each card fades its own
+            // mark (`FleetBoard.moveMarkAnimation`).
+            for (id, lane) in moves where movedFrom[id] == lane { movedFrom[id] = nil }
         }
     }
 
@@ -559,8 +560,9 @@ struct FleetHomeView: View {
                     }
                 }
                 .environment(\.fleetCardEmphasis, cardLayout == .emphasis)
+                .contentTransition(.identity)
                 .animation(
-                    animatesMoves ? .spring(response: 0.5, dampingFraction: 0.86) : nil,
+                    animatesMoves ? FleetBoard.moveAnimation : nil,
                     value: works.map { "\($0.id)|\($0.lane.rawValue)" }
                 )
                 .padding(16)

@@ -729,6 +729,14 @@ private func claimed(from session: String, label: String = "claude@%1") -> Strin
     #expect(FleetBoard.laneMoves(previous: [finished.id: .finished], current: works).isEmpty)
 }
 
+@Test func theMoveMarkFadesInsideItsCardOnly() {
+    // Set right after a move, outside the board's animation: no animation
+    // of its own. Cleared four seconds later: a short fade in the card,
+    // since the board no longer animates that change.
+    #expect(FleetBoard.moveMarkAnimation(.running) == nil)
+    #expect(FleetBoard.moveMarkAnimation(nil) != nil)
+}
+
 @Test func everyAgentWaitingInOneUnitIsListed() throws {
     let impl = try member("impl", "waiting_choice", alias: "impl", pane: "%1")
     let review = try member("review", "waiting_input", alias: "review", pane: "%2")

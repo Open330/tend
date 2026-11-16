@@ -111,6 +111,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   also stop observing the whole model. Measured side by side on two
   optimized copies against the live fleet: 16–18% less CPU with the
   window shown, about a third less with it hidden.
+- Home's lane moves cost less to draw. A card changing lane glides as
+  before, but text that changes during the glide (a "5 sec. ago", a new
+  headline) now swaps at once instead of being re-rendered every frame,
+  and the "From …" mark fades out inside its own card four seconds later
+  instead of animating the whole board again. With a card moving every
+  6 s on an optimized copy against the live fleet, the app used 18–20% less
+  CPU.
 
 ## [0.10.21] - 2026-11-16
 
