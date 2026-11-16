@@ -260,6 +260,16 @@ impl AppState {
 
     #[cfg(test)]
     #[must_use]
+    pub(in crate::dashboard) fn with_devices(
+        mut self,
+        devices: Arc<super::devices::Devices>,
+    ) -> Self {
+        self.devices = devices;
+        self
+    }
+
+    #[cfg(test)]
+    #[must_use]
     pub(in crate::dashboard) fn with_proof_node(mut self, node: &str) -> Self {
         self.proof_node = Some(node.to_owned());
         self
@@ -438,6 +448,7 @@ pub fn router(state: AppState) -> Router {
         .merge(decision_api)
         .merge(super::devices::pairing_routes())
         .merge(super::devices::device_routes(state.clone()))
+        .merge(super::devices::operate_routes(state.clone()))
         .merge(super::sharing::recipient_routes(state.clone()))
         .merge(super::operator::routes())
         .with_state(state.clone());
@@ -818,6 +829,9 @@ struct AccessCapabilities {
     /// `device_pairing_v1`: operators can pair a device that may only
     /// decide (needs the dashboard token to be configured).
     device_pairing: bool,
+    /// The scopes a paired device can be granted (`decide`, `operate`);
+    /// empty when pairing is unavailable.
+    device_scopes: &'static [&'static str],
 }
 
 async fn access_handler(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
@@ -836,6 +850,11 @@ async fn access_handler(State(state): State<AppState>, headers: HeaderMap) -> im
             work_start: state.config.allow_work_start,
             pane_sharing: state.config.sharing.is_some(),
             device_pairing: state.config.token.is_some(),
+            device_scopes: if state.config.token.is_some() {
+                &["decide", "operate"]
+            } else {
+                &[]
+            },
         },
         login: login_status(&state, &headers),
     })

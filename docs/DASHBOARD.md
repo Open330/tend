@@ -443,13 +443,24 @@ sign-in.
 ## Paired devices
 
 A phone (the Tend app for iPhone and iPad) does not use the dashboard
-token or an operator sign-in. It gets **its own credential, which can only
-decide**: it reads `GET /api/decisions` and `GET /api/decisions/history`
-and posts the two decision routes above, for every host this dashboard
-covers, and nothing else. Every other route refuses it as it would refuse
-no credential at all: no pane output or input, Fleet commands, Work control,
-shares, access management or new pairings. Deciding is still real
-authority: an answer can tell an agent to go ahead.
+token or an operator sign-in. It gets **its own credential**, with one of
+two scopes:
+
+- **`decide`** (the default): it reads `GET /api/decisions` and `GET
+  /api/decisions/history` and posts the two decision routes above, for
+  every host this dashboard covers. Deciding is still real authority: an
+  answer can tell an agent to go ahead.
+- **`operate`** (opt-in, granted by the approving operator): everything in
+  `decide`, plus device-only routes for the app's Home and Hosts, starting
+  with `GET /api/device/fleet` (the Fleet snapshot cut down to hosts'
+  states and their agents: no SSH targets, labels, capabilities or panes
+  without an agent). Later routes add an agent's recent output and starting
+  new work, which runs agents with permissions bypassed.
+
+Every operator route refuses a device token of either scope as it would
+refuse no credential at all: no `/api/fleet`, pane output or input, Fleet
+commands, Work control, shares, access management or new pairings. A
+device route outside its scope answers 403.
 
 Pairing is shaped like the OAuth device authorization grant (RFC 8628),
 with tend's own endpoints: no secret passes through a link, the clipboard
@@ -458,14 +469,25 @@ or another app.
 1. The app sends `POST /auth/devices/request` `{"name": "…", "platform":
    "ios"}` and gets `{device_code, user_code, expires_in, interval}`. It
    keeps the device code and shows the user code (`BCDF-GHJK`).
-2. An operator opens **access** in the dashboard header, types the code
-   under **Devices**, and approves (`POST /api/devices/approve`
-   `{"user_code": "…"}`, which answers with the device's name). Approve
-   only a code shown on a device you are pairing yourself, right now: a
-   code someone sends you would pair *their* device (RFC 8628, section 5.4).
+   It may add `"scope": "operate"` to ask for hosts and new work; anything
+   else asks for `decide`.
+2. An operator opens **access** in the dashboard header and types the code
+   under **Devices**. The dashboard first looks it up without granting
+   anything (`POST /api/devices/lookup` `{"user_code": "…"}`: the name,
+   platform, requested scope and when it asked), then the operator approves
+   that request (`POST /api/devices/approve` `{"user_code": "…", "scope":
+   "decide" | "operate"}`). For a device that asked for `operate`, the
+   dialog shows a separate, unticked box; without the tick it is paired to
+   `decide`. The device gets the lesser of what it asked and what was
+   granted; a scope left out is `decide`. Approve only a code shown on a
+   device you are holding, right now: a code someone sends you would pair
+   *their* device (RFC 8628, section 5.4), and with `operate` it could
+   start agents on your hosts.
 3. The app polls `POST /auth/devices/token` `{"device_code": "…"}` every
    `interval` seconds: `202 {"status": "pending"}` until approved, then
-   `201 {"device": {id, name, platform}, "token": "tdv_…"}` exactly once.
+   `201 {"device": {id, name, platform}, "token": "tdv_…", "scope": [...]}`
+   exactly once (`["decisions"]` or `["decisions", "operate"]`, as `GET
+   /api/device` also says).
    It sends `Authorization: Bearer tdv_…` from then on.
 
 Limits and lifetime:
@@ -477,6 +499,14 @@ Limits and lifetime:
   whichever comes first, and the moment it is removed (**Remove**, **Remove
   all**, or the app's Sign out, `POST /api/device/forget`). At most 16 are
   paired.
+- **Limit to deciding** (`POST /api/devices/{id}/limit`) drops an
+  `operate` device to `decide` at once, keeping it paired. It is written to
+  the store before it answers and cannot be undone for that token; to widen
+  a device, pair it again. Neither limiting nor removing undoes an agent a
+  device already started.
+- Every use counts towards the idle limit, so a token in daily use, by its
+  owner or by whoever stole it, lasts the full 90 days: removing it is the
+  defence.
 - Devices are their own principals. Removing the operator who approved a
   device, or rotating the dashboard token, does **not** unpair it: use
   **Remove all**.

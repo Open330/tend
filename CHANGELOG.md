@@ -24,6 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   status dot, the title, the host, how long ago); selecting a row opens its
   details beside the board, where a decision is answered and a unit's agent
   answered, opened or marked Looks Good as before.
+- Paired devices have a scope. `decide` is what phase 1 devices had, and
+  every existing device keeps it. `operate` also lets the iPhone and iPad
+  app see the hosts and their agents through `GET /api/device/fleet`, a cut-down
+  Fleet snapshot. The app asks for a scope. The operator first looks the code
+  up, which grants nothing, then approves with a separate, unticked box for
+  `operate`. The device gets the lesser of the two. **Limit to deciding**
+  narrows a device without unpairing it. Every operator route still refuses
+  a device token of either scope. The device store moves to schema version
+  2 in place.
 - tendd keeps a Work queue (`work_queue_v1`): prompts it sends to an agent
   once that agent is free, and Work it starts once fewer than
   `[work_queue] max_busy_agents` (default 3) agents are busy. The queue lives
