@@ -107,4 +107,36 @@ private func waitFor(_ condition: () -> Bool) async throws {
         #expect(model.askersRevision != askers)
         #expect(model.homeBoard.decisionsRevision != decisions)
     }
+
+    @Test func anOffScreenBoardHoldsUnitsAndTheClockUntilShown() throws {
+        let board = FleetHomeBoard()
+        var publishes = 0
+        let subscription = board.objectWillChange.sink { publishes += 1 }
+        defer { subscription.cancel() }
+        let first = works(try snapshot(activity: "2026-11-16T01:00:01Z"))
+        board.setWorks(first)
+        #expect(board.works.count == 1 && publishes == 1)
+
+        board.setVisible(false)
+        let hidden = publishes
+        board.setWorks(works(try snapshot(activity: "2026-11-16T01:00:02Z", state: "waiting_input")))
+        board.setWorks(works(try snapshot(activity: "2026-11-16T01:00:03Z", state: "idle")))
+        board.tick()
+        board.tick()
+        let revision = board.decisionsRevision
+        board.decisionsChanged()
+        #expect(publishes == hidden, "nothing on Home changes while the window is off screen")
+        #expect(board.works.first?.focus?.agent.state == "working")
+        let clock = board.clock
+
+        board.setVisible(true)
+        #expect(board.isVisible)
+        #expect(board.works.first?.focus?.agent.state == "idle", "the latest units show at once")
+        #expect(board.clock != clock, "relative times catch up at once")
+        #expect(board.decisionsRevision != revision, "a held decisions change applies")
+        board.setVisible(true)
+        let shown = publishes
+        board.tick()
+        #expect(publishes == shown + 1)
+    }
 }

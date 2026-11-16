@@ -106,22 +106,27 @@ struct FleetHomeView: View {
             board
         }
         .background(TendSurfacePalette.workspace(for: colorScheme).ignoresSafeArea())
+        .background(TendWindowVisibilityReader { [homeBoard] visible in homeBoard.setVisible(visible) })
         .sheet(item: $approvalSeed) { seed in
             FleetApprovalRuleSheet(model: model, seed: seed)
         }
         .sheet(item: $revisionTarget) { target in
             ChangesRevisionView(repo: target.repo, revision: target.revision)
         }
-        .task {
+        // Both polls pause while the window is off screen and restart, with
+        // a read at once, when it is shown again.
+        .task(id: homeBoard.isVisible) {
             // Decisions made elsewhere (the CLI, an agent, another window)
             // leave the queue while Home stays open.
+            guard homeBoard.isVisible else { return }
             while !Task.isCancelled {
                 await decisionFeed.load(model.client, works: allWorks)
                 try? await Task.sleep(for: FleetDecisionFeed.refreshEvery)
             }
         }
-        .task {
+        .task(id: homeBoard.isVisible) {
             // Work planned with `tend work plan` shows up while Home is open.
+            guard homeBoard.isVisible else { return }
             while !Task.isCancelled {
                 await backlogFeed.load(model.client)
                 try? await Task.sleep(for: FleetBacklogFeed.refreshEvery)
