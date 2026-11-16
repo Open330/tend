@@ -135,6 +135,9 @@ test("two panes sending at once: each stays locked until its own answer", async 
   releaseTwo();
   await settle();
   assert.equal(composer().disabled, false);
+  assert.equal(composer().value, "", "pane one's sent text is gone from the field on screen");
+  row("%2").click();
+  assert.equal(composer().value, "", "and pane two's");
 });
 
 test("a pane link names the host: the same pane id on another host opens that one", async () => {

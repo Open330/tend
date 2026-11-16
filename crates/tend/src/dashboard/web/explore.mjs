@@ -254,6 +254,9 @@ export function mountExplore(root, deps) {
       send.disabled = !area.value.trim() || view.sending.has(key);
     };
     view.syncComposer = sync;
+    // The composer on screen now, which a send that started on an earlier
+    // copy of this pane's view completes into.
+    view.current = { key, area, status };
     async function submit() {
       const text = area.value;
       if (!text.trim() || view.sending.has(key) || view.open?.id !== key) return;
@@ -267,10 +270,14 @@ export function mountExplore(root, deps) {
         if (item.socket) body.socket = item.socket;
         await write(`/api/panes/${encodeURIComponent(item.pane)}/prompt`, body);
         if (view.drafts.get(key) === text) view.drafts.delete(key);
-        if (area.value === text) area.value = "";
-        status.textContent = S.sent;
+        // Clear the field showing this pane now (the view may have been
+        // redrawn while the send was pending), only if it still holds what
+        // was sent.
+        const shown = view.current?.key === key ? view.current : { area, status };
+        if (shown.area.value === text) shown.area.value = "";
+        shown.status.textContent = S.sent;
       } catch (error) {
-        status.textContent = error.message;
+        (view.current?.key === key ? view.current.status : status).textContent = error.message;
       } finally {
         view.sending.delete(key);
         // Whichever pane is open now gets its composer back.
