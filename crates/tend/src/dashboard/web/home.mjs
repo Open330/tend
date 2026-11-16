@@ -908,6 +908,7 @@ function revealLinkedItem() {
   state.revealed = id;
   state.lane = "needsYou";
   $("board").dataset.lane = "needsYou";
+  for (const tab of document.querySelectorAll("#segments button")) tab.setAttribute("aria-selected", String(tab.dataset.lane === "needsYou"));
   if (state.layout === "compact") {
     state.selected = id;
     render();
