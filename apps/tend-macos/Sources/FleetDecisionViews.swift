@@ -20,9 +20,9 @@ final class FleetDecisionFeed: ObservableObject {
     @Published private(set) var busy: Set<String> = []
     /// The last error recording a decision, by id.
     @Published var failures: [String: String] = [:]
-    /// The one decision whose answer is open, and the text typed so far.
-    @Published private var composingID: String?
-    @Published private var drafts: [String: String] = [:]
+    /// The open answer and the text typed so far, per card: a keystroke
+    /// redraws its card, not every view that watches the feed.
+    let drafts = FleetDecisionDrafts()
     /// Past decisions on this Mac's daemon, for the history view.
     @Published private(set) var history: TendDecisionHistory?
     /// Why the last history read failed; the view offers a retry.
@@ -60,35 +60,41 @@ final class FleetDecisionFeed: ObservableObject {
         loading = true
         defer { loading = false }
         do {
+            // Polled every few seconds while Home is open: assign only what
+            // changed, so an unchanged queue does not redraw the board.
             if let queue = try await client.decisionQueue() {
                 if self.queue != queue { self.queue = queue }
                 if !reviews.isEmpty { reviews = [] }
-                problem = queue.unavailable.isEmpty
+                setProblem(queue.unavailable.isEmpty
                     ? nil
-                    : String(localized: "Some decisions could not be read: \(queue.unavailable.joined(separator: "; "))")
+                    : String(localized: "Some decisions could not be read: \(queue.unavailable.joined(separator: "; "))"))
             } else {
-                queue = nil
+                if queue != nil { queue = nil }
                 let page = try await client.reviewItems(offset: 0, limit: 200)
                 if reviews != page.items { reviews = page.items }
-                problem = nil
+                setProblem(nil)
             }
         } catch {
-            problem = String(localized: "Could not read decisions: \(error.localizedDescription)")
+            setProblem(String(localized: "Could not read decisions: \(error.localizedDescription)"))
         }
         // Without the board there is nothing to decide what to hide for.
         if !works.isEmpty { await loadReviewed(client, works: works, force: false) }
+    }
+
+    private func setProblem(_ problem: String?) {
+        if self.problem != problem { self.problem = problem }
     }
 
     /// Reads the history (for the history view) at most every
     /// `historyEvery` seconds, or now.
     func loadHistory(_ client: TendIPCClient, force: Bool) async {
         guard await client.supports(tendDecisionQueueCapability) else {
-            history = nil
-            historyUnsupported = true
-            historyError = nil
+            if history != nil { history = nil }
+            if !historyUnsupported { historyUnsupported = true }
+            if historyError != nil { historyError = nil }
             return
         }
-        historyUnsupported = false
+        if historyUnsupported { historyUnsupported = false }
         guard force || Date().timeIntervalSince(lastHistoryLoad) >= Self.historyEvery else { return }
         lastHistoryLoad = Date()
         historyLoading = true
@@ -96,7 +102,7 @@ final class FleetDecisionFeed: ObservableObject {
         do {
             guard let history = try await client.decisionHistory() else { return }
             if self.history != history { self.history = history }
-            historyError = nil
+            if historyError != nil { historyError = nil }
         } catch {
             // The last good history stays on screen under the error.
             historyError = String(localized: "Could not read the decision history: \(error.localizedDescription)")
@@ -110,7 +116,7 @@ final class FleetDecisionFeed: ObservableObject {
     /// window. An overlapping older read never replaces a newer one.
     func loadReviewed(_ client: TendIPCClient, works: [FleetWork], force: Bool) async {
         guard await client.supports("review_record_v1"), await client.supports("review_items_v1") else {
-            reviewedKeys = nil
+            if reviewedKeys != nil { reviewedKeys = nil }
             return
         }
         guard force || Date().timeIntervalSince(lastReviewedLoad) >= Self.historyEvery else { return }
@@ -216,25 +222,7 @@ final class FleetDecisionFeed: ObservableObject {
     /// The open answer for `id`: one composer at a time across Home and the
     /// Review sheet, so a keyboard Send can only reach the one on screen.
     func draft(for id: String) -> Binding<String?> {
-        Binding(
-            get: { [weak self] in
-                guard let self, self.composingID == id else { return nil }
-                return self.drafts[id] ?? ""
-            },
-            set: { [weak self] value in
-                guard let self else { return }
-                if let value {
-                    // Reopening keeps what was typed before; an option
-                    // (a non-empty value) replaces it on purpose.
-                    let reopening = self.composingID != id && value.isEmpty
-                    self.composingID = id
-                    if !(reopening && self.drafts[id] != nil) { self.drafts[id] = value }
-                } else if self.composingID == id {
-                    self.composingID = nil
-                    self.drafts[id] = nil
-                }
-            }
-        )
+        drafts.binding(for: id)
     }
 
     /// Replies to a human request as the person; tendd records the answer.
@@ -275,6 +263,71 @@ final class FleetDecisionFeed: ObservableObject {
         // decided elsewhere.
         await load(model.client)
         return succeeded
+    }
+}
+
+/// One decision's answer: open or not, and the text typed so far, which a
+/// closed answer keeps for when it is reopened. Each card watches only its
+/// own, so typing redraws one card.
+@MainActor
+final class FleetDecisionDraft: ObservableObject {
+    /// For cards with no shared draft (previews, tests): never changes.
+    static let detached = FleetDecisionDraft(id: "", owner: nil)
+
+    let id: String
+    fileprivate weak var owner: FleetDecisionDrafts?
+    @Published fileprivate(set) var isOpen = false
+    @Published fileprivate(set) var text: String?
+
+    fileprivate init(id: String, owner: FleetDecisionDrafts?) {
+        self.id = id
+        self.owner = owner
+    }
+
+    /// The answer field's text, nil while it is closed.
+    var value: String? { isOpen ? (text ?? "") : nil }
+
+    func update(_ value: String?) {
+        owner?.set(value, for: id)
+    }
+}
+
+/// Every card's answer, with one open at a time across Home and the Review
+/// sheet.
+@MainActor
+final class FleetDecisionDrafts {
+    private var rows: [String: FleetDecisionDraft] = [:]
+    private var openID: String?
+
+    func row(for id: String) -> FleetDecisionDraft {
+        if let row = rows[id] { return row }
+        let row = FleetDecisionDraft(id: id, owner: self)
+        rows[id] = row
+        return row
+    }
+
+    func binding(for id: String) -> Binding<String?> {
+        let row = row(for: id)
+        return Binding(get: { row.value }, set: { row.update($0) })
+    }
+
+    fileprivate func set(_ value: String?, for id: String) {
+        let row = row(for: id)
+        if let value {
+            // Reopening keeps what was typed before; an option (a non-empty
+            // value) replaces it on purpose.
+            let reopening = openID != id && value.isEmpty
+            if openID != id {
+                if let openID, let open = rows[openID], open.isOpen { open.isOpen = false }
+                openID = id
+            }
+            if !(reopening && row.text != nil), row.text != value { row.text = value }
+            if !row.isOpen { row.isOpen = true }
+        } else if openID == id {
+            openID = nil
+            if row.isOpen { row.isOpen = false }
+            if row.text != nil { row.text = nil }
+        }
     }
 }
 
@@ -498,13 +551,37 @@ struct FleetDecisionCard: View {
     var initialAnswer: String?
     /// The open answer, shared by every card so only one composer (and one
     /// ⌘↩ Send) exists at a time; a card without one keeps its own.
-    var draft: Binding<String?>?
+    @ObservedObject private var draft: FleetDecisionDraft
+    private let sharesDraft: Bool
     @State private var localDraft: String?
 
+    init(
+        decision: FleetDecision,
+        busy: Bool = false,
+        failure: String? = nil,
+        openRevision: @escaping (FleetRevisionTarget) -> Void,
+        answer: @escaping (String) async -> Bool,
+        decide: @escaping (TendReviewDisposition, String?) async -> Bool,
+        openAsker: (() -> Void)? = nil,
+        initialAnswer: String? = nil,
+        draft: FleetDecisionDraft? = nil
+    ) {
+        self.decision = decision
+        self.busy = busy
+        self.failure = failure
+        self.openRevision = openRevision
+        self.answer = answer
+        self.decide = decide
+        self.openAsker = openAsker
+        self.initialAnswer = initialAnswer
+        _draft = ObservedObject(wrappedValue: draft ?? .detached)
+        sharesDraft = draft != nil
+    }
+
     private var composing: String? {
-        get { draft?.wrappedValue ?? localDraft }
+        get { sharesDraft ? draft.value : localDraft }
         nonmutating set {
-            if let draft { draft.wrappedValue = newValue } else { localDraft = newValue }
+            if sharesDraft { draft.update(newValue) } else { localDraft = newValue }
         }
     }
     @Environment(\.colorScheme) private var colorScheme

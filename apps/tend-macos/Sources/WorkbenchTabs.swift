@@ -353,25 +353,32 @@ final class TendWorkbenchTabs: ObservableObject {
         focusedGroupID = groupID
     }
 
+    /// Runs on every workspace change, so it works on a copy and publishes
+    /// (and persists) only when a tab actually went away: each in-place
+    /// edit of `groups` would otherwise publish and write the defaults.
     func prune(where isAvailable: (TendSidebarSelection) -> Bool) {
-        for index in groups.indices.reversed() {
-            groups[index].tabs.removeAll { !isAvailable($0) }
-            groups[index].history.removeAll { !isAvailable($0) }
-            if let preview = groups[index].preview, !isAvailable(preview) {
-                groups[index].preview = nil
+        var pruned = groups
+        var focused = focusedGroupID
+        for index in pruned.indices.reversed() {
+            pruned[index].tabs.removeAll { !isAvailable($0) }
+            pruned[index].history.removeAll { !isAvailable($0) }
+            if let preview = pruned[index].preview, !isAvailable(preview) {
+                pruned[index].preview = nil
             }
-            if let active = groups[index].active, !isAvailable(active) {
-                groups[index].active = groups[index].history.last
-                    ?? groups[index].tabs.first
+            if let active = pruned[index].active, !isAvailable(active) {
+                pruned[index].active = pruned[index].history.last
+                    ?? pruned[index].tabs.first
             }
-            if groups[index].tabs.isEmpty, groups.count > 1 {
-                let removedID = groups[index].id
-                groups.remove(at: index)
-                if focusedGroupID == removedID {
-                    focusedGroupID = groups[0].id
+            if pruned[index].tabs.isEmpty, pruned.count > 1 {
+                let removedID = pruned[index].id
+                pruned.remove(at: index)
+                if focused == removedID {
+                    focused = pruned[0].id
                 }
             }
         }
+        if pruned != groups { groups = pruned }
+        if focused != focusedGroupID { focusedGroupID = focused }
     }
 
     private func open(

@@ -89,9 +89,10 @@ final class FleetBacklogFeed: ObservableObject {
         do {
             let records = try await client.workBacklog()
             if self.records != records { self.records = records }
-            problem = nil
+            if problem != nil { problem = nil }
         } catch {
-            problem = String(localized: "Could not read the backlog: \(error.localizedDescription)")
+            let problem = String(localized: "Could not read the backlog: \(error.localizedDescription)")
+            if self.problem != problem { self.problem = problem }
         }
     }
 

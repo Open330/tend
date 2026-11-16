@@ -16,6 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pass. Reading a large tendd response no longer rescans the whole buffer
   after every 16 KB read. A 15 s CPU sample of the idle app showed these
   paths at the top.
+- The idle Mac app stops publishing values that did not change. Home's
+  decision poll (every 5 s) and backlog poll (every 15 s) assigned an
+  unchanged status on each read, which redrew the whole board; the
+  15-second projection rebuild replaced the agent, Work and Home lists even
+  when nothing differed; pruning editor tabs after every Fleet event
+  published and wrote the tab layout to the defaults several times; and
+  every Inbox read rewrote the notification receipts. Each now publishes or
+  writes only on a change. A process preview that no view shows no longer
+  counts as a new Fleet snapshot, and typing a decision answer redraws only
+  that card. `TEND_PERF_COUNTERS=<seconds>` prints debug counters for this
+  work (body evaluations, publishes, projections, polls) to standard error.
 
 ### Fixed
 

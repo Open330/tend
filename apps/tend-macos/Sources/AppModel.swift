@@ -945,6 +945,7 @@ final class AppModel: ObservableObject {
         await workspaceProjector.refresh(build: { [self] in
             let connection = connectionGeneration
             let snapshot = executionSnapshot, runs = pipelineRuns
+            let published = (agents: hostedAgents, groups: workGroups, works: homeWorks)
             let now = Date()
             TendPerf.count("projection.built")
             return await Task.detached(priority: .userInitiated) {
@@ -959,17 +960,24 @@ final class AppModel: ObservableObject {
                         return left.agent.agentSessionID < right.agent.agentSessionID
                     }
                 let groups = snapshot.workGroups(pipelineRuns: runs)
-                return TendWorkspaceProjection(agents: agents, groups: groups,
+                var projection = TendWorkspaceProjection(agents: agents, groups: groups,
                     works: FleetBoard.works(groups: groups, agents: agents, now: now),
                     builtAt: now, connection: connection)
+                projection.changed = projection.changes(
+                    fromAgents: published.agents, groups: published.groups, works: published.works
+                )
+                return projection
             }.value
         }, publish: { [weak self] result in
             guard let self, result.connection == connectionGeneration else { return }
-            TendPerf.count("projection.published")
-            hostedAgents = result.agents
-            workGroups = result.groups
-            homeWorks = result.works
             projectionBuiltAt = result.builtAt
+            // The comparison ran against what was published when the build
+            // started; nothing else publishes these, so it still holds.
+            guard !result.changed.isEmpty else { return }
+            TendPerf.count("projection.published")
+            if result.changed.contains(.agents) { hostedAgents = result.agents }
+            if result.changed.contains(.groups) { workGroups = result.groups }
+            if result.changed.contains(.works) { homeWorks = result.works }
         })
     }
 
@@ -1671,7 +1679,7 @@ final class AppModel: ObservableObject {
         let generation = connectionGeneration
         isRefreshingInbox = true
         if hostAliases == nil { lastInboxRefresh = Date() }
-        inboxError = nil
+        if inboxError != nil { inboxError = nil }
         defer { isRefreshingInbox = false }
 
         let allTargets = executionSnapshot.watchHosts.map { host -> TendWatchPane in

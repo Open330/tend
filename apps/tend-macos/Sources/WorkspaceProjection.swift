@@ -35,4 +35,69 @@ struct TendWorkspaceProjection: Sendable {
     let works: [FleetWork]
     let builtAt: Date
     let connection: UInt64
+    /// Which parts differ from what was published when the build started;
+    /// only those are published, so an unchanged rebuild (the periodic one,
+    /// or a snapshot whose change projects to nothing) redraws nothing.
+    var changed = Changes.all
+
+    struct Changes: OptionSet, Sendable {
+        let rawValue: UInt8
+        static let agents = Changes(rawValue: 1 << 0)
+        static let groups = Changes(rawValue: 1 << 1)
+        static let works = Changes(rawValue: 1 << 2)
+        static let all: Changes = [.agents, .groups, .works]
+    }
+
+    /// What differs between `self` and the published `agents`, `groups` and
+    /// `works`.
+    func changes(fromAgents agents: [TendHostedAgent], groups: [TendWorkGroup], works: [FleetWork]) -> Changes {
+        var changed: Changes = []
+        if !TendProjectionEquality.same(self.agents, agents, by: TendProjectionEquality.same) { changed.insert(.agents) }
+        if !TendProjectionEquality.same(self.groups, groups, by: TendProjectionEquality.same) { changed.insert(.groups) }
+        if !TendProjectionEquality.same(self.works, works, by: TendProjectionEquality.same) { changed.insert(.works) }
+        return changed
+    }
+}
+
+/// Content equality for the projected lists, used only off the main thread
+/// to decide what to publish. The types are deliberately not `Equatable`:
+/// SwiftUI compares an `Equatable` view input with `==` on every update,
+/// and a deep compare of every card's agents (long responses included)
+/// cost more than it saved.
+enum TendProjectionEquality {
+    static func same<Element>(_ lhs: [Element], _ rhs: [Element], by equal: (Element, Element) -> Bool) -> Bool {
+        lhs.count == rhs.count && zip(lhs, rhs).allSatisfy(equal)
+    }
+
+    static func same(_ lhs: TendHostedAgent, _ rhs: TendHostedAgent) -> Bool {
+        lhs.host == rhs.host && lhs.pane == rhs.pane && lhs.agent == rhs.agent
+    }
+
+    static func same(_ lhs: TendHostedAgent?, _ rhs: TendHostedAgent?) -> Bool {
+        switch (lhs, rhs) {
+        case (nil, nil): true
+        case let (lhs?, rhs?): same(lhs, rhs)
+        default: false
+        }
+    }
+
+    static func same(_ lhs: TendWorkGroup, _ rhs: TendWorkGroup) -> Bool {
+        lhs.identity == rhs.identity && lhs.pipelineRun == rhs.pipelineRun
+            && same(lhs.participants, rhs.participants, by: same)
+    }
+
+    /// Every stored property of `FleetWork`; a test counts them, so a new
+    /// one cannot be left out unnoticed.
+    static let fleetWorkFields = 16
+
+    static func same(_ lhs: FleetWork, _ rhs: FleetWork) -> Bool {
+        lhs.source == rhs.source && lhs.title == rhs.title && lhs.repo == rhs.repo
+            && lhs.lane == rhs.lane && lhs.stages == rhs.stages && lhs.headline == rhs.headline
+            && lhs.since == rhs.since && lhs.handledLimit == rhs.handledLimit
+            && lhs.revision == rhs.revision && lhs.lastChange == rhs.lastChange
+            && lhs.isOrphanHelper == rhs.isOrphanHelper && lhs.isProbableHelper == rhs.isProbableHelper
+            && lhs.isEmptySession == rhs.isEmptySession
+            && same(lhs.focus, rhs.focus)
+            && same(lhs.agents, rhs.agents, by: same) && same(lhs.helpers, rhs.helpers, by: same)
+    }
 }
