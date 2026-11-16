@@ -153,4 +153,37 @@ private func partialQueue() -> [String: Any] {
         let fewer = try JSONDecoder().decode(TendAgentWorkload.self, from: Data(#"{"process_count":1,"shell_count":1}"#.utf8))
         #expect(try workload(10) != fewer, "a count is shown, so it is a change")
     }
+
+    @Test func homesDecisionsAreMergedOnceUntilTheirInputsChange() async throws {
+        let client = daemon(capabilities: ["decision_queue_v1"]) { kind in
+            kind == "decision_queue" ? ["ok": true, "decision_queue": partialQueue()] : ["ok": true]
+        }
+        try await client.hello()
+        let model = AppModel(client: client)
+        let host = try JSONDecoder().decode(TendFleetHost.self, from: Data(#"{"alias":"mac","local":true,"mode":"local","state":"online"}"#.utf8))
+        model.ingestExecutionSnapshotForTesting(TendExecutionSnapshot(hosts: [host]))
+        let feed = FleetDecisionFeed()
+        _ = feed.decisions(model)
+        _ = feed.decisions(model)
+        _ = feed.decisions(model)
+        #expect(feed.decisionBuilds == 1, "every redraw asks; nothing changed")
+        await feed.load(client)
+        _ = feed.decisions(model)
+        _ = feed.decisions(model)
+        #expect(feed.decisionBuilds == 2, "a new queue is merged once")
+    }
+
+    @Test func theAgentIndexKeepsTheFirstAgentLikeTheScanDid() throws {
+        let host = TendFleetHostIdentity(alias: "mac", local: true, state: "online", mode: "local")
+        func agent(_ session: String, cwd: String) throws -> TendHostedAgent {
+            let agent = try JSONDecoder().decode(TendAgent.self, from: Data("""
+            {"kind":"claude","agent_session_id":"\(session)","state":"working","cwd":"\(cwd)"}
+            """.utf8))
+            return TendHostedAgent(host: host, agent: agent, pane: nil)
+        }
+        let index = TendHostedAgentIndex([try agent("s-1", cwd: "/a"), try agent("s-1", cwd: "/b"), try agent("s-2", cwd: "/c")])
+        #expect(index.agent(host: "mac", session: "s-1")?.agent.cwd == "/a")
+        #expect(index.agent(host: "mini", session: "s-1") == nil)
+        #expect(index.byID["mac:s-2"]?.agent.cwd == "/c")
+    }
 }

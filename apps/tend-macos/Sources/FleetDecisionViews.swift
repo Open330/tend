@@ -13,8 +13,22 @@ import SwiftUI
 /// requests come from the console mailbox the app already reads.
 @MainActor
 final class FleetDecisionFeed: ObservableObject {
-    @Published private(set) var queue: TendPendingQueue?
-    @Published private(set) var reviews: [TendReviewItem] = []
+    @Published private(set) var queue: TendPendingQueue? { didSet { sourceRevision &+= 1 } }
+    @Published private(set) var reviews: [TendReviewItem] = [] { didSet { sourceRevision &+= 1 } }
+    /// Bumped with every change of `queue` or `reviews`.
+    private var sourceRevision: UInt64 = 0
+    /// The last merged decisions and what they were built from: Home asks
+    /// on every redraw, and they change only when one of these does.
+    private var cachedDecisions: (key: DecisionsKey, value: [FleetDecision])?
+    /// How many times the decisions were merged, for tests.
+    private(set) var decisionBuilds = 0
+
+    private struct DecisionsKey: Equatable {
+        let source: UInt64
+        let messages: UInt64
+        let agents: UInt64
+        let localHost: TendFleetHostIdentity
+    }
     @Published private(set) var problem: String?
     /// Decisions being recorded, by id.
     @Published private(set) var busy: Set<String> = []
@@ -215,8 +229,17 @@ final class FleetDecisionFeed: ObservableObject {
     /// checkout when Home knows it.
     func decisions(_ model: AppModel) -> [FleetDecision] {
         guard let local = model.fleetHosts.first(where: \.local)?.identity else { return [] }
+        let key = DecisionsKey(
+            source: sourceRevision, messages: model.operatorMessagesRevision,
+            agents: model.askersRevision, localHost: local
+        )
+        if let cachedDecisions, cachedDecisions.key == key { return cachedDecisions.value }
+        decisionBuilds += 1
+        TendPerf.count("decision.merge")
         let merged = FleetDecisions.merge(queue: queue, reviews: reviews, messages: model.operatorMessages, localHost: local)
-        return FleetDecisions.attachAskers(merged, agents: model.hostedAgents)
+        let value = FleetDecisions.attachAskers(merged, index: model.hostedAgentIndex)
+        cachedDecisions = (key, value)
+        return value
     }
 
     /// The open answer for `id`: one composer at a time across Home and the
@@ -335,9 +358,13 @@ extension FleetDecisions {
     /// Fills in each decision's asking agent (its checkout and repository)
     /// from the agents Home sees on the same host.
     static func attachAskers(_ decisions: [FleetDecision], agents: [TendHostedAgent]) -> [FleetDecision] {
+        attachAskers(decisions, index: TendHostedAgentIndex(agents))
+    }
+
+    static func attachAskers(_ decisions: [FleetDecision], index: TendHostedAgentIndex) -> [FleetDecision] {
         decisions.map { decision in
             guard let session = decision.askerSessionID,
-                  let agent = agents.first(where: { $0.host.alias == decision.host.alias && $0.agent.agentSessionID == session })
+                  let agent = index.agent(host: decision.host.alias, session: session)
             else { return decision }
             var decision = decision
             decision.askerAgentID = agent.id

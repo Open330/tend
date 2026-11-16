@@ -27,6 +27,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   counts as a new Fleet snapshot, and typing a decision answer redraws only
   that card. `TEND_PERF_COUNTERS=<seconds>` prints debug counters for this
   work (body evaluations, publishes, projections, polls) to standard error.
+- Home merges its decisions (the queue, review items and every host's
+  questions, with their dates parsed and sorted) once per change of those
+  inputs instead of on every redraw, and finds each asking agent through an
+  index built with the agent list rather than a scan per decision. Tabs and
+  Home's cards look agents up the same way.
+- Home no longer redraws for every change anywhere in the Mac app. It
+  watched the whole app model, so the Inbox's progress, Ask, a remote
+  agent's heartbeat or the workspace revision each re-evaluated the entire
+  board. It now watches its own board state: its units (replaced only when
+  something Home shows changes, not when an agent's last-activity time or
+  process list moves), the hosts' names and states, the connection, and
+  what its decisions are built from, plus a 15-second clock so "5 min ago"
+  and the day-old fold keep moving.
+- While the Mac app's window is hidden, minimized, fully covered or on
+  another Space, Home pauses its decision (5 s) and backlog (15 s) polls,
+  holds new board state and stops its clock. Showing the window again
+  applies what arrived and reads both feeds at once. Notifications, the menu
+  bar and unread tracking keep running from the app model.
 
 ### Fixed
 

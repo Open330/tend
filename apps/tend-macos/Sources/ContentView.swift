@@ -282,7 +282,11 @@ struct ContentView: View {
             ArtifactPreviewView(location: location, model: model, isFocused: groupID == tabs.focusedGroupID, openFile: openFile)
                 .id(location)
         case .workBoard:
-            FleetHomeView(model: model)
+            // Equatable: ContentView redraws for every model publish, and
+            // Home's state wrappers would otherwise make SwiftUI treat it as
+            // changed each time.
+            FleetHomeView(model: model, homeBoard: model.homeBoard)
+                .equatable()
         case .watch:
             NativeWatchView(model: model)
         case .inbox:

@@ -90,7 +90,7 @@ struct TendAttentionTracking: ViewModifier {
             switch selection {
             case .pane(let id): id
             case .agent(let id):
-                model.hostedAgents.first { $0.id == id }.flatMap(TendAgentAttentionCenter.paneIdentity)
+                model.hostedAgent(id: id).flatMap(TendAgentAttentionCenter.paneIdentity)
             default: nil
             }
         })

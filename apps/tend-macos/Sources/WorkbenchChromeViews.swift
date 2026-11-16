@@ -227,7 +227,7 @@ struct WorkspaceTabBar: View {
         case .work(let identity):
             model.workGroups.first { $0.identity == identity }?.title ?? identity.workID
         case .agent(let id):
-            model.hostedAgents.first { $0.id == id }.map {
+            model.hostedAgent(id: id).map {
                 $0.agent.aiTitle
                     ?? $0.pane?.agentAlias.map { "@\($0)" }
                     ?? $0.agent.kind.replacingOccurrences(of: "_", with: " ")
@@ -257,7 +257,7 @@ struct WorkspaceTabBar: View {
     private func agentStatus(for selection: TendSidebarSelection) -> TendAgentStatus? {
         switch selection {
         case .pane(let id): model.executionSnapshot.watchPane(id: id)?.agent?.status
-        case .agent(let id): model.hostedAgents.first { $0.id == id }?.agent.status
+        case .agent(let id): model.hostedAgent(id: id)?.agent.status
         default: nil
         }
     }
@@ -266,7 +266,7 @@ struct WorkspaceTabBar: View {
     private func unreadPane(for selection: TendSidebarSelection) -> TendWatchPaneIdentity? {
         switch selection {
         case .pane(let id): id
-        case .agent(let id): model.hostedAgents.first { $0.id == id }.flatMap(TendAgentAttentionCenter.paneIdentity)
+        case .agent(let id): model.hostedAgent(id: id).flatMap(TendAgentAttentionCenter.paneIdentity)
         default: nil
         }
     }

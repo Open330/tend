@@ -109,6 +109,18 @@ final class AppModel: ObservableObject {
     }
     @Published private(set) var workGroups: [TendWorkGroup] = []
     @Published private(set) var hostedAgents: [TendHostedAgent] = []
+    /// `hostedAgents` by id, and by host and agent session, built with them
+    /// off the main thread; lookups on every redraw use these, not a scan.
+    private(set) var hostedAgentIndex = TendHostedAgentIndex()
+    /// Bumped whenever `hostedAgents` or `operatorMessages` is published, so
+    /// a projection of them can tell it is current without comparing.
+    private(set) var hostedAgentsRevision: UInt64 = 0
+    /// Bumped when an asking agent's id or checkout changes (all a decision
+    /// reads from its asker).
+    private(set) var askersRevision: UInt64 = 0
+    /// What Home's board draws, published only when that changes.
+    let homeBoard = FleetHomeBoard()
+    private(set) var operatorMessagesRevision: UInt64 = 0
     /// Materialized off the main actor, once per workspace projection.
     @Published private(set) var homeWorks: [FleetWork] = []
     @Published private(set) var workspaceRevision: UInt64 = 0
@@ -293,6 +305,9 @@ final class AppModel: ObservableObject {
 
     var agents: [TendAgent] { executionSnapshot.agents }
 
+    /// The listed (not stopped) agent with this id, from the index.
+    func hostedAgent(id: String) -> TendHostedAgent? { hostedAgentIndex.byID[id] }
+
     /// Compact Inbox wording for `inboxHostFailures`, shared with the sidebar.
     var inboxHostFailureSummary: String? {
         TendInboxHostFailureText.summary(inboxHostFailures)
@@ -327,6 +342,7 @@ final class AppModel: ObservableObject {
                 Task { @MainActor [weak self] in await self?.rebuildWorkspaceProjections() }
             }
         if TendPerf.isEnabled { installPerfCounters() }
+        homeBoard.follow(self)
     }
 
     /// Test seam. The app ingests execution snapshots through `refresh`, which
@@ -946,6 +962,7 @@ final class AppModel: ObservableObject {
             let connection = connectionGeneration
             let snapshot = executionSnapshot, runs = pipelineRuns
             let published = (agents: hostedAgents, groups: workGroups, works: homeWorks)
+            let board = homeBoard.latestWorks, askers = hostedAgentIndex.askers
             let now = Date()
             TendPerf.count("projection.built")
             return await Task.detached(priority: .userInitiated) {
@@ -960,11 +977,12 @@ final class AppModel: ObservableObject {
                         return left.agent.agentSessionID < right.agent.agentSessionID
                     }
                 let groups = snapshot.workGroups(pipelineRuns: runs)
-                var projection = TendWorkspaceProjection(agents: agents, groups: groups,
+                var projection = TendWorkspaceProjection(agents: agents, index: TendHostedAgentIndex(agents), groups: groups,
                     works: FleetBoard.works(groups: groups, agents: agents, now: now),
                     builtAt: now, connection: connection)
                 projection.changed = projection.changes(
-                    fromAgents: published.agents, groups: published.groups, works: published.works
+                    fromAgents: published.agents, groups: published.groups, works: published.works,
+                    board: board, askers: askers
                 )
                 return projection
             }.value
@@ -975,9 +993,18 @@ final class AppModel: ObservableObject {
             // started; nothing else publishes these, so it still holds.
             guard !result.changed.isEmpty else { return }
             TendPerf.count("projection.published")
-            if result.changed.contains(.agents) { hostedAgents = result.agents }
+            if result.changed.contains(.agents) {
+                hostedAgentIndex = result.index
+                hostedAgentsRevision &+= 1
+                hostedAgents = result.agents
+            }
             if result.changed.contains(.groups) { workGroups = result.groups }
             if result.changed.contains(.works) { homeWorks = result.works }
+            if result.changed.contains(.askers) {
+                askersRevision &+= 1
+                homeBoard.decisionsChanged()
+            }
+            if result.changed.contains(.board) { homeBoard.setWorks(result.works) }
         })
     }
 
@@ -1765,7 +1792,10 @@ final class AppModel: ObservableObject {
                 }
                 return lhs.id < rhs.id
             }
-        if operatorMessages != updatedMessages { operatorMessages = updatedMessages }
+        if operatorMessages != updatedMessages {
+            operatorMessagesRevision &+= 1
+            operatorMessages = updatedMessages
+        }
         attention.ingestHumanRequests(updatedMessages)
         if inboxHostFailures != failures { inboxHostFailures = failures }
     }
@@ -2203,7 +2233,7 @@ final class AppModel: ObservableObject {
         case .work(let key):
             workGroups.contains { $0.identity == key }
         case .agent(let id):
-            hostedAgents.contains { $0.id == id }
+            hostedAgentIndex.byID[id] != nil
         case .host(let id):
             fleetHosts.contains { $0.id == id }
         case .fleetSession(let id):
