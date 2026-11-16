@@ -242,25 +242,29 @@ extension FleetBoard {
     }
 }
 
-/// `FleetBoard.reviewKey` results by unit id. One entry per unit: a new
-/// revision replaces the old key, so the cache never outgrows the board.
+/// `FleetBoard.reviewKey` results by unit id. A new revision replaces the
+/// old key; departed units linger until the bounded cache is flushed.
+/// Entries are keyed and matched by UTF-8 bytes, not `String` equality:
+/// Swift compares strings by canonical equivalence, but the hash covers raw
+/// bytes, so "é" and "e\u{301}" must not share a cached key.
 final class FleetReviewKeyCache: @unchecked Sendable {
     static let shared = FleetReviewKeyCache()
 
     private let lock = NSLock()
-    private var entries: [String: (revision: String, key: String)] = [:]
+    private var entries: [[UInt8]: (revision: [UInt8], key: String)] = [:]
 
     func key(id: String, revision: String) -> String {
+        let idBytes = Array(id.utf8)
         lock.lock()
-        if let entry = entries[id], entry.revision == revision {
+        if let entry = entries[idBytes], entry.revision.elementsEqual(revision.utf8) {
             lock.unlock()
             return entry.key
         }
         lock.unlock()
         let key = Self.compute(id: id, revision: revision)
         lock.lock()
-        if entries.count > 4_096 { entries.removeAll(keepingCapacity: true) }
-        entries[id] = (revision, key)
+        if entries.count >= 4_096 { entries.removeAll(keepingCapacity: true) }
+        entries[idBytes] = (Array(revision.utf8), key)
         lock.unlock()
         return key
     }

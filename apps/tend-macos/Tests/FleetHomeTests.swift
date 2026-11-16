@@ -947,4 +947,11 @@ private func claimed(from session: String, label: String = "claude@%1") -> Strin
     let moved = cache.key(id: "u", revision: "r2")
     #expect(moved != first)
     #expect(moved == legacy("u", "r2"))
+
+    // Canonically equivalent but byte-distinct ids/revisions are different keys.
+    let nfc = "work:caf\u{e9}", nfd = "work:cafe\u{301}"
+    _ = cache.key(id: nfc, revision: "r1")
+    #expect(cache.key(id: nfd, revision: "r1") == legacy(nfd, "r1"))
+    _ = cache.key(id: "v", revision: "caf\u{e9}")
+    #expect(cache.key(id: "v", revision: "cafe\u{301}") == legacy("v", "cafe\u{301}"))
 }
