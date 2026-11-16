@@ -14,7 +14,7 @@ const POLL_MS = 1500;
 
 export function mountExplore(root, deps) {
   const { S, el, icon, button, logo, hostBadge, when, read, write, authHeaders, canWrite } = deps;
-  const view = { show: "all", query: "", grouping: "host", fleet: null, open: null, stream: null, poll: null, sending: false, drafts: new Map(), collapsed: new Set(), closed: false };
+  const view = { show: "all", query: "", grouping: "host", fleet: null, open: null, stream: null, poll: null, sending: null, drafts: new Map(), collapsed: new Set(), closed: false, syncComposer: null, hash: null };
 
   const sidebar = el("aside", "ex-side");
   const viewer = el("section", "ex-view");
@@ -114,7 +114,7 @@ export function mountExplore(root, deps) {
           sessionRow.append(icon("chevron"), icon("layers"), el("span", "ex-name", session.name || "—"), el("span", "ex-n", String(session.rows.length)));
           nodes.push(sessionRow);
           for (const window of session.windows) {
-            const key = `${section.title}\u0000${session.name}\u0000${window.id}`;
+            const key = `${section.title}\u0000${window.key}`;
             const closed = view.collapsed.has(key);
             const windowRow = el("button", `ex-window${closed ? " closed" : ""}`);
             windowRow.type = "button";
@@ -201,7 +201,10 @@ export function mountExplore(root, deps) {
           status.textContent = "";
         } catch (error) {
           status.textContent = error.status === 401 || error.status === 403 ? S.outputOperatorOnly : error.message;
-          if (error.auth) clearInterval(view.poll);
+          if (error.auth) {
+            clearInterval(view.poll);
+            output.textContent = "";
+          }
         }
       };
       tick();
@@ -216,7 +219,11 @@ export function mountExplore(root, deps) {
       onGone: () => (status.textContent = S.paneGone),
       onState: (state) => {
         if (state === "live") status.textContent = "";
-        else if (state === "denied") status.textContent = S.outputOperatorOnly;
+        else if (state === "denied") {
+          // Refused now: what it showed before goes too.
+          output.textContent = "";
+          status.textContent = S.outputOperatorOnly;
+        }
         else if (state === "unsupported") poll();
       },
     });
@@ -231,7 +238,7 @@ export function mountExplore(root, deps) {
     // A draft belongs to its pane: text for one pane never goes to another.
     const key = item.id;
     area.value = view.drafts.get(key) || "";
-    area.disabled = view.sending;
+    area.disabled = view.sending === key;
     area.maxLength = 16384;
     const send = button(S.send, () => submit(), "btn primary");
     const interrupt = button(S.interrupt, async () => {
@@ -242,11 +249,15 @@ export function mountExplore(root, deps) {
         status.textContent = error.message;
       }
     }, "btn ghost danger");
-    const sync = () => (send.disabled = !area.value.trim() || view.sending);
+    const sync = () => {
+      area.disabled = view.sending === key;
+      send.disabled = !area.value.trim() || view.sending === key;
+    };
+    view.syncComposer = sync;
     async function submit() {
       const text = area.value;
-      if (!text.trim() || view.sending || view.open?.id !== key) return;
-      view.sending = true;
+      if (!text.trim() || view.sending === key || view.open?.id !== key) return;
+      view.sending = key;
       // Frozen while sending, so nothing typed now is lost when it clears.
       area.disabled = true;
       sync();
@@ -260,9 +271,9 @@ export function mountExplore(root, deps) {
       } catch (error) {
         status.textContent = error.message;
       } finally {
-        view.sending = false;
-        area.disabled = false;
-        sync();
+        if (view.sending === key) view.sending = null;
+        // Whichever pane is open now gets its composer back.
+        view.syncComposer?.();
       }
     }
     area.addEventListener("input", () => {
@@ -293,12 +304,26 @@ export function mountExplore(root, deps) {
       view.fleet = fleet;
       // Do not redraw the list under someone typing in the filter.
       if (document.activeElement !== search) drawList();
-      const wanted = paneFromHash(window.location.hash);
-      if (!view.open && wanted && fleet) {
+      // A pane link: on mount, and again whenever the link itself changes.
+      const hash = window.location.hash;
+      const wanted = paneFromHash(hash);
+      const changed = hash !== view.hash;
+      view.hash = hash;
+      if (view.suspended && view.open) {
+        view.suspended = false;
+        drawViewer();
+      }
+      if ((changed || !view.open) && wanted && fleet && !(view.open && view.open.pane === wanted.pane && view.open.socket === wanted.socket)) {
         const rows = exploreSections(fleet, { show: "all" }).sections.flatMap((s) => s.rows);
         const found = rows.find((r) => r.pane === wanted.pane && (!wanted.socket || r.socket === wanted.socket) && (!wanted.host || r.host === wanted.host));
         if (found) openPane(found, { push: false });
       }
+    },
+    /// Off screen (another page of the shell): no live stream or poll for a
+    /// view nobody sees; the next update reopens the pane.
+    suspend() {
+      closeStream();
+      view.suspended = true;
     },
     /// Everything private gone: the stream, the output, the drafts, and
     /// no later update draws it back.

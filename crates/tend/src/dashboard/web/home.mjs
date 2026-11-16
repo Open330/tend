@@ -1164,6 +1164,23 @@ function render() {
 
 // ---- Shell routes: Home, Explore, Settings ------------------------------
 
+/// Close Explore (stream, output, drafts), Settings and the admin dialogs,
+/// and show Home.
+function dropShellPages() {
+  state.explore?.destroy();
+  state.explore = null;
+  $("view-explore").replaceChildren();
+  $("view-settings").replaceChildren();
+  for (const dialog of document.querySelectorAll("dialog.share-dialog")) {
+    dialog.close?.();
+    dialog.remove?.();
+  }
+  if (state.route !== "home") {
+    state.route = "home";
+    history.replaceState(null, "", "/home");
+  }
+}
+
 const ROUTES = {
   "/": "home",
   "/home": "home",
@@ -1202,6 +1219,7 @@ function renderRoute() {
   }
   $("tab-label").textContent = route === "explore" ? S.explore : route === "settings" ? S.settings : S.home;
   $("tab-icon").className = `icon ${route === "explore" ? "i-explore" : route === "settings" ? "i-gear" : "i-board"}`;
+  if (route !== "explore") state.explore?.suspend();
   if (route === "explore") {
     state.explore ||= mountExplore($("view-explore"), {
       S, el, icon, button, logo, hostBadge, when, read, write, authHeaders, canWrite,
@@ -1340,18 +1358,11 @@ function lostAccess(error) {
   $("rail-explore").hidden = true;
   $("rail-settings").hidden = true;
   // Explore's output and drafts, Settings and its admin dialogs go too.
-  state.explore?.destroy();
-  state.explore = null;
+  dropShellPages();
   // The sign-in offer is on Home: show it whichever page was open.
   $("view-home").hidden = false;
   $("view-explore").hidden = true;
   $("view-settings").hidden = true;
-  $("view-explore").replaceChildren();
-  $("view-settings").replaceChildren();
-  for (const dialog of document.querySelectorAll("dialog.share-dialog")) {
-    dialog.close?.();
-    dialog.remove?.();
-  }
   $("status").textContent = error.message;
   const login = $("login");
   login.href = `/auth/login?return_to=${encodeURIComponent(homeReturnPath(window.location.hash))}`;
@@ -1448,6 +1459,11 @@ async function poll() {
     state.composer = null;
     $("start-dialog").close?.();
   }
+  // Explore and Settings need the full dashboard (operator reads): where
+  // they are no longer answered, what they showed goes and Home stays.
+  // A blip (network, timeout) is not a refusal: only an auth answer drops them.
+  const accessRefused = access.status === "rejected" && access.reason?.auth;
+  if (accessRefused && (state.explore || state.route !== "home")) dropShellPages();
   render();
 }
 

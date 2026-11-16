@@ -107,14 +107,18 @@ export function exploreSections(fleet, { show = "all", query = "", grouping = "h
       const mine = rows.filter((row) => row.host === host.alias);
       // host → session → window → pane, the Mac's execution topology.
       const sessions = [];
+      // Identities include the tmux server: two servers can each have a
+      // session "tend" with a window @1 (WorkModels keys them the same way).
       for (const row of mine) {
-        let session = sessions.find((s) => s.name === row.session);
-        if (!session) sessions.push((session = { name: row.session, rows: [], windows: [] }));
+        const sessionKey = `${row.socket || ""}\u0000${row.session}`;
+        let session = sessions.find((s) => s.key === sessionKey);
+        if (!session) sessions.push((session = { key: sessionKey, name: row.session, socket: row.socket, rows: [], windows: [] }));
         session.rows.push(row);
-        let window = session.windows.find((w) => w.id === (row.windowId || row.window));
+        const windowKey = `${sessionKey}\u0000${row.windowId || row.window}`;
+        let window = session.windows.find((w) => w.key === windowKey);
         if (!window) {
           const [index, ...name] = String(row.window).split(":");
-          session.windows.push((window = { id: row.windowId || row.window, index, name: name.join(":"), rows: [] }));
+          session.windows.push((window = { key: windowKey, id: row.windowId || row.window, index, name: name.join(":"), rows: [] }));
         }
         window.rows.push(row);
       }

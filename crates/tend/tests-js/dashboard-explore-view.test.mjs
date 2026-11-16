@@ -86,6 +86,24 @@ test("a pending send freezes the field and clears only what it sent", async () =
   assert.equal(composer().disabled, false);
 });
 
+test("switching panes while a send is pending leaves the new pane usable", async () => {
+  row("%1").click();
+  composer().value = "again";
+  composer().fire("input");
+  let release;
+  gate = new Promise((r) => (release = r));
+  composer().fire("keydown", { key: "Enter" });
+  await settle();
+  row("%2").click();
+  assert.equal(composer().disabled, false, "pane two is not the one sending");
+  release();
+  gate = null;
+  await settle();
+  composer().value = "for two";
+  composer().fire("input");
+  assert.equal(find(root, (n) => n.tag === "button" && n.text.includes("send"))?.disabled, false);
+});
+
 test("destroy leaves nothing private behind", () => {
   view.destroy();
   assert.equal(root.children.length, 0);

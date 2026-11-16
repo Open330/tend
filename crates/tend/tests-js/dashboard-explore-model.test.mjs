@@ -62,3 +62,14 @@ test("the pane deep link round-trips, naming the host only for another one", () 
   assert.deepEqual(paneFromHash("#pane=%252&socket=s"), { pane: "%2", socket: "s", host: null });
   assert.equal(paneFromHash("#item=x"), null);
 });
+
+test("two tmux servers with the same session and window names stay apart", () => {
+  const twin = { hosts: [{ alias: "mba", local: true, state: "online", remote: { agents: [], panes: [
+    { pane_id: "%1", socket: "alpha", session: "tend", window_id: "@1", window_index: "0", window_name: "main" },
+    { pane_id: "%1", socket: "beta", session: "tend", window_id: "@1", window_index: "0", window_name: "main" },
+  ] } }] };
+  const [host] = exploreSections(twin).sections;
+  assert.equal(host.sessions.length, 2);
+  assert.deepEqual(host.sessions.map((s) => s.socket), ["alpha", "beta"]);
+  assert.notEqual(host.sessions[0].windows[0].key, host.sessions[1].windows[0].key);
+});
