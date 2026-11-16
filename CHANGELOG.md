@@ -44,6 +44,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   backend that crashed mid-send, may already have typed the text. Those now
   say "it may have been typed" instead of offering a safe retry.
 
+### Changed
+
+- Tend for Mac and the dashboard share one design-token file,
+  `apps/shared/Design/tokens.json`; the dashboard's `tokens.css` is
+  generated from it, and a test fails when either side drifts.
+
 ## [0.10.20] - 2026-11-16
 
 ### Fixed
