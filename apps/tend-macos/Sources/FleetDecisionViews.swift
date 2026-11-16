@@ -709,19 +709,22 @@ struct FleetDecisionCard: View {
     }
 
     private var actions: some View {
-        PipelineFlowLayout(spacing: 6) {
-            ForEach(decision.options, id: \.self) { option in
-                Button {
-                    composing = option
-                } label: {
-                    Text(verbatim: option)
-                        .lineLimit(2)
-                        .frame(maxWidth: 240)
-                        .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 6) {
+            if !decision.options.isEmpty {
+                // One full-width row per option: a long or multi-line option
+                // wraps under its own number instead of being cut off.
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(decision.options.enumerated()), id: \.offset) { index, option in
+                        FleetDecisionOptionRow(number: index + 1, text: option) { composing = option }
+                    }
                 }
-                .buttonStyle(.tendSecondary)
-                .help(String(localized: "Answer with this option; you see it before it is sent"))
             }
+            otherActions
+        }
+    }
+
+    private var otherActions: some View {
+        PipelineFlowLayout(spacing: 6) {
             switch decision.source {
             case .humanRequest:
                 Button(decision.options.isEmpty ? String(localized: "Answer…") : String(localized: "Other…")) {
@@ -769,5 +772,54 @@ struct FleetDecisionCard: View {
         Task {
             if await send() { composing = nil }
         }
+    }
+}
+
+/// One of the asker's options on a decision card: its number, then its
+/// whole text wrapped beside it. A click fills the answer for a look
+/// before it goes.
+struct FleetDecisionOptionRow: View {
+    let number: Int
+    let text: String
+    let choose: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: choose) {
+            HStack(alignment: .top, spacing: 8) {
+                Text(verbatim: "\(number)")
+                    .font(.system(size: 11, weight: .bold).monospacedDigit())
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 18, height: 18)
+                    .background(Color.accentColor.opacity(0.15), in: Circle())
+                Text(verbatim: text)
+                    .font(TendType.body)
+                    .foregroundStyle(.primary)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    // The first line centred on the number badge.
+                    .padding(.top, 1)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(hovering ? TendTheme.hover(colorScheme) : Color.secondary.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(TendTheme.inputBorder(colorScheme), lineWidth: 1)
+        )
+        .opacity(isEnabled ? 1 : 0.45)
+        .onHover { hovering = $0 && isEnabled }
+        .help(String(localized: "Answer with this option; you see it before it is sent"))
+        .accessibilityLabel(Text(verbatim: "\(number). \(text)"))
     }
 }

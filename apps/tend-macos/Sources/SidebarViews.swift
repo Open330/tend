@@ -129,7 +129,7 @@ struct TendSidebar: View {
     /// Exited shells the user closed from the Shells list. tendd keeps an
     /// exited session listed for a while, so the sidebar hides these until
     /// the daemon drops them.
-    @State private var dismissedShellIDs: Set<String> = []
+    @Binding var dismissedShellIDs: Set<String>
     @State private var remoteShellError: String?
     @State private var isOpeningRemoteShell = false
     @AppStorage("tend.explore.sort") private var exploreSort: ExploreSort = .topology
