@@ -215,6 +215,8 @@ pub(in crate::dashboard) struct Devices {
     /// start); always `None` for an in-memory registry.
     storage: Mutex<Option<Arc<storage::Storage>>>,
     path: Option<PathBuf>,
+    /// Devices with a capture in flight: one each.
+    captures: Mutex<std::collections::HashSet<String>>,
 }
 
 fn sha256(value: &str) -> [u8; 32] {
@@ -301,6 +303,7 @@ impl Devices {
             registry: Mutex::new(Registry::default()),
             storage: Mutex::new(None),
             path: None,
+            captures: Mutex::default(),
         })
     }
 
@@ -314,6 +317,7 @@ impl Devices {
             registry: Mutex::new(Registry::default()),
             storage: Mutex::new(None),
             path: path.clone(),
+            captures: Mutex::default(),
         });
         if let Some(path) = path.filter(|path| path.exists()) {
             let (storage, stored) =
@@ -642,6 +646,21 @@ impl Devices {
         }
         self.registry().devices.clear();
         Ok(count)
+    }
+
+    /// Take this device's capture slot; `false` while one is in flight.
+    pub(in crate::dashboard) fn begin_capture(&self, id: &str) -> bool {
+        self.captures
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(id.to_owned())
+    }
+
+    pub(in crate::dashboard) fn end_capture(&self, id: &str) {
+        self.captures
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(id);
     }
 
     #[cfg(test)]

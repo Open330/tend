@@ -494,8 +494,14 @@ two scopes:
   `decide`, plus device-only routes for the app's Home and Hosts, starting
   with `GET /api/device/fleet` (the Fleet snapshot cut down to hosts'
   states and their agents: no SSH targets, labels, capabilities or panes
-  without an agent). Later routes add an agent's recent output and starting
-  new work, which runs agents with permissions bypassed.
+  without an agent) and `POST /api/device/capture` `{"host": "…",
+  "session_id": "…"}` (one agent's recent output: the pane is the one the
+  current snapshot lists for that agent session, captured through Fleet
+  under `[fleet] capture_policy`; sanitized text only, the last 400 lines
+  and at most 64 KiB, one capture per device at a time, each attempt an
+  audit line without the output). `GET /api/device` lists what the
+  dashboard serves the device in `features` (`capture`). A later route adds
+  starting new work, which runs agents with permissions bypassed.
 
 Every operator route refuses a device token of either scope as it would
 refuse no credential at all: no `/api/fleet`, pane output or input, Fleet

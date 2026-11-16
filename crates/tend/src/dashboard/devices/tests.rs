@@ -861,3 +861,157 @@ async fn parallel_issuance_never_exceeds_the_device_limit() {
         MAX_DEVICES
     );
 }
+
+/// A Fleet with one control host whose snapshot has an agent in `%3` and
+/// a shell in `%4`; the fake relay answers `capture` with 1,000 lines and
+/// records the pane keys it was asked for.
+async fn fleet_with_an_agent() -> (
+    crate::fleet::FleetRuntime,
+    Arc<std::sync::Mutex<Vec<crate::topology::PaneKey>>>,
+) {
+    use crate::fleet::{FleetCommandResult, FleetOperation};
+    let store = Arc::new(crate::fleet::FleetStore::new());
+    let now = "2026-11-16T00:00:00Z";
+    let pane = |id: &str| {
+        json!({
+            "pane_id": id, "session_id": "$1", "session": "work", "window_id": "@1",
+            "window_name": "w", "window_index": "0", "pane_index": "0", "tty": "/dev/ttys1",
+            "current_command": "node", "title": "t", "current_path": "/w", "pane_pid": 42,
+            "socket": "default"
+        })
+    };
+    let host: crate::fleet::FleetHostSnapshot = serde_json::from_value(json!({
+        "alias": "mini", "local": false, "ssh_target": "jiun@mini", "labels": {}, "annotations": {},
+        "mode": "control", "state": "online",
+        "remote": {
+            "revision": 1, "observed_at": now, "sessions": [], "backends": [],
+            "panes": [pane("%3"), pane("%4")],
+            "agents": [{
+                "kind": "claude_code", "agent_session_id": "s-agent", "pane": "%3",
+                "tmux_socket": "default", "state": "working", "started_at": now,
+                "last_activity_at": now, "state_entered_at": now
+            }]
+        }
+    }))
+    .unwrap();
+    store.upsert_host(host).await;
+    let (runtime, mut commands) = crate::fleet::FleetRuntime::new(store);
+    let asked = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = asked.clone();
+    tokio::spawn(async move {
+        while let Some(command) = commands.recv().await {
+            let result = match command.operation {
+                FleetOperation::Capture { pane } => {
+                    seen.lock().unwrap().push(pane);
+                    let text = (0..1000)
+                        .map(|i| format!("line {i}"))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    Ok(FleetCommandResult::capture(Some(text)))
+                }
+                other => Err(format!("a device route sent {other:?}")),
+            };
+            let _ = command.reply.send(result);
+        }
+    });
+    (runtime, asked)
+}
+
+#[tokio::test]
+async fn an_operate_device_reads_one_agents_output_and_nothing_else() {
+    let dir = tempfile::tempdir().unwrap();
+    let audit = dir.path().join("decisions.jsonl");
+    let (runtime, asked) = fleet_with_an_agent().await;
+    let app = router(
+        state(Some(TOKEN))
+            .with_fleet(Some(runtime))
+            .with_decision_audit(Some(audit.clone())),
+    );
+    let (token, device) = pair_with(&app, "phone", Some("operate"), Some("operate")).await;
+    let (_, me) = call(&app, "GET", "/api/device", Some(&token), None).await;
+    assert_eq!(me["features"], json!(["capture"]));
+    let body = |session: &str| Some(json!({"host": "mini", "session_id": session}));
+
+    let (status, out) = call(
+        &app,
+        "POST",
+        "/api/device/capture",
+        Some(&token),
+        body("s-agent"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    let text = out["capture"].as_str().unwrap();
+    assert_eq!(text.lines().count(), 400, "bounded to the last lines");
+    assert!(text.ends_with("line 999"));
+    let keys = asked.lock().unwrap().clone();
+    assert_eq!(keys.len(), 1);
+    assert_eq!(
+        keys[0].pane_id, "%3",
+        "the agent's pane, resolved by the server"
+    );
+
+    // A pane without an agent, another host, an unknown session, extra
+    // fields: refused before anything is sent.
+    for (request, expected) in [
+        (body("%4"), StatusCode::NOT_FOUND),
+        (
+            Some(json!({"host": "elsewhere", "session_id": "s-agent"})),
+            StatusCode::NOT_FOUND,
+        ),
+        (body(""), StatusCode::NOT_FOUND),
+        (
+            Some(json!({"host": "mini", "session_id": "s-agent", "pane": "%4"})),
+            StatusCode::BAD_REQUEST,
+        ),
+    ] {
+        let (status, _) = call(
+            &app,
+            "POST",
+            "/api/device/capture",
+            Some(&token),
+            request.clone(),
+        )
+        .await;
+        assert_eq!(status, expected, "{request:?}");
+    }
+    assert_eq!(
+        asked.lock().unwrap().len(),
+        1,
+        "no other capture reached the host"
+    );
+
+    // A decide device may not; the audit names every attempt.
+    let (decide, _) = pair_with(&app, "other", None, None).await;
+    let (status, _) = call(
+        &app,
+        "POST",
+        "/api/device/capture",
+        Some(&decide),
+        body("s-agent"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let lines = std::fs::read_to_string(&audit).unwrap();
+    let captures: Vec<Value> = lines
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .filter(|line| line["action"] == "device_capture")
+        .collect();
+    assert_eq!(captures.len(), 5);
+    assert_eq!(captures[0]["status"], 200);
+    assert_eq!(captures[0]["account"]["device"], device.as_str());
+    assert!(!lines.contains("line 999"), "the audit never holds output");
+}
+
+#[test]
+fn capture_tails_are_bounded_in_lines_and_bytes() {
+    let long = vec!["é".repeat(20_000); 10].join(
+        "
+",
+    );
+    let out = super::operate::tail(&long);
+    assert!(out.len() <= 64 * 1024);
+    assert!(out.chars().all(|c| c == 'é' || c == '\n'));
+    assert_eq!(super::operate::tail("a\nb\n"), "a\nb");
+}

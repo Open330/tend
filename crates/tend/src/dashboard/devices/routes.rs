@@ -13,6 +13,7 @@
 //! | `GET /api/device` | that device | who it is |
 //! | `POST /api/device/forget` | that device | unpair itself (sign out) |
 //! | `GET /api/device/fleet` | that device, `operate` | the Fleet snapshot, cut down |
+//! | `POST /api/device/capture` | that device, `operate` | one agent's recent output |
 //!
 //! The decision routes accept a device token through the dashboard's
 //! decision gate (`server.rs`), not here. Requests, approvals, issued
@@ -41,6 +42,10 @@ async fn no_store(mut response: Response) -> Response {
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     response
+}
+
+pub(super) async fn audit_entry(state: &AppState, entry: serde_json::Value) {
+    audit(state, entry).await;
 }
 
 async fn audit(state: &AppState, entry: serde_json::Value) {
@@ -113,6 +118,10 @@ pub(in crate::dashboard) fn device_auth(
 pub(in crate::dashboard) fn operate_routes(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/api/device/fleet", get(super::operate::fleet))
+        .route(
+            "/api/device/capture",
+            post(super::operate::capture).layer(DefaultBodyLimit::max(1024)),
+        )
         .layer(middleware::from_fn(operate_only))
         .layer(middleware::from_fn_with_state(state, device_only))
         .layer(middleware::map_response(no_store))
@@ -383,11 +392,21 @@ async fn remove_all(State(state): State<AppState>, headers: HeaderMap) -> Respon
     }
 }
 
-async fn whoami(Extension(device): Extension<DeviceAuth>) -> Response {
+async fn whoami(
+    State(state): State<AppState>,
+    Extension(device): Extension<DeviceAuth>,
+) -> Response {
+    // What an `operate` device can use here beyond the hosts.
+    let features: Vec<&str> = if device.scope == Scope::Operate && state.fleet.is_some() {
+        vec!["capture"]
+    } else {
+        Vec::new()
+    };
     Json(json!({
         "device": { "id": device.id, "name": device.name },
         "approved_by": device.approved_by,
         "scope": device.scope.names(),
+        "features": features,
     }))
     .into_response()
 }
