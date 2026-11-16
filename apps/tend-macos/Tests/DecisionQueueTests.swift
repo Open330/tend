@@ -197,6 +197,30 @@ private func message(host: TendFleetHostIdentity, id: String, created: String, s
         #expect(attached[0].repo == "tend")
     }
 
+    @Test func aQuestionWhoseAskerItsHostNoLongerListsIsMarkedGone() throws {
+        let messages = [
+            try message(host: remote, id: "req_live", created: "2026-11-12T00:00:00Z", session: "s-live"),
+            try message(host: remote, id: "req_dead", created: "2026-11-12T00:00:01Z", session: "s-dead"),
+            try message(host: remote, id: "req_pending", created: "2026-11-12T00:00:02Z", session: "pending-pane:default:%50"),
+            try message(host: remote, id: "req_wake", created: "2026-11-12T00:00:03Z", session: "tend:reply-wake"),
+            try message(host: local, id: "req_local", created: "2026-11-12T00:00:04Z", session: "s-dead"),
+        ]
+        let decisions = FleetDecisions.merge(queue: nil, reviews: [], messages: messages, localHost: local)
+        let agent = try JSONDecoder().decode(TendAgent.self, from: Data("""
+        {"kind":"codex","agent_session_id":"s-live","cwd":"/src/tend","state":"idle"}
+        """.utf8))
+        // Only `mini`'s agents are known: `mac` lists none (disconnected or
+        // not loaded yet), so nothing there is called gone.
+        let attached = FleetDecisions.attachAskers(decisions, agents: [TendHostedAgent(host: remote, agent: agent, pane: nil)])
+        let gone = Dictionary(uniqueKeysWithValues: attached.map { ($0.id, $0.askerGone) })
+        #expect(gone["human:mini:req_live"] == false)
+        #expect(gone["human:mini:req_dead"] == true)
+        #expect(gone["human:mini:req_pending"] == false, "a pending address has no agent row yet")
+        #expect(gone["human:mini:req_wake"] == false, "tendd's own items are not an agent's question")
+        #expect(gone["human:mac:req_local"] == false)
+        #expect(FleetDecisions.attachAskers(decisions, agents: []).allSatisfy { !$0.askerGone })
+    }
+
     @Test(.enabled(if: GitRunner.shared != nil))
     func recordedRevisionsResolveToTheirTwoEnds() async throws {
         let git = try #require(GitRunner.shared)

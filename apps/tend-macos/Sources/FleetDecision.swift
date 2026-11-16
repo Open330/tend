@@ -34,6 +34,9 @@ struct FleetDecision: Identifiable, Hashable, Sendable {
     /// The asking agent as Home sees it, when it is on the board.
     var askerAgentID: String?
     var askerCwd: String?
+    /// The asking agent's session is no longer on its host's board: nobody
+    /// is left to read an answer, so the question is stale.
+    var askerGone = false
 
     /// The asking agent's project, for Home's project filter.
     var repo: String? {

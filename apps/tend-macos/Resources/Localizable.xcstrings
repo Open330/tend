@@ -23692,6 +23692,56 @@
           }
         }
       }
+    },
+    "Asker gone" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "질문한 에이전트 없음"
+          }
+        }
+      }
+    },
+    "Dismiss" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "닫기"
+          }
+        }
+      }
+    },
+    "Dismiss Question" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "질문 닫기"
+          }
+        }
+      }
+    },
+    "Close this question without answering it" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "답하지 않고 이 질문을 닫습니다"
+          }
+        }
+      }
+    },
+    "The agent that asked is no longer running; nobody is waiting for this answer. Dismiss it if it no longer matters." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "질문한 에이전트가 더 이상 실행 중이 아니어서 이 답을 기다리는 쪽이 없습니다. 더 필요 없으면 닫으세요."
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

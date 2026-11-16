@@ -263,6 +263,25 @@ final class FleetDecisionFeed: ObservableObject {
         }
     }
 
+    /// Declines a human request without an answer: the asker, if it is
+    /// still there, reads that the person dismissed it; tendd's own items
+    /// record it as their decision. Either way it leaves every client's
+    /// queue, on the host that holds it.
+    func dismiss(_ decision: FleetDecision, model: AppModel) async -> Bool {
+        guard case .humanRequest(let requestID) = decision.source else { return false }
+        guard let route = model.consoleRoute(hostAlias: decision.host.alias) else {
+            failures[decision.id] = String(localized: "\(decision.host.alias) is not connected.")
+            return false
+        }
+        return await record(decision, model: model) {
+            try await model.client.replyCollaboration(
+                host: route.host, pane: route.pane, requestID: requestID, status: "declined",
+                body: FleetDecisions.dismissedBody
+            )
+            await model.refreshOperatorInbox(force: false, hostAliases: [decision.host.alias])
+        }
+    }
+
     /// Accepts, returns or withdraws a review item on this Mac's daemon.
     func decide(_ decision: FleetDecision, _ disposition: TendReviewDisposition, note: String?, model: AppModel) async -> Bool {
         guard case .review(let item) = decision.source else { return false }
@@ -355,6 +374,10 @@ final class FleetDecisionDrafts {
 }
 
 extension FleetDecisions {
+    /// The reply a dismissed question gets. In English: it is read by the
+    /// asking agent, not shown to the person.
+    static let dismissedBody = "The person dismissed this question from Tend Home without answering it. Do not wait for an answer to it; ask again only if it still matters."
+
     /// Fills in each decision's asking agent (its checkout and repository)
     /// from the agents Home sees on the same host.
     static func attachAskers(_ decisions: [FleetDecision], agents: [TendHostedAgent]) -> [FleetDecision] {
@@ -363,14 +386,26 @@ extension FleetDecisions {
 
     static func attachAskers(_ decisions: [FleetDecision], index: TendHostedAgentIndex) -> [FleetDecision] {
         decisions.map { decision in
-            guard let session = decision.askerSessionID,
-                  let agent = index.agent(host: decision.host.alias, session: session)
-            else { return decision }
+            guard let session = decision.askerSessionID else { return decision }
             var decision = decision
+            guard let agent = index.agent(host: decision.host.alias, session: session) else {
+                decision.askerGone = isGone(decision, session: session, index: index)
+                return decision
+            }
             decision.askerAgentID = agent.id
             decision.askerCwd = agent.agent.cwd
             return decision
         }
+    }
+
+    /// An agent's own question whose session its host no longer lists. Only
+    /// on a host whose agents Home has (a disconnected host lists none), and
+    /// never for tendd's own items or an address still waiting for its
+    /// session (`pending-pane:`), which no agent row carries.
+    static func isGone(_ decision: FleetDecision, session: String, index: TendHostedAgentIndex) -> Bool {
+        decision.isHumanRequest && !decision.isSystemAsk
+            && !session.hasPrefix("pending-pane:")
+            && index.hosts.contains(decision.host.alias)
     }
 }
 
@@ -574,6 +609,8 @@ struct FleetDecisionCard: View {
     /// Disposes a review item; true when it was recorded.
     let decide: (TendReviewDisposition, String?) async -> Bool
     var openAsker: (() -> Void)?
+    /// Declines a human request without an answer; true when it was recorded.
+    var dismiss: (() async -> Bool)?
     /// Opens with the answer field showing, for previews and tests.
     var initialAnswer: String?
     /// The open answer, shared by every card so only one composer (and one
@@ -590,6 +627,7 @@ struct FleetDecisionCard: View {
         answer: @escaping (String) async -> Bool,
         decide: @escaping (TendReviewDisposition, String?) async -> Bool,
         openAsker: (() -> Void)? = nil,
+        dismiss: (() async -> Bool)? = nil,
         initialAnswer: String? = nil,
         draft: FleetDecisionDraft? = nil
     ) {
@@ -600,6 +638,7 @@ struct FleetDecisionCard: View {
         self.answer = answer
         self.decide = decide
         self.openAsker = openAsker
+        self.dismiss = dismiss
         self.initialAnswer = initialAnswer
         _draft = ObservedObject(wrappedValue: draft ?? .detached)
         sharesDraft = draft != nil
@@ -678,6 +717,9 @@ struct FleetDecisionCard: View {
             if case .review = decision.source {
                 Button("Withdraw") { Task { _ = await decide(.withdrawn, nil) } }
             }
+            if let dismiss {
+                Button("Dismiss Question") { Task { _ = await dismiss() } }
+            }
         }
     }
 
@@ -695,6 +737,12 @@ struct FleetDecisionCard: View {
             if !decision.host.local {
                 Text(verbatim: decision.host.alias)
                     .lineLimit(1)
+            }
+            if decision.askerGone {
+                Text("Asker gone")
+                    .foregroundStyle(.orange)
+                    .lineLimit(1)
+                    .help(String(localized: "The agent that asked is no longer running; nobody is waiting for this answer. Dismiss it if it no longer matters."))
             }
             Spacer(minLength: 4)
             if busy {
@@ -728,6 +776,11 @@ struct FleetDecisionCard: View {
                     composing = ""
                 }
                 .buttonStyle(decision.options.isEmpty ? TendButtonStyle.tendSecondary : TendButtonStyle.tendGhost)
+                if let dismiss {
+                    Button("Dismiss") { Task { _ = await dismiss() } }
+                        .buttonStyle(decision.askerGone ? TendButtonStyle.tendSecondary : TendButtonStyle.tendGhost)
+                        .help(String(localized: "Close this question without answering it"))
+                }
             case .review:
                 Button("Accept") { Task { _ = await decide(.accepted, nil) } }
                     .buttonStyle(.tendSecondary)
