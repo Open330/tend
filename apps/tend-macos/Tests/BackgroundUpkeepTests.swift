@@ -40,6 +40,20 @@ import Testing
         #expect(!model.fleetStreamLive)
     }
 
+    @Test func aLateHelloCannotReplaceANewerDaemonsIdentity() {
+        let model = AppModel(client: TendIPCClient(socketPath: "/tmp/tend-upkeep-\(UUID().uuidString).sock"))
+        let a = model.fleetStreamOpened()
+        let b = model.fleetStreamOpened()
+        model.fleetStreamHello(TendDaemonHello(bootID: "B", generation: 2), attempt: b)
+        #expect(model.localDaemonBootID == "B")
+        model.fleetStreamHello(TendDaemonHello(bootID: "A", generation: 1), attempt: a)
+        #expect(model.localDaemonBootID == "B")
+        #expect(model.localDaemonGeneration == 2)
+        model.fleetStreamEnded(b)
+        model.fleetStreamHello(TendDaemonHello(bootID: "B2", generation: 3), attempt: b)
+        #expect(model.localDaemonBootID == "B", "nor a hello after its own stream ended")
+    }
+
     @Test func draftsOfDecisionsThatAreGoneArePruned() {
         let drafts = FleetDecisionFeed().drafts
         let a = drafts.row(for: "a")

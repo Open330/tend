@@ -693,8 +693,7 @@ final class AppModel: ObservableObject {
                     Task { @MainActor [weak self] in
                         guard let self, self.connectionGeneration == generation,
                               self.daemonIdentityEpoch == epoch else { return }
-                        self.fleetStreamReady(stream)
-                        self.adoptDaemonHello(hello)
+                        self.fleetStreamHello(hello, attempt: stream)
                     }
                 })
                 for try await update in updates {
@@ -774,9 +773,18 @@ final class AppModel: ObservableObject {
         return fleetStreamAttempt
     }
 
-    func fleetStreamReady(_ attempt: UInt64) {
-        guard attempt == fleetStreamAttempt else { return }
+    @discardableResult
+    func fleetStreamReady(_ attempt: UInt64) -> Bool {
+        guard attempt == fleetStreamAttempt else { return false }
         liveFleetStream = attempt
+        return true
+    }
+
+    /// A stream's hello: adopted only from the current attempt, so a late
+    /// one cannot overwrite a newer daemon's identity.
+    func fleetStreamHello(_ hello: TendDaemonHello, attempt: UInt64) {
+        guard fleetStreamReady(attempt) else { return }
+        adoptDaemonHello(hello)
     }
 
     func fleetStreamEnded(_ attempt: UInt64) {
