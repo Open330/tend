@@ -303,7 +303,7 @@ struct FleetHomeView: View {
     func decisionCard(_ decision: FleetDecision, openRevision: @escaping (FleetRevisionTarget) -> Void) -> FleetDecisionCard {
         let feed = decisionFeed
         let model = model
-        let asker = decision.askerAgentID.flatMap { id in model.hostedAgents.first { $0.id == id } }
+        let asker = decision.askerAgentID.flatMap(model.hostedAgent(id:))
         return FleetDecisionCard(
             decision: decision,
             busy: feed.busy.contains(decision.id),
@@ -435,7 +435,7 @@ struct FleetHomeView: View {
     /// Types `text` into the agent the draft was written for, after checking
     /// that the same session is still at its pane, at the same question.
     private func send(_ text: String, to target: FleetReplyTarget) async throws {
-        guard let hosted = model.hostedAgents.first(where: { $0.id == target.agentID }),
+        guard let hosted = model.hostedAgent(id: target.agentID),
               let paneID = TendAgentAttentionCenter.paneIdentity(for: hosted),
               let current = model.executionSnapshot.watchPane(id: paneID),
               target.matches(current.agent) else {

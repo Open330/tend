@@ -27,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   counts as a new Fleet snapshot, and typing a decision answer redraws only
   that card. `TEND_PERF_COUNTERS=<seconds>` prints debug counters for this
   work (body evaluations, publishes, projections, polls) to standard error.
+- Home merges its decisions (the queue, review items and every host's
+  questions, with their dates parsed and sorted) once per change of those
+  inputs instead of on every redraw, and finds each asking agent through an
+  index built with the agent list rather than a scan per decision. Tabs and
+  Home's cards look agents up the same way.
 
 ### Fixed
 

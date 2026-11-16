@@ -29,8 +29,30 @@ final class TendCoalescedProjection<Value: Sendable> {
     }
 }
 
+/// The agents Home and the tabs look up on every redraw, by id and by the
+/// host and session that asked a decision.
+struct TendHostedAgentIndex: Sendable {
+    private(set) var byID: [String: TendHostedAgent] = [:]
+    private(set) var bySession: [String: TendHostedAgent] = [:]
+
+    init(_ agents: [TendHostedAgent] = []) {
+        for hosted in agents {
+            if byID[hosted.id] == nil { byID[hosted.id] = hosted }
+            let key = Self.key(host: hosted.host.alias, session: hosted.agent.agentSessionID)
+            if bySession[key] == nil { bySession[key] = hosted }
+        }
+    }
+
+    static func key(host: String, session: String) -> String { "\(host)\u{0}\(session)" }
+
+    func agent(host: String, session: String) -> TendHostedAgent? {
+        bySession[Self.key(host: host, session: session)]
+    }
+}
+
 struct TendWorkspaceProjection: Sendable {
     let agents: [TendHostedAgent]
+    var index = TendHostedAgentIndex()
     let groups: [TendWorkGroup]
     let works: [FleetWork]
     let builtAt: Date

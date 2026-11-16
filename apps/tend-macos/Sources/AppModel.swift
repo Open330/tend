@@ -109,6 +109,13 @@ final class AppModel: ObservableObject {
     }
     @Published private(set) var workGroups: [TendWorkGroup] = []
     @Published private(set) var hostedAgents: [TendHostedAgent] = []
+    /// `hostedAgents` by id, and by host and agent session, built with them
+    /// off the main thread; lookups on every redraw use these, not a scan.
+    private(set) var hostedAgentIndex = TendHostedAgentIndex()
+    /// Bumped whenever `hostedAgents` or `operatorMessages` is published, so
+    /// a projection of them can tell it is current without comparing.
+    private(set) var hostedAgentsRevision: UInt64 = 0
+    private(set) var operatorMessagesRevision: UInt64 = 0
     /// Materialized off the main actor, once per workspace projection.
     @Published private(set) var homeWorks: [FleetWork] = []
     @Published private(set) var workspaceRevision: UInt64 = 0
@@ -292,6 +299,9 @@ final class AppModel: ObservableObject {
     }
 
     var agents: [TendAgent] { executionSnapshot.agents }
+
+    /// The listed (not stopped) agent with this id, from the index.
+    func hostedAgent(id: String) -> TendHostedAgent? { hostedAgentIndex.byID[id] }
 
     /// Compact Inbox wording for `inboxHostFailures`, shared with the sidebar.
     var inboxHostFailureSummary: String? {
@@ -960,7 +970,7 @@ final class AppModel: ObservableObject {
                         return left.agent.agentSessionID < right.agent.agentSessionID
                     }
                 let groups = snapshot.workGroups(pipelineRuns: runs)
-                var projection = TendWorkspaceProjection(agents: agents, groups: groups,
+                var projection = TendWorkspaceProjection(agents: agents, index: TendHostedAgentIndex(agents), groups: groups,
                     works: FleetBoard.works(groups: groups, agents: agents, now: now),
                     builtAt: now, connection: connection)
                 projection.changed = projection.changes(
@@ -975,7 +985,11 @@ final class AppModel: ObservableObject {
             // started; nothing else publishes these, so it still holds.
             guard !result.changed.isEmpty else { return }
             TendPerf.count("projection.published")
-            if result.changed.contains(.agents) { hostedAgents = result.agents }
+            if result.changed.contains(.agents) {
+                hostedAgentIndex = result.index
+                hostedAgentsRevision &+= 1
+                hostedAgents = result.agents
+            }
             if result.changed.contains(.groups) { workGroups = result.groups }
             if result.changed.contains(.works) { homeWorks = result.works }
         })
@@ -1765,7 +1779,10 @@ final class AppModel: ObservableObject {
                 }
                 return lhs.id < rhs.id
             }
-        if operatorMessages != updatedMessages { operatorMessages = updatedMessages }
+        if operatorMessages != updatedMessages {
+            operatorMessagesRevision &+= 1
+            operatorMessages = updatedMessages
+        }
         attention.ingestHumanRequests(updatedMessages)
         if inboxHostFailures != failures { inboxHostFailures = failures }
     }
@@ -2203,7 +2220,7 @@ final class AppModel: ObservableObject {
         case .work(let key):
             workGroups.contains { $0.identity == key }
         case .agent(let id):
-            hostedAgents.contains { $0.id == id }
+            hostedAgentIndex.byID[id] != nil
         case .host(let id):
             fleetHosts.contains { $0.id == id }
         case .fleetSession(let id):
