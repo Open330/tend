@@ -92,7 +92,7 @@ pub(super) async fn decision_response(
     match body {
         RequestBody::DecisionQueue { limit, origin } => {
             let operator = operator_only(origin.as_ref()).is_none();
-            let agents = store.snapshot().await;
+            let agents = store.decision_agents().await;
             let queue = crate::decision_queue::read_pending(
                 reviews,
                 collaboration,

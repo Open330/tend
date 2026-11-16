@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pass. Reading a large tendd response no longer rescans the whole buffer
   after every 16 KB read. A 15 s CPU sample of the idle app showed these
   paths at the top.
+- Reading the decision queue no longer clones large responses, prompts and
+  process lists for every running or idle agent before discarding those rows.
+  The daemon copies only agents whose state or question needs a person;
+  the decision ordering, limits and contents stay the same.
 - Typing `exit` in the live tour while a step was opening could end the tour
   on a tmux error and a backtrace, without the closing summary. The tour
   checked once per poll that the sandbox server was alive, then made several
