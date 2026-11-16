@@ -26,8 +26,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every device. `apps/shared/Fixtures` has a recorded board and its device
   view for the apps' decoders.
 
-### Added
-
 - tendd computes Home's board itself (`GET /api/home`), by Tend for Mac's
   rules:
   - a pipeline run's agents grouped into one Work unit with stages;
