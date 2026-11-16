@@ -118,14 +118,14 @@ pub(in crate::dashboard) fn operate_routes(state: AppState) -> Router<AppState> 
         .layer(middleware::map_response(no_store))
 }
 
-async fn operate_only(req: Request, next: Next) -> Result<Response, Response> {
+async fn operate_only(req: Request, next: Next) -> Response {
     match req.extensions().get::<DeviceAuth>() {
-        Some(auth) if auth.scope == Scope::Operate => Ok(next.run(req).await),
-        Some(_) => Err(error(
+        Some(auth) if auth.scope == Scope::Operate => next.run(req).await,
+        Some(_) => error(
             StatusCode::FORBIDDEN,
             "this device may only decide; pair it again with hosts and new work",
-        )),
-        None => Err(StatusCode::UNAUTHORIZED.into_response()),
+        ),
+        None => StatusCode::UNAUTHORIZED.into_response(),
     }
 }
 
