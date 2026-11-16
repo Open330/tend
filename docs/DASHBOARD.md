@@ -559,8 +559,33 @@ two scopes:
   under `[fleet] capture_policy`; sanitized text only, the last 400 lines
   and at most 64 KiB, one capture per device at a time, each attempt an
   audit line without the output). `GET /api/device` lists what the
-  dashboard serves the device in `features` (`capture`). A later route adds
-  starting new work, which runs agents with permissions bypassed.
+  dashboard serves the device in `features` (`capture`). It also serves
+  starting new work, which runs agents with permissions bypassed:
+  `GET /api/device/work-options?host=…` (whether `allow_work_start` is on,
+  the host's pipelines by name, and the project folders its agents already
+  work in) and `POST /api/device/work` `{"idempotency_key": "<uuid>",
+  "host", "project", "pipeline", "request"}`:
+  - **New work only.** The dashboard mints the Work id (`phone-MMDD-…`) and
+    launches with `new_only`, which tendd refuses for an id that exists.
+    The device cannot name an existing Work.
+  - **Nothing else to choose.** The project must be one listed for that
+    host; the pipeline one it has; no workspace, skill, context, ticket or
+    dry run. A `[[route]]` that would match the minted id and set its own
+    `cwd`, worktree or `prepare` refuses the start. The host must be this
+    one or an online control-mode Fleet host, and `[dashboard]
+    allow_work_start` must be on (else 501).
+  - **Once per key, durably.** The start is reserved in the device store
+    before anything runs. A retry with the same key returns the first
+    start's state; the same key for another request is 409. A start that
+    timed out, or was reserved when tendd stopped, is `unknown` and is never
+    run again: check the host. One start per device at a time, at most 20 an
+    hour.
+  - **Audited before and after.** An intent line (device, approver, key,
+    fingerprint, host, project, pipeline, minted id, request length, not
+    its text) is written and synced before dispatch; if it cannot be,
+    nothing starts (503). A result line follows.
+  `GET /api/device` lists `capture` and `work` in `features` when Fleet
+  runs.
 
 Every operator route refuses a device token of either scope as it would
 refuse no credential at all: no `/api/fleet`, pane output or input, Fleet
