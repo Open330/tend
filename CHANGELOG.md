@@ -48,7 +48,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Tend for Mac and the dashboard share one design-token file,
   `apps/shared/Design/tokens.json`; the dashboard's `tokens.css` is
-  generated from it, and a test fails when either side drifts.
+  generated from it, and a test fails when it is stale or when the Mac
+  app's surfaces, metrics or brand colours stop matching it.
 
 ## [0.10.20] - 2026-11-16
 
