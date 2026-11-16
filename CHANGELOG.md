@@ -76,6 +76,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   went from 312 each to 5, 16 and 5; while minimized or hidden, from 68
   each to 0.
 
+### Changed
+
+- Tend for Mac and the dashboard share one design-token file,
+  `apps/shared/Design/tokens.json`; the dashboard's `tokens.css` is
+  generated from it, and a test fails when it is stale or when the Mac
+  app's surfaces, metrics or brand colours stop matching it.
+
 ## [0.10.20] - 2026-11-16
 
 ### Fixed
