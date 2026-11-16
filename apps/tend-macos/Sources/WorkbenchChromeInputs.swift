@@ -152,29 +152,43 @@ struct TendStatusBarInputs: Equatable {
     var hostCount = 0
     var agentCount = 0
     var shellCount = 0
-    /// The first `TendUsageStatusItems.inlineLimit` accounts, worst first.
-    var usage: [UsageItem] = []
-    /// How many more accounts fold into `+N`, and the worst of them.
-    var moreUsage = 0
-    var moreUsageLevel: TendUsageLevel?
+    /// The usage items, worked out from the agents at one time.
+    struct Usage: Equatable {
+        /// The first `TendUsageStatusItems.inlineLimit` accounts, worst first.
+        var items: [UsageItem] = []
+        /// How many more accounts fold into `+N`, and the worst of them.
+        var more = 0
+        var moreLevel: TendUsageLevel?
+
+        init() {}
+
+        init(_ agents: [TendHostedAgent], now: Date) {
+            let groups = TendUsageGroup.groups(from: agents, now: now)
+            let limit = TendUsageStatusItems.inlineLimit
+            items = groups.prefix(limit).map {
+                UsageItem(id: $0.id, text: TendUsageFormat.statusText($0, now: now), level: $0.level)
+            }
+            more = max(0, groups.count - limit)
+            moreLevel = groups.dropFirst(limit).map(\.level).max()
+        }
+    }
+
+    var usageSummary = Usage()
+    var usage: [UsageItem] { usageSummary.items }
+    var moreUsage: Int { usageSummary.more }
+    var moreUsageLevel: TendUsageLevel? { usageSummary.moreLevel }
 
     init() {}
 
     @MainActor
-    init(_ model: AppModel, now: Date) {
+    init(_ model: AppModel, usage: Usage) {
         connectionState = model.connectionState
         agentActionError = model.agentActionError
         agentActionNotice = model.agentActionNotice
         hostCount = model.fleetHosts.count
         agentCount = model.hostedAgents.count
         shellCount = model.sessions.lazy.filter { !$0.exited }.count
-        let groups = TendUsageGroup.groups(from: model.hostedAgents, now: now)
-        let limit = TendUsageStatusItems.inlineLimit
-        usage = groups.prefix(limit).map {
-            UsageItem(id: $0.id, text: TendUsageFormat.statusText($0, now: now), level: $0.level)
-        }
-        moreUsage = max(0, groups.count - limit)
-        moreUsageLevel = groups.dropFirst(limit).map(\.level).max()
+        usageSummary = usage
     }
 }
 
@@ -227,6 +241,10 @@ final class TendWindowChrome: TendWindowVisibilityTracking {
     /// A change arrived while no window was on screen.
     private var held = false
     private let now: () -> Date
+    /// The usage items for one publish of the hosted agents: grouping the
+    /// fleet's readings is the costly part of the status bar, and between
+    /// those publishes only the clock can change it (`tick`).
+    private var usageCache: (revision: UInt64, usage: TendStatusBarInputs.Usage)?
     private var subscriptions: [AnyCancellable] = []
 
     init(now: @escaping () -> Date = Date.init) {
@@ -314,6 +332,7 @@ final class TendWindowChrome: TendWindowVisibilityTracking {
 
     private func refreshAll() {
         guard let model else { return }
+        usageCache = nil
         content.set(TendContentInputs(model))
         refreshShown(model)
     }
@@ -321,13 +340,24 @@ final class TendWindowChrome: TendWindowVisibilityTracking {
     private func refreshShown(_ model: AppModel) {
         held = false
         sidebar.set(TendSidebarInputs(model))
-        statusBar.set(TendStatusBarInputs(model, now: now()))
+        statusBar.set(statusBarInputs(model, rereadUsage: false))
         tabStrip.set(Self.labels(for: openTabs, model: model))
     }
 
     private func tick() {
         guard isVisible, let model else { return }
-        statusBar.set(TendStatusBarInputs(model, now: now()))
+        statusBar.set(statusBarInputs(model, rereadUsage: true))
+    }
+
+    private func statusBarInputs(_ model: AppModel, rereadUsage: Bool) -> TendStatusBarInputs {
+        let revision = model.hostedAgentsRevision
+        if !rereadUsage, let usageCache, usageCache.revision == revision {
+            return TendStatusBarInputs(model, usage: usageCache.usage)
+        }
+        TendPerf.count("chrome.usage")
+        let usage = TendStatusBarInputs.Usage(model.hostedAgents, now: now())
+        usageCache = (revision, usage)
+        return TendStatusBarInputs(model, usage: usage)
     }
 
     private static func labels(for tabs: [TendSidebarSelection], model: AppModel) -> TendTabStripInputs {
