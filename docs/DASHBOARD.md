@@ -584,8 +584,9 @@ two scopes:
     fingerprint, host, project, pipeline, minted id, request length, not
     its text) is written and synced before dispatch; if it cannot be,
     nothing starts (503). A result line follows.
-  `GET /api/device` lists `capture` and `work` in `features` when Fleet
-  runs.
+  `started` means the Run was registered; its agents launch shortly after,
+  as for any `tend work up`. `GET /api/device` lists `capture` and `work`
+  in `features` when Fleet runs.
 
 Every operator route refuses a device token of either scope as it would
 refuse no credential at all: no `/api/fleet`, pane output or input, Fleet

@@ -723,6 +723,9 @@ async fn dispatch(
     intent["pipeline"] = json!(pipeline);
     intent["work"] = json!(work);
     intent["request_bytes"] = json!(body.request.len());
+    intent["at"] = json!(time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .ok());
     if !crate::dashboard::decisions::try_audit(state.decision_audit.as_ref(), intent).await {
         state.devices.finish_start(
             &device.id,
