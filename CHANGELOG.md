@@ -46,6 +46,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The dashboard's Home (`/home`, also `/needs`) is rebuilt as Tend for Mac's
+  Home: the activity rail, Home tab and status bar; the header with Filter
+  (host, project), Hosts and Start Work; Your turn, In progress and Finished
+  side by side, grouped by project, with the Mac's decision and unit cards,
+  words and order; a details panel with the agent's current state, a field
+  to answer it or send the next instruction, its stages and agents. The
+  Mac's two card layouts are there too (status emphasis, the default, and
+  compact list), switched in the header. On a phone one lane shows at a
+  time. It follows the browser's language
+  (English or Korean) and colour scheme, and runs under a strict Content
+  Security Policy. The workbench's "needs you" link now reads "Home".
 - Tend for Mac and the dashboard share one design-token file,
   `apps/shared/Design/tokens.json`; the dashboard's `tokens.css` is
   generated from it, and a test fails when it is stale or when the Mac

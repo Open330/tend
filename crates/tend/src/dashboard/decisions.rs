@@ -367,10 +367,12 @@ async fn remote_history(
     }
 }
 
-/// `GET /needs`: the phone-first page that renders the two reads above.
-/// Like every dashboard page it is never framed ([`super::assets`]).
+/// `GET /home` and `GET /needs`: Home, Tend for Mac's Home in the browser,
+/// which renders the two reads above with the Fleet snapshot. Like every
+/// dashboard page it is never framed, and it runs under a strict CSP
+/// ([`super::assets`]).
 pub(super) async fn page_handler() -> Response {
-    super::assets::serve_page("needs.html")
+    super::assets::serve_page("home.html")
 }
 
 const MAX_NOTE_BYTES: usize = 1024;

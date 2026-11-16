@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Home · tend</title>
+<link rel="icon" href="/static/icon.svg">
+<link rel="stylesheet" href="/static/tokens.css">
+<link rel="stylesheet" href="/static/home.css">
+</head>
+<body>
+<div class="window">
+  <nav class="rail" aria-label="Tend">
+    <a class="rail-item active" id="rail-home" href="/home" aria-current="page"><span class="icon i-house" aria-hidden="true"></span><span class="rail-label" data-t="home">Home</span><span class="rail-badge" id="rail-badge" hidden></span></a>
+    <span class="rail-divider" aria-hidden="true"></span>
+    <a class="rail-item" id="rail-explore" href="/"><span class="icon i-explore" aria-hidden="true"></span><span class="rail-label" data-t="explore">Explore</span></a>
+  </nav>
+  <div class="editor">
+    <div class="tabstrip">
+      <a class="brand" href="/home" aria-label="tend">
+        <svg class="mark" id="mark" viewBox="4 4 56 56" aria-hidden="true">
+          <path class="room room-waiting" d="M26.266 4 L57 4 Q60 4 60 7 L60 17.25 L27.685 17.25 Z"/>
+          <path class="room room-error" d="M4 7 Q4 4 7 4 L20.734 4 L24.082 35.25 L4 35.25 Z"/>
+          <path class="room room-working" d="M28.275 22.75 L60 22.75 L60 57 Q60 60 57 60 L32.266 60 Z"/>
+          <path class="room room-done" d="M4 40.75 L24.672 40.75 L26.734 60 L7 60 Q4 60 4 57 Z"/>
+        </svg>
+      </a>
+      <div class="tab active"><span class="icon i-board" aria-hidden="true"></span><span data-t="home">Home</span></div>
+    </div>
+    <header class="home-header">
+      <h1 data-t="home">Home</h1>
+      <div class="header-actions">
+        <div class="seg layout-toggle" id="layout-toggle" role="radiogroup" data-t-title="layoutHelp" title="Card layout: status emphasis or compact list">
+          <button type="button" role="radio" data-layout="emphasis" aria-checked="true" data-t-label="layoutEmphasis" aria-label="Status emphasis"><span class="icon i-emphasis" aria-hidden="true"></span></button>
+          <button type="button" role="radio" data-layout="compact" aria-checked="false" data-t-label="layoutCompact" aria-label="Compact list"><span class="icon i-list" aria-hidden="true"></span></button>
+        </div>
+        <details class="menu" id="filter-menu">
+          <summary class="btn ghost" id="filter-button"><span class="icon i-filter" aria-hidden="true"></span><span id="filter-label" data-t="filter">Filter</span><span class="icon i-chevron" aria-hidden="true"></span></summary>
+          <div class="popover" role="group">
+            <label><span data-t="hosts">Hosts</span><select id="filter-host"></select></label>
+            <label><span data-t="allProjects">Project</span><select id="filter-project"></select></label>
+            <button type="button" class="btn ghost small" id="filter-clear" data-t="clearFilters" hidden>Clear Filters</button>
+          </div>
+        </details>
+        <details class="menu" id="hosts-menu">
+          <summary class="btn ghost" id="hosts-button"><span class="dot" id="hosts-dot"></span><span id="hosts-label">Hosts</span></summary>
+          <div class="popover hosts-popover">
+            <h2 data-t="hosts">Hosts</h2>
+            <ul id="hosts-list"></ul>
+          </div>
+        </details>
+        <button type="button" class="btn primary" id="start-work" hidden><span class="icon i-play" aria-hidden="true"></span><span data-t="startWork">Start Work</span></button>
+      </div>
+    </header>
+    <div class="segments" id="segments" role="tablist">
+      <button type="button" role="tab" data-lane="needsYou" aria-selected="true"><span data-t="yourTurn">Your turn</span><span class="seg-count" id="seg-needsYou"></span></button>
+      <button type="button" role="tab" data-lane="running" aria-selected="false"><span data-t="inProgress">In progress</span><span class="seg-count" id="seg-running"></span></button>
+      <button type="button" role="tab" data-lane="finished" aria-selected="false"><span data-t="finished">Finished</span><span class="seg-count" id="seg-finished"></span></button>
+    </div>
+    <div class="body">
+      <main class="board" id="board" data-lane="needsYou">
+        <p class="status" id="status" role="status" aria-live="polite"></p>
+        <a class="btn primary signin" id="login" hidden data-t="signIn">Sign in as an operator</a>
+        <section class="empty-board" id="empty-board" hidden>
+          <span class="icon i-board big" aria-hidden="true"></span>
+          <h2 data-t="noWork">No work yet</h2>
+          <p data-t="noWorkBody"></p>
+        </section>
+        <div class="lanes" id="lanes"></div>
+      </main>
+      <aside class="inspector" id="inspector" hidden aria-label="Details"></aside>
+    </div>
+  </div>
+</div>
+<footer class="statusbar">
+  <span class="chip" id="conn"><span class="icon i-bolt" aria-hidden="true"></span><span id="conn-label">tendd</span></span>
+  <span class="spacer"></span>
+  <span class="stat"><span class="icon i-server" aria-hidden="true"></span><span id="stat-hosts"></span></span>
+  <span class="stat"><span class="icon i-people" aria-hidden="true"></span><span id="stat-agents"></span></span>
+</footer>
+<dialog id="start-dialog">
+  <form method="dialog" id="start-form">
+    <h2 data-t="startWork">Start Work</h2>
+    <label><span data-t="workId">Work</span><input name="work" id="start-work-id" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]*" autocomplete="off"></label>
+    <label><span data-t="description">What to do</span><textarea name="body" id="start-body" rows="4" maxlength="16384"></textarea></label>
+    <p class="error" id="start-error" role="alert"></p>
+    <div class="row end"><button type="button" class="btn ghost" id="start-cancel" data-t="cancel">Cancel</button><button type="submit" class="btn primary" id="start-submit" data-t="start">Start</button></div>
+  </form>
+</dialog>
+<script type="module" src="/static/home.mjs"></script>
+</body>
+</html>

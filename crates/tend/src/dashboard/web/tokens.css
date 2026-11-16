@@ -24,6 +24,9 @@
   --purple: #AF52DE;
   --mint: #00C7BE;
   --terminal: #F7F7F7;
+  --card-your-turn: #FFF6EB;
+  --inset: rgba(0, 0, 0, 0.035);
+  --inset-border: rgba(0, 0, 0, 0.06);
   --brand-ink: #16181D;
   --brand-dim: 0.22;
   --state-error: var(--red);
@@ -50,6 +53,7 @@
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Cascadia Mono", monospace;
   --size-title: 17px;
+  --size-card-title: 14.5px;
   --size-inspector-title: 16px;
   --size-now: 13.5px;
   --size-body: 13px;
@@ -70,6 +74,9 @@
   --choice-radius: 7px;
   --card-radius: 8px;
   --lane-radius: 9px;
+  --stripe-width: 5px;
+  --inset-radius: 6px;
+  --inset-padding: 9px;
   --card-padding: 12px;
   --card-gap: 8px;
   --lane-gap: 12px;
@@ -102,6 +109,9 @@
     --purple: #BF5AF2;
     --mint: #63E6E2;
     --terminal: #212121;
+    --card-your-turn: #33291C;
+    --inset: rgba(255, 255, 255, 0.05);
+    --inset-border: rgba(255, 255, 255, 0.07);
     --brand-ink: #F2F3F5;
     --brand-dim: 0.26;
   }

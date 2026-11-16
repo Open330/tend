@@ -4806,12 +4806,7 @@ mod tests {
         let response = get(app.clone(), "/api/decisions/history", Some("s3cret")).await;
         assert_eq!(response.status(), StatusCode::OK);
         // The page itself is a static asset, like `/`.
-        for uri in [
-            "/",
-            "/static/needs.html",
-            "/static/v/any/needs.html",
-            "/static/index.html",
-        ] {
+        for uri in ["/", "/static/v/any/index.html", "/static/index.html"] {
             let page = get(app.clone(), uri, None).await;
             assert_eq!(page.headers()[header::X_FRAME_OPTIONS], "DENY", "{uri}");
             assert_eq!(
@@ -4820,16 +4815,44 @@ mod tests {
                 "{uri}"
             );
         }
-        for uri in ["/needs", "/home"] {
+        // Home runs under a strict policy: its own scripts and styles only.
+        for uri in [
+            "/needs",
+            "/home",
+            "/static/home.html",
+            "/static/v/any/home.html",
+        ] {
             let page = get(app.clone(), uri, None).await;
             assert_eq!(page.status(), StatusCode::OK, "{uri}");
             assert_eq!(page.headers()[header::X_FRAME_OPTIONS], "DENY", "{uri}");
-            assert_eq!(
-                page.headers()[header::CONTENT_SECURITY_POLICY],
+            let policy = page.headers()[header::CONTENT_SECURITY_POLICY]
+                .to_str()
+                .unwrap()
+                .to_string();
+            for directive in [
+                "default-src 'self'",
+                "script-src 'self'",
+                "style-src 'self'",
                 "frame-ancestors 'none'",
-                "{uri}"
-            );
+                "base-uri 'none'",
+            ] {
+                assert!(policy.contains(directive), "{uri}: {policy}");
+            }
+            assert!(!policy.contains("unsafe-inline"), "{uri}: {policy}");
         }
+        let home = get(app.clone(), "/home", None).await;
+        let html = String::from_utf8(
+            axum::body::to_bytes(home.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(html.contains("/home.mjs"), "{html}");
+        assert!(
+            !html.contains("<script>") && !html.contains(" style=\""),
+            "Home carries no inline code"
+        );
     }
 
     #[tokio::test]
