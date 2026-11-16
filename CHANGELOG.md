@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The dashboard's state colours are now the values the Mac app draws on
+  macOS 26 and later. The red, orange, blue, purple and mint tokens use the
+  26-series system palette (for example blue `#0088FF` / `#0091FF`, orange
+  `#FF8D28` / `#FF9230`), as read from `NSColor.system*` on the Mac.
+  Before, the dashboard used the classic hex values. The accent stays the
+  default `#007AFF` in both appearances, which is what
+  `controlAccentColor` gives. The Mac app itself is unchanged: it uses the
+  system colours directly.
+
 ### Changed
 
 - Tend for Mac now reads its surface colours and shell metrics from the
