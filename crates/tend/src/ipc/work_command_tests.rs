@@ -130,6 +130,8 @@ fn request(host: Option<&str>) -> WorkUpRequest {
         context: None,
         no_ticket: true,
         dry_run: false,
+        new_only: false,
+        queue_lease: None,
         host: host.map(str::to_string),
     }
 }

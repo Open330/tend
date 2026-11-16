@@ -18,6 +18,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   status dot, the title, the host, how long ago); selecting a row opens its
   details beside the board, where a decision is answered and a unit's agent
   answered, opened or marked Looks Good as before.
+- tendd keeps a Work queue (`work_queue_v1`): prompts it sends to an agent
+  once that agent is free, and Work it starts once fewer than
+  `[work_queue] max_busy_agents` (default 3) agents are busy. The queue lives
+  in `$XDG_DATA_HOME/tend/work-queue.json` and survives restarts. Each item
+  is claimed on disk before anything is typed or launched. tendd sends it at
+  most once on its own. It never types to an agent that is working, waiting
+  on you, at a usage limit, draining, or still holding an earlier queued
+  prompt. A send or launch whose effect tendd cannot know shows as
+  *uncertain*, and only a person settles it. This covers tendd stopping
+  mid-send, a paste that failed after reaching the pane, Enter that was not
+  confirmed, and a launch that failed partway. This release adds the daemon
+  side; the CLI, MCP and Home come next.
+- A queued Work gets an id in a reserved form, `Q-<NAME>-<DATE>-<12 hex>`, and
+  is started under a lease on its pipeline Run (`pipeline_queue_lease_v1`).
+  Until the queue releases the lease, `tend work up`, the pipeline
+  reconciler, `tend work start` and watch rules all refuse to register,
+  claim, launch or join that Work. A launch interrupted by a restart stays
+  held until you settle it in the queue.
+
+### Fixed
+
+- A prompt send that tmux did not confirm is no longer reported as "nothing
+  was sent". A paste that failed or timed out after tmux received it, or a
+  backend that crashed mid-send, may already have typed the text. Those now
+  say "it may have been typed" instead of offering a safe retry.
 
 ## [0.10.20] - 2026-11-16
 

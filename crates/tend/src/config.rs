@@ -186,6 +186,8 @@ pub struct Config {
     // WS-F: snapshot
     /// Workspace snapshots: how often tendd takes an automatic one.
     pub snapshot: SnapshotConfig,
+    /// The Work queue's launch throttle.
+    pub work_queue: crate::work_queue::WorkQueueConfig,
     pub session_activity: SessionActivityConfig,
     pub sinks: SinksConfig,
     pub stats: StatsConfig,

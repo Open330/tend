@@ -37,6 +37,7 @@ pub(super) struct ServerCtx {
     pub(super) reviews: crate::review::ReviewStore,
     pub(super) work_store: crate::dashboard::work_store::SharedWorkStore,
     pub(super) work_up: Arc<WorkUpManager>,
+    pub(super) work_queue: Arc<super::work_queue::QueueRuntime>,
     pub(super) mux_snapshots: Arc<crate::mux_snapshot_control::MuxSnapshotControl>,
     pub(super) config_path: Option<PathBuf>,
     pub(super) swap: Option<Arc<dyn crate::swap_api::SwapJobs>>,
@@ -310,6 +311,24 @@ async fn route(
                 declarer,
             ))
             .await;
+            turn.kind = name;
+            Ok(Flow::Respond(response))
+        }
+        body @ (RequestBody::WorkQueueList { .. }
+        | RequestBody::WorkQueueAdd { .. }
+        | RequestBody::WorkQueueEdit { .. }
+        | RequestBody::WorkQueueMove { .. }
+        | RequestBody::WorkQueueCancel { .. }
+        | RequestBody::WorkQueueRemove { .. }
+        | RequestBody::WorkQueueRunNow { .. }
+        | RequestBody::WorkQueueResolve { .. }
+        | RequestBody::WorkQueueClear) => {
+            let actor = match &body {
+                // Reading needs no identity; skip the pane scan.
+                RequestBody::WorkQueueList { .. } => crate::work_queue::QueueActor::Unknown,
+                _ => Box::pin(super::work_queue::actor(ctx, &mut conn.collaboration_actor)).await,
+            };
+            let (name, response) = Box::pin(super::work_queue::response(ctx, actor, body)).await;
             turn.kind = name;
             Ok(Flow::Respond(response))
         }

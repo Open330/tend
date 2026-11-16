@@ -1224,6 +1224,7 @@ fn observed_environment_is_canonical_and_cross_host_or_socket_ambiguity_is_not_e
         observed_pane: Some("rmux:%5".into()),
         pane_evidence: Some(CollaborationPaneEvidence::ProcessEnvironment),
         pane_observed: true,
+        pane_scan_ok: true,
         request_panes: None,
     };
     let origin = CollaborationOrigin {
@@ -1288,6 +1289,7 @@ async fn observed_scan_is_handed_off_once() {
         observed_pane: None,
         pane_evidence: None,
         pane_observed: false,
+        pane_scan_ok: true,
         request_panes: None,
     };
     actor.observe_pane(std::slice::from_ref(&backend)).await;
@@ -1429,6 +1431,7 @@ fn caller_pane_mismatch_is_audit_evidence_not_a_refusal() {
         observed_pane: Some("%9".into()),
         pane_evidence: Some(CollaborationPaneEvidence::ProcessEnvironment),
         pane_observed: true,
+        pane_scan_ok: true,
         request_panes: None,
     };
     let provenance = actor.provenance(&CollaborationOrigin {

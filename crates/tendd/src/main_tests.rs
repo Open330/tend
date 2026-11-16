@@ -199,7 +199,9 @@ async fn only_the_default_daemon_finishes_interrupted_completions() {
         })
         .await
         .unwrap();
-    runs.claim_ready(&identity, run.generation).await.unwrap();
+    runs.claim_ready(&identity, run.generation, None)
+        .await
+        .unwrap();
     let record = tend::review::NewReview {
         target: tend::review::ReviewTarget::Work {
             workspace: "ws".to_string(),

@@ -3753,6 +3753,8 @@ async fn start_work(client: &Client, args: &Value, config: &tend::config::Config
         skill: text("skill"),
         context: text("context"),
         dry_run: flag("dry_run"),
+        new_only: false,
+        queue_lease: None,
         show_prompts: false,
         yes: true,
         no_ticket: flag("no_ticket"),

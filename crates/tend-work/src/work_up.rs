@@ -71,6 +71,15 @@ pub struct UpArgs {
     /// turn; `--no-ticket` skips it entirely.
     #[arg(long)]
     pub dry_run: bool,
+    /// Start only a Work that does not exist yet: refuse, before anything
+    /// runs, when it has a window, panes or a Run. The Work queue launches
+    /// with it so a queued Work never joins an existing one.
+    #[arg(long, hide = true)]
+    pub new_only: bool,
+    /// The Work queue attempt that holds this queued Work's lease; with
+    /// `--new-only`. Registration and claims are made under it.
+    #[arg(long, hide = true, requires = "new_only")]
+    pub queue_lease: Option<String>,
     /// Skip external issue lookup and launch on the Work id alone.
     #[arg(long)]
     pub no_ticket: bool,
@@ -175,6 +184,7 @@ pub struct UpResult {
 /// (every tmux call) stay separable: the CLI runs them back to back,
 /// while the MCP server hands the blocking half to `spawn_blocking`
 /// rather than stalling its reactor on a subprocess.
+#[allow(clippy::struct_excessive_bools)] // independent launch facts, each read on its own
 pub struct Resolved {
     pub work: String,
     pub workspace: String,
@@ -199,6 +209,10 @@ pub struct Resolved {
     /// daemon is unreachable, which degrades to the old pane-only view
     /// rather than failing the launch.
     pub states: HashMap<String, AgentState>,
+    /// `--new-only`: register as a new Run or not at all.
+    pub new_only: bool,
+    /// `--queue-lease`: the queue attempt this launch runs under.
+    pub queue_lease: Option<String>,
     /// `[agent.<program>].account` for each provider that sets one.
     pub accounts: Vec<tend::swap_api::AccountRoute>,
 }
@@ -279,6 +293,11 @@ pub async fn run_noninteractive(
         crate::backlog::fill_from_plan(&mut args, record);
     }
     let dry_run = args.dry_run;
+    if args.new_only && !dry_run {
+        refuse_existing_work(&args, planned.as_ref(), client).await?;
+    } else if !dry_run {
+        refuse_queue_work(&args.work, args.workspace.as_deref(), client).await?;
+    }
     let resolved = resolve(&args, config, Some(client)).await?;
     if dry_run {
         return apply(resolved, true);
@@ -297,6 +316,74 @@ pub async fn run_noninteractive(
         }
     }
     Ok(result)
+}
+
+/// `--new-only`, before anything runs (no ticket, prepare, worktree or
+/// pane): refuse a Work id that already has a planned record, a Run or a
+/// window in any workspace. The registration itself is refused again,
+/// atomically in tendd, if one appears in between.
+async fn refuse_existing_work(
+    args: &UpArgs,
+    planned: Option<&tend::work::WorkRecord>,
+    client: &tend::ipc::Client,
+) -> Result<()> {
+    let work = crate::tmux_work::normalize_work_id(&args.work)?;
+    let runs = client
+        .pipeline_runs()
+        .await
+        .context("reading pipeline Runs")?;
+    // A queue attempt taking over the Run an earlier attempt of the same
+    // item left suspended (the person asked to run it again) passes here;
+    // registration checks the lease again. Its panes, if any, still stop it.
+    let own_run = |run: &tend::pipeline_run::PipelineRun| {
+        args.queue_lease.as_deref().is_some_and(|holder| {
+            run.queue_lease
+                .as_ref()
+                .is_some_and(|lease| lease.holder == holder)
+        })
+    };
+    let exists = planned.is_some()
+        || runs
+            .iter()
+            .any(|run| run.identity.work_id == work && !own_run(run))
+        || crate::tmux_work::find_work_in(&work, None)?.is_some();
+    if exists {
+        bail!(
+            "{}: Work {work} already exists; a new-only launch does not join it",
+            tend::work_queue::WORK_EXISTS_BEFORE_START
+        );
+    }
+    Ok(())
+}
+
+/// A queued Work (a `Q-…` id) belongs to the Work queue until the queue
+/// releases it: refuse it here, before resolve prepares anything. tendd
+/// refuses the registration as well; this only saves the work before it.
+pub async fn refuse_queue_work(
+    work: &str,
+    workspace: Option<&str>,
+    client: &tend::ipc::Client,
+) -> Result<()> {
+    let work = crate::tmux_work::normalize_work_id(work)?;
+    if !tend::pipeline_run::is_queue_work_id(&work) {
+        return Ok(());
+    }
+    let runs = client
+        .pipeline_runs()
+        .await
+        .context("reading pipeline Runs")?;
+    let released = runs.iter().any(|run| {
+        run.identity.work_id == work
+            && workspace.is_none_or(|w| run.identity.workspace_id.eq_ignore_ascii_case(w))
+            && !run.leased_against(None)
+    });
+    if !released {
+        bail!(
+            "{}: Work {work} is a queued Work the Work queue has not released; settle it in the queue first",
+            tend::pipeline_run::WORK_RESERVED_PREFIX
+        );
+    }
+    Ok(())
 }
 
 /// Register desired state with tendd, atomically claim dependency-ready
@@ -360,10 +447,21 @@ pub async fn apply_durable(resolved: Resolved, client: &tend::ipc::Client) -> Re
         observed,
         invalidate,
     };
-    let mut run = client
-        .pipeline_register(&registration)
-        .await
-        .context("register durable pipeline Run with tendd")?;
+    let mut run = if resolved.new_only {
+        if work_info.is_some() || !existing.is_empty() {
+            bail!(
+                "{}: Work {} already has a window or agents; a new-only launch does not join it",
+                tend::pipeline_run::WORK_EXISTS_PREFIX,
+                identity.key()
+            );
+        }
+        client
+            .pipeline_register_new(&registration, resolved.queue_lease.as_deref())
+            .await
+    } else {
+        client.pipeline_register(&registration).await
+    }
+    .context("register durable pipeline Run with tendd")?;
     // Migration/adoption path: panes created before durable Runs have no
     // generation option yet. Stamp every active alias with its own expected
     // generation; pending invalidated descendants keep the old value until
@@ -391,8 +489,19 @@ pub async fn apply_durable(resolved: Resolved, client: &tend::ipc::Client) -> Re
     // An abandoned operation (out of time, tendd shutting down) takes no new
     // claims; the next pass picks them up.
     crate::subprocess::ensure_time_left().context("claim dependency-ready pipeline aliases")?;
+    if resolved.new_only {
+        // Nothing may have joined the Work since registration: every other
+        // creator refuses a leased queue Work, so anything here is a bug or
+        // a non-queue id raced in. Stop before the first launch.
+        if crate::tmux_work::find_work_in(&resolved.work, Some(&resolved.workspace))?.is_some() {
+            bail!(
+                "Work {} gained a window from elsewhere while it was being started; nothing was launched",
+                identity.key()
+            );
+        }
+    }
     let claims = client
-        .pipeline_claim(&identity, run.generation)
+        .pipeline_claim_leased(&identity, run.generation, resolved.queue_lease.as_deref())
         .await
         .context("claim dependency-ready pipeline aliases")?;
     let mut launched = Vec::new();
@@ -713,6 +822,7 @@ fn finish(
 
 // ---------------------------------------------------------------- resolve
 
+#[allow(clippy::too_many_lines)] // route, cwd, plan and durable state resolve together
 pub async fn resolve(
     args: &UpArgs,
     config: &Config,
@@ -841,6 +951,8 @@ pub async fn resolve(
         desired,
         durable_run,
         states,
+        new_only: args.new_only,
+        queue_lease: args.queue_lease.clone(),
         accounts: account_routes(config),
     })
 }
@@ -2025,6 +2137,8 @@ mod tests {
             context: Some("flaky since #500".into()),
             no_ticket: false,
             dry_run: true,
+            new_only: true,
+            queue_lease: None,
             host: None,
         };
         let args = parse_up_argv(&request.arguments()).unwrap();
@@ -2037,6 +2151,7 @@ mod tests {
         assert_eq!(args.body.as_deref(), Some("make CI green"));
         assert_eq!(args.context.as_deref(), Some("flaky since #500"));
         assert!(args.json && args.yes && args.dry_run && !args.no_ticket);
+        assert!(args.new_only);
         assert!(
             !args.non_interactive,
             "run_noninteractive sets it, not the argv"
@@ -2067,6 +2182,8 @@ mod tests {
             skill: None,
             context: None,
             dry_run: false,
+            new_only: false,
+            queue_lease: None,
             show_prompts: false,
             yes: false,
             no_ticket: true,
