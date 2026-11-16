@@ -915,8 +915,10 @@ fn device_unit(item: &Map<String, Value>) -> Value {
     Value::Object(out)
 }
 
-/// A decision as the queue lists it (the shared decoder reads it), plus the
-/// host it is on and whether it can be decided from here.
+/// A decision exactly as the queue lists it (the shared decoder reads it,
+/// and the device decides what it read, never a cut copy; the queue bounds
+/// its own entries as `/api/decisions` serves them), plus the host it is
+/// on, whether it can be decided from here, and its project.
 fn device_decision(item: &Map<String, Value>) -> Value {
     let mut entry = item
         .get("entry")
@@ -925,14 +927,14 @@ fn device_decision(item: &Map<String, Value>) -> Value {
         .unwrap_or_default();
     for field in ["host", "actionable", "repo", "system"] {
         if let Some(v) = item.get(field) {
-            entry.insert(field.to_owned(), v.clone());
+            entry.insert(field.to_owned(), bounded_tree(v));
         }
     }
-    bounded_tree(&Value::Object(entry))
+    Value::Object(entry)
 }
 
 /// The board as an `operate` device sees it: units with only the fields
-/// the app shows and no pane ids or sockets, decisions as the queue lists
+/// the app shows and no pane ids or sockets in their agent references, decisions as the queue lists
 /// them (`kind` `human_request` / `review`), units as `kind: unit`, and the
 /// decided items from the history for Finished.
 pub(super) fn device_board(board: &Value, history: Option<&Value>) -> Value {
@@ -992,7 +994,11 @@ pub(super) fn device_board(board: &Value, history: Option<&Value>) -> Value {
                         "alias": host.get("alias"),
                         "local": host.get("local"),
                         "unavailable": host.get("unavailable"),
-                        "items": host.pointer("/history/items").map(bounded_tree),
+                        // More exist than this page.
+                        "truncated": host.pointer("/history/truncated"),
+                        // The history's own items, as /api/decisions/history
+                        // serves them.
+                        "items": host.pointer("/history/items"),
                     })
                 })
                 .collect()
@@ -1011,7 +1017,7 @@ pub(super) fn device_board(board: &Value, history: Option<&Value>) -> Value {
 /// `GET /api/device/home`: Home's board for an `operate` device.
 pub(super) async fn home(State(state): State<AppState>) -> Response {
     let (board, history) = tokio::join!(
-        crate::dashboard::home::board(&state, 100),
+        crate::dashboard::home::shared_board(&state, 100),
         crate::dashboard::decisions::history_json(&state, 100)
     );
     Json(device_board(&board, Some(&history))).into_response()

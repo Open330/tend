@@ -88,7 +88,7 @@ pub(in crate::dashboard) async fn board(state: &AppState, limit: usize) -> Value
 /// The board for a read: the one built in the last
 /// [`home_board::BOARD_REUSE`] when there is one, so readers polling
 /// together build it once.
-async fn shared_board(state: &AppState, limit: usize) -> Value {
+pub(in crate::dashboard) async fn shared_board(state: &AppState, limit: usize) -> Value {
     let mut last = state.home_sources.last_board.lock().await;
     if let Some((at, board)) = last.as_ref() {
         if limit == DEFAULT_LIMIT && at.elapsed() < home_board::BOARD_REUSE {
