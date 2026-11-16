@@ -19,7 +19,7 @@ the simulator and against a scratch daemon.
 | 5 | What a notification shows on the lock screen (phase 2). | Nothing from the agent: "Tend: 2 need you" and the host alias. The question is fetched after unlock. | Push not built. |
 | 6 | Keep the iOS CI job phase 1 adds (build + unit tests on a GitHub macOS runner, only when `apps/**` changes; free on a public repository, a few minutes per run). | Keep it: the shared models are edited from the Mac side, and only a full iOS build catches what that breaks. | Added with the iOS app PR; removing it is deleting one job. |
 | 7 | Let a paired phone see hosts and agents, read agents' recent output and start new agents (the `operate` scope). The token is an ordinary bearer credential: whoever holds it (a phished approval, a stolen phone) can start agents with bypassed permissions on every covered control-mode host until it is removed or expires. | Yes, accepting that risk, opt-in per device: chosen on the phone, looked up then ticked separately by the operator, create-only starts in projects agents already use, audit before dispatch, **Limit to deciding** and Remove. | Built and tested against a scratch daemon only; existing phones stay decide-only until paired again. |
-| 8 | Turn on `[dashboard] allow_work_start = true` on jiun-mini. It is off today, so neither the web nor the phone can start work through the dashboard. | Turn it on only after the start-work slice (plan step 3) has passed its tests, and when the owner wants to start work from the phone. Tests on a scratch daemon are not a reason to turn it on. | Off. The app shows "Starting work is turned off on this dashboard" and keeps the rest. |
+| 8 | Turn on `[dashboard] allow_work_start = true` on jiun-mini. It is off today, so neither the web nor the phone can start work through the dashboard. | Turn it on only after the start-work slice (plan step 4) has passed its tests, and when the owner wants to start work from the phone. Tests on a scratch daemon are not a reason to turn it on. | Off. The app shows "Starting work is turned off on this dashboard" and keeps the rest. |
 | 9 | Expiry for `operate` devices. A token in daily use lasts the full lifetime whoever uses it. | The same as `decide` (30 days unused, 90 days in all); shorter would mean pairing the phone again every few weeks. Removal is the real defence. | 30 / 90 days. |
 
 ## What the owner uses today
@@ -425,25 +425,45 @@ also prefixes `/api/devices`), and change neither the operator routes nor
     (must be one `work-options` listed for that host), `cwd` = the chosen
     project, `host`, `no_ticket = true`, `dry_run = false`, and nothing
     else (no workspace, skill, context or external reference).
-  - **Projects from the snapshot.** `project` must be a folder an agent on
-    that host has worked in, as the current snapshot shows; the server
-    checks it, so the phone cannot point agents at an arbitrary path. Empty
-    means the host's route default.
+  - **A project is required, from the server's own list.** `project` must
+    be, byte for byte, one of the folders `work-options` listed for that
+    host: folders an agent on that host has worked in, as the current
+    snapshot shows. There is no empty or default project: with no `cwd`,
+    `tend work up` would fall back to its own working directory
+    (`resolve_cwd`), which no one chose. If the host's config has a route
+    that would match the minted id and set its own `cwd`, a worktree or a
+    `prepare` command, the start is refused before dispatch rather than
+    letting the route move the agents elsewhere; the minted prefix
+    `phone-` is chosen so ordinary routes do not match it. The folder the
+    agents get is recorded in the audit line. (A folder limits where agents
+    start, not what an agent with bypassed permissions can reach.)
   - **The existing gates still apply:** `[dashboard] allow_work_start` on
     the dashboard host (default off; off on jiun-mini today, see owner
     decision 8) and a control-mode target host.
-  - **Idempotent.** `idempotency_key` is a UUID the app makes per Start. The
-    server keeps (device, key) → the normalized request and its result for
-    24 hours; a retry with the same request returns the first result, the
-    same key with a different request is refused (409). One start per
-    device in flight; at most 20 per device per hour.
+  - **Idempotent, durably.** `idempotency_key` is a UUID the app makes per
+    Start. Before anything is dispatched, the server **reserves** it in the
+    device store (a `device_starts` table, unique on device id and key):
+    the request's fingerprint (SHA-256 of host, project, pipeline and
+    text), the minted Work id and the state `reserved`, written with
+    `synchronous=FULL`. Only then is `tend work up` run; the state becomes
+    `started` or `failed` with the operation id when it answers, or
+    `unknown` when it times out. A retry with the same key and fingerprint
+    returns that entry's state and never dispatches again; the same key
+    with another fingerprint is refused (409); a concurrent duplicate sees
+    the reservation and gets its state. After a restart, every entry still
+    `reserved` is marked `unknown` and is **never dispatched again**: a
+    second `work up` with that id could now find the Work the first one
+    created and re-prompt it. An `unknown` start is shown as such on the
+    phone and in the audit; a person checks the host. Entries are kept for
+    7 days and an unresolved one is never dropped before it is resolved
+    (removing the device removes its entries). One start per device in
+    flight; at most 20 per device per hour.
   - **Audited before and after.** An intent line (device id and label,
-    scope, approver, host, project, pipeline, minted Work id, request length
-    but not its text) is written **before** dispatch; if it cannot be
-    written, nothing starts (503). A result line follows with the outcome
-    (started, refused, failed, timed out) and the operation id. A start that
-    times out may still have launched agents; the result line says
-    "unknown" and the app says so.
+    scope, approver, idempotency key, fingerprint, host, project, pipeline,
+    minted Work id, request length but not its text) is written **before**
+    dispatch; if it or the reservation cannot be written, nothing starts
+    (503). A result line follows with the outcome (started, refused,
+    failed, unknown) and the operation id.
 
 **Granted at approval, not by the device.**
 
@@ -553,10 +573,14 @@ build 1). In order, each its own PR with screenshots:
    sessions, `capture_policy = never` locally and remotely, size limits.
 4. Start work: `GET /api/device/work-options`, `POST /api/device/work` and
    the app's Start Work with Face ID. Tests: raw bodies with extra fields,
-   a project not in the snapshot, `..` and symlinked paths, a pipeline not
-   listed, idempotent retry and conflicting reuse, the audit line failing
-   closed, `allow_work_start` off; an XCUITest that starts work on a
-   scratch daemon whose pipeline runs a harmless stand-in agent.
+   an empty project, a project not in the list, `..` and symlinked paths,
+   a pipeline not listed, a route that would match the minted id with its
+   own cwd, worktree or prepare; concurrent same-key requests, a restart
+   before dispatch and after dispatch but before the result (never
+   dispatched twice), a timed-out retry, conflicting reuse, the audit line
+   or reservation failing closed, `allow_work_start` off; an XCUITest that
+   starts work on a scratch daemon whose pipeline runs a harmless stand-in
+   agent.
 
 **Phase 2: notifications.** First a real-device vertical slice (needs
 decisions 1 and 4): a question on a host, a content-free push, unlock, the
