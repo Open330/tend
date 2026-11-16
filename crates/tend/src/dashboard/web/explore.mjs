@@ -14,7 +14,7 @@ const POLL_MS = 1500;
 
 export function mountExplore(root, deps) {
   const { S, el, icon, button, logo, hostBadge, when, read, write, authHeaders, canWrite } = deps;
-  const view = { show: "all", query: "", grouping: "host", fleet: null, open: null, stream: null, poll: null, sending: false, draft: "", collapsed: new Set() };
+  const view = { show: "all", query: "", grouping: "host", fleet: null, open: null, stream: null, poll: null, sending: false, drafts: new Map(), collapsed: new Set(), closed: false };
 
   const sidebar = el("aside", "ex-side");
   const viewer = el("section", "ex-view");
@@ -210,7 +210,9 @@ export function mountExplore(root, deps) {
     view.stream = openPaneStream({
       url: `/api/panes/${encodeURIComponent(item.pane)}/output/stream?${params}`,
       headers: authHeaders,
-      onOutput: (payload) => show(payload?.text),
+      onOutput: (payload) => {
+        if (!view.closed && view.open?.id === item.id) show(payload?.text);
+      },
       onGone: () => (status.textContent = S.paneGone),
       onState: (state) => {
         if (state === "live") status.textContent = "";
@@ -226,7 +228,10 @@ export function mountExplore(root, deps) {
     const area = el("textarea", "field");
     area.rows = 2;
     area.placeholder = S.promptPlaceholder;
-    area.value = view.draft;
+    // A draft belongs to its pane: text for one pane never goes to another.
+    const key = item.id;
+    area.value = view.drafts.get(key) || "";
+    area.disabled = view.sending;
     area.maxLength = 16384;
     const send = button(S.send, () => submit(), "btn primary");
     const interrupt = button(S.interrupt, async () => {
@@ -240,25 +245,29 @@ export function mountExplore(root, deps) {
     const sync = () => (send.disabled = !area.value.trim() || view.sending);
     async function submit() {
       const text = area.value;
-      if (!text.trim() || view.sending) return;
+      if (!text.trim() || view.sending || view.open?.id !== key) return;
       view.sending = true;
+      // Frozen while sending, so nothing typed now is lost when it clears.
+      area.disabled = true;
       sync();
       try {
         const body = { text, submit: true };
         if (item.socket) body.socket = item.socket;
         await write(`/api/panes/${encodeURIComponent(item.pane)}/prompt`, body);
-        area.value = "";
-        view.draft = "";
+        if (view.drafts.get(key) === text) view.drafts.delete(key);
+        if (area.value === text) area.value = "";
         status.textContent = S.sent;
       } catch (error) {
         status.textContent = error.message;
       } finally {
         view.sending = false;
+        area.disabled = false;
         sync();
       }
     }
     area.addEventListener("input", () => {
-      view.draft = area.value;
+      if (area.value) view.drafts.set(key, area.value);
+      else view.drafts.delete(key);
       sync();
     });
     area.addEventListener("keydown", (event) => {
@@ -280,6 +289,7 @@ export function mountExplore(root, deps) {
 
   return {
     update(fleet) {
+      if (view.closed) return;
       view.fleet = fleet;
       // Do not redraw the list under someone typing in the filter.
       if (document.activeElement !== search) drawList();
@@ -290,8 +300,15 @@ export function mountExplore(root, deps) {
         if (found) openPane(found, { push: false });
       }
     },
+    /// Everything private gone: the stream, the output, the drafts, and
+    /// no later update draws it back.
     destroy() {
+      view.closed = true;
       closeStream();
+      view.drafts.clear();
+      view.open = null;
+      view.fleet = null;
+      root.replaceChildren();
     },
   };
 }

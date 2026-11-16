@@ -1338,6 +1338,20 @@ function lostAccess(error) {
   $("start-body").value = "";
   $("start-dialog").close?.();
   $("rail-explore").hidden = true;
+  $("rail-settings").hidden = true;
+  // Explore's output and drafts, Settings and its admin dialogs go too.
+  state.explore?.destroy();
+  state.explore = null;
+  // The sign-in offer is on Home: show it whichever page was open.
+  $("view-home").hidden = false;
+  $("view-explore").hidden = true;
+  $("view-settings").hidden = true;
+  $("view-explore").replaceChildren();
+  $("view-settings").replaceChildren();
+  for (const dialog of document.querySelectorAll("dialog.share-dialog")) {
+    dialog.close?.();
+    dialog.remove?.();
+  }
   $("status").textContent = error.message;
   const login = $("login");
   login.href = `/auth/login?return_to=${encodeURIComponent(homeReturnPath(window.location.hash))}`;
