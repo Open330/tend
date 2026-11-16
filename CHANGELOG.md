@@ -20,6 +20,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   process lists for every running or idle agent before discarding those rows.
   The daemon copies only agents whose state or question needs a person;
   the decision ordering, limits and contents stay the same.
+- A "Tend cannot verify the recipient binding" question no longer stays in
+  Your turn forever when the agent that sent the original request is still
+  running. The worker it went to had vanished (no agent row, nothing a
+  person could unblock), but the item only closed once the sender was gone
+  too, so a live coordinator kept it open indefinitely; some were weeks old.
+  After the usual week with the recipient still gone it now closes as
+  stale, recorded on the item. The sender's request itself is untouched and
+  stays listed as interrupted for it. Requests a person sent, and
+  recipients that are still there but failing, keep their item as before.
+- The "reply arrived but its sender is gone" item pointed at
+  `tend msg show`, which does not exist; it now names
+  `tend msg list --scope all --request-id <id> --full`.
 - Typing `exit` in the live tour while a step was opening could end the tour
   on a tmux error and a backtrace, without the closing summary. The tour
   checked once per poll that the sandbox server was alive, then made several
