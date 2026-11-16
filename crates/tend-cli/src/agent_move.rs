@@ -1497,7 +1497,7 @@ mod tests {
         /// rmux on Windows accepts `-S` only for the pipe a server already
         /// listens on, whose name it derives itself: start a private server
         /// by label, then address it by that pipe as tend does. Its panes run
-        /// PowerShell rather than `/bin/sh`. The server starts outside this
+        /// Windows PowerShell rather than `/bin/sh`. The server starts outside this
         /// process's job, as `tend restore --boot` starts one: an SSH
         /// session's or a CI runner's job forbids the breakaway rmux needs.
         #[cfg(windows)]
@@ -1520,9 +1520,15 @@ mod tests {
                     .env_remove("TMUX_PANE");
                 command
             };
+            // The panes' shell is set, not inherited: rmux's default follows
+            // %COMSPEC% (cmd.exe on a clean machine), and these commands are
+            // PowerShell. Windows PowerShell ships with every Windows.
+            let config = directory.path().join("rmux.conf");
+            std::fs::write(&config, "set -g default-shell powershell.exe\n")?;
+            let config = config.to_string_lossy().into_owned();
             tend_work::windows_detach::spawn(&rmux(&[
                 "-f",
-                "NUL",
+                &config,
                 "new-session",
                 "-d",
                 "-s",
@@ -1534,7 +1540,9 @@ mod tests {
             let started = std::time::Instant::now();
             let socket = loop {
                 let output =
-                    rmux(&["display-message", "-p", "-t", "=source", "#{socket_path}"]).output()?;
+                    // A window target: rmux 0.10.0 expands formats against a
+                    // bare session target (`=source`) to empty strings.
+                    rmux(&["display-message", "-p", "-t", "=source:main", "#{socket_path}"]).output()?;
                 let socket = String::from_utf8_lossy(&output.stdout).trim().to_owned();
                 if output.status.success() && socket.starts_with(r"\\.\pipe\") {
                     break socket;
@@ -1545,6 +1553,19 @@ mod tests {
                 }
                 std::thread::sleep(std::time::Duration::from_millis(100));
             };
+            // The moves must carry history the pane already has: wait for
+            // PowerShell (seconds to start on a small machine) to print it.
+            loop {
+                let shown = rmux(&["capture-pane", "-p", "-t", "=source:main"]).output()?;
+                if String::from_utf8_lossy(&shown.stdout).contains("conversation-preserved") {
+                    break;
+                }
+                if started.elapsed() > std::time::Duration::from_secs(30) {
+                    let _ = rmux(&["kill-server"]).output();
+                    anyhow::bail!("rmux label {label}: the pane printed nothing within 30s");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
             Ok(Self {
                 _directory: directory,
                 endpoint: BackendEndpoint {
