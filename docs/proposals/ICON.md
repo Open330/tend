@@ -27,7 +27,7 @@ which is how Finder and the Dock draw Tend.app. The pipeline was checked by
 rendering the shipped bundle this way and comparing with the installed
 `/Applications/Tend.app` (0.10.20) on macOS 27.2.1 / Xcode 27.2. The
 geometry and alpha are identical. Under 1% of pixels differ, by at most
-6/255 in a channel, which is renderer variation and not a different icon.
+6/255 in a channel, which is consistent with rendering variation and not a different icon.
 
 On each 1024 px rendering, `tend_icons.py measure` finds the **plate** from
 the opaque pixels. It finds the **glyph** as every pixel that differs (by
@@ -41,7 +41,7 @@ It compares bounding boxes, not filled area or visual mass, so a dense square
 and a thin ring of the same span score the same. It is also sensitive at the
 edges. With a 20/255 threshold instead of 40, Xcode reads 91.7% instead of
 79.9%, Safari 83.9% instead of 80.1% and Slack 73.7% instead of 70.1%. That
-is because bevels and rims start to count. Full-bleed artwork reads about
+is because bevels and rims start to count. Our full-bleed C and D read about
 93%, not 100%, because the 3.5% sampling band is skipped. Use it to place
 Tend among its neighbours, not to prescribe an exact size.
 
