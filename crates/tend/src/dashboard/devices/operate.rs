@@ -826,6 +826,7 @@ async fn run_and_record(
         detail,
         ..start
     })
+}
 
 /// A unit's fields an `operate` device reads: no pane ids or sockets (a
 /// capture names the agent by host and session).

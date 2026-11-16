@@ -1183,7 +1183,7 @@ async fn work_options_list_only_what_a_phone_chooses_from() {
         "{text}"
     );
     let (_, me) = call(&app, "GET", "/api/device", Some(&token), None).await;
-    assert_eq!(me["features"], json!(["capture", "work"]));
+    assert_eq!(me["features"], json!(["home", "capture", "work"]));
 }
 
 #[tokio::test]
@@ -1561,6 +1561,7 @@ async fn a_retry_gets_its_outcome_even_after_starting_is_turned_off() {
     .await;
     assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
     assert_eq!(launched.lock().unwrap().len(), 1);
+}
 
 #[tokio::test]
 async fn an_operate_device_reads_homes_board_without_panes_and_a_deciding_one_does_not() {
