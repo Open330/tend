@@ -50,6 +50,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   measures the hover capsule only when one unfolds, and checks the pointer
   less often while it is far from every menu bar (down to twice a second
   1500 points away; 15 times a second near one, as before).
+- Markdown in the Mac app's rows (agent responses, asked context) is parsed
+  once per text and kept in a bounded cache, instead of on every redraw.
 
 ### Fixed
 

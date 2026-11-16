@@ -12,7 +12,37 @@ import SwiftUI
 /// does understand and reinserts the block boundaries as literal characters,
 /// so the result stays a single `Text` that can still honor `lineLimit`.
 enum TendMarkdownText {
+    /// Parsed results by source. Rows (Inbox messages, agent responses,
+    /// asked context) parse their Markdown in `body`, so every redraw
+    /// re-parsed the same text; the source fully determines the result.
+    /// Bounded by count and by the sources' total size; NSCache is
+    /// thread-safe and drops entries under memory pressure.
+    private final class Parsed {
+        let value: AttributedString
+        init(_ value: AttributedString) { self.value = value }
+    }
+
+    nonisolated(unsafe) private static let cache: NSCache<NSString, Parsed> = {
+        let cache = NSCache<NSString, Parsed>()
+        cache.countLimit = 512
+        cache.totalCostLimit = 8 << 20
+        return cache
+    }()
+
     static func attributedString(markdown source: String) -> AttributedString {
+        let key = source as NSString
+        if let hit = cache.object(forKey: key) { return hit.value }
+        let value = parse(source)
+        cache.setObject(Parsed(value), forKey: key, cost: source.utf8.count)
+        return value
+    }
+
+    static func isCached(_ source: String) -> Bool {
+        cache.object(forKey: source as NSString) != nil
+    }
+
+    private static func parse(_ source: String) -> AttributedString {
+        TendPerf.count("markdown.parse")
         let options = AttributedString.MarkdownParsingOptions(
             interpretedSyntax: .full,
             failurePolicy: .returnPartiallyParsedIfPossible
