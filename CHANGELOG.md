@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The Mac app's usage alerts no longer regroup the whole fleet's rate-limit
+  readings on every fleet snapshot. A check that found nothing to announce
+  is skipped while the agents' usage fields stay the same, until a reset,
+  a cap lifting, a reading going stale or a receipt expiring could change
+  the answer; an activity time counts only by how it orders the readings
+  and whether it is fresh. Which reading is the freshest, the thresholds
+  and the receipts are unchanged. In a Debug benchmark of an hour of
+  snapshots from 4 hosts, the usage part of each ingest went from about
+  0.26–0.39 ms to 0.04–0.09 ms.
 - On Home in the Mac app, the side bar's divider no longer runs up through
   the traffic-light buttons. With the lists folded away, the activity rail
   sat in a split view whose divider spans the window's full height; the rail
@@ -24,7 +33,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   above every unit. In progress orders by each unit's latest change (a helper
   or a second stage moving counts) and Finished by when the unit finished,
   newest first.
-
 - Home in the Mac app does far less work per redraw. Each finished card's
   review key (a SHA-256 hex string) was recomputed about four times per
   render; it is now cached per card and revision and hex-encoded without
