@@ -25,7 +25,9 @@ struct HomeView: View {
             }
         }
         .navigationTitle(String(localized: "Home"))
-        .navigationBarTitleDisplayMode(sizeClass == .regular ? .inline : .large)
+        // Inline on iPhone too: the lane strip, not a large title, is what
+        // the top of the screen is for.
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if sizeClass == .regular {
                 ToolbarItem(placement: .topBarLeading) { HostsSummary() }
@@ -266,6 +268,21 @@ struct LaneContent: View {
         return order.map { ($0, groups[$0]!) }
     }
 
+    fileprivate static func finishedGroups(_ items: [FinishedItem]) -> [(name: String, decided: Bool, items: [FinishedItem])] {
+        let decidedKey = "\u{0}decided"
+        var order: [String] = []
+        var groups: [String: [FinishedItem]] = [:]
+        for item in items {
+            let key: String = switch item {
+            case .decided: decidedKey
+            case .agent(let agent): agent.agent.repo ?? String(localized: "Other")
+            }
+            if groups[key] == nil { order.append(key) }
+            groups[key, default: []].append(item)
+        }
+        return order.map { ($0, $0 == decidedKey, groups[$0]!) }
+    }
+
     // MARK: Finished
 
     private var recentWindow: TimeInterval { FleetLanes.finishedWindow }
@@ -289,12 +306,24 @@ struct LaneContent: View {
                 .font(TendType.meta)
                 .foregroundStyle(.secondary)
         }
-        ForEach(items) { item in
-            switch item {
-            case .decided(let past): DecidedCard(past: past)
-            case .agent(let agent):
-                NavigationLink(value: agent) { AgentCard(agent: agent, lane: .finished) }
-                    .buttonStyle(.plain)
+        // As on the Mac: by project, in order of the newest item in each;
+        // decisions taken form their own group.
+        let groups = Self.finishedGroups(items)
+        ForEach(groups, id: \.name) { group in
+            if groups.count > 1 {
+                if group.decided {
+                    DecidedHeader(count: group.items.count)
+                } else {
+                    ProjectHeader(name: group.name, count: group.items.count)
+                }
+            }
+            ForEach(group.items) { item in
+                switch item {
+                case .decided(let past): DecidedCard(past: past)
+                case .agent(let agent):
+                    NavigationLink(value: agent) { AgentCard(agent: agent, lane: .finished) }
+                        .buttonStyle(.plain)
+                }
             }
         }
         if older > 0 {
@@ -403,4 +432,20 @@ func historyGap(_ section: HostHistory) -> String {
         parts.append(String(localized: "\(section.history.undecoded) this app cannot show"))
     }
     return String(localized: "\(section.alias): \(parts.joined(separator: "; "))")
+}
+
+/// The heading over decisions taken, in Finished.
+struct DecidedHeader: View {
+    let count: Int
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "checkmark.seal").imageScale(.small)
+            Text("Decided").font(TendType.meta.weight(.semibold))
+            Text(verbatim: "\(count)").font(TendType.meta).monospacedDigit().foregroundStyle(.tertiary)
+        }
+        .foregroundStyle(.secondary)
+        .padding(.top, 4)
+        .accessibilityAddTraits(.isHeader)
+    }
 }

@@ -215,7 +215,15 @@ struct TendApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView().environment(model)
+            // As the host of the unit tests the app shows nothing and polls
+            // nothing: its own reads would hit the tests' stubs and race them
+            // for the Keychain. (UI tests launch the app separately, without
+            // this variable.)
+            if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+                Color.clear
+            } else {
+                RootView().environment(model)
+            }
         }
     }
 }

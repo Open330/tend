@@ -53,10 +53,10 @@ final class HomeUITests: XCTestCase {
 
         let name = app.textFields["deviceName"]
         XCTAssertTrue(name.waitForExistence(timeout: 10))
+        attach(app, "pairing")
         name.tap()
         name.typeText(deviceName)
         app.buttons["scope-operate"].tap()
-        attach(app, "pairing")
         app.buttons["pairButton"].tap()
         let code = app.staticTexts["userCode"]
         XCTAssertTrue(code.waitForExistence(timeout: 10), "no pairing code; is the scratch tendd up?")
@@ -105,6 +105,10 @@ final class HomeUITests: XCTestCase {
             }
             XCTAssertTrue(sidebarHost.waitForExistence(timeout: 5))
             sidebarHost.tap()
+            // Close the overlay sidebar so the host is seen whole.
+            if sidebarHost.isHittable {
+                app.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap()
+            }
         } else {
             app.navigationBars.buttons.firstMatch.tap()
             app.tabBars.buttons["Hosts"].tap()

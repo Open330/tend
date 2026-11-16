@@ -25,7 +25,7 @@ struct AgentCard: View {
                 .font(TendType.body)
                 .foregroundStyle(.secondary)
                 .lineLimit(lane == .finished ? 3 : 2)
-            MetaRow(maker: a.maker, repo: a.repo, host: agent.host, since: a.since)
+            MetaRow(kind: a.kind, repo: a.repo, host: agent.host, hostIsLocal: agent.hostIsLocal, since: a.since)
         }
         .tendCard()
         .contentShape(Rectangle())
@@ -34,17 +34,38 @@ struct AgentCard: View {
     }
 }
 
-/// An agent's mark: Claude's orange asterisk, Codex's dark knot, else a
-/// person (the Mac app's 12 pt agent logos).
+/// A product's own mark (Tend for Mac's `AgentLogos`, copied with its
+/// NOTICE): drawn only scaled, never recoloured; the OpenAI blossom in
+/// exactly black or white. A kind without a mark gets an SF Symbol.
 struct AgentLogo: View {
-    let maker: String
+    let kind: String
+    var size: CGFloat = 15
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var asset: (name: String, scale: CGFloat, monochrome: Bool)? {
+        switch kind {
+        case "claude_code", "claude": ("AgentLogos/claude", 0.98, false)
+        case "codex", "openai": ("AgentLogos/openai", 1.37, true)
+        case "agy", "antigravity": ("AgentLogos/antigravity", 1.35, false)
+        default: nil
+        }
+    }
 
     var body: some View {
-        switch maker {
-        case "claude": Image(systemName: "asterisk").foregroundStyle(Color(uiColor: UIColor(hex: 0xD97757)))
-        case "codex": Image(systemName: "hexagon").foregroundStyle(.primary)
-        default: Image(systemName: "person.crop.circle").foregroundStyle(.secondary)
+        Group {
+            if let asset {
+                Image(asset.name)
+                    .resizable()
+                    .renderingMode(asset.monochrome ? .template : .original)
+                    .scaledToFit()
+                    .foregroundStyle(colorScheme == .dark ? Color.white : Color.black)
+                    .scaleEffect(asset.scale)
+            } else {
+                Image(systemName: "terminal").resizable().scaledToFit().foregroundStyle(.secondary)
+            }
         }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
     }
 }
 
@@ -67,19 +88,20 @@ struct ProjectHeader: View {
 
 /// The Mac card's meta row: agent, project, host badge, then the time.
 struct MetaRow: View {
-    let maker: String
+    let kind: String
     let repo: String?
     let host: String
+    let hostIsLocal: Bool
     let since: Date?
 
     var body: some View {
         HStack(spacing: 8) {
-            AgentLogo(maker: maker).imageScale(.small)
+            AgentLogo(kind: kind)
             if let repo {
                 Text(verbatim: repo).lineLimit(1)
             }
             HStack(spacing: 4) {
-                HostGlyph(alias: host, size: 14)
+                HostBadge(alias: host, local: hostIsLocal, state: "online", size: 16, showsState: false)
                 Text(verbatim: host).lineLimit(1)
             }
             Spacer(minLength: 4)
@@ -91,7 +113,7 @@ struct MetaRow: View {
             }
         }
         .font(TendType.meta)
-        .foregroundStyle(.tertiary)
+        .foregroundStyle(TendSurface.metaText)
         .lineLimit(1)
     }
 }
@@ -110,7 +132,7 @@ struct DecidedCard: View {
                     Text(at, format: .relative(presentation: .numeric, unitsStyle: .abbreviated))
                         .font(TendType.meta)
                         .monospacedDigit()
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(TendSurface.metaText)
                 }
             }
             Text(verbatim: past.title)
@@ -124,15 +146,16 @@ struct DecidedCard: View {
                     .lineLimit(3)
             }
             HStack(spacing: 6) {
-                HostGlyph(alias: past.host, size: 14)
+                HostBadge(alias: past.host, local: past.hostIsLocal, state: "online", size: 16, showsState: false)
                 Text(verbatim: past.host)
                 if let by = past.by {
                     Text(verbatim: "·")
-                    Text("by \(by)").lineLimit(1)
+                    Text("by \(ActorName.display(by))").lineLimit(1)
                 }
             }
             .font(TendType.meta)
-            .foregroundStyle(.tertiary)
+            .foregroundStyle(TendSurface.metaText)
+            .accessibilityElement(children: .combine)
         }
         .tendCard()
         .accessibilityElement(children: .contain)
@@ -175,4 +198,49 @@ struct FlowLayout: Layout {
             row = max(row, size.height)
         }
     }
+}
+
+/// Who decided, for people: a paired device's name (`app:<name>#<id>`), a
+/// signed-in operator's address (`web:<email>`), else the label as recorded.
+enum ActorName {
+    static func display(_ label: String) -> String {
+        if label.hasPrefix("app:") {
+            let rest = label.dropFirst(4)
+            return String(rest.split(separator: "#", maxSplits: 1).first ?? rest)
+        }
+        if label.hasPrefix("web:") { return String(label.dropFirst(4)) }
+        return label
+    }
+}
+
+/// The card actions' one style: outlined like the Mac's secondary buttons
+/// (input border, control radius), filled for the one primary action, and
+/// at least 44 pt tall for a finger.
+struct CardButtonStyle: ButtonStyle {
+    var primary = false
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(TendType.body.weight(primary ? .semibold : .medium))
+            .lineLimit(1)
+            .padding(.horizontal, 14)
+            .frame(minHeight: 44)
+            .foregroundStyle(primary ? Color.white : Color.accentColor)
+            .background(
+                RoundedRectangle(cornerRadius: TendSurface.controlRadius, style: .continuous)
+                    .fill(primary ? Color.accentColor.opacity(configuration.isPressed ? 0.8 : 1) : (configuration.isPressed ? Color.secondary.opacity(0.12) : Color.clear))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: TendSurface.controlRadius, style: .continuous)
+                    .strokeBorder(primary ? Color.clear : TendSurface.inputBorder, lineWidth: 1)
+            )
+            .opacity(isEnabled ? 1 : 0.45)
+            .contentShape(Rectangle())
+    }
+}
+
+extension ButtonStyle where Self == CardButtonStyle {
+    static var card: CardButtonStyle { CardButtonStyle() }
+    static var cardPrimary: CardButtonStyle { CardButtonStyle(primary: true) }
 }

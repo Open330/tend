@@ -93,7 +93,7 @@ struct DecisionCard: View {
                 Text(verbatim: asker).lineLimit(1).truncationMode(.middle)
             }
             if !decision.hostIsLocal {
-                HostGlyph(alias: decision.host, size: 14)
+                HostBadge(alias: decision.host, local: false, state: "online", size: 16, showsState: false)
                 Text(verbatim: decision.host).lineLimit(1)
             }
             Spacer(minLength: 4)
@@ -133,24 +133,26 @@ struct DecisionCard: View {
                         chosenOption = nil
                         composing = ""
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.card)
                     .accessibilityIdentifier("answerButton")
                 case .result:
                     Button("Accept") { Task { await model.review(decision, .accepted) } }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(.card)
                         .accessibilityIdentifier("acceptButton")
                     Button("Return…") {
                         chosenOption = nil
                         composing = ""
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.card)
                     .accessibilityIdentifier("returnButton")
-                    Spacer()
+                    Spacer(minLength: 0)
                     Menu {
                         Button("Withdraw", role: .destructive) { Task { await model.review(decision, .withdrawn) } }
                     } label: {
-                        Image(systemName: "ellipsis.circle")
+                        Image(systemName: "ellipsis")
+                            .frame(width: 20)
                     }
+                    .buttonStyle(.card)
                     .accessibilityLabel(String(localized: "More"))
                 case .waiting:
                     EmptyView()
@@ -187,29 +189,29 @@ struct DecisionCard: View {
                     composing = nil
                     chosenOption = nil
                 }
-                .buttonStyle(.borderless)
-                Spacer()
+                .buttonStyle(.card)
+                Spacer(minLength: 0)
                 switch decision.kind {
                 case .question:
                     Button("Decline") { submit { await model.answer(decision, text: text.wrappedValue, declined: true) } }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(.card)
                         .disabled(empty)
                         .accessibilityIdentifier("declineButton")
                     Button("Send") { submit { await model.answer(decision, text: text.wrappedValue) } }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.cardPrimary)
                         .disabled(empty)
                         .accessibilityIdentifier("sendButton")
                 case .result:
                     if chosenOption == nil {
                         Button("Return") { submit { await model.review(decision, .returned, note: text.wrappedValue) } }
-                            .buttonStyle(.bordered)
+                            .buttonStyle(.card)
                             .disabled(empty)
                             .accessibilityIdentifier("confirmReturn")
                     }
                     Button("Accept") {
                         submit { await model.review(decision, .accepted, note: empty ? nil : text.wrappedValue, option: chosenOption) }
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.cardPrimary)
                     .accessibilityIdentifier("confirmAccept")
                 case .waiting:
                     EmptyView()

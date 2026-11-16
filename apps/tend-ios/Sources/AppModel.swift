@@ -86,7 +86,9 @@ struct PendingDecision: Identifiable, Hashable, Sendable {
     var asker: String? {
         switch kind {
         case .question(let entry): entry.fromAlias ?? entry.workID ?? entry.fromPane
-        case .result(let item): item.target.text
+        // Who asked for the review (`impl`), as the Mac shows it; the
+        // target only when the requester left no label.
+        case .result(let item): item.requestedBy.label?.nonEmpty ?? item.target.text
         case .waiting(let entry): entry.agentKind
         }
     }
@@ -117,6 +119,7 @@ struct PendingDecision: Identifiable, Hashable, Sendable {
 struct PastDecision: Identifiable, Hashable, Sendable {
     let item: TendDecidedItem
     let host: String
+    var hostIsLocal = false
 
     var id: String {
         switch item {
@@ -295,7 +298,7 @@ final class AppModel {
 
     var past: [PastDecision] {
         history
-            .flatMap { section in section.history.items.map { PastDecision(item: $0, host: section.alias) } }
+            .flatMap { section in section.history.items.map { PastDecision(item: $0, host: section.alias, hostIsLocal: section.local) } }
             .sorted { ($0.at ?? .distantPast) > ($1.at ?? .distantPast) }
     }
 

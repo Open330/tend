@@ -190,7 +190,7 @@ struct AgentDetailView: View {
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 8) {
                         AgentStatusTag(status: a.status)
-                        MetaRow(maker: a.maker, repo: a.repo, host: agent.host, since: a.since)
+                        MetaRow(kind: a.kind, repo: a.repo, host: agent.host, hostIsLocal: agent.hostIsLocal, since: a.since)
                     }
                 }
                 NowBox(agent: a)

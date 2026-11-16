@@ -39,6 +39,14 @@ enum TendSurface {
     static let border = Color.tend(light: 0xE5E5E5, dark: 0x2B2B2B)
     static let inputBackground = Color.tend(light: 0xFFFFFF, dark: 0x313131)
     static let inputBorder = Color.tend(light: 0xCECECE, dark: 0x3C3C3C)
+    /// Meta rows (agent, project, host, time): readable on a card in both
+    /// schemes, quieter than body text. The Mac's tertiary washes out at
+    /// phone sizes; this is its secondary text token (`tokens.json`).
+    static let metaText = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(white: 1, alpha: 0.55)
+            : UIColor(white: 0, alpha: 0.5)
+    })
 
     static let cardRadius: CGFloat = 10
     static let laneRadius: CGFloat = 12
@@ -256,6 +264,7 @@ struct HostBadge: View {
     let local: Bool
     let state: String
     var size: CGFloat = 30
+    var showsState = true
 
     var body: some View {
         let (tint, _) = HostIdentity.colors(alias)
@@ -268,11 +277,13 @@ struct HostBadge: View {
                     .foregroundStyle(tint)
             )
             .overlay(alignment: .bottomTrailing) {
-                Circle()
-                    .fill(HostState.color(state))
-                    .frame(width: size * 0.3, height: size * 0.3)
-                    .overlay(Circle().strokeBorder(TendSurface.workspace, lineWidth: 1.5))
-                    .offset(x: 2, y: 2)
+                if showsState {
+                    Circle()
+                        .fill(HostState.color(state))
+                        .frame(width: size * 0.3, height: size * 0.3)
+                        .overlay(Circle().strokeBorder(TendSurface.workspace, lineWidth: 1.5))
+                        .offset(x: 2, y: 2)
+                }
             }
             .accessibilityHidden(true)
     }
