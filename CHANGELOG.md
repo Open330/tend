@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Tend for Windows** (`tend-app.exe`, `crates/tend-app`): the tray app
+  around a local tendd's Home, like Tend for Mac's menu bar. Notification
+  area icon with the Tend mark, the dashboard's Home in a WebView2 window,
+  toasts for new questions and results on every Fleet host, start with
+  Windows. It sends the dashboard token only to a server that proved it
+  knows it and never hands it to the page. See docs/WINDOWS.md.
 - Home in the Mac app has two card layouts, chosen in Settings → General →
   Home or with the toggle in Home's header. Status emphasis (the default)
   leads each card with its lane's colour stripe and a bold title, puts the
