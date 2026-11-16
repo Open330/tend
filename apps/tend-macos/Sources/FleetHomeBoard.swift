@@ -8,7 +8,7 @@ import SwiftUI
 /// field of a remote agent, the workspace revision) used to re-evaluate the
 /// entire board.
 @MainActor
-final class FleetHomeBoard: ObservableObject {
+final class FleetHomeBoard: ObservableObject, TendWindowVisibilityTracking {
     /// Home's units. Replaced when a unit changes in a way Home can show
     /// (`TendProjectionEquality.sameOnHome`), not for each agent heartbeat.
     @Published private(set) var works: [FleetWork] = []
@@ -145,7 +145,7 @@ final class FleetHomeBoard: ObservableObject {
 /// hidden. Reports on attaching to a window and on each change, and nil
 /// when it leaves its window or is removed.
 struct TendWindowVisibilityReader: NSViewRepresentable {
-    let board: FleetHomeBoard
+    let board: any TendWindowVisibilityTracking
 
     func makeNSView(context: Context) -> ReaderView {
         let view = ReaderView()
@@ -158,7 +158,7 @@ struct TendWindowVisibilityReader: NSViewRepresentable {
     }
 
     /// Each reader is one entry in the board's set of Home windows.
-    private static func report(to board: FleetHomeBoard, from view: ReaderView) -> (Bool?) -> Void {
+    private static func report(to board: any TendWindowVisibilityTracking, from view: ReaderView) -> (Bool?) -> Void {
         let reader = ObjectIdentifier(view)
         return { [weak board] visible in
             guard let board else { return }

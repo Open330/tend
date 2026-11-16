@@ -4,54 +4,65 @@ import SwiftUI
 // MARK: - Status bar
 
 /// The status bar's usage items: one per rate-limit account that reports
-/// anything, worst first. Rendered under a periodic timeline so a lifted cap
-/// or a rolled-over window drops out without waiting for the next refresh.
+/// anything, worst first, as `TendStatusBarInputs` worked them out (it
+/// reads them again every `TendWindowChrome.clockPeriod`, so a lifted cap
+/// or a rolled-over window drops out without waiting for the next refresh).
 struct TendUsageStatusItems: View {
-    let agents: [TendHostedAgent]
+    let items: [TendStatusBarInputs.UsageItem]
+    let more: Int
+    let moreLevel: TendUsageLevel?
     let openPane: (TendWatchPaneIdentity) -> Void
 
     /// More than this and the rest fold into a `+N` item; the status bar is
     /// shared with the connection and fleet counts.
-    private static let inlineLimit = 2
+    static let inlineLimit = 2
 
     @State private var showsPopover = false
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 30)) { context in
-            let groups = TendUsageGroup.groups(from: agents, now: context.date)
-            if !groups.isEmpty {
-                Button {
-                    showsPopover.toggle()
-                } label: {
-                    HStack(spacing: 10) {
-                        ForEach(groups.prefix(Self.inlineLimit)) { group in
-                            Label(
-                                TendUsageFormat.statusText(group, now: context.date),
-                                systemImage: "gauge.with.dots.needle.67percent"
-                            )
-                            .foregroundStyle(group.level.tint(normal: .secondary))
-                        }
-                        if groups.count > Self.inlineLimit {
-                            Text(verbatim: "+\(groups.count - Self.inlineLimit)")
-                                .foregroundStyle(groups.dropFirst(Self.inlineLimit).map(\.level).max()?.tint(normal: .secondary) ?? .secondary)
-                        }
+        if !items.isEmpty {
+            Button {
+                showsPopover.toggle()
+            } label: {
+                HStack(spacing: 10) {
+                    ForEach(items, id: \.id) { item in
+                        Label(item.text, systemImage: "gauge.with.dots.needle.67percent")
+                            .foregroundStyle(item.level.tint(normal: .secondary))
                     }
-                    .labelStyle(TendUsageStatusLabelStyle())
-                    .contentShape(Rectangle())
+                    if more > 0 {
+                        Text(verbatim: "+\(more)")
+                            .foregroundStyle(moreLevel?.tint(normal: .secondary) ?? .secondary)
+                    }
                 }
-                .buttonStyle(.plain)
-                .help("Usage and rate limits")
-                .popover(isPresented: $showsPopover, arrowEdge: .top) {
-                    TendUsagePopover(
-                        groups: groups,
-                        hostCosts: TendUsageHostCost.summaries(from: agents),
-                        now: context.date
-                    ) { id in
-                        showsPopover = false
-                        openPane(id)
-                    }
+                .labelStyle(TendUsageStatusLabelStyle())
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Usage and rate limits")
+            .popover(isPresented: $showsPopover, arrowEdge: .top) {
+                TendUsageLivePopover { id in
+                    showsPopover = false
+                    openPane(id)
                 }
             }
+        }
+    }
+}
+
+/// The popover, open: it follows the model itself, as it did when the
+/// whole status bar did.
+private struct TendUsageLivePopover: View {
+    @EnvironmentObject private var model: AppModel
+    let openPane: (TendWatchPaneIdentity) -> Void
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            TendUsagePopover(
+                groups: TendUsageGroup.groups(from: model.hostedAgents, now: context.date),
+                hostCosts: TendUsageHostCost.summaries(from: model.hostedAgents),
+                now: context.date,
+                openPane: openPane
+            )
         }
     }
 }

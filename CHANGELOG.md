@@ -43,6 +43,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was sent". A paste that failed or timed out after tmux received it, or a
   backend that crashed mid-send, may already have typed the text. Those now
   say "it may have been typed" instead of offering a safe retry.
+- The Mac app's window chrome (the root view, the side bar, the tab strips
+  and the status bar) no longer redraws for every fleet heartbeat. Each
+  observed the whole app model; they now draw from small inputs published
+  only when what they show changes: the side bar's rail badges and, with a
+  list open, that list's rows; the open tabs' titles, state dots and unread
+  panes; the status bar's counts and usage text. With no workbench window
+  on screen (hidden, minimized, covered, on another Space) the side bar,
+  tabs and status bar wait, and catch up when a window is shown again; the
+  window's own sheets still follow at once. Measured on optimized copies
+  over the same 235 s of a live fleet, with the window shown, minimized,
+  covered and hidden in turn: root view, side bar and status bar bodies
+  went from 312 each to 5, 16 and 5; while minimized or hidden, from 68
+  each to 0.
 
 ## [0.10.20] - 2026-11-16
 
