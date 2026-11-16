@@ -341,8 +341,11 @@ struct TendSidebar: View {
         model.openInLiveWatch(participant)
     }
 
-    private func openRemoteShell(on host: TendFleetHost) {
+    private func openRemoteShell(on listed: TendFleetHost) {
         guard !isOpeningRemoteShell else { return }
+        // The menu was built when the host list last changed; launch with
+        // the host as it is now (its SSH target may have moved since).
+        let host = model.remoteShellHosts.first { $0.alias == listed.alias } ?? listed
         isOpeningRemoteShell = true
         remoteShellError = nil
         Task {

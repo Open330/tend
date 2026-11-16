@@ -160,8 +160,11 @@ struct ContentView: View, @MainActor Equatable {
             model.activateEditor(tabs.focusedSelection)
         }
         .background(WorkbenchWindowPresenter())
-        .onAppear { model.chrome.setOpenTabs(tabs.groups.flatMap(\.tabs)) }
-        .onReceive(tabs.$groups) { groups in model.chrome.setOpenTabs(groups.flatMap(\.tabs)) }
+        .onAppear { model.chrome.setOpenTabs(tabs.groups.flatMap(\.tabs), window: ObjectIdentifier(tabs)) }
+        .onReceive(tabs.$groups) { groups in
+            model.chrome.setOpenTabs(groups.flatMap(\.tabs), window: ObjectIdentifier(tabs))
+        }
+        .onDisappear { model.chrome.removeOpenTabs(window: ObjectIdentifier(tabs)) }
         // WS-A: unread tracking and notification-click routing.
         .modifier(TendAttentionTracking(model: model, tabs: tabs, attention: model.attention, open: openAgentPane))
         .focusedSceneValue(\.tendEditorCommands, editorCommands)

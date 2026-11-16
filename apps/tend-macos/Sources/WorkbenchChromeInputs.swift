@@ -219,6 +219,9 @@ final class TendWindowChrome: TendWindowVisibilityTracking {
 
     private weak var model: AppModel?
     private var readers: [ObjectIdentifier: Bool] = [:]
+    /// Each window's open tabs, by its tab model; the strips are labelled
+    /// for all of them.
+    private var tabsByWindow: [ObjectIdentifier: [TendSidebarSelection]] = [:]
     private var openTabs: [TendSidebarSelection] = []
     private var refreshQueued = false
     /// A change arrived while no window was on screen.
@@ -245,8 +248,23 @@ final class TendWindowChrome: TendWindowVisibilityTracking {
         refreshAll()
     }
 
-    /// The tabs open in the window, whose labels the tab strips show.
-    func setOpenTabs(_ tabs: [TendSidebarSelection]) {
+    /// The tabs open in one window (named by its tab model), whose labels
+    /// its tab strips show.
+    func setOpenTabs(_ tabs: [TendSidebarSelection], window: ObjectIdentifier) {
+        guard tabsByWindow[window] != tabs else { return }
+        tabsByWindow[window] = tabs
+        openTabsChanged()
+    }
+
+    /// That window is gone.
+    func removeOpenTabs(window: ObjectIdentifier) {
+        guard tabsByWindow.removeValue(forKey: window) != nil else { return }
+        openTabsChanged()
+    }
+
+    private func openTabsChanged() {
+        var seen = Set<TendSidebarSelection>()
+        let tabs = tabsByWindow.values.joined().filter { seen.insert($0).inserted }
         guard tabs != openTabs else { return }
         openTabs = tabs
         guard let model else { return }
@@ -268,7 +286,9 @@ final class TendWindowChrome: TendWindowVisibilityTracking {
         guard visible != isVisible else { return }
         isVisible = visible
         TendPerf.count(visible ? "chrome.shown" : "chrome.hidden")
-        if visible, held { refreshAll() }
+        // Shown again: catch up at once, time-only changes (a cap lifting,
+        // a reset passing) included.
+        if visible { refreshAll() }
     }
 
     private func queueRefresh() {

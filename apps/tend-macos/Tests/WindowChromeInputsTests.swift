@@ -78,12 +78,30 @@ private func host(_ alias: String, local: Bool = false, activity: String = "2026
         let model = model(), chrome = model.chrome
         let window = NSObject(), reader = ObjectIdentifier(window)
         chrome.setVisible(true, reader: reader)
-        chrome.setOpenTabs([.workBoard, .inbox])
+        let tabsA = NSObject()
+        chrome.setOpenTabs([.workBoard, .inbox], window: ObjectIdentifier(tabsA))
         #expect(chrome.tabStrip.value[.inbox]?.title == String(localized: "Inbox"))
         #expect(chrome.tabStrip.value[.ask] == nil)
         let tabs = Publishes(chrome.tabStrip)
         chrome.refresh()
         #expect(tabs.count == 0, "same tabs, same labels")
+        chrome.removeReader(reader)
+    }
+
+    @Test func everyWindowsTabsAreLabelled() throws {
+        let model = model(), chrome = model.chrome
+        let window = NSObject(), reader = ObjectIdentifier(window)
+        chrome.setVisible(true, reader: reader)
+        let a = NSObject(), b = NSObject()
+        chrome.setOpenTabs([.workBoard, .host("mac")], window: ObjectIdentifier(a))
+        chrome.setOpenTabs([.inbox], window: ObjectIdentifier(b))
+        #expect(chrome.tabStrip.value[.host("mac")]?.title == String(localized: "Host"))
+        model.ingestExecutionSnapshotForTesting(TendExecutionSnapshot(hosts: [try host("mac", local: true)]))
+        chrome.refresh()
+        #expect(chrome.tabStrip.value[.host("mac")]?.title == "mac", "window A's tab follows though B updated last")
+        chrome.removeOpenTabs(window: ObjectIdentifier(a))
+        #expect(chrome.tabStrip.value[.host("mac")] == nil)
+        #expect(chrome.tabStrip.value[.inbox] != nil)
         chrome.removeReader(reader)
     }
 }
