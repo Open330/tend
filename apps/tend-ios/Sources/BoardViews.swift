@@ -80,6 +80,12 @@ struct BoardYourTurn: View {
                     .foregroundStyle(.secondary)
             }
         }
+        if !board.coverageKnown {
+            Label(String(localized: "Not every host's queue could be read, so more may need you."), systemImage: "exclamationmark.triangle")
+                .font(TendType.meta)
+                .foregroundStyle(TendPalette.orange)
+                .accessibilityIdentifier("coverageUnknown")
+        }
         if let undecoded = board.undecoded[.yourTurn], undecoded > 0 {
             Label(String(localized: "\(undecoded) more need you in a form this app cannot show yet. Open the dashboard in a browser, or update the app."), systemImage: "exclamationmark.triangle")
                 .font(TendType.meta)
@@ -152,9 +158,10 @@ struct WorkDetailView: View {
     let unit: BoardUnit
     @Environment(AppModel.self) private var model
 
-    /// The unit as the latest board has it.
-    private var current: BoardUnit {
-        guard let board = model.visibleBoard else { return unit }
+    /// The unit as the latest board has it; the snapshot it was opened
+    /// with only while this device may still read the board.
+    private var current: BoardUnit? {
+        guard let board = model.visibleBoard else { return nil }
         for lane in Lane.board {
             for case .unit(let found) in board.items(lane) where found.id == unit.id { return found }
         }
@@ -162,7 +169,22 @@ struct WorkDetailView: View {
     }
 
     var body: some View {
-        let u = current
+        if let u = current {
+            detail(u)
+        } else {
+            ScrollView {
+                if model.operates {
+                    Empty(text: String(localized: "This work is not on the board any more."))
+                } else {
+                    DecideOnlyNotice()
+                }
+            }
+            .padding(16)
+            .background(TendSurface.workspace)
+        }
+    }
+
+    private func detail(_ u: BoardUnit) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 6) {

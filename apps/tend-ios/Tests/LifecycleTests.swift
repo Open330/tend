@@ -223,3 +223,59 @@ final class LifecycleTests: XCTestCase {
         XCTAssertThrowsError(try hosts(#"{"hosts":[{"alias":"x","queue":"garbage"}]}"#))
     }
 }
+
+/// Home on the daemon's board, and leaving it.
+extension LifecycleTests {
+    private static let boardWithAQuestion = #"{"hosts":[{"alias":"here","local":true}],"decision_hosts":[{"alias":"here","local":true}],"lanes":{"needs_you":{"groups":[{"items":[{"kind":"human_request","request_id":"r1","body":"Ship?","from_session_id":"s","from_pane":"%1","created_at":"2026-11-16T10:00:00Z","host":"here","actionable":true}]}]}}}"#
+    private static let homeDevice = #"{"device":{"id":"dev_1","name":"phone"},"scope":["operate"],"features":["home"]}"#
+
+    func testNarrowedOffTheBoardReadsTheQueueBeforeSayingAllClear() async {
+        StubProtocol.on("/api/device", .init(status: 200, body: Self.homeDevice))
+        StubProtocol.on("/api/device/fleet", .init(status: 200, body: Self.fleetJSON))
+        StubProtocol.on("/api/device/home", .init(status: 200, body: Self.boardWithAQuestion), .init(status: 403, body: "{}"))
+        StubProtocol.on("/api/decisions", .init(status: 200, body: Self.emptyQueue))
+        let model = operateModel()
+        await model.refreshDevice()
+        await model.refresh()
+        XCTAssertEqual(model.pending.count, 1)
+        XCTAssertFalse(StubProtocol.seen.contains("/api/decisions"), "the board stands in for the queue")
+        await model.refresh()
+        XCTAssertFalse(model.operates)
+        XCTAssertNil(model.visibleBoard)
+        XCTAssertTrue(StubProtocol.seen.contains("/api/decisions"), "the queue is read in the same refresh")
+        XCTAssertTrue(model.loaded)
+        XCTAssertEqual(model.hosts.map(\.alias), ["here"])
+    }
+
+    func testLosingTheBoardFeatureReadsTheQueue() async {
+        StubProtocol.on("/api/device",
+                        .init(status: 200, body: Self.homeDevice),
+                        .init(status: 200, body: #"{"device":{"id":"dev_1","name":"phone"},"scope":["operate"],"features":[]}"#))
+        StubProtocol.on("/api/device/fleet", .init(status: 200, body: Self.fleetJSON))
+        StubProtocol.on("/api/device/home", .init(status: 200, body: Self.boardWithAQuestion))
+        StubProtocol.on("/api/decisions", .init(status: 200, body: Self.emptyQueue))
+        let model = operateModel()
+        await model.refreshDevice()
+        await model.refresh()
+        XCTAssertNotNil(model.visibleBoard)
+        await model.refreshDevice()
+        XCTAssertNil(model.visibleBoard)
+        XCTAssertTrue(StubProtocol.seen.contains("/api/decisions"))
+        XCTAssertTrue(model.loaded)
+        XCTAssertEqual(model.hosts.map(\.alias), ["here"])
+    }
+
+    func testFinishedCountsOlderDecisionsAsTheWebDoes() async {
+        StubProtocol.on("/api/device", .init(status: 200, body: Self.homeDevice))
+        StubProtocol.on("/api/device/fleet", .init(status: 200, body: Self.fleetJSON))
+        StubProtocol.on("/api/device/home", .init(status: 200, body: #"{"decision_hosts":[{"alias":"here","local":true}],"lanes":{"needs_you":{"groups":[]},"finished":{"groups":[]}}}"#))
+        let history = #"{"hosts":[{"alias":"here","local":true,"history":{"items":[{"kind":"human_answer","request_id":"r1","body":"Ship?","from_session_id":"s","from_pane":"%1","created_at":"2020-01-01T00:00:00Z","status":"completed","answer":"yes","answered_at":"2020-01-02T00:00:00Z"}]}}]}"#
+        StubProtocol.on("/api/decisions/history", .init(status: 200, body: history))
+        let model = operateModel()
+        await model.refreshDevice()
+        await model.refresh()
+        await model.refreshHistory()
+        XCTAssertEqual(model.past.count, 1)
+        XCTAssertEqual(model.count(.finished), 1)
+    }
+}

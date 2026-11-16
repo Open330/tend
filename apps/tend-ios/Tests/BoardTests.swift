@@ -49,7 +49,7 @@ final class BoardTests: XCTestCase {
             unit("old", #""recent": false"#),
             unit("seen", #""reviewed": true, "probable_helper": true"#),
         ].joined(separator: ",")
-        let b = try board(#"{"lanes": {"running": {"groups": [{"project": "tend", "items": [\#(items)]}]}}}"#)
+        let b = try board(#"{"lanes": {"needs_you": {"groups": []}, "running": {"groups": [{"project": "tend", "items": [\#(items)]}]}}}"#)
         let folded = FoldedLane(b, lane: .inProgress)
         XCTAssertEqual(folded.groups.flatMap(\.items).map(\.id), ["u:shown"])
         XCTAssertEqual(folded.helpers.map(\.id), ["helper"])
@@ -98,10 +98,21 @@ final class BoardTests: XCTestCase {
     }
 
     func testStagesShowWhereTheWorkIs() throws {
-        let b = try board(#"{"lanes": {"running": {"groups": [{"items": [{"kind": "unit", "id": "w", "lane": "running", "title": {"key": "kind_on_host", "kind": "codex", "host": "mini"}, "stages": [{"name": "plan", "state": "done"}, {"name": "build", "state": "running"}, {"name": "review", "state": "waiting"}]}]}]}}}"#)
+        let b = try board(#"{"lanes": {"needs_you": {"groups": []}, "running": {"groups": [{"items": [{"kind": "unit", "id": "w", "lane": "running", "title": {"key": "kind_on_host", "kind": "codex", "host": "mini"}, "stages": [{"name": "plan", "state": "done"}, {"name": "build", "state": "running"}, {"name": "review", "state": "waiting"}]}]}]}}}"#)
         guard case .unit(let unit)? = b.items(.inProgress).first else { return XCTFail("no unit") }
         XCTAssertEqual(unit.currentStage, 1)
         XCTAssertEqual(unit.doneStages, 1)
         XCTAssertEqual(unit.titleText, "codex on mini")
+    }
+
+    func testABoardWithoutCoverageIsNeverAllClear() throws {
+        // No Your turn lane at all: not a board.
+        XCTAssertThrowsError(try board(#"{"lanes": {}}"#))
+        let empty = #""lanes": {"needs_you": {"groups": []}}"#
+        // No coverage sent, or a host record this app cannot read.
+        XCTAssertFalse(try board(#"{\#(empty)}"#).allClear)
+        let unreadable = try board(#"{\#(empty), "decision_hosts": [{"alias": 42, "truncated": true}]}"#)
+        XCTAssertFalse(unreadable.coverageKnown)
+        XCTAssertFalse(unreadable.allClear)
     }
 }

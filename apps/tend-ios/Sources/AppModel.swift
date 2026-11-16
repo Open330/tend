@@ -302,9 +302,18 @@ final class AppModel {
             guard session == mine, capability == generation else { return }
             if info.scope == .decide, scope == .operate {
                 narrow()
+                await refresh()
                 return
             }
-            features = scope == .operate ? info.features : []
+            let next = scope == .operate ? info.features : []
+            let leavesBoard = readsBoard && !next.contains("home")
+            features = next
+            if leavesBoard {
+                // The queue was not being read: never show its empty
+                // fallback as all clear. Read it now.
+                leaveBoard()
+                await refresh()
+            }
         } catch is CancellationError {
             return
         } catch {
@@ -484,8 +493,11 @@ final class AppModel {
             async let fleetRead: Void = refreshFleet(client, session: mine)
             if readsBoard {
                 await refreshBoard(client, session: mine)
-                await fleetRead
-                continue
+                // Still on the board (not narrowed while reading): done.
+                if readsBoard {
+                    await fleetRead
+                    continue
+                }
             }
             do {
                 let read = try await client.queue()
@@ -547,8 +559,18 @@ final class AppModel {
         }
     }
 
+    /// Home stops reading the board: the queue it skipped is unknown, so
+    /// Your turn waits for it instead of showing an empty queue as clear.
+    private func leaveBoard() {
+        board = nil
+        hosts = []
+        loaded = false
+        refreshAgain = refreshing
+    }
+
     /// The dashboard limited this device to deciding.
     private func narrow() {
+        if readsBoard { leaveBoard() }
         capability = UUID()
         scope = .decide
         features = []
@@ -583,7 +605,9 @@ final class AppModel {
         if let board = visibleBoard {
             switch lane {
             case .backlog: return board.backlog.count
-            case .finished: return FoldedLane(board, lane: lane).count + recentPast.count
+            // Every decided item, the older ones behind their fold too
+            // (fromServerBoard counts them).
+            case .finished: return FoldedLane(board, lane: lane).count + past.count
             default: return FoldedLane(board, lane: lane).count
             }
         }

@@ -182,7 +182,16 @@ struct AgentDetailView: View {
     }
 
     var body: some View {
-        let a = current
+        // Narrowed to deciding while open: nothing of the agent stays.
+        if model.operates {
+            detail(current)
+        } else {
+            ScrollView { DecideOnlyNotice().padding(16) }
+                .background(TendSurface.workspace)
+        }
+    }
+
+    private func detail(_ a: FleetAgent) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 6) {

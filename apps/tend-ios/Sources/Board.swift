@@ -328,6 +328,9 @@ struct DeviceHome: Decodable, Hashable, Sendable {
     let backlog: [BacklogRecord]
     /// Board entries this app could not read, per lane.
     let undecoded: [Lane: Int]
+    /// Whether every host's queue coverage was read: false when the board
+    /// sent none, or a record this app could not read.
+    let coverageKnown: Bool
 
     enum CodingKeys: String, CodingKey {
         case hosts, lanes, backlog
@@ -369,7 +372,9 @@ struct DeviceHome: Decodable, Hashable, Sendable {
     }
 
     private struct RawLanes: Decodable {
-        let needsYou: RawLane?
+        // Your turn is required: without it nothing can be said about
+        // what needs the person.
+        let needsYou: RawLane
         let running: RawLane?
         let finished: RawLane?
         enum CodingKeys: String, CodingKey { case running, finished, needsYou = "needs_you" }
@@ -378,7 +383,10 @@ struct DeviceHome: Decodable, Hashable, Sendable {
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         hosts = ((try? values.decodeIfPresent([TendLenient<BoardHost>].self, forKey: .hosts)) ?? nil)?.compactMap(\.value) ?? []
-        decisionHosts = ((try? values.decodeIfPresent([TendLenient<BoardDecisionHost>].self, forKey: .decisionHosts)) ?? nil)?.compactMap(\.value) ?? []
+        let coverage = (try? values.decodeIfPresent([TendLenient<BoardDecisionHost>].self, forKey: .decisionHosts)) ?? nil
+        let readHosts = coverage?.compactMap(\.value) ?? []
+        decisionHosts = readHosts
+        coverageKnown = coverage.map { $0.count == readHosts.count } ?? false
         backlog = ((try? values.decodeIfPresent([TendLenient<BacklogRecord>].self, forKey: .backlog)) ?? nil)?.compactMap(\.value) ?? []
         // The lanes are the board: without them this is not a board.
         let raw = try values.decode(RawLanes.self, forKey: .lanes)
@@ -418,7 +426,7 @@ struct DeviceHome: Decodable, Hashable, Sendable {
     /// "Nothing needs you" only when every host's queue was read in full,
     /// every entry decoded, and none is waiting.
     var allClear: Bool {
-        items(.yourTurn).isEmpty && (undecoded[.yourTurn] ?? 0) == 0
+        coverageKnown && items(.yourTurn).isEmpty && (undecoded[.yourTurn] ?? 0) == 0
             && decisionHosts.allSatisfy { !$0.truncated && $0.unavailable.isEmpty }
     }
 }
