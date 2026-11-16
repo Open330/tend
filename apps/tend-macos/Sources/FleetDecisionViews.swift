@@ -231,7 +231,7 @@ final class FleetDecisionFeed: ObservableObject {
         guard let local = model.fleetHosts.first(where: \.local)?.identity else { return [] }
         let key = DecisionsKey(
             source: sourceRevision, messages: model.operatorMessagesRevision,
-            agents: model.hostedAgentsRevision, localHost: local
+            agents: model.askersRevision, localHost: local
         )
         if let cachedDecisions, cachedDecisions.key == key { return cachedDecisions.value }
         decisionBuilds += 1
