@@ -480,6 +480,15 @@ dashboard_url`, else `[dashboard.login] public_url`'s origin; set
 `dashboard_url = ""` for no link. Opening it still needs an operator
 sign-in.
 
+When tendd serves the board read below, Home draws it:
+- Work units with their stages;
+- helpers folded into the unit they help, with folds for possible helpers, empty sessions and older items;
+- the Backlog column, with **Start**;
+- **Looks Good** on a finished unit;
+- **Review** in the header: the finished results a person asked for and nobody marked yet, over Today, 24 hours, This week or All.
+
+Without the read (an older tendd, or a proxy or paired device it is refused to), the page lays out the queue and the Fleet snapshot itself, one agent per unit.
+
 ### The board read (`GET /api/home`)
 
 Home's lanes are computed in tendd, once for every client

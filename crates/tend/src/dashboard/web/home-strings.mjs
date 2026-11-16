@@ -97,10 +97,47 @@ const EN = {
   layoutEmphasis: "Status emphasis",
   layoutCompact: "Compact list",
   layoutHelp: "Card layout: status emphasis or compact list",
+  // The daemon's board (crates/tend/src/home_board.rs) words.
+  status: (v) => (v.status === "limited" ? "Limited" : v.status === "asked" ? "Asked you" : EN.stateLabels[v.status] || v.status || ""),
+  background_task: "⟳ Background task",
+  reply_ready: (v) => `Reply from ${v.who} is ready`,
+  kind_on_host: (v) => `${v.kind} on ${v.host}`,
+  asks_to_choose: "Asks you to choose. Open to see the question.",
+  waits_for_answer: "Waits for your answer. Open to see the question.",
+  stage_is: (v) => `Stage ${v.stage} is ${v.status === "failed" ? "Error" : "Blocked"}`,
+  waiting_for_agents: "Waiting for its agents to start",
+  owner_says: (v) => `${v.owner}: ${v.text}`,
+  waiting_on: (v) => `Waiting on ${v.owner}: ${v.text}`,
+  limitHandled: "Rate limited · the limit policy will resume it",
+  looksGood: "Looks Good",
+  backlog: "Backlog",
+  backlogSub: "Planned, not started",
+  review: "Review",
+  reviewTitle: "Review",
+  reviewEmpty: "All caught up",
+  scopeToday: "Today",
+  scopeDay: "24 hours",
+  scopeWeek: "This week",
+  scopeAll: "All",
+  done: "Done",
+  helpers: "Helpers",
+  helpersHelp: "Sessions other agents started to help with this work.",
+  foldHelpers: (n) => `${n} possible helper sessions`,
+  hideHelpers: "Hide possible helpers",
+  foldEmpty: (n) => `${n} empty sessions`,
+  hideEmpty: "Hide empty sessions",
+  showReviewed: (n) => `Show ${n} reviewed`,
+  hideReviewed: "Hide reviewed",
+  helperPill: "Helper",
   openAgent: "Open Agent",
   backgroundTask: "⟳ Background task",
   replyReady: (v) => `Reply from ${v.who} is ready`,
   kindOnHost: (v) => `${v.kind} on ${v.host}`,
+};
+
+const KO_STATES = {
+  working: "작업 중", starting: "시작 중", idle: "대기", error: "오류",
+  waiting_input: "입력 대기 중", waiting_choice: "선택 대기 중", stopped: "멈춤", blocked: "차단됨", failed: "오류", done: "완료",
 };
 
 const KO = {
@@ -194,6 +231,36 @@ const KO = {
   layoutEmphasis: "상태 강조",
   layoutCompact: "간결한 목록",
   layoutHelp: "카드 레이아웃: 상태 강조 또는 간결한 목록",
+  status: (v) => (v.status === "limited" ? "제한됨" : v.status === "asked" ? "답을 기다림" : KO_STATES[v.status] || v.status || ""),
+  background_task: "⟳ 백그라운드 작업",
+  reply_ready: (v) => `${v.who}의 회신 도착`,
+  kind_on_host: (v) => `${v.host}의 ${v.kind}`,
+  asks_to_choose: "선택을 기다립니다. 열어서 질문을 보세요.",
+  waits_for_answer: "답을 기다립니다. 열어서 질문을 보세요.",
+  stage_is: (v) => `${v.stage} 단계: ${v.status === "failed" ? "오류" : "차단됨"}`,
+  waiting_for_agents: "에이전트가 시작되기를 기다리는 중",
+  owner_says: (v) => `${v.owner}: ${v.text}`,
+  waiting_on: (v) => `${v.owner} 기다리는 중: ${v.text}`,
+  limitHandled: "한도 도달 · 한도 정책이 이어서 진행합니다",
+  looksGood: "확인 완료",
+  backlog: "백로그",
+  backlogSub: "계획만 있고 시작 전",
+  review: "리뷰",
+  reviewTitle: "리뷰",
+  reviewEmpty: "모두 확인했습니다",
+  scopeToday: "오늘",
+  scopeDay: "24시간",
+  scopeWeek: "이번 주",
+  scopeAll: "전체",
+  helpers: "보조 세션",
+  helpersHelp: "다른 에이전트가 이 작업을 돕기 위해 띄운 세션입니다.",
+  foldHelpers: (n) => `보조 세션 후보 ${n}개`,
+  hideHelpers: "보조 세션 후보 숨기기",
+  foldEmpty: (n) => `빈 세션 ${n}개`,
+  hideEmpty: "빈 세션 숨기기",
+  showReviewed: (n) => `확인한 항목 ${n}개 보기`,
+  hideReviewed: "확인한 항목 숨기기",
+  helperPill: "보조",
   openAgent: "에이전트 열기",
   backgroundTask: "⟳ 백그라운드 작업",
   replyReady: (v) => `${v.who}의 회신 도착`,
@@ -204,8 +271,11 @@ const KO = {
 export function textOf(strings, value) {
   if (value == null) return "";
   if (typeof value === "string") return value;
+  // The daemon's board nests texts ({key: "owner_says", text: {...}}).
+  const args = {};
+  for (const [name, arg] of Object.entries(value)) args[name] = name === "key" ? arg : typeof arg === "object" ? textOf(strings, arg) : arg;
   const word = strings[value.key];
-  return typeof word === "function" ? word(value) : word || "";
+  return typeof word === "function" ? word(args) : word || "";
 }
 
 export function languageOf(languages = []) {

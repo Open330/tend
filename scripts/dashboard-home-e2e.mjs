@@ -103,6 +103,28 @@ async function run(name, contextOptions) {
   await finished.locator(`[data-id="review:${reviewId}"]`).waitFor({ timeout: 15000 });
   if (phone) check(!(await yourTurn.isVisible()), "the phone shows one lane at a time");
 
+  // Review and Looks Good, where the daemon serves its board (GET /api/home).
+  const reviewButton = page.locator("#review-button");
+  if (!compact && (await reviewButton.isVisible())) {
+    await reviewButton.click();
+    const rows = page.locator("#review-list .review-row");
+    const before = await rows.count();
+    if (before) {
+      const title = (await rows.first().locator(".e-title").textContent()).trim();
+      await rows.first().getByRole("button", { name: "Looks Good" }).click();
+      // Home's CSP refuses page-side evaluation, so poll from here.
+      for (let tries = 0; (await rows.count()) >= before; tries += 1) {
+        check(tries < 60, "the reviewed unit stayed in Review");
+        await page.waitForTimeout(250);
+      }
+      await page.locator("#review-done").click();
+      await finished.getByRole("button", { name: /Show \d+ reviewed/ }).waitFor({ timeout: 15000 });
+      console.log(`  looks good: "${title}" left Review and folded into "Show N reviewed"`);
+    } else {
+      await page.locator("#review-done").click();
+    }
+  }
+
   // A unit opens the inspector and Escape closes it.
   const unit = page.locator(".lane:visible .card.work, .lane:visible .row-c").first();
   if (await unit.count()) {
