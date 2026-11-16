@@ -163,3 +163,40 @@ test("an agent's title and line follow the Mac's solo projection", async () => {
   const untitled = buildBoard({ fleet: { hosts: [{ alias: "mba", local: true, remote: { agents: [{ agent_session_id: "b", kind: "claude_code", pane: "%2", state: "working" }] } }] }, now: NOW });
   assert.deepEqual(untitled.lanes.running.groups[0].units[0].title, { key: "kindOnHost", kind: "claude", host: "mba" });
 });
+
+test("the daemon's board: a null focus stays null, and Review ignores Home's filters", async () => {
+  const { fromServerBoard, reviewQueue, replyTarget, sameTarget } = await import("../src/dashboard/web/home-board.mjs");
+  const unit = (id, repo, extra = {}) => ({
+    type: "unit", id, lane: "finished", title: id, repo, headline: "done", stages: [{ name: "claude", state: "done" }],
+    shown_time: new Date().toISOString(), agents: [{ host: "mba", local: true, pane: "%2", socket: "s", state: "idle", session_id: "x" }],
+    helpers: [], focus: null, host_aliases: ["mba"], agent_kinds: ["claude_code"], recent: true, requested_by_person: true, review_key: `home:${id}`, ...extra,
+  });
+  const server = { hosts: [{ alias: "mba", local: true }], lanes: { needs_you: { groups: [] }, running: { groups: [] }, finished: { groups: [
+    { project: "a", items: [unit("u1", "a")] }, { project: "b", items: [unit("u2", "b")] },
+  ] } } };
+  const board = fromServerBoard(server, { filter: { project: "a" } });
+  const shown = board.lanes.finished.groups.flatMap((g) => g.units);
+  assert.equal(shown.length, 1);
+  assert.equal(shown[0].pane, null, "no stand-in agent for a null focus");
+  assert.equal(replyTarget(shown[0]), null, "nobody to answer");
+  assert.equal(reviewQueue(fromServerBoard(server, {})).length, 2, "Review counts every finished result");
+  // A reply target is the agent at one question.
+  const focused = fromServerBoard({ ...server, lanes: { ...server.lanes, finished: { groups: [{ project: "a", items: [unit("u3", "a", {
+    focus: { host: "mba", local: true, pane: "%2", socket: "s", state: "idle", session_id: "x", state_entered_at: "t1", owner: "claude · mba" },
+  })] }] } } }).lanes.finished.groups[0].units[0];
+  const target = replyTarget(focused);
+  assert.equal(target.kind, "sendBack");
+  assert.equal(target.pane, "%2");
+  assert.ok(sameTarget(target, { ...target }));
+  assert.ok(!sameTarget(target, { ...target, since: "t2" }), "the same agent's next turn is another target");
+  assert.ok(!sameTarget(target, { ...target, session: "y", pane: "%3" }), "another agent is another target");
+});
+
+test("a waiting choice or an error is answered in the pane, not by text", async () => {
+  const { replyTarget } = await import("../src/dashboard/web/home-board.mjs");
+  const focus = (state) => ({ host: "mba", pane: "%1", state, session: "s", remote: false });
+  assert.equal(replyTarget({ lane: "needsYou", focus: focus("waiting_choice") }), null);
+  assert.equal(replyTarget({ lane: "needsYou", focus: focus("error") }), null);
+  assert.equal(replyTarget({ lane: "needsYou", focus: focus("waiting_input") }).kind, "answer");
+  assert.equal(replyTarget({ lane: "running", focus: focus("working") }), null);
+});

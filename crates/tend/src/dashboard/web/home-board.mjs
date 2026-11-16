@@ -239,7 +239,7 @@ function agentUnit(agent, host, lane, overrides = {}) {
     since: agent.state_entered_at || agent.last_activity_at || null,
     pane: agent.pane || null,
     socket: agent.tmux_socket || null,
-    agents: [{ kind: agent.kind, name: kindName(agent.kind), product: productOf(agent.kind), state: agent.state, host: host.alias, pane: agent.pane || null, socket: agent.tmux_socket || null }],
+    agents: [{ kind: agent.kind, name: kindName(agent.kind), product: productOf(agent.kind), state: agent.state, host: host.alias, pane: host.local ? agent.pane || null : null, socket: host.local ? agent.tmux_socket || null : null, session: agent.agent_session_id || null, since: agent.state_entered_at || null, owner: `${kindName(agent.kind)} · ${host.alias}`, remote: !host.local, status: agent.awaiting_reply ? { key: "status", status: "asked" } : null }],
     ...overrides,
   };
 }
@@ -412,6 +412,9 @@ function serverAgent(ref) {
     status: ref?.status || null,
     owner: ref?.owner || null,
     host: ref?.host || null,
+    session: ref?.session_id || null,
+    since: ref?.state_entered_at || null,
+    needsAttention: ref?.needs_attention === true,
     pane: ref?.local ? ref?.pane || null : null,
     socket: ref?.local ? ref?.socket || null : null,
     remote: !ref?.local,
@@ -419,16 +422,19 @@ function serverAgent(ref) {
 }
 
 function serverUnit(item) {
-  const focus = item.focus || item.agents?.[0] || null;
+  // The daemon's focus, null included: a blocked stage nobody is on has
+  // no agent to answer, and no other agent stands in for it.
+  const focus = item.focus || null;
   const lane = LANE[item.lane] || "running";
   return {
     type: "work",
     lane,
     id: item.id,
     source: item.source || null,
-    host: focus?.host || item.host_aliases?.[0] || "",
+    focus: focus ? serverAgent(focus) : null,
+    host: focus?.host || item.host_aliases?.[0] || item.agents?.[0]?.host || "",
     hosts: item.host_aliases || [],
-    remote: focus ? !focus.local : false,
+    remote: focus ? !focus.local : !(item.agents || []).some((a) => a.local),
     title: item.title,
     headline: item.headline,
     stages: (item.stages || []).map((stage) => ({ name: stage.name, owner: stage.owner, state: STAGE[stage.state] || "waiting", kind: stage.kind })),
@@ -457,7 +463,16 @@ function serverDecision(item, sections) {
   const host = { alias: item.host, local: item.local === true, control: section.control !== false, decides_reviews: section.decides_reviews === true };
   const unit = decisionUnit(item.entry || {}, host, agentIndex(null));
   if (!unit) return null;
-  return { ...unit, project: item.system ? TEND_PROJECT : item.repo || "", actionable: item.actionable !== false, system: item.system === true };
+  // The asker as the daemon found it: its pane on its own socket.
+  const asker = item.asker && item.asker.local ? { pane: item.asker.pane || unit.pane, socket: item.asker.socket || null } : null;
+  return {
+    ...unit,
+    project: item.system ? TEND_PROJECT : item.repo || "",
+    actionable: item.actionable !== false,
+    system: item.system === true,
+    pane: asker ? asker.pane : unit.pane,
+    socket: asker ? asker.socket : unit.socket,
+  };
 }
 
 /// The daemon's board in the page's shape, with what was decided (the
@@ -548,4 +563,27 @@ export function reviewQueue(board, scope = "day", now = Date.now()) {
     .filter((u) => u.type === "work" && u.requestedByPerson && !u.reviewed && !seen.has(u.id) && seen.add(u.id))
     .filter((u) => (instant(u.since) || -Infinity) >= start)
     .sort((a, b) => instant(b.since) - instant(a.since));
+}
+
+
+/// What the person may type to a unit's agent, and to whom
+/// (FleetBoard.reply(for:) and FleetReplyTarget): an answer to an agent
+/// asking or waiting for input in Your turn, or the next instruction to an
+/// agent done with its turn in Finished. A choice dialog, an error or a
+/// working agent is handled in the pane.
+export function replyTarget(unit) {
+  // The daemon names a focus (null for nobody); a unit built here is one agent.
+  const focus = "focus" in unit ? unit.focus : unit.agents?.length === 1 ? unit.agents[0] : null;
+  if (!focus || !focus.pane || focus.remote) return null;
+  const asked = focus.status?.status === "asked" || (focus.state === "idle" && unit.lane === "needsYou");
+  let kind = null;
+  if (unit.lane === "needsYou" && (asked || focus.state === "waiting_input")) kind = "answer";
+  else if (unit.lane === "finished" && (focus.state === "idle" || focus.state === "done")) kind = "sendBack";
+  if (!kind) return null;
+  return { kind, session: focus.session || null, state: focus.state || null, since: focus.since || null, owner: focus.owner || focus.name || focus.kind || "", pane: focus.pane, socket: focus.socket || null };
+}
+
+/// A draft's target is still the agent at the same question.
+export function sameTarget(a, b) {
+  return Boolean(a && b && a.kind === b.kind && a.session === b.session && a.state === b.state && a.since === b.since && a.pane === b.pane);
 }

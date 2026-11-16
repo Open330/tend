@@ -489,6 +489,7 @@ impl Hosted<'_> {
             "name": kind_name(self.kind()),
             "owner": self.owner(),
             "state": str_of(self.agent, "state"),
+            "state_entered_at": str_of(self.agent, "state_entered_at"),
             "status": self.status.label(self.agent),
             "needs_attention": self.status.needs_attention(),
             "pane": self.pane_id(),
@@ -1367,6 +1368,9 @@ struct Decision {
     repo: Option<String>,
     entry: Value,
     actionable: bool,
+    /// The asking agent as the board lists it (its pane and socket), when
+    /// it is listed.
+    asker: Option<Value>,
 }
 
 fn decisions(input: &BoardInput, agents: &[Hosted]) -> Vec<Decision> {
@@ -1423,13 +1427,15 @@ fn decisions(input: &BoardInput, agents: &[Hosted]) -> Vec<Decision> {
                     .and_then(|t| str_of(t, "session_id")),
                 _ => str_of(&item, "from_session_id"),
             };
-            let repo = asker.and_then(|session| {
+            let asking = asker.and_then(|session| {
                 agents
                     .iter()
                     .find(|h| h.host.alias == host && h.session() == session)
-                    .and_then(|h| non_empty(h.agent, "cwd"))
-                    .and_then(repo_name)
             });
+            let repo = asking
+                .and_then(|h| non_empty(h.agent, "cwd"))
+                .and_then(repo_name);
+            let asker = asking.map(Hosted::reference);
             out.push(Decision {
                 id,
                 host: host.clone(),
@@ -1439,6 +1445,7 @@ fn decisions(input: &BoardInput, agents: &[Hosted]) -> Vec<Decision> {
                 repo,
                 entry: item,
                 actionable,
+                asker,
             });
         }
     }
@@ -1517,6 +1524,7 @@ fn decision_json(decision: &Decision) -> Value {
         "repo": decision.repo,
         "since": format_time(decision.since),
         "actionable": decision.actionable,
+        "asker": decision.asker,
         "entry": decision.entry,
     })
 }

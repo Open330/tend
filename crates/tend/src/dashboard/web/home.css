@@ -437,9 +437,11 @@ dialog .error:empty { display: none; }
 .review-empty { display: grid; justify-items: center; gap: 8px; padding: 40px 0; color: var(--text-secondary); }
 .review-empty .icon { color: var(--green); }
 @media (max-width: 760px) {
-  .lane.backlog { display: none; }
+  .board[data-lane="backlog"] .lane.backlog { display: flex; }
   .review-dialog { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0; border-radius: 0; }
 }
 /* A long lane scrolls; its cards keep their height. */
 .lane-body > * { flex: none; }
 .lane-head h2, .lane-head .count { white-space: nowrap; }
+.stale { display: grid; gap: 6px; font-size: var(--size-meta); color: var(--orange); }
+.stale > span { display: inline; }
