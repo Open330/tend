@@ -132,6 +132,10 @@ token = "$tok"
 # whole start path runs, no agent does.
 allow_work_start = true
 
+[fleet]
+# SCRATCH_CAPTURE_POLICY=never checks that recent output is refused.
+capture_policy = "${SCRATCH_CAPTURE_POLICY:-selected}"
+
 [pipeline.solo]
 description = "one stand-in agent"
 
