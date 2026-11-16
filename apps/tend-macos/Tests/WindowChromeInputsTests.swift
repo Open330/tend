@@ -104,4 +104,27 @@ private func host(_ alias: String, local: Bool = false, activity: String = "2026
         #expect(chrome.tabStrip.value[.inbox] != nil)
         chrome.removeReader(reader)
     }
+
+    @Test func usageIsGroupedOncePerPublishOfTheAgents() async throws {
+        TendPerf.enableForTesting()
+        func groupings() -> Int { TendPerf.snapshot()["chrome.usage"] ?? 0 }
+        let model = model(), chrome = model.chrome
+        let window = NSObject(), reader = ObjectIdentifier(window)
+        chrome.setVisible(true, reader: reader)
+        model.ingestExecutionSnapshotForTesting(TendExecutionSnapshot(hosts: [try host("mac", local: true)]))
+        await model.rebuildProjectionsForTesting()
+        chrome.refresh()
+        let first = groupings()
+        model.isPresentingWorkStart = true
+        chrome.refresh()
+        chrome.refresh()
+        #expect(groupings() == first, "other publishes reuse the agents' usage")
+        #expect(chrome.statusBar.value.usage.count == 1)
+        model.ingestExecutionSnapshotForTesting(TendExecutionSnapshot(hosts: [try host("mac", local: true), try host("mini")]))
+        await model.rebuildProjectionsForTesting()
+        chrome.refresh()
+        #expect(groupings() == first + 1)
+        #expect(chrome.statusBar.value.usage.count == 2)
+        chrome.removeReader(reader)
+    }
 }

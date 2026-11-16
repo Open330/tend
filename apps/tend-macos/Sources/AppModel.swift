@@ -397,6 +397,7 @@ final class AppModel: ObservableObject {
         inboxReadTokens.removeAll()
         connectionGeneration &+= 1
         let generation = connectionGeneration
+        _ = fleetStreamOpened() // no stream of the old connection counts as live
         connectionState = .connecting
         localDaemonBootID = nil
         localDaemonLacksBootID = false
@@ -686,11 +687,13 @@ final class AppModel: ObservableObject {
                 // as soon as each (re)connect is acknowledged, even when
                 // that daemon then stays quiet.
                 let epoch = daemonIdentityEpoch
+                let stream = fleetStreamOpened()
+                defer { fleetStreamEnded(stream) }
                 let updates = try await client.fleetUpdates(onReady: { [weak self] hello in
                     Task { @MainActor [weak self] in
                         guard let self, self.connectionGeneration == generation,
                               self.daemonIdentityEpoch == epoch else { return }
-                        self.adoptDaemonHello(hello)
+                        self.fleetStreamHello(hello, attempt: stream)
                     }
                 })
                 for try await update in updates {
@@ -740,13 +743,77 @@ final class AppModel: ObservableObject {
             } catch {
                 return
             }
-            await refresh(ifGeneration: generation)
+            if reconciliationDue(at: Date()) {
+                lastReconciliation = Date()
+                TendPerf.count("reconcile.run")
+                await refresh(ifGeneration: generation)
+            }
+            // Automation rules and the swaps they start have no push: they
+            // keep the 15 s period, since limit coverage decides which caps
+            // need the person.
             if !isDisconnected {
                 await AutomationStore.shared.refreshRules(model: self)
                 await swaps.refreshHealthIfStale()
             }
         }
     }
+
+    /// The Fleet push stream is connected; while it is, it carries every
+    /// change and reconciliation only repairs gaps.
+    var fleetStreamLive: Bool { liveFleetStream != nil }
+    /// The newest stream attempt, and the one whose hello arrived. A late
+    /// hello of an ended attempt, or the cleanup of an old one, cannot
+    /// touch a newer stream's state.
+    private var fleetStreamAttempt: UInt64 = 0
+    private var liveFleetStream: UInt64?
+
+    func fleetStreamOpened() -> UInt64 {
+        fleetStreamAttempt &+= 1
+        liveFleetStream = nil
+        return fleetStreamAttempt
+    }
+
+    @discardableResult
+    func fleetStreamReady(_ attempt: UInt64) -> Bool {
+        guard attempt == fleetStreamAttempt else { return false }
+        liveFleetStream = attempt
+        return true
+    }
+
+    /// A stream's hello: adopted only from the current attempt, so a late
+    /// one cannot overwrite a newer daemon's identity.
+    func fleetStreamHello(_ hello: TendDaemonHello, attempt: UInt64) {
+        guard fleetStreamReady(attempt) else { return }
+        adoptDaemonHello(hello)
+    }
+
+    func fleetStreamEnded(_ attempt: UInt64) {
+        guard attempt == fleetStreamAttempt else { return }
+        // Ends the attempt too, so its late hello is ignored.
+        fleetStreamAttempt &+= 1
+        liveFleetStream = nil
+    }
+    private var lastReconciliation = Date.distantPast
+    /// With no window on screen and the push stream live, reconciliation
+    /// runs this often instead of every 15 s: the menu bar and
+    /// notifications follow the pushed snapshots and mailbox events, not
+    /// this loop.
+    static let backgroundReconciliation: TimeInterval = 60
+
+    /// Whether this 15 s turn of the reconciliation loop should refresh.
+    /// Always while disconnected, without a live push stream, or with any
+    /// of the app's windows on screen.
+    func reconciliationDue(at date: Date, windowOnScreen: Bool = TendAppWindows.anyOnScreen()) -> Bool {
+        guard connectionState == .connected, fleetStreamLive, !windowOnScreen else { return true }
+        guard date.timeIntervalSince(lastReconciliation) >= Self.backgroundReconciliation else {
+            TendPerf.count("reconcile.deferred")
+            return false
+        }
+        return true
+    }
+
+    func setConnectedForTesting() { connectionState = .connected }
+    func markReconciledForTesting(at date: Date) { lastReconciliation = date }
 
     private var isDisconnected: Bool {
         if case .failed = connectionState { return true }
