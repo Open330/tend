@@ -1,0 +1,526 @@
+{
+  "agent_count": 4,
+  "decided": [
+    {
+      "alias": "local",
+      "items": [
+        {
+          "decision": {
+            "evidence": [
+              {
+                "kind": "pull_request",
+                "url": "https://github.com/Open330/tend/pull/1"
+              },
+              {
+                "command": "cargo test -p tend review",
+                "kind": "test",
+                "passed": true
+              }
+            ],
+            "needed": "Merge the retry path now?",
+            "options": [
+              "merge now",
+              "wait for the perf run"
+            ],
+            "recommendation": "merge now: the perf run only covers reads"
+          },
+          "disposition": {
+            "at": "2026-11-15T08:12:51.258619Z",
+            "by": {
+              "kind": "user",
+              "label": "app:UI test iPad 9999#bcdd7097"
+            },
+            "kind": "accepted",
+            "note": "chose: merge now"
+          },
+          "generation": 1,
+          "id": "rv_6579bfdfa5274daea6ee36f6685b55f0",
+          "kind": "review",
+          "requested_at": "2026-11-15T08:10:52.458963Z",
+          "requested_by": {
+            "kind": "agent",
+            "label": "impl"
+          },
+          "summary": "Retry path for the storage migration (1794730252)",
+          "target": {
+            "kind": "session",
+            "session_id": "ios-scratch-1794730252"
+          }
+        },
+        {
+          "action": "choice",
+          "answer": "Yes, behind the flag",
+          "answered_at": "2026-11-15T08:12:46.314963Z",
+          "body": "Ship the storage migration behind a flag? (1794730292)",
+          "created_at": "2026-11-15T08:11:32.421323Z",
+          "from_pane": "%4",
+          "from_session_id": "ios-asker-1794730292",
+          "kind": "human_answer",
+          "request_id": "req_18e829b12b67e8f8_3",
+          "status": "completed"
+        },
+        {
+          "decision": {
+            "evidence": [
+              {
+                "kind": "pull_request",
+                "url": "https://github.com/Open330/tend/pull/1"
+              },
+              {
+                "command": "cargo test -p tend review",
+                "kind": "test",
+                "passed": true
+              }
+            ],
+            "needed": "Merge the retry path now?",
+            "options": [
+              "merge now",
+              "wait for the perf run"
+            ],
+            "recommendation": "merge now: the perf run only covers reads"
+          },
+          "disposition": {
+            "at": "2026-11-15T08:11:15.938263Z",
+            "by": {
+              "kind": "user",
+              "label": "app:UI test iPhone 8766#32dfc9b5"
+            },
+            "kind": "accepted",
+            "note": "chose: merge now"
+          },
+          "generation": 1,
+          "id": "rv_173bebc9edbd44b09f544a8c9c078e94",
+          "kind": "review",
+          "requested_at": "2026-11-15T08:05:34.890026Z",
+          "requested_by": {
+            "kind": "agent",
+            "label": "impl"
+          },
+          "summary": "Retry path for the storage migration (1794729934)",
+          "target": {
+            "kind": "session",
+            "session_id": "ios-scratch-1794729934"
+          }
+        },
+        {
+          "action": "choice",
+          "answer": "Yes, behind the flag",
+          "answered_at": "2026-11-15T08:11:11.622028Z",
+          "body": "Ship the storage migration behind a flag? (1794730252)",
+          "created_at": "2026-11-15T08:10:52.483853Z",
+          "from_pane": "%3",
+          "from_session_id": "ios-asker-1794730252",
+          "kind": "human_answer",
+          "request_id": "req_18e829a7def27ac8_2",
+          "status": "completed"
+        }
+      ],
+      "local": true,
+      "truncated": true,
+      "unavailable": []
+    }
+  ],
+  "decision_hosts": [
+    {
+      "alias": "local",
+      "control": true,
+      "covers": [
+        "questions",
+        "waiting agents",
+        "review items"
+      ],
+      "decides_reviews": true,
+      "local": true,
+      "truncated": false,
+      "unavailable": []
+    }
+  ],
+  "generated_at": "2026-11-16T09:59:17.851538Z",
+  "hosts": [
+    {
+      "alias": "local",
+      "error": null,
+      "local": true,
+      "state": "online"
+    }
+  ],
+  "lanes": {
+    "finished": {
+      "count": 2,
+      "groups": [
+        {
+          "items": [
+            {
+              "agent_kinds": [
+                "claude_code"
+              ],
+              "agents": [
+                {
+                  "host": "local",
+                  "kind": "claude_code",
+                  "local": true,
+                  "name": "claude",
+                  "needs_attention": false,
+                  "owner": "claude · local",
+                  "session_id": "web-empty-1794823154",
+                  "state": "idle",
+                  "state_entered_at": "2026-11-16T09:59:14.801915Z",
+                  "status": {
+                    "key": "status",
+                    "status": "idle"
+                  }
+                }
+              ],
+              "empty_session": true,
+              "focus": {
+                "host": "local",
+                "kind": "claude_code",
+                "local": true,
+                "name": "claude",
+                "needs_attention": false,
+                "owner": "claude · local",
+                "session_id": "web-empty-1794823154",
+                "state": "idle",
+                "state_entered_at": "2026-11-16T09:59:14.801915Z",
+                "status": {
+                  "key": "status",
+                  "status": "idle"
+                }
+              },
+              "handled_limit": false,
+              "headline": {
+                "key": "status",
+                "status": "idle"
+              },
+              "helpers": [],
+              "host_aliases": [
+                "local"
+              ],
+              "id": "agent:local:web-empty-1794823154",
+              "kind": "unit",
+              "lane": "finished",
+              "last_change": "2026-11-16T09:59:14.801915Z",
+              "orphan_helper": false,
+              "probable_helper": false,
+              "recent": true,
+              "repo": null,
+              "requested_by_person": false,
+              "reviewed": false,
+              "shown_time": "2026-11-16T09:59:14.801915Z",
+              "since": "2026-11-16T09:59:14.801915Z",
+              "source": {
+                "host": "local",
+                "kind": "agent",
+                "session_id": "web-empty-1794823154"
+              },
+              "stages": [
+                {
+                  "kind": "claude_code",
+                  "name": "claude",
+                  "owner": "claude · local",
+                  "state": "done"
+                }
+              ],
+              "title": {
+                "host": "local",
+                "key": "kind_on_host",
+                "kind": "claude"
+              }
+            },
+            {
+              "agent_kinds": [
+                "claude_code"
+              ],
+              "agents": [
+                {
+                  "host": "local",
+                  "kind": "claude_code",
+                  "local": true,
+                  "name": "claude",
+                  "needs_attention": false,
+                  "owner": "claude · local",
+                  "session_id": "web-done-1794823154",
+                  "state": "idle",
+                  "state_entered_at": "2026-11-16T09:59:14.783789Z",
+                  "status": {
+                    "key": "status",
+                    "status": "idle"
+                  }
+                }
+              ],
+              "empty_session": false,
+              "focus": {
+                "host": "local",
+                "kind": "claude_code",
+                "local": true,
+                "name": "claude",
+                "needs_attention": false,
+                "owner": "claude · local",
+                "session_id": "web-done-1794823154",
+                "state": "idle",
+                "state_entered_at": "2026-11-16T09:59:14.783789Z",
+                "status": {
+                  "key": "status",
+                  "status": "idle"
+                }
+              },
+              "handled_limit": false,
+              "headline": "Added the Unreleased entry and linked #588.",
+              "helpers": [],
+              "host_aliases": [
+                "local"
+              ],
+              "id": "agent:local:web-done-1794823154",
+              "kind": "unit",
+              "lane": "finished",
+              "last_change": "2026-11-16T09:59:14.783789Z",
+              "orphan_helper": false,
+              "probable_helper": false,
+              "recent": true,
+              "repo": null,
+              "requested_by_person": true,
+              "reviewed": false,
+              "shown_time": "2026-11-16T09:59:14.783789Z",
+              "since": "2026-11-16T09:59:14.783789Z",
+              "source": {
+                "host": "local",
+                "kind": "agent",
+                "session_id": "web-done-1794823154"
+              },
+              "stages": [
+                {
+                  "kind": "claude_code",
+                  "name": "claude",
+                  "owner": "claude · local",
+                  "state": "done"
+                }
+              ],
+              "title": "Write the CHANGELOG entry for the queue"
+            }
+          ],
+          "project": null,
+          "system": false
+        }
+      ]
+    },
+    "needs_you": {
+      "count": 2,
+      "groups": [
+        {
+          "items": [
+            {
+              "actionable": true,
+              "decision": {
+                "evidence": [
+                  {
+                    "kind": "pull_request",
+                    "url": "https://github.com/Open330/tend/pull/1"
+                  },
+                  {
+                    "command": "cargo test -p tend review",
+                    "kind": "test",
+                    "passed": true
+                  }
+                ],
+                "needed": "Merge the retry path now?",
+                "options": [
+                  "merge now",
+                  "wait for the perf run"
+                ],
+                "recommendation": "merge now: the perf run only covers reads"
+              },
+              "generation": 1,
+              "host": "local",
+              "id": "rv_080ed5a1896548d99df38ee9c6bcd0ee",
+              "kind": "review",
+              "repo": null,
+              "requested_at": "2026-11-16T09:59:14.674652Z",
+              "requested_by": {
+                "kind": "agent",
+                "label": "impl"
+              },
+              "summary": "Retry path for the storage migration (1794823154)",
+              "system": false,
+              "target": {
+                "kind": "session",
+                "session_id": "ios-scratch-1794823154"
+              }
+            },
+            {
+              "action": "choice",
+              "actionable": true,
+              "body": "Ship the storage migration behind a flag? (1794823154)",
+              "created_at": "2026-11-16T09:59:14.715721Z",
+              "from_pane": "%1",
+              "from_session_id": "ios-asker-1794823154",
+              "host": "local",
+              "kind": "human_request",
+              "repo": null,
+              "request_id": "req_18e87e265b79fd28_1",
+              "system": false
+            }
+          ],
+          "project": null,
+          "system": false
+        }
+      ]
+    },
+    "running": {
+      "count": 2,
+      "groups": [
+        {
+          "items": [
+            {
+              "agent_kinds": [
+                "claude_code"
+              ],
+              "agents": [
+                {
+                  "host": "local",
+                  "kind": "claude_code",
+                  "local": true,
+                  "name": "claude",
+                  "needs_attention": false,
+                  "owner": "claude · local",
+                  "session_id": "web-worker-1794823154",
+                  "state": "working",
+                  "state_entered_at": "2026-11-16T09:59:14.7259Z",
+                  "status": {
+                    "key": "status",
+                    "status": "working"
+                  }
+                }
+              ],
+              "empty_session": false,
+              "focus": {
+                "host": "local",
+                "kind": "claude_code",
+                "local": true,
+                "name": "claude",
+                "needs_attention": false,
+                "owner": "claude · local",
+                "session_id": "web-worker-1794823154",
+                "state": "working",
+                "state_entered_at": "2026-11-16T09:59:14.7259Z",
+                "status": {
+                  "key": "status",
+                  "status": "working"
+                }
+              },
+              "handled_limit": false,
+              "headline": {
+                "key": "status",
+                "status": "working"
+              },
+              "helpers": [],
+              "host_aliases": [
+                "local"
+              ],
+              "id": "agent:local:web-worker-1794823154",
+              "kind": "unit",
+              "lane": "running",
+              "last_change": "2026-11-16T09:59:14.7259Z",
+              "orphan_helper": false,
+              "probable_helper": false,
+              "recent": true,
+              "repo": null,
+              "requested_by_person": true,
+              "reviewed": false,
+              "shown_time": "2026-11-16T09:59:14.7259Z",
+              "since": "2026-11-16T09:59:14.7259Z",
+              "source": {
+                "host": "local",
+                "kind": "agent",
+                "session_id": "web-worker-1794823154"
+              },
+              "stages": [
+                {
+                  "kind": "claude_code",
+                  "name": "claude",
+                  "owner": "claude · local",
+                  "state": "running"
+                }
+              ],
+              "title": "Port the retry path to the Windows named pipe"
+            },
+            {
+              "agent_kinds": [
+                "claude_code"
+              ],
+              "agents": [
+                {
+                  "host": "local",
+                  "kind": "claude_code",
+                  "local": true,
+                  "name": "claude",
+                  "needs_attention": false,
+                  "owner": "claude · local",
+                  "session_id": "ios-asker-1794823154",
+                  "state": "working",
+                  "state_entered_at": "2026-11-16T09:59:14.65389Z",
+                  "status": {
+                    "key": "status",
+                    "status": "working"
+                  }
+                }
+              ],
+              "empty_session": false,
+              "focus": {
+                "host": "local",
+                "kind": "claude_code",
+                "local": true,
+                "name": "claude",
+                "needs_attention": false,
+                "owner": "claude · local",
+                "session_id": "ios-asker-1794823154",
+                "state": "working",
+                "state_entered_at": "2026-11-16T09:59:14.65389Z",
+                "status": {
+                  "key": "status",
+                  "status": "working"
+                }
+              },
+              "handled_limit": false,
+              "headline": {
+                "key": "status",
+                "status": "working"
+              },
+              "helpers": [],
+              "host_aliases": [
+                "local"
+              ],
+              "id": "agent:local:ios-asker-1794823154",
+              "kind": "unit",
+              "lane": "running",
+              "last_change": "2026-11-16T09:59:14.65389Z",
+              "orphan_helper": false,
+              "probable_helper": false,
+              "recent": true,
+              "repo": null,
+              "requested_by_person": true,
+              "reviewed": false,
+              "shown_time": "2026-11-16T09:59:14.65389Z",
+              "since": "2026-11-16T09:59:14.65389Z",
+              "source": {
+                "host": "local",
+                "kind": "agent",
+                "session_id": "ios-asker-1794823154"
+              },
+              "stages": [
+                {
+                  "kind": "claude_code",
+                  "name": "claude",
+                  "owner": "claude · local",
+                  "state": "running"
+                }
+              ],
+              "title": "migrate storage"
+            }
+          ],
+          "project": null,
+          "system": false
+        }
+      ]
+    }
+  }
+}

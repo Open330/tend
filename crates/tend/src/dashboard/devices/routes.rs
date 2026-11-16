@@ -120,6 +120,7 @@ pub(in crate::dashboard) fn device_auth(
 pub(in crate::dashboard) fn operate_routes(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/api/device/fleet", get(super::operate::fleet))
+        .route("/api/device/home", get(super::operate::home))
         .route(
             "/api/device/capture",
             post(super::operate::capture).layer(DefaultBodyLimit::max(1024)),
@@ -415,11 +416,14 @@ async fn whoami(
     Extension(device): Extension<DeviceAuth>,
 ) -> Response {
     // What an `operate` device can use here beyond the hosts.
-    let features: Vec<&str> = if device.scope == Scope::Operate && state.fleet.is_some() {
-        vec!["capture", "work"]
-    } else {
-        Vec::new()
-    };
+    let mut features: Vec<&str> = Vec::new();
+    if device.scope == Scope::Operate {
+        // Home's board (GET /api/device/home), the Mac's lanes for the app.
+        features.push("home");
+        if state.fleet.is_some() {
+            features.extend(["capture", "work"]);
+        }
+    }
     Json(json!({
         "device": { "id": device.id, "name": device.name },
         "approved_by": device.approved_by,

@@ -584,8 +584,14 @@ two scopes:
   current snapshot lists for that agent session, captured through Fleet
   under `[fleet] capture_policy`; sanitized text only, the last 400 lines
   and at most 64 KiB, one capture per device at a time, each attempt an
-  audit line without the output). `GET /api/device` lists what the
-  dashboard serves the device in `features` (`capture`). It also serves
+  audit line without the output), and `GET /api/device/home`, Home's
+  board (`/api/home`, below) with only the fields the app shows: no pane
+  ids or sockets in its agent references (a capture names the agent by
+  host and session), decisions exactly as the queue lists them, units as
+  `"kind": "unit"`, and what was decided in `decided` (with each host's
+  `truncated`). `GET /api/device` lists what the dashboard serves the
+  device in `features` (`home` always, `capture` and `work` when Fleet
+  runs). It also serves
   starting new work, which runs agents with permissions bypassed:
   `GET /api/device/work-options?host=…` (whether `allow_work_start` is on,
   the host's pipelines by name, and the project folders its agents already
@@ -611,8 +617,7 @@ two scopes:
     its text) is written and synced before dispatch; if it cannot be,
     nothing starts (503). A result line follows.
   `started` means the Run was registered; its agents launch shortly after,
-  as for any `tend work up`. `GET /api/device` lists `capture` and `work`
-  in `features` when Fleet runs.
+  as for any `tend work up`.
 
 Every operator route refuses a device token of either scope as it would
 refuse no credential at all: no `/api/fleet`, pane output or input, Fleet

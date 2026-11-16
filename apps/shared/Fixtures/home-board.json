@@ -1,0 +1,472 @@
+{
+    "agent_count": 4,
+    "backlog": [],
+    "decision_hosts": [
+        {
+            "alias": "local",
+            "control": true,
+            "covers": [
+                "questions",
+                "waiting agents",
+                "review items"
+            ],
+            "decides_reviews": true,
+            "local": true,
+            "truncated": false,
+            "unavailable": []
+        }
+    ],
+    "generated_at": "2026-11-16T09:59:17.851538Z",
+    "hosts": [
+        {
+            "alias": "local",
+            "error": null,
+            "local": true,
+            "state": "online"
+        }
+    ],
+    "lanes": {
+        "finished": {
+            "count": 2,
+            "groups": [
+                {
+                    "items": [
+                        {
+                            "agent_kinds": [
+                                "claude_code"
+                            ],
+                            "agents": [
+                                {
+                                    "host": "local",
+                                    "id": "local:web-empty-1794823154",
+                                    "kind": "claude_code",
+                                    "local": true,
+                                    "name": "claude",
+                                    "needs_attention": false,
+                                    "owner": "claude \u00b7 local",
+                                    "pane": "%5",
+                                    "session_id": "web-empty-1794823154",
+                                    "socket": "tmux.sock",
+                                    "state": "idle",
+                                    "state_entered_at": "2026-11-16T09:59:14.801915Z",
+                                    "status": {
+                                        "key": "status",
+                                        "status": "idle"
+                                    }
+                                }
+                            ],
+                            "empty_session": true,
+                            "focus": {
+                                "host": "local",
+                                "id": "local:web-empty-1794823154",
+                                "kind": "claude_code",
+                                "local": true,
+                                "name": "claude",
+                                "needs_attention": false,
+                                "owner": "claude \u00b7 local",
+                                "pane": "%5",
+                                "session_id": "web-empty-1794823154",
+                                "socket": "tmux.sock",
+                                "state": "idle",
+                                "state_entered_at": "2026-11-16T09:59:14.801915Z",
+                                "status": {
+                                    "key": "status",
+                                    "status": "idle"
+                                }
+                            },
+                            "handled_limit": false,
+                            "headline": {
+                                "key": "status",
+                                "status": "idle"
+                            },
+                            "helpers": [],
+                            "host_aliases": [
+                                "local"
+                            ],
+                            "id": "agent:local:web-empty-1794823154",
+                            "lane": "finished",
+                            "last_change": "2026-11-16T09:59:14.801915Z",
+                            "orphan_helper": false,
+                            "probable_helper": false,
+                            "recent": true,
+                            "repo": null,
+                            "requested_by_person": false,
+                            "review_key": "home:5180773a7b6e84361f3bf1f5472afce59dafe09d18bfae859e29397b322a1094",
+                            "reviewed": false,
+                            "revision": "local:web-empty-1794823154|idle|2026-11-16T09:59:14.801915Z",
+                            "shown_time": "2026-11-16T09:59:14.801915Z",
+                            "since": "2026-11-16T09:59:14.801915Z",
+                            "source": {
+                                "host": "local",
+                                "kind": "agent",
+                                "session_id": "web-empty-1794823154"
+                            },
+                            "stages": [
+                                {
+                                    "kind": "claude_code",
+                                    "name": "claude",
+                                    "owner": "claude \u00b7 local",
+                                    "state": "done"
+                                }
+                            ],
+                            "title": {
+                                "host": "local",
+                                "key": "kind_on_host",
+                                "kind": "claude"
+                            },
+                            "type": "unit"
+                        },
+                        {
+                            "agent_kinds": [
+                                "claude_code"
+                            ],
+                            "agents": [
+                                {
+                                    "host": "local",
+                                    "id": "local:web-done-1794823154",
+                                    "kind": "claude_code",
+                                    "local": true,
+                                    "name": "claude",
+                                    "needs_attention": false,
+                                    "owner": "claude \u00b7 local",
+                                    "pane": "%3",
+                                    "session_id": "web-done-1794823154",
+                                    "socket": "tmux.sock",
+                                    "state": "idle",
+                                    "state_entered_at": "2026-11-16T09:59:14.783789Z",
+                                    "status": {
+                                        "key": "status",
+                                        "status": "idle"
+                                    }
+                                }
+                            ],
+                            "empty_session": false,
+                            "focus": {
+                                "host": "local",
+                                "id": "local:web-done-1794823154",
+                                "kind": "claude_code",
+                                "local": true,
+                                "name": "claude",
+                                "needs_attention": false,
+                                "owner": "claude \u00b7 local",
+                                "pane": "%3",
+                                "session_id": "web-done-1794823154",
+                                "socket": "tmux.sock",
+                                "state": "idle",
+                                "state_entered_at": "2026-11-16T09:59:14.783789Z",
+                                "status": {
+                                    "key": "status",
+                                    "status": "idle"
+                                }
+                            },
+                            "handled_limit": false,
+                            "headline": "Added the Unreleased entry and linked #588.",
+                            "helpers": [],
+                            "host_aliases": [
+                                "local"
+                            ],
+                            "id": "agent:local:web-done-1794823154",
+                            "lane": "finished",
+                            "last_change": "2026-11-16T09:59:14.783789Z",
+                            "orphan_helper": false,
+                            "probable_helper": false,
+                            "recent": true,
+                            "repo": null,
+                            "requested_by_person": true,
+                            "review_key": "home:aa681abb2b3efab6ab599422d1827500ef3183488282c7d490f21ad80a131871",
+                            "reviewed": false,
+                            "revision": "local:web-done-1794823154|idle|2026-11-16T09:59:14.783789Z",
+                            "shown_time": "2026-11-16T09:59:14.783789Z",
+                            "since": "2026-11-16T09:59:14.783789Z",
+                            "source": {
+                                "host": "local",
+                                "kind": "agent",
+                                "session_id": "web-done-1794823154"
+                            },
+                            "stages": [
+                                {
+                                    "kind": "claude_code",
+                                    "name": "claude",
+                                    "owner": "claude \u00b7 local",
+                                    "state": "done"
+                                }
+                            ],
+                            "title": "Write the CHANGELOG entry for the queue",
+                            "type": "unit"
+                        }
+                    ],
+                    "project": null,
+                    "system": false
+                }
+            ]
+        },
+        "needs_you": {
+            "count": 2,
+            "groups": [
+                {
+                    "items": [
+                        {
+                            "actionable": true,
+                            "asker": null,
+                            "entry": {
+                                "decision": {
+                                    "evidence": [
+                                        {
+                                            "kind": "pull_request",
+                                            "url": "https://github.com/Open330/tend/pull/1"
+                                        },
+                                        {
+                                            "command": "cargo test -p tend review",
+                                            "kind": "test",
+                                            "passed": true
+                                        }
+                                    ],
+                                    "needed": "Merge the retry path now?",
+                                    "options": [
+                                        "merge now",
+                                        "wait for the perf run"
+                                    ],
+                                    "recommendation": "merge now: the perf run only covers reads"
+                                },
+                                "generation": 1,
+                                "id": "rv_080ed5a1896548d99df38ee9c6bcd0ee",
+                                "kind": "review",
+                                "requested_at": "2026-11-16T09:59:14.674652Z",
+                                "requested_by": {
+                                    "kind": "agent",
+                                    "label": "impl"
+                                },
+                                "summary": "Retry path for the storage migration (1794823154)",
+                                "target": {
+                                    "kind": "session",
+                                    "session_id": "ios-scratch-1794823154"
+                                }
+                            },
+                            "host": "local",
+                            "id": "review:rv_080ed5a1896548d99df38ee9c6bcd0ee",
+                            "local": true,
+                            "repo": null,
+                            "since": "2026-11-16T09:59:14.674652Z",
+                            "system": false,
+                            "type": "decision"
+                        },
+                        {
+                            "actionable": true,
+                            "asker": {
+                                "host": "local",
+                                "id": "local:ios-asker-1794823154",
+                                "kind": "claude_code",
+                                "local": true,
+                                "name": "claude",
+                                "needs_attention": false,
+                                "owner": "claude \u00b7 local",
+                                "pane": "%1",
+                                "session_id": "ios-asker-1794823154",
+                                "socket": "tmux.sock",
+                                "state": "working",
+                                "state_entered_at": "2026-11-16T09:59:14.65389Z",
+                                "status": {
+                                    "key": "status",
+                                    "status": "working"
+                                }
+                            },
+                            "entry": {
+                                "action": "choice",
+                                "body": "Ship the storage migration behind a flag? (1794823154)",
+                                "created_at": "2026-11-16T09:59:14.715721Z",
+                                "from_pane": "%1",
+                                "from_session_id": "ios-asker-1794823154",
+                                "kind": "human_request",
+                                "request_id": "req_18e87e265b79fd28_1"
+                            },
+                            "host": "local",
+                            "id": "human:local:req_18e87e265b79fd28_1",
+                            "local": true,
+                            "repo": null,
+                            "since": "2026-11-16T09:59:14.715721Z",
+                            "system": false,
+                            "type": "decision"
+                        }
+                    ],
+                    "project": null,
+                    "system": false
+                }
+            ]
+        },
+        "running": {
+            "count": 2,
+            "groups": [
+                {
+                    "items": [
+                        {
+                            "agent_kinds": [
+                                "claude_code"
+                            ],
+                            "agents": [
+                                {
+                                    "host": "local",
+                                    "id": "local:web-worker-1794823154",
+                                    "kind": "claude_code",
+                                    "local": true,
+                                    "name": "claude",
+                                    "needs_attention": false,
+                                    "owner": "claude \u00b7 local",
+                                    "pane": "%2",
+                                    "session_id": "web-worker-1794823154",
+                                    "socket": "tmux.sock",
+                                    "state": "working",
+                                    "state_entered_at": "2026-11-16T09:59:14.7259Z",
+                                    "status": {
+                                        "key": "status",
+                                        "status": "working"
+                                    }
+                                }
+                            ],
+                            "empty_session": false,
+                            "focus": {
+                                "host": "local",
+                                "id": "local:web-worker-1794823154",
+                                "kind": "claude_code",
+                                "local": true,
+                                "name": "claude",
+                                "needs_attention": false,
+                                "owner": "claude \u00b7 local",
+                                "pane": "%2",
+                                "session_id": "web-worker-1794823154",
+                                "socket": "tmux.sock",
+                                "state": "working",
+                                "state_entered_at": "2026-11-16T09:59:14.7259Z",
+                                "status": {
+                                    "key": "status",
+                                    "status": "working"
+                                }
+                            },
+                            "handled_limit": false,
+                            "headline": {
+                                "key": "status",
+                                "status": "working"
+                            },
+                            "helpers": [],
+                            "host_aliases": [
+                                "local"
+                            ],
+                            "id": "agent:local:web-worker-1794823154",
+                            "lane": "running",
+                            "last_change": "2026-11-16T09:59:14.7259Z",
+                            "orphan_helper": false,
+                            "probable_helper": false,
+                            "recent": true,
+                            "repo": null,
+                            "requested_by_person": true,
+                            "review_key": "home:f8fdb56acf1fab58afe420492ea4892cea3d76cb325b4509b78e6845769dea29",
+                            "reviewed": false,
+                            "revision": "local:web-worker-1794823154|working|2026-11-16T09:59:14.7259Z",
+                            "shown_time": "2026-11-16T09:59:14.7259Z",
+                            "since": "2026-11-16T09:59:14.7259Z",
+                            "source": {
+                                "host": "local",
+                                "kind": "agent",
+                                "session_id": "web-worker-1794823154"
+                            },
+                            "stages": [
+                                {
+                                    "kind": "claude_code",
+                                    "name": "claude",
+                                    "owner": "claude \u00b7 local",
+                                    "state": "running"
+                                }
+                            ],
+                            "title": "Port the retry path to the Windows named pipe",
+                            "type": "unit"
+                        },
+                        {
+                            "agent_kinds": [
+                                "claude_code"
+                            ],
+                            "agents": [
+                                {
+                                    "host": "local",
+                                    "id": "local:ios-asker-1794823154",
+                                    "kind": "claude_code",
+                                    "local": true,
+                                    "name": "claude",
+                                    "needs_attention": false,
+                                    "owner": "claude \u00b7 local",
+                                    "pane": "%1",
+                                    "session_id": "ios-asker-1794823154",
+                                    "socket": "tmux.sock",
+                                    "state": "working",
+                                    "state_entered_at": "2026-11-16T09:59:14.65389Z",
+                                    "status": {
+                                        "key": "status",
+                                        "status": "working"
+                                    }
+                                }
+                            ],
+                            "empty_session": false,
+                            "focus": {
+                                "host": "local",
+                                "id": "local:ios-asker-1794823154",
+                                "kind": "claude_code",
+                                "local": true,
+                                "name": "claude",
+                                "needs_attention": false,
+                                "owner": "claude \u00b7 local",
+                                "pane": "%1",
+                                "session_id": "ios-asker-1794823154",
+                                "socket": "tmux.sock",
+                                "state": "working",
+                                "state_entered_at": "2026-11-16T09:59:14.65389Z",
+                                "status": {
+                                    "key": "status",
+                                    "status": "working"
+                                }
+                            },
+                            "handled_limit": false,
+                            "headline": {
+                                "key": "status",
+                                "status": "working"
+                            },
+                            "helpers": [],
+                            "host_aliases": [
+                                "local"
+                            ],
+                            "id": "agent:local:ios-asker-1794823154",
+                            "lane": "running",
+                            "last_change": "2026-11-16T09:59:14.65389Z",
+                            "orphan_helper": false,
+                            "probable_helper": false,
+                            "recent": true,
+                            "repo": null,
+                            "requested_by_person": true,
+                            "review_key": "home:96303db70d9fa2280a415301e1e734b7b096870281278c6e2e601c50ebfe2082",
+                            "reviewed": false,
+                            "revision": "local:ios-asker-1794823154|working|2026-11-16T09:59:14.65389Z",
+                            "shown_time": "2026-11-16T09:59:14.65389Z",
+                            "since": "2026-11-16T09:59:14.65389Z",
+                            "source": {
+                                "host": "local",
+                                "kind": "agent",
+                                "session_id": "ios-asker-1794823154"
+                            },
+                            "stages": [
+                                {
+                                    "kind": "claude_code",
+                                    "name": "claude",
+                                    "owner": "claude \u00b7 local",
+                                    "state": "running"
+                                }
+                            ],
+                            "title": "migrate storage",
+                            "type": "unit"
+                        }
+                    ],
+                    "project": null,
+                    "system": false
+                }
+            ]
+        }
+    },
+    "projects": [],
+    "reviewed_marks": true
+}

@@ -29,6 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- An `operate` paired device reads Home's board too: `GET /api/device/home`
+  gives the app the lanes tendd computes for the dashboard and the Mac app,
+  with only the fields the app shows. It has no pane ids or sockets, lists
+  decisions as the queue does, and adds the decided items for Finished. A
+  device that may only decide gets 403, and `/api/home` itself still refuses
+  every device. `apps/shared/Fixtures` has a recorded board and its device
+  view for the apps' decoders.
+
 - tendd computes Home's board itself (`GET /api/home`), by Tend for Mac's
   rules:
   - a pipeline run's agents grouped into one Work unit with stages;
