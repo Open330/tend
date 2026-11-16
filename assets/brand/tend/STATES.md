@@ -30,6 +30,10 @@ state colours on the graphite ground, so the icon itself teaches the rule: coral
 right, green bottom left, paper bottom right. The macOS app ships it as an Icon Composer
 bundle, `apps/tend-macos/Resources/AppIcon.icon`: one SVG layer per room over an automatic graphite
 gradient, so macOS 26 and later draw it at full size in the system squircle instead of shrinking a
-pre-rounded image into a grey plate. Edit it in Xcode's Icon Composer, or change the room SVGs and
-`icon.json` by hand; keep `assets/icon.svg` in step. `appicon-calm.svg` and `appicon-call.svg` are the earlier white and
+pre-rounded image into a grey plate. The rooms fill the icon edge to edge, and the graphite shows
+in the corridors between them (variant D, `docs/proposals/ICON.md`). The same picture is the iOS icon,
+the favicon, the installed-web-app icons, the landing page tile and the Windows `.exe`, taskbar and tray
+icon. Every app icon file is generated from one geometry by `uv run scripts/brand/tend_icons.py apply D`;
+the Windows tray and window icon are drawn by `crates/tend-app/src/mark.rs` to the same shape. Change
+the script, not the files. `appicon-calm.svg` and `appicon-call.svg` are the earlier white and
 single-amber versions, kept for reference.

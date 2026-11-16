@@ -20,6 +20,82 @@ mod settings;
 #[cfg(windows)]
 mod shell;
 
+// The exe icon resource build.rs links in; tested here, where tests run on
+// every CI host.
+#[cfg(test)]
+mod icon_res;
+
+#[cfg(test)]
+mod icon_res_tests {
+    use super::icon_res::res_from_ico;
+
+    fn u16_at(b: &[u8], at: usize) -> u16 {
+        u16::from_le_bytes([b[at], b[at + 1]])
+    }
+
+    fn u32_at(b: &[u8], at: usize) -> usize {
+        u32::from_le_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]]) as usize
+    }
+
+    /// (type, name, data) of every entry in a `.res` built with numeric ids.
+    fn entries(res: &[u8]) -> Vec<(u16, u16, &[u8])> {
+        let mut out = Vec::new();
+        let mut at = 0;
+        while at < res.len() {
+            let size = u32_at(res, at);
+            let header = u32_at(res, at + 4);
+            assert_eq!(header, 32);
+            assert_eq!(u16_at(res, at + 8), 0xFFFF);
+            assert_eq!(u16_at(res, at + 12), 0xFFFF);
+            let data = &res[at + header..at + header + size];
+            out.push((u16_at(res, at + 10), u16_at(res, at + 14), data));
+            at += header + size.div_ceil(4) * 4;
+        }
+        out
+    }
+
+    #[test]
+    fn the_checked_in_icon_becomes_one_group_of_all_its_images() {
+        let ico = include_bytes!("../assets/tend.ico");
+        let res = res_from_ico(ico).expect("tend.ico parses");
+        let all = entries(&res);
+        assert_eq!(
+            (all[0].0, all[0].1, all[0].2.len()),
+            (0, 0, 0),
+            "leading empty entry"
+        );
+        let count = usize::from(u16_at(ico, 4));
+        let icons: Vec<_> = all.iter().filter(|e| e.0 == 3).collect();
+        assert_eq!(icons.len(), count);
+        let groups: Vec<_> = all.iter().filter(|e| e.0 == 14).collect();
+        assert_eq!(groups.len(), 1);
+        let group = groups[0].2;
+        assert_eq!((u16_at(group, 0), u16_at(group, 2)), (0, 1));
+        assert_eq!(usize::from(u16_at(group, 4)), count);
+        for (i, icon) in icons.iter().enumerate() {
+            let dir = 6 + 16 * i;
+            let image = &ico[u32_at(ico, dir + 12)..][..u32_at(ico, dir + 8)];
+            assert_eq!(icon.2, image, "image {i} copied unchanged");
+            let entry = 6 + 14 * i;
+            assert_eq!(&group[entry..entry + 12], &ico[dir..dir + 12]);
+            assert_eq!(usize::from(u16_at(group, entry + 12)), i + 1);
+            assert_eq!(usize::from(icon.1), i + 1);
+        }
+        // 256 px is written as 0 in both directories.
+        assert!(ico[6..].chunks(16).take(count).any(|d| d[0] == 0));
+    }
+
+    #[test]
+    fn a_file_that_is_not_an_icon_is_refused() {
+        assert!(res_from_ico(b"").is_none());
+        assert!(res_from_ico(&[0, 0, 2, 0, 1, 0]).is_none(), "a cursor file");
+        assert!(
+            res_from_ico(&[0, 0, 1, 0, 1, 0]).is_none(),
+            "an entry past the end"
+        );
+    }
+}
+
 const USAGE: &str = "\
 usage: tend-app [--background] [--open [ITEM]] [--install | --uninstall] [--version]
 

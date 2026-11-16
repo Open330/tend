@@ -229,9 +229,20 @@ fn open_home(
     let Ok(window) = WindowBuilder::new()
         .with_title(identity::DISPLAY_NAME)
         .with_inner_size(tao::dpi::LogicalSize::new(520.0, 860.0))
+        // The app icon on the taskbar: every room lit in its state colour,
+        // the working room in paper, as tend.ico and the other platforms.
         .with_window_icon(
             tao::window::Icon::from_rgba(
-                mark::rgba(64, Rooms::default(), [0x5F, 0x63, 0x68]),
+                mark::rgba(
+                    64,
+                    Rooms {
+                        waiting: true,
+                        error: true,
+                        working: true,
+                        done: true,
+                    },
+                    [0xF2, 0xF3, 0xF5],
+                ),
                 64,
                 64,
             )

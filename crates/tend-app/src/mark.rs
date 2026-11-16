@@ -1,7 +1,9 @@
 //! The Tend mark for the notification area, drawn as RGBA: one square
 //! split by a canted passage into four rooms, each lit for one state
 //! (`assets/brand/tend/mark-rooms.svg`, `STATES.md`, the Mac app's
-//! `BrandMark.swift`). Corners are left square at tray size.
+//! `BrandMark.swift`). As the app icon (variant D of
+//! `docs/proposals/ICON.md`) the rooms fill a rounded graphite plate, which
+//! shows in the corridors between them.
 
 /// Which rooms are lit: one flag per room, as the Mac app's `TendBrandMark`.
 #[allow(clippy::struct_excessive_bools)]
@@ -39,8 +41,26 @@ fn inside(polygon: &[(f32, f32)], x: f32, y: f32) -> bool {
     odd
 }
 
-/// The mark at `size` x `size` pixels, straight RGBA, with `ink` for the
-/// working room and the dimmed rooms (light ink for a dark taskbar).
+/// The plate's corner radius in design units (22.5% of the 56-unit side), the
+/// shape of `crates/tend-app/assets/tend.ico` (`scripts/brand/tend_icons.py`).
+const CORNER: f32 = 56.0 * 0.225;
+/// The graphite plate, top and bottom: it shows in the corridors between the
+/// rooms (variant D of `docs/proposals/ICON.md`).
+const PLATE_TOP: [f32; 3] = [60.0, 65.0, 75.0];
+const PLATE_BOTTOM: [f32; 3] = [27.0, 31.0, 38.0];
+
+fn on_plate(x: f32, y: f32) -> bool {
+    let (lo, hi) = (4.0 + CORNER, 60.0 - CORNER);
+    let dx = (lo - x).max(x - hi).max(0.0);
+    let dy = (lo - y).max(y - hi).max(0.0);
+    (4.0..=60.0).contains(&x) && (4.0..=60.0).contains(&y) && dx * dx + dy * dy <= CORNER * CORNER
+}
+
+/// The icon at `size` x `size` pixels, straight RGBA: the rooms fill a
+/// rounded graphite plate that shows in the corridors between them. Lit
+/// rooms take their state colour; the working room lights in `ink`; dimmed
+/// rooms are `ink` at a low alpha over the plate. The plate is the same on
+/// light and dark taskbars, so the icon does not depend on the theme.
 #[must_use]
 #[allow(
     clippy::cast_precision_loss,
@@ -65,24 +85,34 @@ pub fn rgba(size: u32, rooms: Rooms, ink: [u8; 3]) -> Vec<u8> {
                 for sx in 0..SAMPLES {
                     let x = 4.0 + (px as f32 + (sx as f32 + 0.5) / SAMPLES as f32) * scale;
                     let y = 4.0 + (py as f32 + (sy as f32 + 0.5) / SAMPLES as f32) * scale;
-                    if let Some((_, (color, alpha))) =
+                    if !on_plate(x, y) {
+                        continue;
+                    }
+                    let t = (y - 4.0) / 56.0;
+                    let mut color = [0.0f32; 3];
+                    for c in 0..3 {
+                        color[c] = PLATE_TOP[c] + (PLATE_BOTTOM[c] - PLATE_TOP[c]) * t;
+                    }
+                    if let Some((_, (room, alpha))) =
                         layers.iter().find(|(poly, _)| inside(poly, x, y))
                     {
                         for c in 0..3 {
-                            acc[c] += f32::from(color[c]) * alpha;
+                            color[c] += (f32::from(room[c]) - color[c]) * alpha;
                         }
-                        acc[3] += alpha;
                     }
+                    for c in 0..3 {
+                        acc[c] += color[c];
+                    }
+                    acc[3] += 1.0;
                 }
             }
-            let n = (SAMPLES * SAMPLES) as f32;
             let i = ((py * size + px) * 4) as usize;
-            let alpha = acc[3] / n;
-            if alpha > 0.0 {
+            if acc[3] > 0.0 {
                 for c in 0..3 {
                     out[i + c] = (acc[c] / acc[3]).round().clamp(0.0, 255.0) as u8;
                 }
-                out[i + 3] = (alpha * 255.0).round().clamp(0.0, 255.0) as u8;
+                let n = (SAMPLES * SAMPLES) as f32;
+                out[i + 3] = (acc[3] / n * 255.0).round().clamp(0.0, 255.0) as u8;
             }
         }
     }
@@ -99,7 +129,7 @@ mod tests {
     }
 
     #[test]
-    fn lit_rooms_take_their_colours_and_the_passage_stays_clear() {
+    fn lit_rooms_take_their_colours_on_a_graphite_plate() {
         let size = 32;
         let ink = [0xE8, 0xE6, 0xE3];
         let quiet = rgba(size, Rooms::default(), ink);
@@ -114,17 +144,27 @@ mod tests {
             ink,
         );
         assert_eq!(quiet.len(), 32 * 32 * 4);
-        // Top-right is the waiting room: amber when lit, dim ink when not.
-        let waiting = pixel(&busy, size, 28, 3);
+        // Top-right is the waiting room: amber when lit, dim ink over the
+        // plate when not.
+        let waiting = pixel(&busy, size, 24, 3);
         assert_eq!(&waiting[..3], &WAITING);
         assert_eq!(waiting[3], 255);
-        let dim = pixel(&quiet, size, 28, 3);
-        assert_eq!(&dim[..3], &ink);
-        assert!(dim[3] < 80, "dimmed: {dim:?}");
-        // Bottom-left is done, top-left error.
-        assert_eq!(&pixel(&busy, size, 2, 30)[..3], &DONE);
-        assert_eq!(&pixel(&busy, size, 2, 2)[..3], &ERROR);
-        // The horizontal passage between the top rooms and the working room.
-        assert_eq!(pixel(&busy, size, 28, 9)[3], 0, "passage is transparent");
+        let dim = pixel(&quiet, size, 24, 3);
+        assert_eq!(dim[3], 255, "the plate is opaque: {dim:?}");
+        assert!(dim[0] > 60 && dim[0] < 150, "dimmed over graphite: {dim:?}");
+        // Bottom-left is done, top-left error (inside the rounded corner).
+        assert_eq!(&pixel(&busy, size, 6, 28)[..3], &DONE);
+        assert_eq!(&pixel(&busy, size, 6, 4)[..3], &ERROR);
+        // The corridor between the top rooms and the working room shows the
+        // graphite plate.
+        let corridor = pixel(&busy, size, 24, 9);
+        assert_eq!(corridor[3], 255);
+        assert!(
+            corridor[..3].iter().all(|&c| c < 80),
+            "graphite: {corridor:?}"
+        );
+        // Outside the rounded corner the icon is transparent.
+        assert_eq!(pixel(&busy, size, 0, 0)[3], 0);
+        assert_eq!(pixel(&busy, size, 31, 31)[3], 0);
     }
 }
