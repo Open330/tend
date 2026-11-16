@@ -60,6 +60,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dispatch, or nothing starts. A device runs one start at a time, at most
   20 an hour. `[dashboard] allow_work_start` still gates all of it.
 
+
+### Fixed
+
+- The Windows app's desktop end-to-end test (`scripts/windows-app-e2e.ps1
+  -Desktop`) drives the rebuilt Home again: a question's option, then Send,
+  and Accept, in English or Korean (Home follows the system language). It
+  had stopped answering anything since #598.
 ## [0.10.21] - 2026-11-16
 
 ### Added

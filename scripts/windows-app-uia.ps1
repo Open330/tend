@@ -22,9 +22,10 @@ function Window {
 }
 
 # Home follows the system language: each label is given in every language
-# the page ships (English, Korean).
-$Send = @("Send", "보내기")
-$Accept = @("Accept", "수락")
+# the page ships (English, Korean). PowerShell names are case-insensitive,
+# so these must not share a name with a loop variable ($send, $good).
+$SendLabels = @("Send", "보내기")
+$AcceptLabels = @("Accept", "수락")
 
 function Buttons($win, [string[]]$names) {
     $isButton = New-Object System.Windows.Automation.PropertyCondition($AE::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
@@ -37,6 +38,19 @@ function OptionButtons($win, [string]$option) {
     @($win.FindAll($Scope::Descendants, $isButton) | Where-Object { $_.Current.Name -match "^\d+\s*$([regex]::Escape($option))$" })
 }
 
+# Buttons found by `$find`, waiting up to `$seconds` for one: right after a
+# decision the page re-renders, and a lookup then can briefly find nothing.
+# Only that long without one counts as "none left".
+function Settled([scriptblock]$find, [int]$seconds = 6) {
+    $until = (Get-Date).AddSeconds($seconds)
+    do {
+        $found = @(& $find)
+        if ($found.Count -gt 0) { return ,$found }
+        Start-Sleep -Milliseconds 500
+    } while ((Get-Date) -lt $until)
+    return ,@()
+}
+
 function Press($element) {
     $element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
 }
@@ -45,7 +59,7 @@ $win = Window
 Write-Output "window: $($win.Current.Name)"
 # Wait for the page to render its cards.
 $deadline = (Get-Date).AddSeconds(30)
-while ((Get-Date) -lt $deadline -and (OptionButtons $win "yes").Count -eq 0 -and (Buttons $win $Accept).Count -eq 0) { Start-Sleep -Milliseconds 500 }
+while ((Get-Date) -lt $deadline -and (OptionButtons $win "yes").Count -eq 0 -and (Buttons $win $AcceptLabels).Count -eq 0) { Start-Sleep -Milliseconds 500 }
 
 # The page re-renders when it reads the queue again (0.8 s after a decision,
 # and on its own timer), which can replace a button between finding and
@@ -54,7 +68,7 @@ function Gone($err) { "$($err.Exception)" -match "ElementNotAvailable" }
 
 $answered = 0
 for ($i = 0; $i -lt 20; $i++) {
-    $yes = OptionButtons $win "yes"
+    $yes = Settled { OptionButtons $win "yes" }
     if ($yes.Count -eq 0) { break }
     try {
         # The option opens the card's answer field filled with it; Send sends.
@@ -63,7 +77,7 @@ for ($i = 0; $i -lt 20; $i++) {
         # nothing: wait for the field, else find the option again.
         $send = @()
         $until = (Get-Date).AddSeconds(4)
-        while ($send.Count -eq 0 -and (Get-Date) -lt $until) { Start-Sleep -Milliseconds 300; $send = Buttons $win $Send }
+        while ($send.Count -eq 0 -and (Get-Date) -lt $until) { Start-Sleep -Milliseconds 300; $send = Buttons $win $SendLabels }
         if ($send.Count -eq 0) {
             Write-Output "no answer field after choosing an option; retrying"
             Start-Sleep -Seconds 1
@@ -83,7 +97,7 @@ for ($i = 0; $i -lt 20; $i++) {
 
 $accepted = 0
 for ($i = 0; $i -lt 20; $i++) {
-    $good = Buttons $win $Accept
+    $good = Settled { Buttons $win $AcceptLabels }
     if ($good.Count -eq 0) { break }
     try { Press $good[0] } catch {
         if (-not (Gone $_)) { throw }
