@@ -35,6 +35,8 @@ mod decisions;
 #[cfg(feature = "dashboard")]
 mod devices;
 #[cfg(feature = "dashboard")]
+mod home;
+#[cfg(feature = "dashboard")]
 mod oidc;
 #[cfg(feature = "dashboard")]
 pub mod operator;

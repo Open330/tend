@@ -254,6 +254,12 @@ pub(super) async fn queue_handler(
     Query(query): Query<DecisionsQuery>,
 ) -> Response {
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT);
+    Json(json!({ "hosts": queue_sections(&state, limit).await })).into_response()
+}
+
+/// The decision queue, one section per host, as `GET /api/decisions`
+/// returns it (Home's board interleaves these into Your turn).
+pub(super) async fn queue_sections(state: &AppState, limit: usize) -> Vec<serde_json::Value> {
     let agents = state.store.snapshot().await;
     let local = crate::decision_queue::read_pending(
         &state.reviews,
@@ -263,7 +269,7 @@ pub(super) async fn queue_handler(
         true,
     )
     .await;
-    let fleet_hosts = fleet_hosts(&state).await;
+    let fleet_hosts = fleet_hosts(state).await;
     let mut hosts = vec![json!({
         "alias": local_alias(&fleet_hosts), "local": true, "control": true,
         "decides_reviews": true,
@@ -280,7 +286,7 @@ pub(super) async fn queue_handler(
         .await;
         hosts.extend(sections);
     }
-    Json(json!({ "hosts": hosts })).into_response()
+    hosts
 }
 
 /// `GET /api/decisions/history`: past decisions, newest first, per host
@@ -392,7 +398,7 @@ fn error(status: StatusCode, message: impl Into<String>) -> Response {
 /// A paired device (admitted by the decision gate, which hands it over as
 /// a request extension) is `app:<device name>#<id prefix>`; its audit line
 /// names the device and who approved it.
-fn operator_identity(
+pub(super) fn operator_identity(
     state: &AppState,
     headers: &HeaderMap,
     device: Option<&super::devices::DeviceAuth>,
