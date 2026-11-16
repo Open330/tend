@@ -40,7 +40,22 @@ final class TendMenuBarAgentController: NSObject, NSPopoverDelegate {
     private var closingClick: (destination: String?, at: Date)?
     private var animationFrom: [CGFloat] = []
     private var positions: [CGFloat] = []
-    private var pillWidth = TendMenuBarGeometry.disc
+    /// The unfolded capsule's width. Measuring it lays out every chip's
+    /// label, and most refreshes never unfold one, so it is measured on
+    /// first use after the folded chips change.
+    private var pillWidth: CGFloat {
+        if let chips = pillWidthChips {
+            pillWidthChips = nil
+            measuredPillWidth = TendMenuBarAgentRenderer.pillWidth(chips)
+        }
+        return measuredPillWidth
+    }
+    private var pillWidthChips: [TendMenuBarChip]?
+    private var measuredPillWidth = TendMenuBarGeometry.disc
+    /// What the last refresh was built from; an unchanged snapshot skips.
+    private var lastInputs: TendMenuBarInputs?
+    /// A refresh was asked for by something other than a Fleet snapshot.
+    private var refreshForced = false
     private var drawnPillWidth = TendMenuBarGeometry.disc
     private var lead: CGFloat = 0
     private var animationPillFrom = TendMenuBarGeometry.disc
@@ -85,7 +100,7 @@ final class TendMenuBarAgentController: NSObject, NSPopoverDelegate {
         }
         // @Published fires before assignment. Defer the read until the model
         // and its attention center have both consumed the execution snapshot.
-        model.$executionSnapshot.sink { [weak self] _ in self?.scheduleRefresh() }.store(in: &subscriptions)
+        model.$executionSnapshot.sink { [weak self] _ in self?.scheduleRefresh(force: false) }.store(in: &subscriptions)
         model.attention.$unreadPanes.sink { [weak self] _ in self?.scheduleRefresh() }.store(in: &subscriptions)
         model.$connectionState.sink { [weak self] _ in self?.scheduleRefresh() }.store(in: &subscriptions)
         observers.append(NotificationCenter.default.addObserver(forName: TendLimitCoverage.didChange, object: nil, queue: .main) { [weak self] _ in
@@ -153,19 +168,35 @@ final class TendMenuBarAgentController: NSObject, NSPopoverDelegate {
         NSStatusBar.system.removeStatusItem(item)
     }
 
-    private func scheduleRefresh() {
+    private func scheduleRefresh(force: Bool = true) {
+        if force { refreshForced = true }
         guard !stopped, !refreshScheduled else { return }
         refreshScheduled = true
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.refreshScheduled = false
+            let forced = self.refreshForced
+            self.refreshForced = false
+            // A snapshot that changes nothing the folded cluster shows is
+            // skipped; with the card, a peek or a hover open, everything is.
+            if !forced, self.popover?.isShown != true, self.peek == nil, !self.pointerInside, self.focus == nil,
+               self.currentInputs() == self.lastInputs {
+                TendPerf.count("menubar.skipped")
+                return
+            }
             self.refresh()
         }
+    }
+
+    private func currentInputs() -> TendMenuBarInputs {
+        TendMenuBarInputs(hosted: model.executionSnapshot.hostedAgents, unread: model.attention.unreadPanes,
+                          connection: model.connectionState)
     }
 
     private func refresh() {
         guard !stopped else { return }
         TendPerf.count("menubar.refresh")
+        lastInputs = currentInputs()
         state.updateDraftAgents(model.executionSnapshot.hostedAgents, unread: model.attention.unreadPanes)
         candidates = order.update(model.executionSnapshot.hostedAgents, unread: model.attention.unreadPanes)
         var content = candidates
@@ -212,8 +243,8 @@ final class TendMenuBarAgentController: NSObject, NSPopoverDelegate {
             chips = Array(activity.prefix(count)) + (usage.map { [$0] } ?? [])
             overflow = max(0, activity.count - count)
             focus = nil
-            pillWidth = TendMenuBarAgentRenderer.pillWidth(chips)
-            positions = geometry.layout(focus: nil, pillWidth: pillWidth)
+            pillWidthChips = chips
+            positions = geometry.layout(focus: nil, pillWidth: TendMenuBarGeometry.disc)
             drawnPillWidth = TendMenuBarGeometry.disc
             lead = 0
             animationStarted = nil
@@ -351,7 +382,8 @@ final class TendMenuBarAgentController: NSObject, NSPopoverDelegate {
             pollingInterval = 0
             return
         }
-        let interval = TendMenuBarPolling.interval(pointerInside: pointerInside, animating: animationStarted != nil, popoverShown: popover?.isShown == true, waitingToFold: foldIntent.deadline != nil)
+        let interval = TendMenuBarPolling.interval(pointerInside: pointerInside, animating: animationStarted != nil, popoverShown: popover?.isShown == true, waitingToFold: foldIntent.deadline != nil,
+            distanceToMenuBar: focus == nil && peek == nil ? distanceToMenuBar(lastPoint ?? NSEvent.mouseLocation) : 0)
         guard interval != pollingInterval else { return }
         pollingInterval = interval
         timer?.invalidate()
@@ -366,13 +398,22 @@ final class TendMenuBarAgentController: NSObject, NSPopoverDelegate {
     /// Most pointer movement is nowhere near a menu bar. Avoid asking AppKit
     /// for the replicated status window's frame on those idle movements.
     private func isNearMenuBar(_ point: NSPoint) -> Bool {
+        currentMenuBarBands.contains { $0.contains(point) }
+    }
+
+    private var currentMenuBarBands: [NSRect] {
         let bands = menuBarBands ?? NSScreen.screens.map { screen in
             let height = max(screen.frame.maxY - screen.visibleFrame.maxY, NSStatusBar.system.thickness, 40) + 12
             return NSRect(x: screen.frame.minX, y: screen.frame.maxY - height,
                           width: screen.frame.width, height: height + 1)
         }
         menuBarBands = bands
-        return bands.contains { $0.contains(point) }
+        return bands
+    }
+
+    /// How far the pointer is from the nearest menu bar band, in points.
+    private func distanceToMenuBar(_ point: NSPoint) -> CGFloat {
+        TendMenuBarPolling.distance(from: point, to: currentMenuBarBands)
     }
 
     /// Translate the offscreen stand-in to the pointer's display, retaining
@@ -598,9 +639,11 @@ final class TendMenuBarAgentController: NSObject, NSPopoverDelegate {
     }
 
     private func chipRect(_ index: Int) -> NSRect {
-        let xs = geometry.layout(focus: focus, pillWidth: pillWidth)
+        // Folded, no capsule is open and its width is not needed.
+        let pill = focus == nil ? TendMenuBarGeometry.disc : pillWidth
+        let xs = geometry.layout(focus: focus, pillWidth: pill)
         let x = xs.indices.contains(index) ? xs[index] : 0
-        let width = index == focus ? max(TendMenuBarGeometry.slot, pillWidth + 2 * TendMenuBarGeometry.inset) : TendMenuBarGeometry.slot
+        let width = index == focus ? max(TendMenuBarGeometry.slot, pill + 2 * TendMenuBarGeometry.inset) : TendMenuBarGeometry.slot
         return NSRect(x: clusterOrigin + x, y: 0, width: width, height: item.button?.bounds.height ?? 24)
     }
 

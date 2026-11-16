@@ -1,10 +1,32 @@
 import Foundation
 
 enum TendMenuBarPolling {
-    static func interval(pointerInside: Bool, animating: Bool, popoverShown: Bool, waitingToFold: Bool = false) -> TimeInterval {
+    static func interval(pointerInside: Bool, animating: Bool, popoverShown: Bool, waitingToFold: Bool = false,
+                         distanceToMenuBar: CGFloat = 0) -> TimeInterval {
         // Keep animation/tracking smooth; idle hover detection needs at most
         // 67ms, rather than waking the run loop sixty times every second.
-        animating || waitingToFold || (pointerInside && !popoverShown) ? 1.0 / 60 : 1.0 / 15
+        if animating || waitingToFold || (pointerInside && !popoverShown) { return 1.0 / 60 }
+        return idle(distanceToMenuBar: distanceToMenuBar)
+    }
+
+    /// A pointer far from every menu bar cannot reach one before the next
+    /// look even at a fast flick (about 3000 points a second), so it is
+    /// checked less often; near one, at 15 Hz as before.
+    static func idle(distanceToMenuBar distance: CGFloat) -> TimeInterval {
+        switch distance {
+        case 1500...: 0.5
+        case 900...: 0.3
+        case 450...: 0.15
+        default: 1.0 / 15
+        }
+    }
+
+    static func distance(from point: CGPoint, to bands: [CGRect]) -> CGFloat {
+        bands.map { band in
+            let dx = max(band.minX - point.x, 0, point.x - band.maxX)
+            let dy = max(band.minY - point.y, 0, point.y - band.maxY)
+            return (dx * dx + dy * dy).squareRoot()
+        }.min() ?? 0
     }
 
     static func refreshUsage(chipShown: Bool, lastAttempt: Date, lastSuccess: Date?, now: Date) -> Bool {

@@ -27,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   counts as a new Fleet snapshot, and typing a decision answer redraws only
   that card. `TEND_PERF_COUNTERS=<seconds>` prints debug counters for this
   work (body evaluations, publishes, projections, polls) to standard error.
+- The menu-bar cluster skips a Fleet snapshot that changes nothing it
+  shows (each agent's state, name, place, connection and unread mark),
+  measures the hover capsule only when one unfolds, and checks the pointer
+  less often while it is far from every menu bar (down to twice a second
+  1500 points away; 15 times a second near one, as before).
 
 ### Fixed
 

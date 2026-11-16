@@ -44,6 +44,36 @@ struct TendMenuBarAgent: Identifiable {
     }
 }
 
+/// What the folded cluster shows of each agent, and the inputs around
+/// them. A Fleet snapshot whose agents all look the same here (a heartbeat,
+/// a response the cluster does not show) skips the refresh.
+@MainActor
+struct TendMenuBarInputs: Equatable {
+    struct Agent: Equatable {
+        let id: String
+        let stamp: String
+        let status: TendAgentStatus
+        let name: String
+        let location: String
+        let connected: Bool
+        let pane: TendWatchPaneIdentity?
+    }
+
+    let agents: [Agent]
+    let unread: Set<TendWatchPaneIdentity>
+    let connection: AppModel.ConnectionState
+
+    init(hosted: [TendHostedAgent], unread: Set<TendWatchPaneIdentity>, connection: AppModel.ConnectionState) {
+        agents = hosted.map { hosted in
+            let item = TendMenuBarAgent(hosted: hosted, unread: false)
+            return Agent(id: item.id, stamp: TendUnreadRules.stamp(hosted.agent), status: item.status,
+                         name: item.name, location: item.location, connected: item.connected, pane: item.pane)
+        }
+        self.unread = unread
+        self.connection = connection
+    }
+}
+
 /// Ranks by local observation order, not clocks from different fleet hosts.
 /// Items discovered in one snapshot share a rank and use a stable id tie-break.
 @MainActor
