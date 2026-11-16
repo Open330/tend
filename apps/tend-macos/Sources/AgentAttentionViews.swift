@@ -49,7 +49,11 @@ private struct TendUnreadDotContent: View {
 /// Feeds the attention center what the workbench shows, and opens the pane a
 /// notification click asked for.
 struct TendAttentionTracking: ViewModifier {
-    @ObservedObject var model: AppModel
+    /// Read, not observed: it sits at the workbench's root, and observing
+    /// the whole model re-evaluated it on every model publish. It acts on
+    /// the workspace revision, which `workspaceRevised` signals after the
+    /// new value is stored.
+    let model: AppModel
     @ObservedObject var tabs: TendWorkbenchTabs
     @ObservedObject var attention: TendAgentAttentionCenter
     let open: (TendWatchPaneIdentity) -> Void
@@ -64,7 +68,7 @@ struct TendAttentionTracking: ViewModifier {
                 openPending()
             }
             .onReceive(tabs.$groups) { _ in DispatchQueue.main.async(execute: updateVisibility) }
-            .onChange(of: model.workspaceRevision) { _ in
+            .onReceive(model.chrome.workspaceRevised) { _ in
                 updateVisibility()
                 openPending()
                 openPendingSwitch()

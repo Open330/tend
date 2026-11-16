@@ -1,3 +1,4 @@
+import Combine
 import GhosttyTerminal
 import SwiftUI
 
@@ -187,12 +188,19 @@ enum TendTerminalAppearance {
 @main
 struct TendApp: App {
     @NSApplicationDelegateAdaptor(TendApplicationDelegate.self) private var appDelegate
-    @StateObject private var model: AppModel
+    /// Held, not observed. A `@StateObject` here made every model publish
+    /// (several a second on a busy fleet) re-evaluate the App's scenes and
+    /// reset every window's root view, which re-laid out and redrew the
+    /// whole workbench even when nothing it shows changed. Views observe
+    /// what they draw themselves; the menu reads `commandState`.
+    @State private var model: AppModel
+    @StateObject private var commandState: TendAppCommandState
     @AppStorage(TendPreferences.appearanceKey) private var appearance = TendAppearance.system.rawValue
 
     init() {
         let model = AppModel()
-        _model = StateObject(wrappedValue: model)
+        _model = State(initialValue: model)
+        _commandState = StateObject(wrappedValue: TendAppCommandState(model: model))
         TendApplicationDelegate.model = model
     }
 
@@ -273,28 +281,51 @@ struct TendApp: App {
             CommandGroup(after: .newItem) {
                 Button("Start Tend Work…") { model.presentWorkStart() }
                     .keyboardShortcut("n", modifiers: [.command, .option])
-                    .disabled(!model.isConnected || model.isStartingWork)
+                    .disabled(!commandState.isConnected || commandState.isStartingWork)
                 Button("Open Live Watch") { model.select(.watch) }
                     .keyboardShortcut("w", modifiers: [.command, .control])
                 // ⌘T opens a terminal tab in every terminal and agent
                 // workbench (Terminal, Ghostty, iTerm, Orca).
                 Button("New Tend Shell") { model.createShell() }
                     .keyboardShortcut("t", modifiers: .command)
-                    .disabled(!model.isConnected || model.isCreatingSession)
+                    .disabled(!commandState.isConnected || commandState.isCreatingSession)
                 // WS-B: new agent — ⌥⌘T starts the default agent in the
                 // focused editor's folder, as Orca's new agent tab does.
                 Button("New Default Agent") { Task { await model.quickStartAgent() } }
                     .keyboardShortcut("t", modifiers: [.command, .option])
-                    .disabled(!model.isConnected || model.isStartingAgent)
+                    .disabled(!commandState.isConnected || commandState.isStartingAgent)
                 Button("New Agent…") { model.presentNewAgent() }
                     .keyboardShortcut("t", modifiers: [.command, .option, .shift])
-                    .disabled(!model.isConnected || model.isStartingAgent)
+                    .disabled(!commandState.isConnected || commandState.isStartingAgent)
             }
         }
     }
 
     private var preferredColorScheme: ColorScheme? {
         TendAppearance(rawValue: appearance)?.colorScheme
+    }
+}
+
+/// The model state the app's menu commands enable and disable on, each
+/// published only when it changes, so the App's scenes are not
+/// re-evaluated for the model's other publishes.
+@MainActor
+final class TendAppCommandState: ObservableObject {
+    @Published private(set) var isConnected = false
+    @Published private(set) var isStartingWork = false
+    @Published private(set) var isCreatingSession = false
+    @Published private(set) var isStartingAgent = false
+    private var subscriptions: [AnyCancellable] = []
+
+    init(model: AppModel) {
+        // `@Published` sends the new value before storing it: map the value.
+        subscriptions = [
+            model.$connectionState.map { $0 == .connected }.removeDuplicates()
+                .sink { [weak self] in self?.isConnected = $0 },
+            model.$isStartingWork.removeDuplicates().sink { [weak self] in self?.isStartingWork = $0 },
+            model.$isCreatingSession.removeDuplicates().sink { [weak self] in self?.isCreatingSession = $0 },
+            model.$isStartingAgent.removeDuplicates().sink { [weak self] in self?.isStartingAgent = $0 },
+        ]
     }
 }
 
