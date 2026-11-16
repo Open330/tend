@@ -199,9 +199,12 @@ identity gradients, font stacks, type sizes and metrics.
   checked against Swift, so they can still drift until phase 4 generates
   the Swift side; that phase is what makes the guarantee complete.
 - The Mac app is not edited in phase 1 (other sessions are changing Home).
-  Phase 4 generates the Swift side from the same file (a mechanical
-  extraction PR into `apps/shared`), after which the check covers the
-  generated Swift instead of parsing `TendTheme.swift`.
+  Phase 4 (done) generates the Swift side from the same file:
+  `apps/shared/Sources/TendDesignTokens.swift`, compiled into Tend for Mac
+  and the iOS app. `TendTheme`'s surfaces and shell metrics read it (a
+  mechanical change), and the test checks both generated files are current
+  and that `TendTheme` reads the tokens. Type sizes, card metrics and host
+  gradients are generated too, for the views that adopt them next.
 - Agent marks: the Claude and OpenAI marks are the files Tend for Mac ships
   (`Assets.xcassets/AgentLogos`, sources in `AgentLogos-NOTICE.md`), drawn
   only scaled; the OpenAI mark only in black or white.

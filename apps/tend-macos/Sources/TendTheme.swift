@@ -26,38 +26,39 @@ enum TendTheme {
 
     /// One Explore/tree row. VS Code lists are 22px; a touch taller keeps the
     /// Korean glyphs from crowding.
-    static let rowHeight: CGFloat = 24
+    static let rowHeight = CGFloat(TendDesignTokens.Metric.rowHeight)
     static let treeIndent: CGFloat = 12
-    static let sectionHeaderHeight: CGFloat = 32
+    static let sectionHeaderHeight = CGFloat(TendDesignTokens.Metric.sectionHeaderHeight)
     static let breadcrumbHeight: CGFloat = 28
-    static let statusBarHeight: CGFloat = 22
-    static let activityBarWidth: CGFloat = 46
-    static let controlRadius: CGFloat = 4
+    static let statusBarHeight = CGFloat(TendDesignTokens.Metric.statusBarHeight)
+    static let activityBarWidth = CGFloat(TendDesignTokens.Metric.activityBarWidth)
+    static let controlRadius = CGFloat(TendDesignTokens.Metric.controlRadius)
 
     /// Cards and grouped content inside an editor: small corners and a
     /// hairline edge rather than a floating material slab.
-    static let panelRadius: CGFloat = 6
+    static let panelRadius = CGFloat(TendDesignTokens.Metric.panelRadius)
 
     /// The card fill, following the appearance on its own so views that
     /// don't read `colorScheme` can use it as a plain `ShapeStyle`.
     static let panelFill = Color(nsColor: NSColor(name: nil) { appearance in
-        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(srgbRed: 0x25 / 255, green: 0x25 / 255, blue: 0x26 / 255, alpha: 1)
-            : NSColor(srgbRed: 0xF8 / 255, green: 0xF8 / 255, blue: 0xF8 / 255, alpha: 1)
+        let tokens = TendDesignTokens.lane
+        return appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? nsColor(tokens.dark, alpha: tokens.darkAlpha)
+            : nsColor(tokens.light, alpha: tokens.lightAlpha)
     })
 
     // MARK: Surfaces
 
     static func activityBar(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? rgb(0x181818) : rgb(0xF8F8F8)
+        token(TendDesignTokens.activityBar, scheme)
     }
 
     static func sideBar(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? rgb(0x181818) : rgb(0xF8F8F8)
+        token(TendDesignTokens.sideBar, scheme)
     }
 
     static func editor(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? rgb(0x1F1F1F) : rgb(0xFFFFFF)
+        token(TendDesignTokens.editor, scheme)
     }
 
     /// Tab strip and inactive tabs: the side bar's tone, so the active tab
@@ -68,27 +69,27 @@ enum TendTheme {
 
     /// Panels inside an editor (inspector cards, the live-pane header).
     static func panel(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? rgb(0x181818) : rgb(0xF8F8F8)
+        token(TendDesignTokens.panel, scheme)
     }
 
     static func border(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? rgb(0x2B2B2B) : rgb(0xE5E5E5)
+        token(TendDesignTokens.border, scheme)
     }
 
     static func inputBackground(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? rgb(0x313131) : rgb(0xFFFFFF)
+        token(TendDesignTokens.inputBackground, scheme)
     }
 
     static func inputBorder(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? rgb(0x3C3C3C) : rgb(0xCECECE)
+        token(TendDesignTokens.inputBorder, scheme)
     }
 
     static func hover(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color.white.opacity(0.07) : Color.black.opacity(0.05)
+        token(TendDesignTokens.hover, scheme)
     }
 
     static func pressed(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color.white.opacity(0.12) : Color.black.opacity(0.09)
+        token(TendDesignTokens.pressed, scheme)
     }
 
     /// The active row in a list that has focus: the accent, muted.
@@ -97,11 +98,26 @@ enum TendTheme {
     }
 
     static func segmentTrack(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.055)
+        token(TendDesignTokens.segmentTrack, scheme)
     }
 
     static func segmentChip(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? rgb(0x3A3A3A) : rgb(0xFFFFFF)
+        token(TendDesignTokens.segmentChip, scheme)
+    }
+
+    /// A token from apps/shared/Design/tokens.json (TendDesignTokens.swift,
+    /// generated; the dashboard reads the same file).
+    private static func token(_ token: TendTokenColor, _ scheme: ColorScheme) -> Color {
+        scheme == .dark ? rgb(token.dark).opacity(token.darkAlpha) : rgb(token.light).opacity(token.lightAlpha)
+    }
+
+    private static func nsColor(_ hex: UInt32, alpha: Double) -> NSColor {
+        NSColor(
+            srgbRed: CGFloat((hex >> 16) & 0xFF) / 255,
+            green: CGFloat((hex >> 8) & 0xFF) / 255,
+            blue: CGFloat(hex & 0xFF) / 255,
+            alpha: CGFloat(alpha)
+        )
     }
 
     private static func rgb(_ hex: UInt32) -> Color {

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Tend for Mac now reads its surface colours and shell metrics from the
+  shared design-token file. `apps/shared/Design/tokens.json` generates
+  both the dashboard's `tokens.css` and `apps/shared/Sources/TendDesignTokens.swift`,
+  and `TendTheme` uses the generated values. The Mac app and the web
+  dashboard therefore change together, and a test fails when either
+  generated file is stale. The values are unchanged.
+
 ### Added
 
 - tendd computes Home's board itself (`GET /api/home`), by Tend for Mac's
