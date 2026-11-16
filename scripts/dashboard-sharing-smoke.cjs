@@ -5,7 +5,8 @@ const pane=n=>(process.env.TEND_TEST_PANE_PREFIX||'')+'%'+n;
  try {
   const owner=await browser.newContext();const page=await owner.newPage();const origin=process.argv[2];
   page.on('pageerror',e=>console.error('PAGEERROR',e)); page.on('response',async r=>{if(r.url().includes('/api/shares'))console.log('SHARE',r.status(),await r.text())});
-  await page.goto(origin+'/#token=operator');
+  // The workbench (pane drawer, shares) lives at /workbench; / is Home.
+  await page.goto(origin+'/workbench#token=operator');
   await page.locator('[data-collapse-target="data-panel"]').click();
   await page.locator('[data-tab="panes"]').click();
   await page.locator('#panes-tbody [data-open-pane]').first().click();await page.locator('#pane-drawer-share').click();

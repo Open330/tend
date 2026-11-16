@@ -8,6 +8,9 @@
 import { buildBoard, fromServerBoard, hostHue, LANES, productOf, replyTarget, reviewQueue, sameTarget, TEND_PROJECT } from "./home-board.mjs";
 import { languageOf, relativeTime, stringsFor, textOf } from "./home-strings.mjs";
 import { linkedItemOf } from "./needs-model.mjs";
+import { mountExplore } from "./explore.mjs";
+import { openAccessManager } from "./operators-admin.mjs";
+import { openShareManager } from "./sharing-admin.mjs";
 
 const TOKEN_KEY = "tend.token";
 /// The card layout, a per-browser preference like the Mac's
@@ -31,6 +34,9 @@ const state = {
   selected: null,
   lane: "needsYou",
   layout: "emphasis",
+  /// Which page of the shell is showing: home, explore or settings.
+  route: "home",
+  explore: null,
   filter: { host: "", project: "" },
   showOlder: false,
   /// Per lane, which of the Mac's folds are open (helpers, empty,
@@ -170,7 +176,7 @@ function when(iso) {
 export function paneLink(unit) {
   const params = new URLSearchParams({ pane: unit.pane });
   if (unit.socket) params.set("socket", unit.socket);
-  return `/#${params}`;
+  return `/explore#${params}`;
 }
 
 function localHost(alias) {
@@ -1121,6 +1127,7 @@ export function composing() {
 
 function render() {
   if (state.lost) return;
+  renderRoute();
   const board = currentBoard();
   state.board = board;
   renderHeader(board);
@@ -1150,8 +1157,135 @@ function render() {
   // dashboard serves: hidden where /api/access is not answered (a paired
   // device, the Windows app's scoped proxy).
   $("rail-explore").hidden = !state.data.access;
+  $("rail-settings").hidden = !state.data.access;
   renderInspector();
   revealLinkedItem();
+}
+
+// ---- Shell routes: Home, Explore, Settings ------------------------------
+
+/// Close Explore (stream, output, drafts), Settings and the admin dialogs,
+/// and show Home.
+function dropShellPages() {
+  state.explore?.destroy();
+  state.explore = null;
+  $("view-explore").replaceChildren();
+  $("view-settings").replaceChildren();
+  for (const dialog of document.querySelectorAll("dialog.share-dialog")) {
+    dialog.close?.();
+    dialog.remove?.();
+  }
+  if (state.route !== "home") {
+    state.route = "home";
+    history.replaceState(null, "", "/home");
+  }
+}
+
+const ROUTES = {
+  "/": "home",
+  "/home": "home",
+  "/needs": "home",
+  "/explore": "explore",
+  "/settings": "settings",
+};
+
+/// Links the old workbench made (`/#pane=…`, `/#workspace=…`, …) still
+/// open what they named there.
+export function legacyTarget(pathname, hash) {
+  if (pathname !== "/") return null;
+  const params = new URLSearchParams(String(hash || "").replace(/^#/, ""));
+  return ["pane", "workspace", "session", "window", "message", "wsocket"].some((key) => params.has(key))
+    ? `/workbench${hash}`
+    : null;
+}
+
+function go(route, { push = true } = {}) {
+  state.route = route;
+  if (push) history.pushState(null, "", route === "home" ? "/home" : `/${route}`);
+  render();
+  if (route === "explore") refresh();
+}
+
+function renderRoute() {
+  const route = state.route;
+  $("view-home").hidden = route !== "home";
+  $("view-explore").hidden = route !== "explore";
+  $("view-settings").hidden = route !== "settings";
+  for (const item of document.querySelectorAll(".rail-item[data-route]")) {
+    const on = item.dataset.route === route;
+    item.classList.toggle("active", on);
+    if (on) item.setAttribute("aria-current", "page");
+    else item.removeAttribute("aria-current");
+  }
+  $("tab-label").textContent = route === "explore" ? S.explore : route === "settings" ? S.settings : S.home;
+  $("tab-icon").className = `icon ${route === "explore" ? "i-explore" : route === "settings" ? "i-gear" : "i-board"}`;
+  if (route !== "explore") state.explore?.suspend();
+  if (route === "explore") {
+    state.explore ||= mountExplore($("view-explore"), {
+      S, el, icon, button, logo, hostBadge, when, read, write, authHeaders, canWrite,
+    });
+    state.explore.update(state.data.fleet);
+  }
+  if (route === "settings") renderSettings();
+}
+
+function settingsRow(label, value) {
+  const row = el("div", "set-row");
+  row.append(el("span", "set-label", label), el("span", "set-value", value));
+  return row;
+}
+
+/// Settings, the web's part of the Mac's Settings: who is signed in and
+/// what this dashboard allows, access and sharing administration, and the
+/// classic workbench for what has not moved into the shell yet.
+function renderSettings() {
+  const box = $("view-settings");
+  const access = state.data.access;
+  const page = el("div", "set-page");
+  page.append(el("h1", null, S.settings));
+  const general = el("section", "set-section");
+  general.append(el("h2", null, S.settingsAccount));
+  const login = access?.login || {};
+  general.append(
+    settingsRow(S.settingsSignedIn, login.signed_in ? `${login.email || "—"} (${login.role || "—"})` : access ? S.settingsToken : "—"),
+    settingsRow(S.settingsMode, access?.mode || "—"),
+    settingsRow(S.settingsWrites, access?.write_authorized ? S.yes : S.no),
+    settingsRow(S.settingsWorkStart, access?.capabilities?.work_start ? S.yes : S.no),
+  );
+  page.append(general);
+  if (canWrite()) {
+    const admin = el("section", "set-section");
+    admin.append(el("h2", null, S.settingsAccess));
+    admin.append(el("p", "set-help", S.settingsAccessHelp));
+    const row = el("div", "row");
+    row.append(
+      button(S.settingsManageAccess, () => openAccessManager(adminFetch, { login: Boolean(login.available), devices: Boolean(access?.capabilities?.device_pairing) }), "btn"),
+    );
+    if (access?.capabilities?.pane_sharing) row.append(button(S.settingsManageShares, () => openShareManager(null, adminFetch), "btn"));
+    admin.append(row);
+    page.append(admin);
+  }
+  const more = el("section", "set-section");
+  more.append(el("h2", null, S.settingsWorkbench));
+  more.append(el("p", "set-help", S.settingsWorkbenchHelp));
+  const link = el("a", "btn", S.settingsOpenWorkbench);
+  link.href = "/workbench";
+  more.append(link);
+  page.append(more);
+  box.replaceChildren(page);
+}
+
+/// The admin dialogs' request helper (`controlFetch` in the workbench):
+/// JSON in and out, the operator header on every call.
+async function adminFetch(path, options = {}) {
+  const resp = await fetch(path, {
+    credentials: "same-origin",
+    ...options,
+    headers: { "Content-Type": "application/json", "X-Tend-Operator": "1", ...authHeaders(), ...(options.headers || {}) },
+  });
+  const payload = await resp.json().catch(() => null);
+  if (!resp.ok) throw new ApiError(payload?.error || `${resp.status}`, resp.status, resp.status === 401);
+  return payload;
 }
 
 /// Brings the card a link names (`#item=<id>`) into view once per link:
@@ -1185,6 +1319,12 @@ export function homeReturnPath(hash) {
 /// drafts, host names, filters and an open sheet included, and no older
 /// read may bring it back.
 function lostAccess(error) {
+  // Someone who is not an operator opening the dashboard's address gets
+  // the classic page: its landing, its sign-in, its public read view.
+  if (window.location.pathname === "/") {
+    window.location.replace(`/workbench${window.location.hash}`);
+    return;
+  }
   state.generation += 1;
   state.lost = true;
   state.drafts.clear();
@@ -1216,6 +1356,13 @@ function lostAccess(error) {
   $("start-body").value = "";
   $("start-dialog").close?.();
   $("rail-explore").hidden = true;
+  $("rail-settings").hidden = true;
+  // Explore's output and drafts, Settings and its admin dialogs go too.
+  dropShellPages();
+  // The sign-in offer is on Home: show it whichever page was open.
+  $("view-home").hidden = false;
+  $("view-explore").hidden = true;
+  $("view-settings").hidden = true;
   $("status").textContent = error.message;
   const login = $("login");
   login.href = `/auth/login?return_to=${encodeURIComponent(homeReturnPath(window.location.hash))}`;
@@ -1261,7 +1408,9 @@ async function poll() {
   let fleet;
   if (home.status === "fulfilled") {
     decisions = { status: "fulfilled", value: null };
-    fleet = { status: "fulfilled", value: null };
+    // Explore lists every pane, which the board does not carry.
+    [fleet] = state.route === "explore" ? await Promise.allSettled([read("/api/fleet")]) : [{ status: "fulfilled", value: null }];
+    if (!current()) return;
   } else {
     [decisions, fleet] = await Promise.allSettled([read("/api/decisions"), read("/api/fleet")]);
     if (!current()) return;
@@ -1310,6 +1459,11 @@ async function poll() {
     state.composer = null;
     $("start-dialog").close?.();
   }
+  // Explore and Settings need the full dashboard (operator reads): where
+  // they are no longer answered, what they showed goes and Home stays.
+  // A blip (network, timeout) is not a refusal: only an auth answer drops them.
+  const accessRefused = access.status === "rejected" && access.reason?.auth;
+  if (accessRefused && (state.explore || state.route !== "home")) dropShellPages();
   render();
 }
 
@@ -1368,6 +1522,23 @@ function translate() {
 
 export function start() {
   bootstrapToken();
+  const legacy = legacyTarget(window.location.pathname, window.location.hash);
+  if (legacy) {
+    window.location.replace(legacy);
+    return;
+  }
+  state.route = ROUTES[window.location.pathname] || "home";
+  for (const item of document.querySelectorAll(".rail-item[data-route]")) {
+    item.addEventListener("click", (event) => {
+      if (event.metaKey || event.ctrlKey || event.shiftKey) return;
+      event.preventDefault();
+      go(item.dataset.route);
+    });
+  }
+  window.addEventListener?.("popstate", () => {
+    state.route = ROUTES[window.location.pathname] || "home";
+    render();
+  });
   translate();
   wireStartWork();
   wireReview();

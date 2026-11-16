@@ -133,6 +133,23 @@ async function run(name, contextOptions) {
     await page.keyboard.press("Escape");
     await page.locator("#inspector").waitFor({ state: "hidden", timeout: 5000 });
   }
+  // Explore: open a shell pane in the shell and type to it. The scratch
+  // daemon's holder pane runs `cat`, which prints back what it is sent.
+  if (!compact) {
+    await page.goto(`${base}/explore`);
+    await page.locator(".ex-row").first().waitFor({ timeout: 15000 });
+    const shell = page.locator(".ex-row", { has: page.locator(".ex-sub", { hasText: /^cat$/ }) }).first();
+    if (await shell.count()) {
+      await shell.click();
+      const marker = `e2e-explore-${Date.now()}`;
+      await page.locator(".ex-composer textarea").fill(marker);
+      await page.keyboard.press("Enter");
+      await page.locator(".ex-output", { hasText: marker }).waitFor({ timeout: 15000 });
+      console.log("  explore: typed to a pane and saw it in its live output");
+    } else {
+      console.log("  explore: no shell pane running cat to type to; skipped");
+    }
+  }
   check(!problems.length, problems.join("\n"));
   await context.close();
   console.log(`ok ${name}: answered "${title}", accepted "${reviewTitle}"`);

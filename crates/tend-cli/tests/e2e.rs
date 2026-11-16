@@ -994,12 +994,21 @@ fn dashboard_static_index_is_public() {
     let Some(dd) = spawn_dashboard(Some("e2e-token")) else {
         return;
     };
+    // `/` is Home's shell; the classic workbench (and its landing page for
+    // visitors) is at /workbench. Both are public pages.
     let url = format!("http://127.0.0.1:{}/", dd.port);
     assert_eq!(curl_status(&url, None), 200);
     let body = curl_body(&url, None);
     assert!(
+        body.contains("home.mjs"),
+        "expected Home's shell; got: {body:.200}"
+    );
+    let workbench = format!("http://127.0.0.1:{}/workbench", dd.port);
+    assert_eq!(curl_status(&workbench, None), 200);
+    let body = curl_body(&workbench, None);
+    assert!(
         body.contains("tend dashboard"),
-        "expected dashboard HTML; got: {body:.200}"
+        "expected the workbench HTML; got: {body:.200}"
     );
     drop(dd.daemon);
 }

@@ -15,6 +15,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `TendTheme` uses the generated values. The Mac app and the web
   dashboard therefore change together, and a test fails when either
   generated file is stale. The values are unchanged.
+- The dashboard's address (`/`) opens Home in the new shell, as Tend for Mac
+  opens on Home.
+  - **Explore** (`/explore`) lists every host's panes in the Mac's
+    execution topology (host, session, window, pane) with All / Attention /
+    Active and host-tree or status grouping. A pane of this host opens with
+    its live output and a field to type to it.
+  - **Settings** (`/settings`) shows the sign-in and access, opens access
+    and sharing administration, and links the classic workbench.
+  - The classic workbench moved to `/workbench`. Visitors who are not
+    operators and the workbench's own `/#pane=…` style links are sent
+    there.
 
 ### Added
 

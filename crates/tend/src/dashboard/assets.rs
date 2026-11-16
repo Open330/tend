@@ -40,12 +40,23 @@ struct WebAssets;
 /// token.
 pub fn router<S: Clone + Send + Sync + 'static>() -> Router<S> {
     Router::new()
-        .route("/", get(index_handler))
+        // The dashboard's address opens Home, as Tend for Mac opens on it;
+        // the classic workbench (and its landing page for visitors) moved
+        // to /workbench, where Home sends anyone who is not an operator and
+        // every link the workbench made (`/#pane=…`).
+        .route("/", get(home_handler))
+        .route("/explore", get(home_handler))
+        .route("/settings", get(home_handler))
+        .route("/workbench", get(index_handler))
         .route("/static/{*path}", get(static_handler))
 }
 
 async fn index_handler() -> Response {
     serve_page("index.html")
+}
+
+async fn home_handler() -> Response {
+    serve_page("home.html")
 }
 
 async fn static_handler(Path(path): Path<String>) -> Response {
