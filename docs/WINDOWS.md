@@ -18,6 +18,32 @@ cargo install --path crates/tend-cli --locked
 tend init --component tmux-popup,tmux-peek,claude-hooks,codex-hooks,tendd-shellrc
 ```
 
+### On a new machine
+
+What a clean Windows 11 Pro install (26H2, checked 2026-11-16) lacks before
+the commands above work:
+
+- **A C++ toolchain.** `cargo install` needs the Visual Studio 2022 Build
+  Tools with only *MSVC x64/x86 build tools* and a *Windows 11 SDK*
+  (about 4.3 GB), then [rustup](https://rustup.rs) (MSVC host) and Git.
+  A release build of `tendd`, `tend` and `tend-app` takes about 18 minutes
+  on 4 cores and about 2 GB of `target`.
+- **rmux.** `winget install Helvesec.RMUX` works from a signed-in terminal
+  (the first winget run asks to accept the `msstore` source terms); the
+  release's Windows zip works too. winget is not available to a service or
+  `SYSTEM` session.
+- **PowerShell 7.** Windows ships only Windows PowerShell 5.1, whose
+  default execution policy is `Restricted` (no profile runs). The
+  `tendd-shellrc` autostart is written to the PowerShell 7 profile, so
+  install PowerShell 7 (its policy was `RemoteSigned` on the tested machine;
+  if the profile does not load, see `Get-ExecutionPolicy -List`). On the clean machine
+  an rmux server's `default-shell` was `cmd.exe` (from `%COMSPEC%`), which
+  reads no profile: set `set -g default-shell pwsh` in `~/.rmux.conf` for
+  the autostart to run.
+- **Nothing for the app itself.** WebView2 ships with Windows 11 (157 here).
+  An OpenSSH server is needed only when another machine reaches this one as
+  a Fleet host.
+
 `tend init` writes its bindings to `~/.rmux.conf` on Windows — rmux reads that
 file (then `%APPDATA%\rmux\rmux.conf`) and never `~/.tmux.conf` — and accepts
 rmux in place of tmux in its pre-flight. Run it from inside an rmux pane so the
@@ -132,6 +158,55 @@ real client:
 - **Claude's folder-trust prompt** after a relaunch or swap is now parsed for
   a drive or UNC path, but what Claude prints there on Windows has not been
   captured; until it has, expect to answer that prompt by hand.
+
+## Tend for Windows (the app)
+
+`tend-app.exe` (`crates/tend-app`) is the Windows counterpart of Tend for
+Mac's menu bar and Home: an icon in the notification area with the Tend
+mark (amber when something needs you, red when the dashboard cannot be
+reached), a Home window, toasts, and start with Windows. Design and its
+security review: [proposals/WINDOWS_APP.md](proposals/WINDOWS_APP.md).
+
+```powershell
+tend init --component dashboard       # the app talks to the local dashboard
+cargo install --path crates/tend-app --locked
+tend-app --install                    # start with Windows, register toasts, start
+```
+
+- **Home** is the dashboard's `/home` page (Your turn / In progress /
+  Finished, every Fleet host), in a WebView2 window. Answering and deciding
+  go through the same audited routes as the web page (`web:token`).
+  Closing the window frees WebView2; the app stays in the tray.
+- **Toasts**: one per new question, waiting agent or result to review, on
+  any host; several at once, or what is already waiting at start, are one
+  summary. A toast goes away when its item is decided anywhere (after a
+  complete read of its host). Clicking one opens Home on that card.
+- **Tray menu**: Open Home, Notifications, Start with Windows, Start tendd
+  (when the dashboard does not answer; the app also tries it once at
+  start), Quit.
+- `tend-app --open ITEM` opens Home on a card; a second start hands its
+  request to the running app. `tend-app --uninstall` removes the start entry
+  and the toast registration.
+
+How it talks to tendd: only to the loopback dashboard, with the dashboard
+token read from tendd's config (or `TEND_DASHBOARD_TOKEN`), and only after
+the server proved it knows the token (`GET /api/proof`, bound to this
+host's node id and the dashboard address). The page never sees the token:
+the window loads Home from the app's own origin and the app forwards only
+Home's reads and the two decision writes. It refuses a dashboard without
+token auth, a token under 32 characters, or a non-loopback `bind`, and the
+tray says which.
+
+State (`%LOCALAPPDATA%\tend\app`): `app.log`, the items already told about
+(`app-state.json`), the WebView2 profile. `TEND_APP_STATE_DIR`,
+`TEND_APP_ID` and `TEND_APP_RUN_VALUE` move all of it for a test run.
+
+`scripts/windows-app-e2e.ps1 -Bin <dir> -Desktop` is the end-to-end test:
+two scratch daemons on private rmux servers (one a Fleet host over
+`ssh localhost`), seeded questions and results, the app started by its Run
+command, toasts, Home driven through UI Automation, answers and decisions
+read back from both daemons, and an impostor on the dashboard port that
+must not see the token.
 
 ## Use WSL2
 
