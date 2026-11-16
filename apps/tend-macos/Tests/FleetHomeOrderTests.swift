@@ -109,6 +109,24 @@ private func question(_ id: String, at createdAt: String, system: Bool = false) 
     #expect(items.map(\.id) == ["decision:human:mini:q1", "decision:human:mini:q2", "agent:a", "agent:b"])
 }
 
+@Test func groupingKeepsTendsOwnItemsLast() throws {
+    // A system ask from project A must not ride ahead of project B's work
+    // just because A's work waits longest.
+    var recovery = try question("recovery", at: "2026-11-08T00:00:00Z", system: true)
+    recovery.askerCwd = "/src/a"
+    let items = FleetBoard.yourTurn(
+        works: [
+            unit("a", .needsYou, since: "2026-11-08T01:00:00Z", repo: "a"),
+            unit("b", .needsYou, since: "2026-11-08T02:00:00Z", repo: "b"),
+        ],
+        decisions: [recovery]
+    )
+    let groups = FleetBoard.byProject(items)
+    #expect(groups.flatMap(\.items).map(\.id) == ["agent:a", "agent:b", "decision:human:mini:recovery"])
+    #expect(groups.map(\.isSystem) == [false, false, true])
+    #expect(Set(groups.map(\.id)).count == groups.count)
+}
+
 @Test func yourTurnGroupsByProjectInWaitOrder() throws {
     let items = FleetBoard.yourTurn(
         works: [

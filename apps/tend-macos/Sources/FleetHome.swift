@@ -678,8 +678,10 @@ enum FleetTurnItem: Identifiable, Sendable {
 struct FleetTurnGroup: Identifiable, Sendable {
     let project: String?
     let items: [FleetTurnItem]
+    /// tendd's own items, after every project's.
+    var isSystem = false
 
-    var id: String { project ?? "" }
+    var id: String { isSystem ? "\u{0}system" : project ?? "" }
 }
 
 extension FleetBoard {
@@ -694,8 +696,13 @@ extension FleetBoard {
     }
 
     /// Your turn's entries grouped by project the same way.
+    /// tendd's own items are kept out of the projects and come last in a
+    /// group of their own, so grouping never pulls one ahead of an agent's.
     static func byProject(_ items: [FleetTurnItem]) -> [FleetTurnGroup] {
-        grouped(items, by: \.repo).map { FleetTurnGroup(project: $0.project, items: $0.items) }
+        let system = items.filter(\.isSystemAsk)
+        let groups = grouped(items.filter { !$0.isSystemAsk }, by: \.repo)
+            .map { FleetTurnGroup(project: $0.project, items: $0.items) }
+        return system.isEmpty ? groups : groups + [FleetTurnGroup(project: nil, items: system, isSystem: true)]
     }
 
     private static func grouped<Item>(_ items: [Item], by repo: (Item) -> String?) -> [(project: String?, items: [Item])] {

@@ -661,7 +661,7 @@ private struct FleetLaneColumn: View {
                         let groups = FleetBoard.byProject(FleetBoard.yourTurn(works: shown, decisions: decisionCard == nil ? [] : decisions))
                         ForEach(groups) { group in
                             if groups.count > 1 {
-                                FleetProjectHeader(project: group.project, count: group.items.count)
+                                FleetProjectHeader(project: group.project, count: group.items.count, isSystem: group.isSystem)
                             }
                             ForEach(group.items) { item in
                                 switch item {
@@ -745,12 +745,14 @@ private struct FleetLaneColumn: View {
 private struct FleetProjectHeader: View {
     let project: String?
     let count: Int
+    /// tendd's own items rather than a project.
+    var isSystem = false
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: "folder")
+            Image(systemName: isSystem ? "gearshape" : "folder")
                 .font(.system(size: 10))
-            Text(project ?? String(localized: "No project"))
+            Text(isSystem ? String(localized: "From tend itself") : project ?? String(localized: "No project"))
                 .font(.system(size: 11, weight: .semibold))
                 .lineLimit(1)
             Text("\(count)")
