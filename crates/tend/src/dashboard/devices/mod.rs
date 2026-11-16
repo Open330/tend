@@ -1,4 +1,5 @@
-//! Paired devices: a phone that may decide, and nothing else.
+//! Paired devices: a phone that may decide, and, when the operator who
+//! approves it says so, also see the hosts and start new work.
 //!
 //! Pairing is shaped like the OAuth device authorization grant (RFC 8628),
 //! with tend's own endpoints: the **device asks**, an **operator
@@ -14,12 +15,16 @@
 //! 3. The app, polling `POST /auth/devices/token` with its device code, gets
 //!    its **device token** once, and the request is gone.
 //!
-//! The device token authorizes exactly the decision routes
-//! (`/api/decisions*`) and the device's own `/api/device*`. It adds no
-//! access to anything else: no pane output or input, Fleet commands, Work
-//! control, shares or access management. What it can do is what deciding
-//! means: read the questions and evidence of every host this dashboard
-//! covers, and answer them, which can tell an agent to go ahead.
+//! Every device has one [`Scope`]. A `decide` token authorizes exactly the
+//! decision routes (`/api/decisions*`) and the device's own `GET
+//! /api/device` and `POST /api/device/forget`: read the questions and
+//! evidence of every host this dashboard covers, and answer them, which can
+//! tell an agent to go ahead. An `operate` token adds the device-only
+//! routes in `operate_routes` (the Fleet snapshot cut down, an agent's
+//! recent output, starting new work) and nothing else: no pane input,
+//! generic Fleet commands, Work control, shares or access management. The
+//! device asks for a scope; the approving operator grants it or less; a
+//! token is never widened, and `limit` narrows it in place.
 //!
 //! # Secrets and limits
 //!
@@ -38,12 +43,15 @@
 //! an exclusive lock and its own application id. Nothing is created until
 //! the first device is paired; an existing store is opened at start.
 
+mod operate;
 mod routes;
 mod storage;
 #[cfg(test)]
 mod tests;
 
-pub(in crate::dashboard) use routes::{admin_routes, device_auth, device_routes, pairing_routes};
+pub(in crate::dashboard) use routes::{
+    admin_routes, device_auth, device_routes, operate_routes, pairing_routes,
+};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -67,6 +75,43 @@ const MAX_NAME_CHARS: usize = 64;
 const USER_CODE_ALPHABET: &[u8] = b"BCDFGHJKLMNPQRSTVWXZ23456789";
 const USER_CODE_LEN: usize = 8;
 
+/// What a paired device may do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(in crate::dashboard) enum Scope {
+    /// Read and answer what needs the person.
+    Decide,
+    /// Also the hosts, agents, recent output, and starting new work.
+    Operate,
+}
+
+impl Scope {
+    pub(in crate::dashboard) fn as_str(self) -> &'static str {
+        match self {
+            Self::Decide => "decide",
+            Self::Operate => "operate",
+        }
+    }
+
+    /// A stored or requested value: anything but `operate` is `decide`.
+    pub(in crate::dashboard) fn from_stored(value: &str) -> Self {
+        if value == "operate" {
+            Self::Operate
+        } else {
+            Self::Decide
+        }
+    }
+
+    /// The route groups this scope reaches, as `GET /api/device` lists them
+    /// (`decisions` first, for clients that only knew phase 1).
+    pub(in crate::dashboard) fn names(self) -> &'static [&'static str] {
+        match self {
+            Self::Decide => &["decisions"],
+            Self::Operate => &["decisions", "operate"],
+        }
+    }
+}
+
 /// Who approved a device.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(in crate::dashboard) struct ApprovedBy {
@@ -89,6 +134,7 @@ pub(in crate::dashboard) struct Device {
     pub approved_by: ApprovedBy,
     pub created_at: i64,
     pub last_seen_at: i64,
+    pub scope: Scope,
     #[serde(skip)]
     token_hash: [u8; 32],
 }
@@ -109,6 +155,19 @@ pub(in crate::dashboard) struct DeviceAuth {
     pub id: String,
     pub name: String,
     pub approved_by: ApprovedBy,
+    /// The scope as the registry held it when this request was admitted.
+    pub scope: Scope,
+}
+
+/// A pending request as an operator sees it before approving: nothing is
+/// granted by looking.
+#[derive(Debug, Clone, Serialize)]
+pub(in crate::dashboard) struct RequestView {
+    pub name: String,
+    pub platform: String,
+    pub scope: Scope,
+    /// Seconds since the device asked.
+    pub age_secs: u64,
 }
 
 struct PendingRequest {
@@ -116,6 +175,10 @@ struct PendingRequest {
     user_code: String,
     name: String,
     platform: String,
+    /// What the device asked for; fixed for the life of the request.
+    requested: Scope,
+    /// What the operator granted: at most `requested`.
+    granted: Scope,
     expires: Instant,
     approved_by: Option<ApprovedBy>,
 }
@@ -334,6 +397,7 @@ impl Devices {
         &self,
         name: &str,
         platform: &str,
+        scope: Scope,
     ) -> Option<(String, String, u64, u64)> {
         let device_code = random_secret();
         let mut registry = self.pruned();
@@ -351,6 +415,8 @@ impl Devices {
             user_code: user_code.clone(),
             name: clean_name(name),
             platform: clean_platform(platform),
+            requested: scope,
+            granted: Scope::Decide,
             expires: Instant::now() + REQUEST_TTL,
             approved_by: None,
         });
@@ -362,22 +428,49 @@ impl Devices {
         ))
     }
 
-    /// An operator approves the pending request with this user code:
-    /// `(name, platform)` of the device approved, `None` if no request has
+    /// The pending, not yet approved request with this user code, as an
+    /// operator sees it before deciding. Grants nothing.
+    pub(in crate::dashboard) fn lookup(&self, user_code: &str) -> Option<RequestView> {
+        let code = normalize_user_code(user_code);
+        let registry = self.pruned();
+        let request = registry
+            .requests
+            .iter()
+            .find(|request| request.user_code == code && request.approved_by.is_none())?;
+        let age =
+            REQUEST_TTL.saturating_sub(request.expires.saturating_duration_since(Instant::now()));
+        Some(RequestView {
+            name: request.name.clone(),
+            platform: request.platform.clone(),
+            scope: request.requested,
+            age_secs: age.as_secs(),
+        })
+    }
+
+    /// An operator approves the pending request with this user code,
+    /// granting `grant` or, if the device asked for less, what it asked:
+    /// the device approved and the scope it gets, `None` if no request has
     /// that code (or it was approved already).
     pub(in crate::dashboard) fn approve(
         &self,
         user_code: &str,
         by: ApprovedBy,
-    ) -> Option<(String, String)> {
+        grant: Scope,
+    ) -> Option<RequestView> {
         let code = normalize_user_code(user_code);
         let mut registry = self.pruned();
         let request = registry
             .requests
             .iter_mut()
             .find(|request| request.user_code == code && request.approved_by.is_none())?;
+        request.granted = grant.min(request.requested);
         request.approved_by = Some(by);
-        Some((request.name.clone(), request.platform.clone()))
+        Some(RequestView {
+            name: request.name.clone(),
+            platform: request.platform.clone(),
+            scope: request.granted,
+            age_secs: 0,
+        })
     }
 
     /// The device polls with its device code.
@@ -403,7 +496,11 @@ impl Devices {
             // polls racing with the same code.
             registry.requests.swap_remove(index)
         };
-        let (request_code, request_expires) = (request.user_code.clone(), request.expires);
+        let (request_code, request_expires, requested) = (
+            request.user_code.clone(),
+            request.expires,
+            request.requested,
+        );
         let token = format!("{TOKEN_PREFIX}{}", random_secret());
         let at = now_unix();
         let device = Device {
@@ -413,6 +510,7 @@ impl Devices {
             approved_by: request.approved_by.expect("checked approval"),
             created_at: at,
             last_seen_at: at,
+            scope: request.granted,
             token_hash: sha256(&token),
         };
         let stored = match self.storage() {
@@ -428,6 +526,8 @@ impl Devices {
                 user_code: request_code,
                 name: device.name,
                 platform: device.platform,
+                requested,
+                granted: device.scope,
                 expires: request_expires,
                 approved_by: Some(device.approved_by),
             });
@@ -460,6 +560,7 @@ impl Devices {
                     id: device.id.clone(),
                     name: device.name.clone(),
                     approved_by: device.approved_by.clone(),
+                    scope: device.scope,
                 },
                 touch,
             )
@@ -488,6 +589,38 @@ impl Devices {
             storage.remove(id)?;
         }
         self.registry().devices.retain(|device| device.id != id);
+        Ok(true)
+    }
+
+    /// Limit a device to deciding, keeping it paired. Irreversible for its
+    /// token; persisted before it is reported, serialized with issuance and
+    /// removal. `false` when no such device exists; `Ok(true)` also when it
+    /// already could only decide.
+    pub(in crate::dashboard) fn limit(&self, id: &str) -> std::io::Result<bool> {
+        let _transition = self.transition();
+        let Some(scope) = self
+            .registry()
+            .devices
+            .iter()
+            .find(|device| device.id == id)
+            .map(|device| device.scope)
+        else {
+            return Ok(false);
+        };
+        if scope == Scope::Decide {
+            return Ok(true);
+        }
+        if let Some(storage) = self.storage()? {
+            storage.set_scope(id, Scope::Decide)?;
+        }
+        if let Some(device) = self
+            .registry()
+            .devices
+            .iter_mut()
+            .find(|device| device.id == id)
+        {
+            device.scope = Scope::Decide;
+        }
         Ok(true)
     }
 

@@ -1,11 +1,14 @@
 //! Durable paired devices. Each row holds the SHA-256 of the device token,
 //! never the token, plus what the access dialog lists.
-use super::{ApprovedBy, Device, MAX_DEVICES};
+use super::{ApprovedBy, Device, Scope, MAX_DEVICES};
 use rusqlite::{params, Connection};
 use std::{fs::File, io, path::Path, sync::Mutex, time::Duration};
 
 /// `MXDV`: refuses to adopt a database written by anything else.
 const APPLICATION_ID: i64 = 0x4D58_4456;
+/// 1: phase 1 (every device may decide). 2: adds `scope`; a version 1
+/// store is migrated in place on open, every device keeping `decide`.
+const SCHEMA_VERSION: i64 = 2;
 
 pub(super) struct Storage {
     connection: Mutex<Connection>,
@@ -27,7 +30,8 @@ fn validate_database(connection: &Connection) -> io::Result<()> {
         )
         .map_err(io::Error::other)?;
     if (application == 0 && tables != 0)
-        || (application != 0 && (application != APPLICATION_ID || version != 1))
+        || (application != 0
+            && (application != APPLICATION_ID || !(1..=SCHEMA_VERSION).contains(&version)))
     {
         return Err(io::Error::other("not a supported tend device database"));
     }
@@ -53,18 +57,19 @@ impl Storage {
             .map_err(io::Error::other)?;
         connection
             .execute_batch(
-                "PRAGMA synchronous=FULL; PRAGMA application_id=0x4D584456; PRAGMA user_version=1; \
+                "PRAGMA synchronous=FULL; PRAGMA application_id=0x4D584456; \
                  CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, \
                  token_hash BLOB NOT NULL UNIQUE, name TEXT NOT NULL, platform TEXT NOT NULL, \
                  approved_by TEXT NOT NULL, created_at INTEGER NOT NULL, \
-                 last_seen_at INTEGER NOT NULL);",
+                 last_seen_at INTEGER NOT NULL, scope TEXT NOT NULL DEFAULT 'decide');",
             )
             .map_err(io::Error::other)?;
+        migrate(&connection)?;
         let devices = {
             let mut statement = connection
                 .prepare(
-                    "SELECT id, token_hash, name, platform, approved_by, created_at, last_seen_at \
-                     FROM devices ORDER BY created_at, id",
+                    "SELECT id, token_hash, name, platform, approved_by, created_at, last_seen_at, \
+                     scope FROM devices ORDER BY created_at, id",
                 )
                 .map_err(io::Error::other)?;
             let rows = statement
@@ -77,12 +82,13 @@ impl Storage {
                         row.get::<_, String>(4)?,
                         row.get::<_, i64>(5)?,
                         row.get::<_, i64>(6)?,
+                        row.get::<_, String>(7)?,
                     ))
                 })
                 .map_err(io::Error::other)?;
             let mut devices = Vec::new();
             for row in rows {
-                let (id, hash, name, platform, approved_by, created_at, last_seen_at) =
+                let (id, hash, name, platform, approved_by, created_at, last_seen_at, scope) =
                     row.map_err(io::Error::other)?;
                 let token_hash: [u8; 32] = hash
                     .try_into()
@@ -96,6 +102,8 @@ impl Storage {
                     approved_by,
                     created_at,
                     last_seen_at,
+                    // Anything but a known wider scope reads as `decide`.
+                    scope: Scope::from_stored(&scope),
                     token_hash,
                 });
             }
@@ -123,7 +131,8 @@ impl Storage {
         let approved_by = serde_json::to_string(&device.approved_by).map_err(io::Error::other)?;
         self.connection()?
             .execute(
-                "INSERT INTO devices VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO devices (id, token_hash, name, platform, approved_by, created_at, \
+                 last_seen_at, scope) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     device.id,
                     device.token_hash.as_slice(),
@@ -131,7 +140,8 @@ impl Storage {
                     device.platform,
                     approved_by,
                     device.created_at,
-                    device.last_seen_at
+                    device.last_seen_at,
+                    device.scope.as_str()
                 ],
             )
             .map(drop)
@@ -148,6 +158,22 @@ impl Storage {
             .map_err(io::Error::other)
     }
 
+    /// Narrow a device's scope. Persisted before the caller reports it.
+    pub(super) fn set_scope(&self, id: &str, scope: Scope) -> io::Result<()> {
+        let changed = self
+            .connection()?
+            .execute(
+                "UPDATE devices SET scope = ?2 WHERE id = ?1",
+                params![id, scope.as_str()],
+            )
+            .map_err(io::Error::other)?;
+        if changed == 1 {
+            Ok(())
+        } else {
+            Err(io::Error::other("the device is not in storage"))
+        }
+    }
+
     pub(super) fn clear(&self) -> io::Result<()> {
         self.connection()?
             .execute("DELETE FROM devices", [])
@@ -161,6 +187,27 @@ impl Storage {
             .map(drop)
             .map_err(io::Error::other)
     }
+}
+
+/// Bring a store to [`SCHEMA_VERSION`]. A version 1 table has no `scope`
+/// column: it is added with `decide` for every row.
+fn migrate(connection: &Connection) -> io::Result<()> {
+    let has_scope: bool = connection
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('devices') WHERE name = 'scope'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(io::Error::other)?
+        > 0;
+    if !has_scope {
+        connection
+            .execute_batch("ALTER TABLE devices ADD COLUMN scope TEXT NOT NULL DEFAULT 'decide';")
+            .map_err(io::Error::other)?;
+    }
+    connection
+        .execute_batch(&format!("PRAGMA user_version={SCHEMA_VERSION};"))
+        .map_err(io::Error::other)
 }
 
 impl Drop for Storage {

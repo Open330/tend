@@ -4,18 +4,21 @@
 //! | --- | --- | --- |
 //! | `POST /auth/devices/request` | a device | a device code (secret) and a user code (shown) |
 //! | `POST /auth/devices/token` | the device holding the device code | pending, or its token once approved |
-//! | `POST /api/devices/approve` | operator | approve the request with this user code |
+//! | `POST /api/devices/lookup` | operator | the request with this user code, granting nothing |
+//! | `POST /api/devices/approve` | operator | approve the request with this user code, granting a scope up to what it asked |
 //! | `GET /api/devices` | operator | paired devices |
 //! | `POST /api/devices/{id}/remove` | operator | unpair one |
 //! | `POST /api/devices/remove-all` | operator | unpair every device |
+//! | `POST /api/devices/{id}/limit` | operator | limit a device to deciding, keeping it paired |
 //! | `GET /api/device` | that device | who it is |
 //! | `POST /api/device/forget` | that device | unpair itself (sign out) |
+//! | `GET /api/device/fleet` | that device, `operate` | the Fleet snapshot, cut down |
 //!
 //! The decision routes accept a device token through the dashboard's
 //! decision gate (`server.rs`), not here. Requests, approvals, issued
 //! tokens and removals are written to the decision audit (never a code or
 //! a token).
-use super::{ApprovedBy, DeviceAuth, Poll};
+use super::{ApprovedBy, DeviceAuth, Poll, Scope};
 use crate::dashboard::server::AppState;
 use axum::{
     body::Bytes,
@@ -68,11 +71,16 @@ pub(in crate::dashboard) fn admin_routes() -> Router<AppState> {
     Router::new()
         .route("/api/devices", get(list))
         .route(
+            "/api/devices/lookup",
+            post(lookup).layer(DefaultBodyLimit::max(1024)),
+        )
+        .route(
             "/api/devices/approve",
             post(approve).layer(DefaultBodyLimit::max(1024)),
         )
         .route("/api/devices/remove-all", post(remove_all))
         .route("/api/devices/{id}/remove", post(remove))
+        .route("/api/devices/{id}/limit", post(limit))
         .layer(middleware::map_response(no_store))
 }
 
@@ -99,6 +107,28 @@ pub(in crate::dashboard) fn device_auth(
     )
 }
 
+/// The routes an `operate` device adds, each an exact path (never a
+/// prefix: `/api/device` also prefixes `/api/devices`). A device without
+/// `operate` gets 403, never 401, which the app reads as "removed".
+pub(in crate::dashboard) fn operate_routes(state: AppState) -> Router<AppState> {
+    Router::new()
+        .route("/api/device/fleet", get(super::operate::fleet))
+        .layer(middleware::from_fn(operate_only))
+        .layer(middleware::from_fn_with_state(state, device_only))
+        .layer(middleware::map_response(no_store))
+}
+
+async fn operate_only(req: Request, next: Next) -> Result<Response, Response> {
+    match req.extensions().get::<DeviceAuth>() {
+        Some(auth) if auth.scope == Scope::Operate => Ok(next.run(req).await),
+        Some(_) => Err(error(
+            StatusCode::FORBIDDEN,
+            "this device may only decide; pair it again with hosts and new work",
+        )),
+        None => Err(StatusCode::UNAUTHORIZED.into_response()),
+    }
+}
+
 async fn device_only(
     State(state): State<AppState>,
     mut req: Request,
@@ -115,6 +145,9 @@ struct RequestBody {
     name: String,
     #[serde(default)]
     platform: String,
+    /// `operate` to ask for hosts and new work; anything else is `decide`.
+    #[serde(default)]
+    scope: String,
 }
 
 async fn request(State(state): State<AppState>, body: Bytes) -> Response {
@@ -125,7 +158,9 @@ async fn request(State(state): State<AppState>, body: Bytes) -> Response {
         return error(StatusCode::BAD_REQUEST, "expected {\"name\": \"...\"}");
     };
     let Some((device_code, user_code, expires_in, interval)) =
-        state.devices.request(&body.name, &body.platform)
+        state
+            .devices
+            .request(&body.name, &body.platform, Scope::from_stored(&body.scope))
     else {
         return error(
             StatusCode::TOO_MANY_REQUESTS,
@@ -173,7 +208,7 @@ async fn token(State(state): State<AppState>, body: Bytes) -> Response {
                     "by": super::Device::label(&device.name, &device.id),
                     "action": "device_paired", "id": device.id, "name": device.name,
                     "platform": device.platform, "approved_by": device.approved_by,
-                    "status": 201,
+                    "scope": device.scope, "status": 201,
                 }),
             )
             .await;
@@ -182,6 +217,7 @@ async fn token(State(state): State<AppState>, body: Bytes) -> Response {
                 Json(json!({
                     "device": { "id": device.id, "name": device.name, "platform": device.platform },
                     "token": token,
+                    "scope": device.scope.names(),
                 })),
             )
                 .into_response()
@@ -230,26 +266,57 @@ fn approved_by(state: &AppState, headers: &HeaderMap) -> ApprovedBy {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LookupBody {
+    user_code: String,
+}
+
+/// What the device behind a code is and asks for, before anything is
+/// granted: the operator approves that exact request next.
+async fn lookup(State(state): State<AppState>, body: Bytes) -> Response {
+    let Ok(body) = serde_json::from_slice::<LookupBody>(&body) else {
+        return error(StatusCode::BAD_REQUEST, "expected {\"user_code\": \"...\"}");
+    };
+    match state.devices.lookup(&body.user_code) {
+        Some(view) => Json(json!({ "request": view })).into_response(),
+        None => error(
+            StatusCode::NOT_FOUND,
+            "no device is waiting with that code; check it on the device",
+        ),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ApproveBody {
     user_code: String,
+    /// What the operator grants; absent (an older dashboard page) is
+    /// `decide`. The device gets this or what it asked for, whichever is
+    /// less.
+    #[serde(default)]
+    scope: Option<String>,
 }
 
 async fn approve(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
     let Ok(body) = serde_json::from_slice::<ApproveBody>(&body) else {
         return error(StatusCode::BAD_REQUEST, "expected {\"user_code\": \"...\"}");
     };
+    let grant = Scope::from_stored(body.scope.as_deref().unwrap_or("decide"));
     let by = approved_by(&state, &headers);
-    match state.devices.approve(&body.user_code, by.clone()) {
-        Some((name, platform)) => {
+    match state.devices.approve(&body.user_code, by.clone(), grant) {
+        Some(view) => {
             audit(
                 &state,
                 json!({
-                    "by": by, "action": "device_approved", "name": name,
-                    "platform": platform, "status": 200,
+                    "by": by, "action": "device_approved", "name": view.name,
+                    "platform": view.platform, "scope": view.scope, "status": 200,
                 }),
             )
             .await;
-            Json(json!({ "approved": { "name": name, "platform": platform } })).into_response()
+            Json(json!({
+                "approved": { "name": view.name, "platform": view.platform, "scope": view.scope }
+            }))
+            .into_response()
         }
         None => error(
             StatusCode::NOT_FOUND,
@@ -320,9 +387,37 @@ async fn whoami(Extension(device): Extension<DeviceAuth>) -> Response {
     Json(json!({
         "device": { "id": device.id, "name": device.name },
         "approved_by": device.approved_by,
-        "scope": ["decisions"],
+        "scope": device.scope.names(),
     }))
     .into_response()
+}
+
+async fn limit(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    match state.devices.limit(&id) {
+        Ok(true) => {
+            audit(
+                &state,
+                json!({
+                    "by": approved_by(&state, &headers), "action": "device_limited",
+                    "id": id, "scope": Scope::Decide, "status": 200,
+                }),
+            )
+            .await;
+            Json(json!({ "limited": id, "scope": Scope::Decide })).into_response()
+        }
+        Ok(false) => error(StatusCode::NOT_FOUND, "no such device"),
+        Err(e) => {
+            tracing::warn!(error = %e, "dashboard device store failed");
+            error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "the device store is unavailable",
+            )
+        }
+    }
 }
 
 async fn forget(
