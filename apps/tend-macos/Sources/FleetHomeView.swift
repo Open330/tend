@@ -337,6 +337,7 @@ struct FleetHomeView: View {
             answer: { text in await feed.answer(decision, text: text, model: model) },
             decide: { disposition, note in await feed.decide(decision, disposition, note: note, model: model) },
             openAsker: asker.map { hosted in { open(hosted) } },
+            dismiss: decision.isHumanRequest ? { await feed.dismiss(decision, model: model) } : nil,
             draft: feed.drafts.row(for: decision.id)
         )
     }

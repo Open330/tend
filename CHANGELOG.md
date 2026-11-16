@@ -67,6 +67,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A question on Home's Your turn can be dismissed in one click: **Dismiss**
+  (also in the card's menu) closes it without an answer, on the host that
+  holds it. It is recorded there as declined, so it leaves every client's
+  queue. The asking agent, if it is still running, reads that the person
+  dismissed it. Before, the only way to clear a wrong or outdated question
+  was to type an answer. An agent's question that has waited over ten
+  minutes and whose session its host does not list is marked **Asker not
+  listed**: the agent may have exited.
 - Windows: `tend init` can replace and remove its agent skill links. A
   directory symlink or junction was removed as a file, which Windows refuses
   with "access denied", so upgrading or uninstalling the skill failed.

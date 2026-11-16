@@ -23693,6 +23693,56 @@
         }
       }
     },
+    "Asker not listed" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "질문한 에이전트 목록에 없음"
+          }
+        }
+      }
+    },
+    "Dismiss" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "닫기"
+          }
+        }
+      }
+    },
+    "Dismiss Question" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "질문 닫기"
+          }
+        }
+      }
+    },
+    "Close this question without answering it" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "답하지 않고 이 질문을 닫습니다"
+          }
+        }
+      }
+    },
+    "The agent that asked is not listed on its host; it may have exited. Dismiss the question if it no longer matters." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "질문한 에이전트가 그 호스트의 목록에 없습니다. 종료되었을 수 있습니다. 더 필요 없는 질문이면 닫으세요."
+          }
+        }
+      }
+    },
     "From tend itself" : {
       "localizations" : {
         "ko" : {

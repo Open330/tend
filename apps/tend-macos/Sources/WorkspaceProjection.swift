@@ -37,6 +37,10 @@ struct TendHostedAgentIndex: Sendable {
     /// What a decision takes from its asking agent (id and checkout), by
     /// host and session: the decisions change only when this does.
     private(set) var askers: [String: Asker] = [:]
+    /// The hosts represented in this index (at least one agent listed).
+    /// Only on these can a session be reported as not listed; absence is
+    /// an observation, not proof that it exited.
+    private(set) var hosts: Set<String> = []
 
     struct Asker: Hashable, Sendable {
         let id: String
@@ -45,6 +49,7 @@ struct TendHostedAgentIndex: Sendable {
 
     init(_ agents: [TendHostedAgent] = []) {
         for hosted in agents {
+            hosts.insert(hosted.host.alias)
             if byID[hosted.id] == nil { byID[hosted.id] = hosted }
             let key = Self.key(host: hosted.host.alias, session: hosted.agent.agentSessionID)
             if bySession[key] == nil {
