@@ -15,7 +15,7 @@ Each has a recommendation and the default this stream proceeds on.
 
 | # | Decision | Recommendation | Default meanwhile |
 | --- | --- | --- | --- |
-| 1 | **What `/` opens.** Today `/` is the old workbench (workspaces, sessions tree, Work board, timeline) and Home lives at `/home` and `/needs`. The Mac app opens on Home. | `/` opens Home once phase 3 has moved Explore (sessions and panes) into the new shell, so nothing `/` shows today disappears. Deep links (`/#pane=…`, `/#workspace=…`, `/#window=…`, `/#message=…`) keep opening the workbench view they name. | `/` unchanged. The new Home is at `/home` and `/needs` (the URLs the Windows app and notification links already use); the workbench's top-bar link to it reads "Home". |
+| 1 | **What `/` opens.** Today `/` is the old workbench (workspaces, sessions tree, Work board, timeline) and Home lives at `/home` and `/needs`. The Mac app opens on Home. | `/` opens Home once phase 3 has moved Explore (sessions and panes) into the new shell, so nothing `/` shows today disappears. Deep links (`/#pane=…`, `/#workspace=…`, `/#window=…`, `/#message=…`) keep opening the workbench view they name. | Decided in phase 3 (the coordinator: proceed on the recommendation). `/` opens Home; Explore and Settings moved into the shell; the workbench is at `/workbench`, and non-operators and its old `/#…` links are sent there. |
 | 2 | **Language.** The Mac app has its own language setting; a browser has only its own. | Follow the browser (`navigator.languages`): Korean when it comes first, English otherwise. | As recommended. |
 
 Nothing in phase 1 removes a page, changes a bookmarked URL's meaning, or

@@ -300,6 +300,14 @@ test("a reply goes only to the agent and question it was written for", async () 
   await home.refresh();
 });
 
+test("the workbench's old links still open the workbench; Home's own do not", () => {
+  assert.equal(home.legacyTarget("/", "#pane=%251&socket=s"), "/workbench#pane=%251&socket=s");
+  assert.equal(home.legacyTarget("/", "#workspace=tend"), "/workbench#workspace=tend");
+  assert.equal(home.legacyTarget("/", "#item=req_9"), null);
+  assert.equal(home.legacyTarget("/home", "#pane=%251"), null);
+  assert.equal(home.paneLink({ pane: "%1", socket: "s" }), "/explore#pane=%251&socket=s");
+});
+
 test("sign-in returns to Home, and to the linked card", () => {
   assert.equal(home.homeReturnPath(""), "/home");
   assert.equal(home.homeReturnPath("#item=a b"), "/home#item=a%20b");

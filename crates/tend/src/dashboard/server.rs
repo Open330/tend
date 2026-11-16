@@ -4835,7 +4835,11 @@ mod tests {
         let response = get(app.clone(), "/api/decisions/history", Some("s3cret")).await;
         assert_eq!(response.status(), StatusCode::OK);
         // The page itself is a static asset, like `/`.
-        for uri in ["/", "/static/v/any/index.html", "/static/index.html"] {
+        for uri in [
+            "/workbench",
+            "/static/v/any/index.html",
+            "/static/index.html",
+        ] {
             let page = get(app.clone(), uri, None).await;
             assert_eq!(page.headers()[header::X_FRAME_OPTIONS], "DENY", "{uri}");
             assert_eq!(
@@ -5082,6 +5086,9 @@ mod tests {
         };
         // Home runs under a strict policy: its own scripts and styles only.
         for uri in [
+            "/",
+            "/explore",
+            "/settings",
             "/needs",
             "/home",
             "/static/home.html",

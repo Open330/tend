@@ -350,6 +350,32 @@ in `unlinked_executions`; they are never guessed into Work from their names.
 Their sessions still appear as workspaces in the rail (see
 [Workspace rail](#workspace-rail)), but Work only comes from managed runs.
 
+## The shell: Home, Explore, Settings
+
+The dashboard's address (`/`) opens Home, as Tend for Mac opens on it.
+The activity rail on the left switches between pages:
+
+- **Home**: `/home` (also `/` and `/needs`), described below.
+- **Explore**: `/explore`. Every host's panes in the Mac's execution
+  topology: host, then session, then window, then pane. Each pane shows its
+  agent's mark, title and state, or the shell's command. The panes that need
+  you are listed first. The filter in the search field shows All,
+  Attention or Active panes, grouped by host tree or by status. Selecting a
+  pane of this host shows its live output (`GET
+  /api/panes/{pane}/output/stream`) and a field to type to it (Enter sends,
+  Shift+Enter adds a line, Interrupt sends Ctrl-C). Both need operator
+  access. A pane on another Fleet host is listed with its state and opens
+  on that host. `#pane=<id>&socket=<socket>` links to a pane.
+- **Settings**: `/settings`. Who is signed in and what this dashboard
+  allows. It also opens access administration (operators, viewers, paired
+  devices), pane sharing, and the classic workbench.
+
+The classic workbench (workspaces, the Work board, collaboration, the
+timeline and the execution inventory) is at `/workbench`. Anyone who is not
+an operator opening `/` is sent there, to its landing page, sign-in and
+public read view. Links the workbench made before (`/#pane=…`,
+`/#workspace=…`, `/#window=…`, `/#session=…`, `/#message=…`) still open it.
+
 ## Home (needs you)
 
 `/home` (also `/needs`) is Tend for Mac's Home in the browser: the same

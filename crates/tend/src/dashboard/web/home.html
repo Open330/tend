@@ -14,9 +14,11 @@
 <body>
 <div class="window">
   <nav class="rail" aria-label="Tend">
-    <a class="rail-item active" id="rail-home" href="/home" aria-current="page"><span class="icon i-house" aria-hidden="true"></span><span class="rail-label" data-t="home">Home</span><span class="rail-badge" id="rail-badge" hidden></span></a>
+    <a class="rail-item active" id="rail-home" href="/home" data-route="home" aria-current="page"><span class="icon i-house" aria-hidden="true"></span><span class="rail-label" data-t="home">Home</span><span class="rail-badge" id="rail-badge" hidden></span></a>
     <span class="rail-divider" aria-hidden="true"></span>
-    <a class="rail-item" id="rail-explore" href="/"><span class="icon i-explore" aria-hidden="true"></span><span class="rail-label" data-t="explore">Explore</span></a>
+    <a class="rail-item" id="rail-explore" href="/explore" data-route="explore" hidden><span class="icon i-explore" aria-hidden="true"></span><span class="rail-label" data-t="explore">Explore</span></a>
+    <span class="rail-spacer"></span>
+    <a class="rail-item" id="rail-settings" href="/settings" data-route="settings" hidden><span class="icon i-gear" aria-hidden="true"></span><span class="rail-label" data-t="settings">Settings</span></a>
   </nav>
   <div class="editor">
     <div class="tabstrip">
@@ -28,8 +30,9 @@
           <path class="room room-done" d="M4 40.75 L24.672 40.75 L26.734 60 L7 60 Q4 60 4 57 Z"/>
         </svg>
       </a>
-      <div class="tab active"><span class="icon i-board" aria-hidden="true"></span><span data-t="home">Home</span></div>
+      <div class="tab active"><span class="icon i-board" aria-hidden="true" id="tab-icon"></span><span id="tab-label" data-t="home">Home</span></div>
     </div>
+    <div class="view" id="view-home">
     <header class="home-header">
       <h1 data-t="home">Home</h1>
       <div class="header-actions">
@@ -75,6 +78,9 @@
       </main>
       <aside class="inspector" id="inspector" hidden aria-label="Details"></aside>
     </div>
+    </div>
+    <div class="view explore" id="view-explore" hidden></div>
+    <div class="view settings" id="view-settings" hidden></div>
   </div>
 </div>
 <footer class="statusbar">
