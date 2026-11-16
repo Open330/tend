@@ -5,7 +5,10 @@ import SwiftUI
 /// Presents the swap sheet wherever a surface asks for one
 /// (`model.swaps.present`). Applied once, at the workbench root.
 struct TendSwapSheetHost: ViewModifier {
-    @ObservedObject var model: AppModel
+    /// Passed on, not observed: the sheet observes it. This modifier sits
+    /// at the workbench's root, where observing the model re-evaluated it
+    /// on every model publish.
+    let model: AppModel
     @ObservedObject var swaps: TendSwapCenter
 
     init(model: AppModel) {

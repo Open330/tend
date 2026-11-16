@@ -99,6 +99,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   -Desktop`) drives the rebuilt Home again: a question's option, then Send,
   and Accept, in English or Korean (Home follows the system language). It
   had stopped answering anything since #598.
+- Tend for Mac no longer re-evaluates its windows' scenes on every model
+  publish. The app held the model as a `@StateObject`, so each Fleet
+  snapshot, inbox poll or projection (about two a second on a busy fleet)
+  re-ran the App's scenes, rebuilt the main menu and reset each window's
+  root view, which re-propagated the environment to every view and
+  re-laid out the window. The App now holds the model without observing
+  it; the four menu items that enable on model state read a small object
+  that publishes only when one of them changes. Two modifiers at the
+  workbench's root (attention tracking and the account-swap sheet host)
+  also stop observing the whole model. Measured side by side on two
+  optimized copies against the live fleet: 16–18% less CPU with the
+  window shown, about a third less with it hidden.
+
 ## [0.10.21] - 2026-11-16
 
 ### Added
