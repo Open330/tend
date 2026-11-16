@@ -352,6 +352,7 @@ final class TendAgentAttentionCenter: ObservableObject {
         // Bound local receipts without re-alerting unresolved requests.
         humanNotified = humanNotified.filter { active.contains($0.key) || date.timeIntervalSince($0.value) < Self.pruneAfter }
         if let data = try? JSONEncoder().encode(humanNotified) {
+            TendPerf.count("attention.persistHuman")
             defaults?.set(data, forKey: Self.humanPersistenceKey)
         }
         recompute()

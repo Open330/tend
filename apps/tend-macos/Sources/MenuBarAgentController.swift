@@ -165,6 +165,7 @@ final class TendMenuBarAgentController: NSObject, NSPopoverDelegate {
 
     private func refresh() {
         guard !stopped else { return }
+        TendPerf.count("menubar.refresh")
         state.updateDraftAgents(model.executionSnapshot.hostedAgents, unread: model.attention.unreadPanes)
         candidates = order.update(model.executionSnapshot.hostedAgents, unread: model.attention.unreadPanes)
         var content = candidates
@@ -260,6 +261,7 @@ final class TendMenuBarAgentController: NSObject, NSPopoverDelegate {
     }
 
     private func tick() {
+        TendPerf.count("menubar.tick")
         // Caps may expire without a new daemon snapshot.
         if Date().timeIntervalSince(statusRefreshAt) >= 15 {
             statusRefreshAt = Date()

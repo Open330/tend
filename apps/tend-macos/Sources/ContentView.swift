@@ -26,6 +26,7 @@ struct ContentView: View {
     }
 
     var body: some View {
+        let _ = TendPerf.count("content.body")
         VStack(spacing: 0) {
             HSplitView {
                 if sidebarVisible {

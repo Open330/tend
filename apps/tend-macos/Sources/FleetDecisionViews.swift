@@ -3,6 +3,7 @@
 // recommendation, links the evidence, and records the answer with tendd
 // (a human-request reply, or a review disposition).
 import AppKit
+import Combine
 import SwiftUI
 
 // MARK: - Feed
@@ -47,9 +48,15 @@ final class FleetDecisionFeed: ObservableObject {
     private var loading = false
 
     static let refreshEvery: Duration = .seconds(5)
+    private var perfSubscription: AnyCancellable?
+
+    init() {
+        perfSubscription = TendPerf.observe(self, "decision.publish")
+    }
 
     func load(_ client: TendIPCClient, works: [FleetWork] = []) async {
         guard !loading else { return }
+        TendPerf.count("decision.poll")
         loading = true
         defer { loading = false }
         do {

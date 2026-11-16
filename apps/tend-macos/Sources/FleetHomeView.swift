@@ -96,6 +96,7 @@ struct FleetHomeView: View {
     }
 
     var body: some View {
+        let _ = TendPerf.count("home.body")
         VStack(spacing: 0) {
             header
             Divider()
@@ -316,6 +317,7 @@ struct FleetHomeView: View {
     }
 
     private var board: some View {
+        let _ = TendPerf.count("home.board")
         let all = FleetBoard.filter(allWorks, host: hostFilter, project: projectFilter)
         let decisions = decisions
         let marks = marks

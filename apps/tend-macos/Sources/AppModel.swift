@@ -264,6 +264,8 @@ final class AppModel: ObservableObject {
     private let workspaceProjector = TendCoalescedProjection<TendWorkspaceProjection>()
     private var projectionBuiltAt = Date.distantPast
     private var coverageSubscription: AnyCancellable?
+    /// `TendPerf` publish counters, installed only when they are on.
+    var perfSubscriptions: [AnyCancellable] = []
     /// Held by whichever full or Fleet-event refresh is running.
     private var refreshInFlight = false
     /// A full refresh asked for while the slot was held. It runs once, right
@@ -324,6 +326,7 @@ final class AppModel: ObservableObject {
             .sink { [weak self] _ in
                 Task { @MainActor [weak self] in await self?.rebuildWorkspaceProjections() }
             }
+        if TendPerf.isEnabled { installPerfCounters() }
     }
 
     /// Test seam. The app ingests execution snapshots through `refresh`, which
@@ -943,6 +946,7 @@ final class AppModel: ObservableObject {
             let connection = connectionGeneration
             let snapshot = executionSnapshot, runs = pipelineRuns
             let now = Date()
+            TendPerf.count("projection.built")
             return await Task.detached(priority: .userInitiated) {
                 let agents = snapshot.hostedAgents
                     .filter { $0.agent.state != "stopped" }
@@ -961,6 +965,7 @@ final class AppModel: ObservableObject {
             }.value
         }, publish: { [weak self] result in
             guard let self, result.connection == connectionGeneration else { return }
+            TendPerf.count("projection.published")
             hostedAgents = result.agents
             workGroups = result.groups
             homeWorks = result.works

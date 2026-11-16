@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 /// VS Code-style editor state, deliberately separate from the sidebar view
@@ -25,12 +26,14 @@ final class TendWorkbenchTabs: ObservableObject {
     private(set) var recentlyClosed: [TendSidebarSelection] = []
     private let persistenceKey: String?
     private let defaults: UserDefaults
+    private var perfSubscription: AnyCancellable?
 
     init(
         initial: TendSidebarSelection? = .workBoard,
         persistenceKey: String? = "tend.workbench.tabs.v1",
         defaults: UserDefaults = .standard
     ) {
+        defer { perfSubscription = TendPerf.observe(self, "tabs.publish") }
         self.persistenceKey = persistenceKey
         self.defaults = defaults
         if let persistenceKey,

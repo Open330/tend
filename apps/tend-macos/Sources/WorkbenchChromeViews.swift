@@ -409,6 +409,7 @@ struct WorkbenchStatusBar: View {
     }
 
     var body: some View {
+        let _ = TendPerf.count("statusbar.body")
         HStack(spacing: 0) {
             connectionItems
                 .padding(.horizontal, 9)

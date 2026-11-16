@@ -1,6 +1,7 @@
 // Home's Backlog: Work the person planned and has not started
 // (`work_backlog_v1`, `tend work plan`), in the daemon's backlog order.
 // One action: Start, which runs `tend work up` from the saved plan.
+import Combine
 import SwiftUI
 
 /// Daemons that serve `work_backlog`, `work_edit` and `work_record_show`.
@@ -77,8 +78,14 @@ final class FleetBacklogFeed: ObservableObject {
     @Published var failures: [String: String] = [:]
 
     static let refreshEvery: Duration = .seconds(15)
+    private var perfSubscription: AnyCancellable?
+
+    init() {
+        perfSubscription = TendPerf.observe(self, "backlog.publish")
+    }
 
     func load(_ client: TendIPCClient) async {
+        TendPerf.count("backlog.poll")
         do {
             let records = try await client.workBacklog()
             if self.records != records { self.records = records }
