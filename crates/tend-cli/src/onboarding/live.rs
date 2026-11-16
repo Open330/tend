@@ -2128,6 +2128,12 @@ impl Tour<'_> {
         Ok(())
     }
 
+    /// Everything that happens when a step opens: its setup, then its narration.
+    fn open_step(&mut self, index: usize, escape: bool) -> Result<()> {
+        self.on_enter(index)?;
+        self.narrate(index, escape)
+    }
+
     fn narrate(&self, index: usize, escape: bool) -> Result<()> {
         let step = &STEPS[index];
         let achieved = tr(self.language, step.achieved_en, step.achieved_ko);
@@ -2217,6 +2223,26 @@ impl Tour<'_> {
         Ok(())
     }
 
+    /// The short demo starts with the agents already there, beside the learner.
+    fn prepare_quick(&mut self) -> Result<()> {
+        self.perform(0)?;
+        let session = "tend-onboarding";
+        self.before_split = self
+            .sandbox
+            .tmux_command(&["list-panes", "-t", session, "-F", "#{pane_id}"])?
+            .lines()
+            .map(str::to_string)
+            .collect();
+        self.sandbox
+            .tmux_command(&["split-window", "-d", "-t", session])?;
+        self.sandbox.prepare_agents(self.language)?;
+        self.fleet = Some(
+            self.sandbox
+                .add_agents(session, &self.before_split, self.language)?,
+        );
+        Ok(())
+    }
+
     fn drive(&mut self) -> Result<usize> {
         let first = if self.quick { AGENTS_ARRIVE } else { 0 };
         let end = if self.quick {
@@ -2225,22 +2251,7 @@ impl Tour<'_> {
             STEPS.len()
         };
         if self.quick {
-            self.perform(0)?;
-            let session = "tend-onboarding";
-            self.before_split = self
-                .sandbox
-                .tmux_command(&["list-panes", "-t", session, "-F", "#{pane_id}"])?
-                .lines()
-                .map(str::to_string)
-                .collect();
-            self.sandbox
-                .tmux_command(&["split-window", "-d", "-t", session])?;
-            self.sandbox.prepare_agents(self.language)?;
-            self.fleet = Some(self.sandbox.add_agents(
-                session,
-                &self.before_split,
-                self.language,
-            )?);
+            self.prepare_quick()?;
         }
         self.narrate(first, self.no_quiz)?;
 
@@ -2267,6 +2278,7 @@ impl Tour<'_> {
         // and put the prompt back.
         self.seen.prompt = true;
 
+        let sandbox = self.sandbox;
         let mut index = first;
         let mut entered = Instant::now();
         let mut offered_escape = self.no_quiz;
@@ -2290,9 +2302,8 @@ impl Tour<'_> {
                 index += 1;
                 entered = Instant::now();
                 offered_escape = self.no_quiz;
-                if index < end {
-                    self.on_enter(index)?;
-                    self.narrate(index, offered_escape)?;
+                if index < end && ended_by_exit(sandbox, self.open_step(index, offered_escape))? {
+                    break;
                 }
                 continue;
             }
@@ -2301,34 +2312,57 @@ impl Tour<'_> {
                     UiLanguage::En => UiLanguage::Ko,
                     UiLanguage::Ko => UiLanguage::En,
                 };
-                self.narrate(index, offered_escape)?;
+                if ended_by_exit(sandbox, self.narrate(index, offered_escape))? {
+                    break;
+                }
                 continue;
             }
             if self.sandbox.skip_requested() {
-                self.perform(index)?;
+                if ended_by_exit(sandbox, self.perform(index))? {
+                    break;
+                }
                 index += 1;
                 entered = Instant::now();
                 offered_escape = self.no_quiz;
-                if index < end {
-                    self.on_enter(index)?;
-                    self.narrate(index, offered_escape)?;
+                if index < end && ended_by_exit(sandbox, self.open_step(index, offered_escape))? {
+                    break;
                 }
                 continue;
             }
             if !offered_escape && entered.elapsed() > SKIP_AFTER {
                 offered_escape = true;
-                self.narrate(index, true)?;
+                if ended_by_exit(sandbox, self.narrate(index, true))? {
+                    break;
+                }
             }
             std::thread::sleep(POLL);
         }
 
         if self.quick && index == end {
-            self.finish_quick(&mut shell)?;
+            ended_by_exit(sandbox, self.finish_quick(&mut shell))?;
         }
         let _ = self.sandbox.tmux_command(&["kill-server"]);
         let _ = shell.kill();
         let _ = shell.wait();
         Ok(index)
+    }
+}
+
+/// Whether a step's tmux work failed because the learner's `exit` took the
+/// sandbox server away mid-step. That is the tour ending, not an error.
+///
+/// The poll loop asks whether the server is alive once per turn, but opening
+/// a step is a dozen tmux calls after that check: three status rows, the cue,
+/// sometimes a split or a session. An `exit` that landed between two of them
+/// failed the next one, and the tour quit on that error. The learner got
+/// `Error: tmux set … failed` and a backtrace instead of the closing summary,
+/// for having used a legitimate way out. A failure only counts as an error
+/// while the server is still there to have failed.
+fn ended_by_exit(sandbox: &Sandbox, result: Result<()>) -> Result<bool> {
+    match result {
+        Ok(()) => Ok(false),
+        Err(_) if !sandbox.server_alive() => Ok(true),
+        Err(error) => Err(error),
     }
 }
 
@@ -2751,6 +2785,98 @@ mod tests {
                 "the ending promises `{key}`, which `tend init` does not bind"
             );
         }
+    }
+
+    /// A sandbox whose tmux is a script, so a test decides what the server
+    /// does without starting one.
+    #[cfg(unix)]
+    fn scripted_sandbox(dir: &Path, tmux_body: &str) -> Sandbox {
+        use std::os::unix::fs::PermissionsExt;
+        let tmux = dir.join("tmux");
+        std::fs::write(&tmux, format!("#!/bin/sh\n{tmux_body}\n")).unwrap();
+        std::fs::set_permissions(&tmux, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut env = BTreeMap::new();
+        env.insert(
+            "TEND_TMUX_SOCKET".to_string(),
+            dir.join("socket").display().to_string(),
+        );
+        Sandbox {
+            // Not the tour's prefix, so `Drop` leaves the test's directory alone.
+            name: "scripted".to_string(),
+            dir: dir.to_path_buf(),
+            script: dir.join("no-such-script"),
+            config: dir.join("config"),
+            rcfile: dir.join("rcfile"),
+            cue: dir.join("cue"),
+            history: dir.join("history"),
+            home: dir.to_path_buf(),
+            project: dir.to_path_buf(),
+            tmux,
+            exe: dir.join("no-such-tend"),
+            env,
+        }
+    }
+
+    #[cfg(unix)]
+    fn tour_on(sandbox: &Sandbox) -> Tour<'_> {
+        Tour {
+            quick: false,
+            sandbox,
+            language: UiLanguage::En,
+            fleet: None,
+            seen: Seen::default(),
+            before_split: Vec::new(),
+            prompts_at_entry: 0,
+            no_quiz: false,
+        }
+    }
+
+    /// `exit` landing while a step is being opened ends the tour cleanly.
+    ///
+    /// CI typed `exit` just as step 2's first status row appeared. The server
+    /// went away between that row and the next, the next `set` failed, and the
+    /// tour returned the error. The learner got a backtrace and never saw
+    /// "The sandbox is gone". Here the server answers the first call of the
+    /// step and is gone for every call after it, display-message included.
+    #[cfg(unix)]
+    #[test]
+    fn exit_landing_mid_step_ends_the_tour_instead_of_failing_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let calls = dir.path().join("calls");
+        let sandbox = scripted_sandbox(
+            dir.path(),
+            &format!(
+                "if [ -e '{calls}' ]; then echo 'server exited unexpectedly' >&2; exit 1; fi\n\
+                 touch '{calls}'",
+                calls = calls.display()
+            ),
+        );
+        let mut tour = tour_on(&sandbox);
+        let opened = tour.open_step(2, false);
+        assert!(
+            opened.is_err(),
+            "the step's later tmux calls hit a dead server"
+        );
+        assert!(
+            ended_by_exit(&sandbox, opened).expect("a vanished server is a way out"),
+            "the tour should stop as if the learner had left"
+        );
+    }
+
+    /// A failure while the server is still up is a real error, and still raised.
+    #[cfg(unix)]
+    #[test]
+    fn a_failure_with_the_server_still_up_is_still_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let sandbox = scripted_sandbox(
+            dir.path(),
+            "case \"$*\" in *display-message*) echo 4242 ;; *) echo 'invalid option' >&2; exit 1 ;; esac",
+        );
+        let mut tour = tour_on(&sandbox);
+        let opened = tour.open_step(2, false);
+        let error =
+            ended_by_exit(&sandbox, opened).expect_err("the server is alive, so this failed");
+        assert!(error.to_string().contains("failed"), "{error}");
     }
 
     /// Every step says what the last action accomplished, in both languages.

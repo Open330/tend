@@ -123,6 +123,14 @@ impl PaneBackend for InventoryBackend {
     fn send_prompt_text_on(&self, socket: Option<&str>, pane_id: &str, text: &str) -> bool {
         self.inner.send_prompt_text_on(socket, pane_id, text)
     }
+    fn send_prompt_text_checked(
+        &self,
+        socket: Option<&str>,
+        pane_id: &str,
+        text: &str,
+    ) -> super::TextSend {
+        self.inner.send_prompt_text_checked(socket, pane_id, text)
+    }
     fn capture_pane_on(&self, socket: Option<&str>, pane_id: &str) -> Option<String> {
         self.inner.capture_pane_on(socket, pane_id)
     }

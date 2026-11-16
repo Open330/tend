@@ -110,6 +110,81 @@ pub struct PipelineRun {
     pub window_id: Option<String>,
     pub aliases: BTreeMap<String, PipelineAliasState>,
     pub updated_at: OffsetDateTime,
+    /// Set on a Work the queue started (a [`is_queue_work_id`] id): until it
+    /// is `Released`, only the queue attempt holding it may register or
+    /// claim, and nothing else creates or adopts the Work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_lease: Option<QueueLease>,
+}
+
+/// Prefix of the Work ids the queue mints (`Q-<SLUG>-<YYYYMMDD>-<12 hex>`).
+pub const QUEUE_WORK_PREFIX: &str = "Q-";
+/// Hex digits ending a queue Work id.
+pub const QUEUE_WORK_SUFFIX_LEN: usize = 12;
+
+/// Whether `work` is in the queue's reserved id namespace. Only the queue
+/// brings such a Work into existence, under a [`QueueLease`]; everything
+/// else refuses one whose lease is not released.
+#[must_use]
+pub fn is_queue_work_id(work: &str) -> bool {
+    let work = work.trim();
+    let Some(rest) = work
+        .get(..QUEUE_WORK_PREFIX.len())
+        .filter(|prefix| prefix.eq_ignore_ascii_case(QUEUE_WORK_PREFIX))
+        .map(|_| &work[QUEUE_WORK_PREFIX.len()..])
+    else {
+        return false;
+    };
+    let Some((rest, suffix)) = rest.rsplit_once('-') else {
+        return false;
+    };
+    let Some((slug, date)) = rest.rsplit_once('-') else {
+        return false;
+    };
+    !slug.is_empty()
+        && date.len() == 8
+        && date.bytes().all(|b| b.is_ascii_digit())
+        && suffix.len() == QUEUE_WORK_SUFFIX_LEN
+        && suffix.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Who owns the launch of a queued Work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QueueLeaseState {
+    /// The holder's launch is under way.
+    Launching,
+    /// The launch's outcome is unknown; nothing claims or adopts until a
+    /// person settles the queue item.
+    Suspended,
+    /// The queue is done with it: an ordinary Work from here on. Final.
+    Released,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueueLease {
+    /// The queue item.
+    pub item_id: String,
+    /// The attempt that holds it.
+    pub holder: String,
+    pub state: QueueLeaseState,
+    #[serde(with = "time::serde::rfc3339")]
+    pub at: OffsetDateTime,
+}
+
+impl PipelineRun {
+    /// Whether anyone but `holder` is kept out (lease not released).
+    #[must_use]
+    pub fn leased_against(&self, holder: Option<&str>) -> bool {
+        match &self.queue_lease {
+            None => is_queue_work_id(&self.identity.work_id),
+            Some(lease) => match lease.state {
+                QueueLeaseState::Released => false,
+                QueueLeaseState::Suspended => true,
+                QueueLeaseState::Launching => holder != Some(lease.holder.as_str()),
+            },
+        }
+    }
 }
 
 /// Prompt-free projection used by list/watch surfaces.
@@ -227,6 +302,15 @@ pub struct PipelineClaim {
     pub pane: Option<String>,
 }
 
+/// Daemons that honor `create_new` on `pipeline_register`.
+pub const PIPELINE_CREATE_NEW_CAPABILITY: &str = "pipeline_create_new_v1";
+/// Prefix of the refusal a new-only `work up` reports when the Work exists.
+pub const WORK_EXISTS_PREFIX: &str = "work_exists";
+/// Prefix of the refusal for a queue Work the queue still owns.
+pub const WORK_RESERVED_PREFIX: &str = "work_reserved";
+/// Daemons that keep queue leases on Runs.
+pub const PIPELINE_QUEUE_LEASE_CAPABILITY: &str = "pipeline_queue_lease_v1";
+
 #[derive(Debug, thiserror::Error)]
 pub enum PipelineRunError {
     #[error("pipeline run {0} was not found")]
@@ -243,6 +327,14 @@ pub enum PipelineRunError {
     },
     #[error("invalid pipeline run: {0}")]
     Invalid(String),
+    /// A create-new registration found the Work already started.
+    #[error(
+        "{WORK_EXISTS_PREFIX}: Work {0} already has a Run; a new-only launch does not join it"
+    )]
+    Exists(String),
+    /// A queue Work whose launch the queue still owns.
+    #[error("{WORK_RESERVED_PREFIX}: Work {0} is being started by the Work queue (or its start is unsettled); settle it in the queue first")]
+    Reserved(String),
     #[error("pipeline Run store I/O: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -257,6 +349,10 @@ struct PipelineRunFile {
 struct Inner {
     path: Option<PathBuf>,
     runs: BTreeMap<WorkIdentity, PipelineRun>,
+    /// Leases taken for queued Works not registered yet. In memory only:
+    /// after a restart the queue item is uncertain and must be settled
+    /// before its launch can be taken again.
+    pending_leases: BTreeMap<WorkIdentity, QueueLease>,
 }
 
 #[derive(Debug)]
@@ -367,7 +463,24 @@ impl PipelineRunStore {
             )));
         }
         let mut runs = BTreeMap::new();
-        for run in file.runs {
+        for mut run in file.runs {
+            // A launch tendd was running when it stopped has an unknown
+            // outcome: hold it until the queue item is settled.
+            if let Some(lease) = run.queue_lease.as_mut() {
+                if lease.state == QueueLeaseState::Launching {
+                    lease.state = QueueLeaseState::Suspended;
+                }
+            } else if is_queue_work_id(&run.identity.work_id) {
+                // A Run from before queue leases whose id happens to match
+                // the queue's pattern: the queue never owned it, so it
+                // stays an ordinary Work.
+                run.queue_lease = Some(QueueLease {
+                    item_id: String::new(),
+                    holder: String::new(),
+                    state: QueueLeaseState::Released,
+                    at: run.updated_at,
+                });
+            }
             let identity = run.identity.clone();
             if runs.insert(identity.clone(), run).is_some() {
                 return Err(PipelineRunError::Invalid(format!(
@@ -386,7 +499,11 @@ impl PipelineRunStore {
     ) -> std::sync::Arc<Self> {
         let (revision, _) = watch::channel(0);
         std::sync::Arc::new(Self {
-            inner: Mutex::new(Inner { path, runs }),
+            inner: Mutex::new(Inner {
+                path,
+                runs,
+                pending_leases: BTreeMap::new(),
+            }),
             revision,
         })
     }
@@ -422,9 +539,163 @@ impl PipelineRunStore {
         &self,
         registration: PipelineRunRegistration,
     ) -> Result<PipelineRun, PipelineRunError> {
+        self.register_inner(registration, false, None).await
+    }
+
+    /// [`Self::register`] for a Work that must be new: refused, with
+    /// nothing changed, when the identity already has a Run or the caller
+    /// saw panes or a window for it. Checked under the store lock, so of two
+    /// launches racing for one identity only one gets past here.
+    pub async fn register_new(
+        &self,
+        registration: PipelineRunRegistration,
+        lease: Option<&str>,
+    ) -> Result<PipelineRun, PipelineRunError> {
+        self.register_inner(registration, true, lease).await
+    }
+
+    /// Take the launch of queued Work `identity` for one attempt, before it
+    /// starts. Free when nothing has the Work yet; a Run the same item left
+    /// suspended is taken over (the person asked to run it again).
+    pub async fn acquire_lease(
+        &self,
+        identity: &WorkIdentity,
+        item_id: &str,
+        holder: &str,
+    ) -> Result<(), PipelineRunError> {
+        let mut inner = self.inner.lock().await;
+        let now = OffsetDateTime::now_utc();
+        let lease = QueueLease {
+            item_id: item_id.to_string(),
+            holder: holder.to_string(),
+            state: QueueLeaseState::Launching,
+            at: now,
+        };
+        if let Some(previous) = inner.runs.get(identity).cloned() {
+            let ours = previous.queue_lease.as_ref().is_some_and(|lease| {
+                lease.item_id == item_id && lease.state == QueueLeaseState::Suspended
+            });
+            if !ours {
+                return Err(PipelineRunError::Exists(identity.key()));
+            }
+            let mut run = previous.clone();
+            run.queue_lease = Some(lease);
+            run.updated_at = now;
+            persist_run(&mut inner, run, Some(previous)).await?;
+            self.bump_revision();
+            return Ok(());
+        }
+        if inner
+            .pending_leases
+            .get(identity)
+            .is_some_and(|pending| pending.item_id != item_id)
+        {
+            return Err(PipelineRunError::Exists(identity.key()));
+        }
+        inner.pending_leases.insert(identity.clone(), lease);
+        Ok(())
+    }
+
+    /// Settle the lease item `item_id` holds on `identity`: `Released` (an
+    /// ordinary Work from now on) or `Suspended` (unknown outcome). A lease
+    /// someone else holds is left alone.
+    ///
+    /// `holder` fences it: given, only that attempt's lease changes, so a
+    /// stale settlement never touches a newer attempt's launch.
+    pub async fn settle_lease(
+        &self,
+        identity: &WorkIdentity,
+        item_id: &str,
+        holder: Option<&str>,
+        state: QueueLeaseState,
+    ) -> Result<(), PipelineRunError> {
+        let mut inner = self.inner.lock().await;
+        let held = |lease: &QueueLease| {
+            lease.item_id == item_id && holder.is_none_or(|holder| lease.holder == holder)
+        };
+        if inner.pending_leases.get(identity).is_some_and(held) {
+            inner.pending_leases.remove(identity);
+        }
+        let Some(previous) = inner.runs.get(identity).cloned() else {
+            return Ok(());
+        };
+        let Some(lease) = previous.queue_lease.as_ref() else {
+            return Ok(());
+        };
+        if !held(lease) || lease.state == state || lease.state == QueueLeaseState::Released {
+            return Ok(());
+        }
+        let now = OffsetDateTime::now_utc();
+        let mut run = previous.clone();
+        if let Some(lease) = run.queue_lease.as_mut() {
+            lease.state = state;
+            lease.at = now;
+        }
+        run.updated_at = now;
+        persist_run(&mut inner, run, Some(previous)).await?;
+        self.bump_revision();
+        Ok(())
+    }
+
+    /// The lease on queued Work `identity`, registered or still pending.
+    pub async fn lease(&self, identity: &WorkIdentity) -> Option<QueueLease> {
+        let inner = self.inner.lock().await;
+        inner
+            .runs
+            .get(identity)
+            .and_then(|run| run.queue_lease.clone())
+            .or_else(|| inner.pending_leases.get(identity).cloned())
+    }
+
+    #[allow(clippy::too_many_lines)] // one lock/commit covers lease checks and the full reconciliation
+    async fn register_inner(
+        &self,
+        registration: PipelineRunRegistration,
+        create_new: bool,
+        holder: Option<&str>,
+    ) -> Result<PipelineRun, PipelineRunError> {
         validate_registration(&registration)?;
         let mut inner = self.inner.lock().await;
         let previous = inner.runs.get(&registration.identity).cloned();
+        let queue_work = is_queue_work_id(&registration.identity.work_id);
+        // The lease a queue launch registers under: pending (first
+        // registration) or already on the Run (taken over).
+        let mut new_lease = None;
+        if queue_work {
+            let pending = inner
+                .pending_leases
+                .get(&registration.identity)
+                .filter(|lease| create_new && Some(lease.holder.as_str()) == holder)
+                .cloned();
+            match (&previous, pending) {
+                (None, Some(lease)) => new_lease = Some(lease),
+                (Some(run), _) if !run.leased_against(holder) => {
+                    // Released (ordinary from here on), or this holder's own
+                    // launch registering again.
+                }
+                _ => return Err(PipelineRunError::Reserved(registration.identity.key())),
+            }
+            if create_new
+                && previous.is_some()
+                && previous
+                    .as_ref()
+                    .and_then(|run| run.queue_lease.as_ref())
+                    .is_none_or(|lease| Some(lease.holder.as_str()) != holder)
+            {
+                return Err(PipelineRunError::Exists(registration.identity.key()));
+            }
+        } else if create_new
+            && (previous.is_some()
+                || registration.window_id.is_some()
+                || !registration.observed.is_empty())
+        {
+            return Err(PipelineRunError::Exists(registration.identity.key()));
+        }
+        if new_lease.is_some()
+            && (registration.window_id.is_some() || !registration.observed.is_empty())
+        {
+            return Err(PipelineRunError::Exists(registration.identity.key()));
+        }
         let now = OffsetDateTime::now_utc();
         let mut run = previous.clone().unwrap_or_else(|| PipelineRun {
             identity: registration.identity.clone(),
@@ -439,7 +710,11 @@ impl PipelineRunStore {
                 .map(|agent| (agent.alias.clone(), pending_state(&agent.alias, 1, now)))
                 .collect(),
             updated_at: now,
+            queue_lease: None,
         });
+        if let Some(lease) = new_lease {
+            run.queue_lease = Some(lease);
+        }
 
         let topology_changed = run.pipeline != registration.pipeline
             || run.cwd != registration.cwd
@@ -548,6 +823,7 @@ impl PipelineRunStore {
         }
         run.updated_at = now;
         persist_run(&mut inner, run.clone(), previous).await?;
+        inner.pending_leases.remove(&run.identity);
         self.bump_revision();
         Ok(run)
     }
@@ -726,10 +1002,15 @@ impl PipelineRunStore {
     /// Claim every dependency-ready pending alias for one Run. Claiming and
     /// changing to `running` are atomic, so concurrent CLI/daemon reconcilers
     /// cannot launch the same alias twice.
+    ///
+    /// A queued Work whose lease is not released gives claims only to the
+    /// attempt holding it, and only while its launch runs: the reconciler,
+    /// a manual `work up` and an expired claim get nothing.
     pub async fn claim_ready(
         &self,
         identity: &WorkIdentity,
         generation: u64,
+        holder: Option<&str>,
     ) -> Result<Vec<PipelineClaim>, PipelineRunError> {
         let mut inner = self.inner.lock().await;
         let previous = inner
@@ -737,6 +1018,9 @@ impl PipelineRunStore {
             .get(identity)
             .cloned()
             .ok_or_else(|| PipelineRunError::NotFound(identity.key()))?;
+        if previous.leased_against(holder) {
+            return Ok(Vec::new());
+        }
         if previous.generation != generation {
             return Err(PipelineRunError::StaleGeneration {
                 alias: "reconcile".to_string(),
@@ -1225,7 +1509,7 @@ mod tests {
         let run = store.register(registration(Vec::new())).await.unwrap();
         assert!(store.has_ready_alias().await);
         store
-            .claim_ready(&run.identity, run.generation)
+            .claim_ready(&run.identity, run.generation, None)
             .await
             .unwrap();
         assert!(!store.has_ready_alias().await);
@@ -1245,8 +1529,8 @@ mod tests {
         let store = PipelineRunStore::in_memory();
         let run = store.register(registration(Vec::new())).await.unwrap();
         let (left, right) = tokio::join!(
-            store.claim_ready(&run.identity, run.generation),
-            store.claim_ready(&run.identity, run.generation),
+            store.claim_ready(&run.identity, run.generation, None),
+            store.claim_ready(&run.identity, run.generation, None),
         );
         let claims: Vec<_> = left.unwrap().into_iter().chain(right.unwrap()).collect();
         assert_eq!(claims.len(), 1);
@@ -1260,13 +1544,13 @@ mod tests {
         let store = PipelineRunStore::load(Some(path.clone())).unwrap();
         let run = store.register(registration(Vec::new())).await.unwrap();
         store
-            .claim_ready(&run.identity, run.generation)
+            .claim_ready(&run.identity, run.generation, None)
             .await
             .unwrap();
         drop(store);
         let restored = PipelineRunStore::load(Some(path.clone())).unwrap();
         assert!(restored
-            .claim_ready(&run.identity, run.generation)
+            .claim_ready(&run.identity, run.generation, None)
             .await
             .unwrap()
             .is_empty());
@@ -1285,7 +1569,7 @@ mod tests {
         std::fs::write(&path, serde_json::to_vec(&file).unwrap()).unwrap();
         let restored = PipelineRunStore::load(Some(path.clone())).unwrap();
         let claims = restored
-            .claim_ready(&run.identity, run.generation)
+            .claim_ready(&run.identity, run.generation, None)
             .await
             .unwrap();
         assert_eq!(claims.len(), 1);
@@ -1309,7 +1593,7 @@ mod tests {
         assert_eq!(adopted.aliases["plan"].pane.as_deref(), Some("%42"));
         assert!(!adopted.has_ready_alias());
         assert!(restored
-            .claim_ready(&run.identity, run.generation)
+            .claim_ready(&run.identity, run.generation, None)
             .await
             .unwrap()
             .is_empty());
@@ -1318,7 +1602,7 @@ mod tests {
             .await
             .unwrap();
         let claims = restored
-            .claim_ready(&run.identity, run.generation)
+            .claim_ready(&run.identity, run.generation, None)
             .await
             .unwrap();
         assert_eq!(claims.len(), 1);
@@ -1330,7 +1614,7 @@ mod tests {
         let store = PipelineRunStore::in_memory();
         let run = store.register(registration(Vec::new())).await.unwrap();
         let claims = store
-            .claim_ready(&run.identity, run.generation)
+            .claim_ready(&run.identity, run.generation, None)
             .await
             .unwrap();
         assert_eq!(
@@ -1345,7 +1629,7 @@ mod tests {
             .await
             .unwrap();
         let claims = store
-            .claim_ready(&run.identity, run.generation)
+            .claim_ready(&run.identity, run.generation, None)
             .await
             .unwrap();
         assert_eq!(
@@ -1362,7 +1646,7 @@ mod tests {
         let store = PipelineRunStore::in_memory();
         let run = store.register(registration(Vec::new())).await.unwrap();
         store
-            .claim_ready(&run.identity, run.generation)
+            .claim_ready(&run.identity, run.generation, None)
             .await
             .unwrap();
         store
@@ -1391,7 +1675,7 @@ mod tests {
         let store = PipelineRunStore::load(Some(path.clone())).unwrap();
         let run = store.register(registration(Vec::new())).await.unwrap();
         store
-            .claim_ready(&run.identity, run.generation)
+            .claim_ready(&run.identity, run.generation, None)
             .await
             .unwrap();
         store
@@ -1416,7 +1700,7 @@ mod tests {
         registration.desired = vec![agent("left", &[]), agent("right", &[])];
         let run = store.register(registration).await.unwrap();
         store
-            .claim_ready(&run.identity, run.generation)
+            .claim_ready(&run.identity, run.generation, None)
             .await
             .unwrap();
         let (left, right) = tokio::join!(
@@ -1444,7 +1728,7 @@ mod tests {
         registration.desired.push(agent("docs", &[]));
         let run = store.register(registration).await.unwrap();
         let roots = store
-            .claim_ready(&run.identity, run.generation)
+            .claim_ready(&run.identity, run.generation, None)
             .await
             .unwrap();
         assert_eq!(roots.len(), 2);
@@ -1455,7 +1739,7 @@ mod tests {
                 .unwrap();
         }
         let impl_claim = store
-            .claim_ready(&run.identity, run.generation)
+            .claim_ready(&run.identity, run.generation, None)
             .await
             .unwrap();
         assert_eq!(impl_claim[0].agent.alias, "impl");
@@ -1464,7 +1748,7 @@ mod tests {
             .await
             .unwrap();
         let review_claim = store
-            .claim_ready(&run.identity, run.generation)
+            .claim_ready(&run.identity, run.generation, None)
             .await
             .unwrap();
         assert_eq!(review_claim[0].agent.alias, "review");
@@ -1505,7 +1789,7 @@ mod tests {
         assert_eq!(next.generation, first.generation + 1);
         assert_eq!(next.aliases["impl"].status, PipelineAliasStatus::Pending);
         let claims = store
-            .claim_ready(&next.identity, next.generation)
+            .claim_ready(&next.identity, next.generation, None)
             .await
             .unwrap();
         assert_eq!(claims.len(), 1);
@@ -1520,7 +1804,7 @@ mod tests {
         registration.desired = vec![agent("left", &[]), agent("right", &[])];
         let first = store.register(registration).await.unwrap();
         let claims = store
-            .claim_ready(&first.identity, first.generation)
+            .claim_ready(&first.identity, first.generation, None)
             .await
             .unwrap();
         assert_eq!(claims.len(), 2);
@@ -1649,5 +1933,253 @@ mod tests {
         let error = PipelineRunStore::load(Some(path)).unwrap_err();
 
         assert!(matches!(error, PipelineRunError::Invalid(_)));
+    }
+}
+
+/// Queue leases: who may register, claim, adopt or launch a queued Work.
+#[cfg(test)]
+mod lease_tests {
+    use super::*;
+
+    const QUEUED: &str = "Q-FIX-LOGIN-20261116-0123456789AB";
+
+    fn agent(alias: &str, after: &[&str]) -> DesiredAgent {
+        DesiredAgent {
+            alias: alias.to_string(),
+            program: "codex".to_string(),
+            role: None,
+            task: None,
+            prompt: Some(format!("do {alias}")),
+            options: Vec::new(),
+            direction: None,
+            after: after.iter().map(|value| (*value).to_string()).collect(),
+            purpose: crate::collaboration::LaunchPurpose::Primary,
+        }
+    }
+
+    fn queued(work: &str) -> PipelineRunRegistration {
+        PipelineRunRegistration {
+            identity: WorkIdentity::new("ws", work),
+            pipeline: "chain".to_string(),
+            desired: vec![agent("plan", &[]), agent("impl", &["plan"])],
+            cwd: PathBuf::from("/tmp/work"),
+            window_id: None,
+            observed: Vec::new(),
+            invalidate: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn queue_ids_are_recognised_only_in_full() {
+        assert!(is_queue_work_id(QUEUED));
+        assert!(is_queue_work_id(&QUEUED.to_ascii_lowercase()));
+        for other in [
+            "ENG-1",
+            "Q-FIX-0123456789AB",
+            "Q--20261116-0123456789AB",
+            "Q-FIX-20261116-0123456789A",
+            "Q-FIX-2026111X-0123456789AB",
+            "X-FIX-20261116-0123456789AB",
+        ] {
+            assert!(!is_queue_work_id(other), "{other}");
+        }
+    }
+
+    /// Nobody but the lease holder registers or claims a queued Work until
+    /// the queue releases it.
+    #[tokio::test]
+    async fn a_queue_lease_keeps_every_other_caller_out_until_released() {
+        let store = PipelineRunStore::in_memory();
+        let identity = WorkIdentity::new("ws", QUEUED);
+        // Never leased: an ordinary or create-new registration is refused.
+        assert!(matches!(
+            store.register(queued(QUEUED)).await,
+            Err(PipelineRunError::Reserved(_))
+        ));
+        assert!(store
+            .register_new(queued(QUEUED), Some("a1"))
+            .await
+            .is_err());
+
+        store.acquire_lease(&identity, "q-1", "a1").await.unwrap();
+        // Another item cannot take the same identity.
+        assert!(store.acquire_lease(&identity, "q-2", "a9").await.is_err());
+        // A manual start between the claim and the queue's registration.
+        assert!(matches!(
+            store.register(queued(QUEUED)).await,
+            Err(PipelineRunError::Reserved(_))
+        ));
+        assert!(store
+            .register_new(queued(QUEUED), Some("other"))
+            .await
+            .is_err());
+        let run = store
+            .register_new(queued(QUEUED), Some("a1"))
+            .await
+            .unwrap();
+        assert_eq!(
+            run.queue_lease.as_ref().unwrap().state,
+            QueueLeaseState::Launching
+        );
+
+        // A manual start after it registered: refused, the generation and
+        // aliases untouched.
+        let mut changed = queued(QUEUED);
+        changed.desired.push(agent("review", &["impl"]));
+        assert!(matches!(
+            store.register(changed.clone()).await,
+            Err(PipelineRunError::Reserved(_))
+        ));
+        assert_eq!(
+            store.get(&identity).await.unwrap().generation,
+            run.generation
+        );
+        // The reconciler (no holder) and anyone else get nothing; the
+        // holder gets its claim.
+        for holder in [None, Some("other")] {
+            assert!(store
+                .claim_ready(&identity, run.generation, holder)
+                .await
+                .unwrap()
+                .is_empty());
+        }
+        let claims = store
+            .claim_ready(&identity, run.generation, Some("a1"))
+            .await
+            .unwrap();
+        assert_eq!(claims.len(), 1);
+
+        store
+            .settle_lease(&identity, "q-1", None, QueueLeaseState::Released)
+            .await
+            .unwrap();
+        // An ordinary Work now: a manual `work up` may change it.
+        let rerun = store.register(changed).await.unwrap();
+        assert!(rerun.generation > run.generation);
+        // A settlement for another attempt (stale) changes nothing.
+        let other = WorkIdentity::new("ws", "Q-OTHER-20261116-0123456789AB");
+        store.acquire_lease(&other, "q-9", "new").await.unwrap();
+        store
+            .register_new(queued("Q-OTHER-20261116-0123456789AB"), Some("new"))
+            .await
+            .unwrap();
+        store
+            .settle_lease(&other, "q-9", Some("old"), QueueLeaseState::Released)
+            .await
+            .unwrap();
+        assert_eq!(
+            store.lease(&other).await.unwrap().state,
+            QueueLeaseState::Launching
+        );
+        // Released is final.
+        store
+            .settle_lease(&identity, "q-1", None, QueueLeaseState::Suspended)
+            .await
+            .unwrap();
+        assert_eq!(
+            store.lease(&identity).await.unwrap().state,
+            QueueLeaseState::Released
+        );
+    }
+
+    #[tokio::test]
+    async fn two_create_new_registrations_race_and_one_wins() {
+        let store = PipelineRunStore::in_memory();
+        let identity = WorkIdentity::new("ws", QUEUED);
+        store.acquire_lease(&identity, "q-1", "a1").await.unwrap();
+        // The holder, a manual start and another would-be holder at once:
+        // only the holder registers, whatever the order.
+        let (holder, manual, other) = tokio::join!(
+            store.register_new(queued(QUEUED), Some("a1")),
+            store.register(queued(QUEUED)),
+            store.register_new(queued(QUEUED), Some("a2")),
+        );
+        assert!(holder.is_ok());
+        assert!(manual.is_err() && other.is_err());
+        // Non-queue ids keep the plain create-new rule.
+        let (left, right) = tokio::join!(
+            store.register_new(queued("ENG-7"), None),
+            store.register_new(queued("ENG-7"), None),
+        );
+        assert_eq!(usize::from(left.is_ok()) + usize::from(right.is_ok()), 1);
+    }
+
+    /// tendd stops while the queue's launch runs: after the restart the
+    /// lease is suspended, so no reconciler pass (and no expired claim)
+    /// adopts, launches or prompts until the item is settled.
+    #[tokio::test]
+    async fn a_launch_interrupted_by_a_restart_stays_suspended() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("runs.json");
+        let identity = WorkIdentity::new("ws", QUEUED);
+        let store = PipelineRunStore::load(Some(path.clone())).unwrap();
+        store.acquire_lease(&identity, "q-1", "a1").await.unwrap();
+        let run = store
+            .register_new(queued(QUEUED), Some("a1"))
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .claim_ready(&identity, run.generation, Some("a1"))
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        drop(store);
+
+        let restored = PipelineRunStore::load(Some(path.clone())).unwrap();
+        assert_eq!(
+            restored.lease(&identity).await.unwrap().state,
+            QueueLeaseState::Suspended
+        );
+        for holder in [None, Some("a1")] {
+            assert!(restored
+                .claim_ready(&identity, run.generation, holder)
+                .await
+                .unwrap()
+                .is_empty());
+        }
+        assert!(restored.register(queued(QUEUED)).await.is_err());
+        // Pending leases do not survive a restart.
+        let other = "Q-OTHER-20261116-0123456789AB";
+        let fresh = WorkIdentity::new("ws", other);
+        restored.acquire_lease(&fresh, "q-3", "a3").await.unwrap();
+        drop(restored);
+        let again = PipelineRunStore::load(Some(path)).unwrap();
+        assert!(again.lease(&fresh).await.is_none());
+        assert!(again.register_new(queued(other), Some("a3")).await.is_err());
+
+        // The person runs it again: only the same item takes it over.
+        assert!(again.acquire_lease(&identity, "q-2", "b1").await.is_err());
+        again.acquire_lease(&identity, "q-1", "b1").await.unwrap();
+        assert!(again.register_new(queued(QUEUED), Some("b1")).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn an_older_run_whose_id_matches_the_queue_pattern_stays_ordinary() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("runs.json");
+        let now = OffsetDateTime::now_utc();
+        let run = PipelineRun {
+            identity: WorkIdentity::new("ws", QUEUED),
+            pipeline: "chain".into(),
+            desired: vec![agent("plan", &[])],
+            cwd: PathBuf::from("/tmp/work"),
+            generation: 1,
+            window_id: None,
+            aliases: BTreeMap::from([("plan".to_string(), pending_state("plan", 1, now))]),
+            updated_at: now,
+            queue_lease: None,
+        };
+        let file = serde_json::json!({"version": PIPELINE_RUN_SCHEMA_VERSION, "runs": [run]});
+        std::fs::write(&path, serde_json::to_vec(&file).unwrap()).unwrap();
+        let store = PipelineRunStore::load(Some(path)).unwrap();
+        let identity = WorkIdentity::new("ws", QUEUED);
+        assert!(!store.get(&identity).await.unwrap().leased_against(None));
+        assert_eq!(
+            store.claim_ready(&identity, 1, None).await.unwrap().len(),
+            1
+        );
     }
 }

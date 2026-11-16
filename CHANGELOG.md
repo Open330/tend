@@ -7,12 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Home in the Mac app has two card layouts, chosen in Settings → General →
+  Home or with the toggle in Home's header. Status emphasis (the default)
+  leads each card with its lane's colour stripe and a bold title, puts the
+  question and its choices in an inset box, keeps host, project and time on
+  one subdued line, tints Your turn cards, and labels In progress and
+  Finished cards with their state. Compact list shows one row per item (a
+  status dot, the title, the host, how long ago); selecting a row opens its
+  details beside the board, where a decision is answered and a unit's agent
+  answered, opened or marked Looks Good as before.
+- tendd keeps a Work queue (`work_queue_v1`): prompts it sends to an agent
+  once that agent is free, and Work it starts once fewer than
+  `[work_queue] max_busy_agents` (default 3) agents are busy. The queue lives
+  in `$XDG_DATA_HOME/tend/work-queue.json` and survives restarts. Each item
+  is claimed on disk before anything is typed or launched. tendd sends it at
+  most once on its own. It never types to an agent that is working, waiting
+  on you, at a usage limit, draining, or still holding an earlier queued
+  prompt. A send or launch whose effect tendd cannot know shows as
+  *uncertain*, and only a person settles it. This covers tendd stopping
+  mid-send, a paste that failed after reaching the pane, Enter that was not
+  confirmed, and a launch that failed partway. This release adds the daemon
+  side; the CLI, MCP and Home come next.
+- A queued Work gets an id in a reserved form, `Q-<NAME>-<DATE>-<12 hex>`, and
+  is started under a lease on its pipeline Run (`pipeline_queue_lease_v1`).
+  Until the queue releases the lease, `tend work up`, the pipeline
+  reconciler, `tend work start` and watch rules all refuse to register,
+  claim, launch or join that Work. A launch interrupted by a restart stays
+  held until you settle it in the queue.
+
 ### Fixed
 
-- CI builds with `--locked`, so a PR whose `Cargo.lock` is out of date fails
-  instead of breaking `cargo install --locked` after release (v0.10.19
-  shipped such a lock). Release binaries are built `--locked` too, matching
-  the install docs.
 - Windows: `tend init` can replace and remove its agent skill links. A
   directory symlink or junction was removed as a file, which Windows refuses
   with "access denied", so upgrading or uninstalling the skill failed.
@@ -20,6 +46,122 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `dispatch_id`) can journal their dispatch. Making the record durable opened
   its directory as a file, which Windows refuses, so every such dispatch
   failed before it was sent.
+- A prompt send that tmux did not confirm is no longer reported as "nothing
+  was sent". A paste that failed or timed out after tmux received it, or a
+  backend that crashed mid-send, may already have typed the text. Those now
+  say "it may have been typed" instead of offering a safe retry.
+- The Mac app's window chrome (the root view, the side bar, the tab strips
+  and the status bar) no longer redraws for every fleet heartbeat. Each
+  observed the whole app model; they now draw from small inputs published
+  only when what they show changes: the side bar's rail badges and, with a
+  list open, that list's rows; the open tabs' titles, state dots and unread
+  panes; the status bar's counts and usage text. With no workbench window
+  on screen (hidden, minimized, covered, on another Space) the side bar,
+  tabs and status bar wait, and catch up when a window is shown again; the
+  window's own sheets still follow at once. Measured on optimized copies
+  over the same 235 s of a live fleet, with the window shown, minimized,
+  covered and hidden in turn: root view, side bar and status bar bodies
+  went from 312 each to 5, 16 and 5; while minimized or hidden, from 68
+  each to 0.
+
+## [0.10.20] - 2026-11-16
+
+### Fixed
+
+- The Mac app's usage alerts no longer regroup the whole fleet's rate-limit
+  readings on every fleet snapshot. A check that found nothing to announce
+  is skipped while the agents' usage fields stay the same, until a reset,
+  a cap lifting, a reading going stale or a receipt expiring could change
+  the answer; an activity time counts only by how it orders the readings
+  and whether it is fresh. Which reading is the freshest, the thresholds
+  and the receipts are unchanged. In a Debug benchmark of an hour of
+  snapshots from 4 hosts, the usage part of each ingest went from about
+  0.26–0.39 ms to 0.04–0.09 ms.
+- On Home in the Mac app, the side bar's divider no longer runs up through
+  the traffic-light buttons. With the lists folded away, the activity rail
+  sat in a split view whose divider spans the window's full height; the rail
+  now sits beside it and draws its edge only below the title bar row.
+- A decision card in Home's Your turn shows every option in full. Options
+  were buttons cut to two lines and 240 pt; each option is now a full-width
+  row with its number and its whole text wrapped beside it. The choice panel
+  in the inspector wraps long options the same way.
+- Home's Your turn lists the decisions from tendd's queue and the units whose
+  agents wait in one order, the longest wait first, instead of every decision
+  above every unit. In progress orders by each unit's latest change (a helper
+  or a second stage moving counts) and Finished by when the unit finished,
+  newest first.
+- Home in the Mac app does far less work per redraw. Each finished card's
+  review key (a SHA-256 hex string) was recomputed about four times per
+  render; it is now cached per card and revision and hex-encoded without
+  `String(format:)`, and the board decides which cards are hidden in one
+  pass. Reading a large tendd response no longer rescans the whole buffer
+  after every 16 KB read. A 15 s CPU sample of the idle app showed these
+  paths at the top.
+- Reading the decision queue no longer clones large responses, prompts and
+  process lists for every running or idle agent before discarding those rows.
+  The daemon copies only agents whose state or question needs a person;
+  the decision ordering, limits and contents stay the same.
+- A "Tend cannot verify the recipient binding" question no longer stays in
+  Your turn forever when the agent that sent the original request is still
+  running. The worker it went to had vanished (no agent row, nothing a
+  person could unblock), but the item only closed once the sender was gone
+  too, so a live coordinator kept it open indefinitely; some were weeks old.
+  After the usual week with the recipient still gone it now closes as
+  stale, recorded on the item. The sender's request itself is untouched and
+  stays listed as interrupted for it. Requests a person sent, and
+  recipients that are still there but failing, keep their item as before.
+- The "reply arrived but its sender is gone" item pointed at
+  `tend msg show`, which does not exist; it now names
+  `tend msg list --scope all --request-id <id> --full`.
+- Typing `exit` in the live tour while a step was opening could end the tour
+  on a tmux error and a backtrace, without the closing summary. The tour
+  checked once per poll that the sandbox server was alive, then made several
+  tmux calls; an `exit` between them failed the next one. A failure after the
+  server has gone now ends the tour the same way `exit` does.
+- The idle Mac app stops publishing values that did not change. Home's
+  decision poll (every 5 s) and backlog poll (every 15 s) assigned an
+  unchanged status on each read, which redrew the whole board; the
+  15-second projection rebuild replaced the agent, Work and Home lists even
+  when nothing differed; pruning editor tabs after every Fleet event
+  published and wrote the tab layout to the defaults several times; and
+  every Inbox read rewrote the notification receipts. Each now publishes or
+  writes only on a change. A process preview that no view shows no longer
+  counts as a new Fleet snapshot, and typing a decision answer redraws only
+  that card. `TEND_PERF_COUNTERS=<seconds>` prints debug counters for this
+  work (body evaluations, publishes, projections, polls) to standard error.
+- Home merges its decisions (the queue, review items and every host's
+  questions, with their dates parsed and sorted) once per change of those
+  inputs instead of on every redraw, and finds each asking agent through an
+  index built with the agent list rather than a scan per decision. Tabs and
+  Home's cards look agents up the same way.
+- Home no longer redraws for every change anywhere in the Mac app. It
+  watched the whole app model, so the Inbox's progress, Ask, a remote
+  agent's heartbeat or the workspace revision each re-evaluated the entire
+  board. It now watches its own board state: its units (replaced only when
+  something Home shows changes, not when an agent's last-activity time or
+  process list moves), the hosts' names and states, the connection, and
+  what its decisions are built from, plus a 15-second clock so "5 min ago"
+  and the day-old fold keep moving.
+- While the Mac app's window is hidden, minimized, fully covered or on
+  another Space, Home pauses its decision (5 s) and backlog (15 s) polls,
+  holds new board state and stops its clock. Showing the window again
+  applies what arrived and reads both feeds at once. Notifications, the menu
+  bar and unread tracking keep running from the app model.
+- The menu-bar cluster skips a Fleet snapshot that changes nothing it
+  shows (each agent's state, name, place, connection and unread mark),
+  measures the hover capsule only when one unfolds, and checks the pointer
+  less often while it is far from every menu bar (down to twice a second
+  1500 points away; 15 times a second near one, as before).
+- Markdown in the Mac app's rows (agent responses, asked context) is parsed
+  once per text and kept in a bounded cache, instead of on every redraw.
+
+- CI builds with `--locked`, so a PR whose `Cargo.lock` is out of date fails
+  instead of breaking `cargo install --locked` after release (v0.10.19
+  shipped such a lock). Release binaries are built `--locked` too, matching
+  the install docs.
+- Tend for iPhone and iPad can be uploaded to App Store Connect: the app
+  icon no longer carries an (unused) alpha channel, which the upload
+  rejects, and the app declares that it uses only exempt encryption.
 
 ## [0.10.19] - 2026-11-15
 

@@ -2330,6 +2330,19 @@ impl Store {
         self.agents.read().await.values().cloned().collect()
     }
 
+    /// Rows that can contribute an agent item to the decision queue.
+    /// Filter while borrowing the registry so periodic decision reads do not
+    /// clone prompts, responses and process lists for unrelated agents.
+    pub async fn decision_agents(&self) -> Vec<Agent> {
+        self.agents
+            .read()
+            .await
+            .values()
+            .filter(|agent| crate::decision_queue::agent_needs_person(agent))
+            .cloned()
+            .collect()
+    }
+
     pub async fn by_pane(&self, pane: &str) -> Vec<Agent> {
         self.agents
             .read()
@@ -3788,6 +3801,57 @@ mod tests {
     use super::*;
     use crate::event::{AgentEvent, AgentId, AgentKind, NotificationLevel, SurfaceKind};
     use time::macros::datetime;
+
+    #[tokio::test]
+    async fn decision_agents_preserve_queue_contents_without_unrelated_rows() {
+        let store = Store::shared();
+        let at = datetime!(2026-11-16 00:00 UTC);
+        for (index, state) in [
+            AgentState::Starting,
+            AgentState::Working,
+            AgentState::Idle,
+            AgentState::WaitingInput,
+            AgentState::WaitingChoice,
+            AgentState::Error,
+            AgentState::Stopped,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let session = format!("decision-{index}");
+            let mut identity = id(&session);
+            identity.pane = Some(format!("%decision-{index}"));
+            store.apply(&AgentEvent::Started { id: identity, at }).await;
+            let mut agents = store.agents.write().await;
+            let agent = agents.get_mut(&session).unwrap();
+            agent.state = state;
+            agent.last_response = Some("unused response".repeat(4096));
+        }
+        store
+            .apply(&AgentEvent::Started {
+                id: id("asked"),
+                at,
+            })
+            .await;
+        {
+            let mut agents = store.agents.write().await;
+            let asked = agents.get_mut("asked").unwrap();
+            asked.state = AgentState::Idle;
+            asked.awaiting_reply = Some(AwaitingReply {
+                question: "Proceed?".into(),
+                since: at,
+            });
+        }
+        let full = store.snapshot().await;
+        let scoped = store.decision_agents().await;
+        assert_eq!(scoped.len(), 4);
+        for limit in [1, 3, 200] {
+            assert_eq!(
+                crate::decision_queue::assemble_queue(&[], &full, Vec::new(), limit),
+                crate::decision_queue::assemble_queue(&[], &scoped, Vec::new(), limit),
+            );
+        }
+    }
 
     fn id(session: &str) -> AgentId {
         AgentId {

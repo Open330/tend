@@ -70,7 +70,7 @@ struct FleetQuickLookView: View {
     @State private var showsPane = false
 
     private var hosted: TendHostedAgent? {
-        model.hostedAgents.first { $0.id == target.agentID }
+        model.hostedAgent(id: target.agentID)
     }
 
     /// The answer field belongs here only when the unit's reply goes to this

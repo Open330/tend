@@ -44,6 +44,9 @@ pub async fn run(
     if let (Some(client), true) = (client, acceptance.is_some() || checks.is_some()) {
         crate::work_backlog::require_verify(client).await?;
     }
+    if let (Some(client), false) = (client, dry_run) {
+        crate::work_up::refuse_queue_work(&args.work, args.workspace.as_deref(), client).await?;
+    }
     let resolved = resolve_or_onboard(&args, config, config_path, client).await?;
     if show_prompts {
         print_prompts(&resolved.desired);

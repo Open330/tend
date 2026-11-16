@@ -154,7 +154,7 @@ pub(super) fn gone_sender_body(parent: &CollaborationRequest) -> String {
     format!(
         "The reply to request {id} ({status:?}) arrived, but its sender session {session} \
          ({label}) is gone and no single session holds its slot, so nobody was told.\n\
-         Read the reply with `tend msg show {id}` and decide whether to hand it to another \
+         Read the reply with `tend msg list --scope all --request-id {id} --full` and decide whether to hand it to another \
          agent. Answering this item records that you have seen it; it does not move the \
          reply. If the sender's session returns, it is still woken.",
         id = parent.id,
@@ -571,7 +571,9 @@ mod tests {
         let action = store.report_gone_sender(&id).await.unwrap().unwrap();
         assert!(action.needs_human_response());
         assert_eq!(action.parent_request_id.as_deref(), Some(id.as_str()));
-        assert!(action.body.contains(&format!("tend msg show {id}")));
+        assert!(action.body.contains(&format!(
+            "tend msg list --scope all --request-id {id} --full"
+        )));
         assert_eq!(store.pending_human_notifications().await.len(), 1);
         assert!(
             store.report_gone_sender(&id).await.unwrap().is_none(),

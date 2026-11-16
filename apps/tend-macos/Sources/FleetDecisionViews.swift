@@ -3,6 +3,7 @@
 // recommendation, links the evidence, and records the answer with tendd
 // (a human-request reply, or a review disposition).
 import AppKit
+import Combine
 import SwiftUI
 
 // MARK: - Feed
@@ -12,16 +13,30 @@ import SwiftUI
 /// requests come from the console mailbox the app already reads.
 @MainActor
 final class FleetDecisionFeed: ObservableObject {
-    @Published private(set) var queue: TendPendingQueue?
-    @Published private(set) var reviews: [TendReviewItem] = []
+    @Published private(set) var queue: TendPendingQueue? { didSet { sourceRevision &+= 1 } }
+    @Published private(set) var reviews: [TendReviewItem] = [] { didSet { sourceRevision &+= 1 } }
+    /// Bumped with every change of `queue` or `reviews`.
+    private var sourceRevision: UInt64 = 0
+    /// The last merged decisions and what they were built from: Home asks
+    /// on every redraw, and they change only when one of these does.
+    private var cachedDecisions: (key: DecisionsKey, value: [FleetDecision])?
+    /// How many times the decisions were merged, for tests.
+    private(set) var decisionBuilds = 0
+
+    private struct DecisionsKey: Equatable {
+        let source: UInt64
+        let messages: UInt64
+        let agents: UInt64
+        let localHost: TendFleetHostIdentity
+    }
     @Published private(set) var problem: String?
     /// Decisions being recorded, by id.
     @Published private(set) var busy: Set<String> = []
     /// The last error recording a decision, by id.
     @Published var failures: [String: String] = [:]
-    /// The one decision whose answer is open, and the text typed so far.
-    @Published private var composingID: String?
-    @Published private var drafts: [String: String] = [:]
+    /// The open answer and the text typed so far, per card: a keystroke
+    /// redraws its card, not every view that watches the feed.
+    let drafts = FleetDecisionDrafts()
     /// Past decisions on this Mac's daemon, for the history view.
     @Published private(set) var history: TendDecisionHistory?
     /// Why the last history read failed; the view offers a retry.
@@ -47,41 +62,53 @@ final class FleetDecisionFeed: ObservableObject {
     private var loading = false
 
     static let refreshEvery: Duration = .seconds(5)
+    private var perfSubscription: AnyCancellable?
+
+    init() {
+        perfSubscription = TendPerf.observe(self, "decision.publish")
+    }
 
     func load(_ client: TendIPCClient, works: [FleetWork] = []) async {
         guard !loading else { return }
+        TendPerf.count("decision.poll")
         loading = true
         defer { loading = false }
         do {
+            // Polled every few seconds while Home is open: assign only what
+            // changed, so an unchanged queue does not redraw the board.
             if let queue = try await client.decisionQueue() {
                 if self.queue != queue { self.queue = queue }
                 if !reviews.isEmpty { reviews = [] }
-                problem = queue.unavailable.isEmpty
+                setProblem(queue.unavailable.isEmpty
                     ? nil
-                    : String(localized: "Some decisions could not be read: \(queue.unavailable.joined(separator: "; "))")
+                    : String(localized: "Some decisions could not be read: \(queue.unavailable.joined(separator: "; "))"))
             } else {
-                queue = nil
+                if queue != nil { queue = nil }
                 let page = try await client.reviewItems(offset: 0, limit: 200)
                 if reviews != page.items { reviews = page.items }
-                problem = nil
+                setProblem(nil)
             }
         } catch {
-            problem = String(localized: "Could not read decisions: \(error.localizedDescription)")
+            setProblem(String(localized: "Could not read decisions: \(error.localizedDescription)"))
         }
         // Without the board there is nothing to decide what to hide for.
         if !works.isEmpty { await loadReviewed(client, works: works, force: false) }
+    }
+
+    private func setProblem(_ problem: String?) {
+        if self.problem != problem { self.problem = problem }
     }
 
     /// Reads the history (for the history view) at most every
     /// `historyEvery` seconds, or now.
     func loadHistory(_ client: TendIPCClient, force: Bool) async {
         guard await client.supports(tendDecisionQueueCapability) else {
-            history = nil
-            historyUnsupported = true
-            historyError = nil
+            if history != nil { history = nil }
+            if !historyUnsupported { historyUnsupported = true }
+            if historyError != nil { historyError = nil }
             return
         }
-        historyUnsupported = false
+        if historyUnsupported { historyUnsupported = false }
         guard force || Date().timeIntervalSince(lastHistoryLoad) >= Self.historyEvery else { return }
         lastHistoryLoad = Date()
         historyLoading = true
@@ -89,7 +116,7 @@ final class FleetDecisionFeed: ObservableObject {
         do {
             guard let history = try await client.decisionHistory() else { return }
             if self.history != history { self.history = history }
-            historyError = nil
+            if historyError != nil { historyError = nil }
         } catch {
             // The last good history stays on screen under the error.
             historyError = String(localized: "Could not read the decision history: \(error.localizedDescription)")
@@ -103,7 +130,7 @@ final class FleetDecisionFeed: ObservableObject {
     /// window. An overlapping older read never replaces a newer one.
     func loadReviewed(_ client: TendIPCClient, works: [FleetWork], force: Bool) async {
         guard await client.supports("review_record_v1"), await client.supports("review_items_v1") else {
-            reviewedKeys = nil
+            if reviewedKeys != nil { reviewedKeys = nil }
             return
         }
         guard force || Date().timeIntervalSince(lastReviewedLoad) >= Self.historyEvery else { return }
@@ -202,32 +229,23 @@ final class FleetDecisionFeed: ObservableObject {
     /// checkout when Home knows it.
     func decisions(_ model: AppModel) -> [FleetDecision] {
         guard let local = model.fleetHosts.first(where: \.local)?.identity else { return [] }
+        let key = DecisionsKey(
+            source: sourceRevision, messages: model.operatorMessagesRevision,
+            agents: model.askersRevision, localHost: local
+        )
+        if let cachedDecisions, cachedDecisions.key == key { return cachedDecisions.value }
+        decisionBuilds += 1
+        TendPerf.count("decision.merge")
         let merged = FleetDecisions.merge(queue: queue, reviews: reviews, messages: model.operatorMessages, localHost: local)
-        return FleetDecisions.attachAskers(merged, agents: model.hostedAgents)
+        let value = FleetDecisions.attachAskers(merged, index: model.hostedAgentIndex)
+        cachedDecisions = (key, value)
+        return value
     }
 
     /// The open answer for `id`: one composer at a time across Home and the
     /// Review sheet, so a keyboard Send can only reach the one on screen.
     func draft(for id: String) -> Binding<String?> {
-        Binding(
-            get: { [weak self] in
-                guard let self, self.composingID == id else { return nil }
-                return self.drafts[id] ?? ""
-            },
-            set: { [weak self] value in
-                guard let self else { return }
-                if let value {
-                    // Reopening keeps what was typed before; an option
-                    // (a non-empty value) replaces it on purpose.
-                    let reopening = self.composingID != id && value.isEmpty
-                    self.composingID = id
-                    if !(reopening && self.drafts[id] != nil) { self.drafts[id] = value }
-                } else if self.composingID == id {
-                    self.composingID = nil
-                    self.drafts[id] = nil
-                }
-            }
-        )
+        drafts.binding(for: id)
     }
 
     /// Replies to a human request as the person; tendd records the answer.
@@ -271,13 +289,82 @@ final class FleetDecisionFeed: ObservableObject {
     }
 }
 
+/// One decision's answer: open or not, and the text typed so far, which a
+/// closed answer keeps for when it is reopened. Each card watches only its
+/// own, so typing redraws one card.
+@MainActor
+final class FleetDecisionDraft: ObservableObject {
+    /// For cards with no shared draft (previews, tests): never changes.
+    static let detached = FleetDecisionDraft(id: "", owner: nil)
+
+    let id: String
+    fileprivate weak var owner: FleetDecisionDrafts?
+    @Published fileprivate(set) var isOpen = false
+    @Published fileprivate(set) var text: String?
+
+    fileprivate init(id: String, owner: FleetDecisionDrafts?) {
+        self.id = id
+        self.owner = owner
+    }
+
+    /// The answer field's text, nil while it is closed.
+    var value: String? { isOpen ? (text ?? "") : nil }
+
+    func update(_ value: String?) {
+        owner?.set(value, for: id)
+    }
+}
+
+/// Every card's answer, with one open at a time across Home and the Review
+/// sheet.
+@MainActor
+final class FleetDecisionDrafts {
+    private var rows: [String: FleetDecisionDraft] = [:]
+    private var openID: String?
+
+    func row(for id: String) -> FleetDecisionDraft {
+        if let row = rows[id] { return row }
+        let row = FleetDecisionDraft(id: id, owner: self)
+        rows[id] = row
+        return row
+    }
+
+    func binding(for id: String) -> Binding<String?> {
+        let row = row(for: id)
+        return Binding(get: { row.value }, set: { row.update($0) })
+    }
+
+    fileprivate func set(_ value: String?, for id: String) {
+        let row = row(for: id)
+        if let value {
+            // Reopening keeps what was typed before; an option (a non-empty
+            // value) replaces it on purpose.
+            let reopening = openID != id && value.isEmpty
+            if openID != id {
+                if let openID, let open = rows[openID], open.isOpen { open.isOpen = false }
+                openID = id
+            }
+            if !(reopening && row.text != nil), row.text != value { row.text = value }
+            if !row.isOpen { row.isOpen = true }
+        } else if openID == id {
+            openID = nil
+            if row.isOpen { row.isOpen = false }
+            if row.text != nil { row.text = nil }
+        }
+    }
+}
+
 extension FleetDecisions {
     /// Fills in each decision's asking agent (its checkout and repository)
     /// from the agents Home sees on the same host.
     static func attachAskers(_ decisions: [FleetDecision], agents: [TendHostedAgent]) -> [FleetDecision] {
+        attachAskers(decisions, index: TendHostedAgentIndex(agents))
+    }
+
+    static func attachAskers(_ decisions: [FleetDecision], index: TendHostedAgentIndex) -> [FleetDecision] {
         decisions.map { decision in
             guard let session = decision.askerSessionID,
-                  let agent = agents.first(where: { $0.host.alias == decision.host.alias && $0.agent.agentSessionID == session })
+                  let agent = index.agent(host: decision.host.alias, session: session)
             else { return decision }
             var decision = decision
             decision.askerAgentID = agent.id
@@ -491,13 +578,37 @@ struct FleetDecisionCard: View {
     var initialAnswer: String?
     /// The open answer, shared by every card so only one composer (and one
     /// ⌘↩ Send) exists at a time; a card without one keeps its own.
-    var draft: Binding<String?>?
+    @ObservedObject private var draft: FleetDecisionDraft
+    private let sharesDraft: Bool
     @State private var localDraft: String?
 
+    init(
+        decision: FleetDecision,
+        busy: Bool = false,
+        failure: String? = nil,
+        openRevision: @escaping (FleetRevisionTarget) -> Void,
+        answer: @escaping (String) async -> Bool,
+        decide: @escaping (TendReviewDisposition, String?) async -> Bool,
+        openAsker: (() -> Void)? = nil,
+        initialAnswer: String? = nil,
+        draft: FleetDecisionDraft? = nil
+    ) {
+        self.decision = decision
+        self.busy = busy
+        self.failure = failure
+        self.openRevision = openRevision
+        self.answer = answer
+        self.decide = decide
+        self.openAsker = openAsker
+        self.initialAnswer = initialAnswer
+        _draft = ObservedObject(wrappedValue: draft ?? .detached)
+        sharesDraft = draft != nil
+    }
+
     private var composing: String? {
-        get { draft?.wrappedValue ?? localDraft }
+        get { sharesDraft ? draft.value : localDraft }
         nonmutating set {
-            if let draft { draft.wrappedValue = newValue } else { localDraft = newValue }
+            if sharesDraft { draft.update(newValue) } else { localDraft = newValue }
         }
     }
     @Environment(\.colorScheme) private var colorScheme
@@ -505,7 +616,28 @@ struct FleetDecisionCard: View {
     private var answerText: String { composing ?? initialAnswer ?? "" }
     private var isComposing: Bool { composing != nil || initialAnswer != nil }
 
+    @Environment(\.fleetCardEmphasis) private var emphasis
+
     var body: some View {
+        Group {
+            if emphasis {
+                emphasisBody
+            } else {
+                plainBody
+            }
+        }
+        .disabled(busy)
+        .contextMenu {
+            if let openAsker {
+                Button("Open Agent", action: openAsker)
+            }
+            if case .review = decision.source {
+                Button("Withdraw") { Task { _ = await decide(.withdrawn, nil) } }
+            }
+        }
+    }
+
+    private var plainBody: some View {
         VStack(alignment: .leading, spacing: 7) {
             header
             // What tend checked itself comes first; the asker's account
@@ -518,40 +650,9 @@ struct FleetDecisionCard: View {
                 .lineLimit(4)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
-            if let detail = decision.detail {
-                Text(verbatim: detail)
-                    .font(TendType.detail)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(3)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            if let recommendation = decision.recommendation {
-                Label {
-                    Text(verbatim: recommendation)
-                        .lineLimit(3)
-                } icon: {
-                    Image(systemName: "lightbulb")
-                        .foregroundStyle(.orange)
-                }
-                .font(TendType.detail)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .help(String(localized: "What the asker recommends"))
-            }
-            if !decision.evidence.isEmpty {
-                FleetEvidenceChips(decision: decision, openRevision: openRevision)
-            }
-            if isComposing {
-                composer
-            } else {
-                actions
-            }
-            if let failure {
-                Label(failure, systemImage: "exclamationmark.circle")
-                    .font(TendType.meta)
-                    .foregroundStyle(.red)
-                    .lineLimit(3)
-            }
+            account
+            answering
+            failureLabel
         }
         .padding(12)
         .background(TendSurfacePalette.workspace(for: colorScheme), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -559,14 +660,104 @@ struct FleetDecisionCard: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .strokeBorder(Color.orange.opacity(0.45), lineWidth: 1)
         )
-        .disabled(busy)
-        .contextMenu {
-            if let openAsker {
-                Button("Open Agent", action: openAsker)
+    }
+
+    /// Status emphasis: the kind, the question as a bold title, everything
+    /// to decide with in an inset box, who and when on one line under it.
+    private var emphasisBody: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 5) {
+                Image(systemName: decision.isHumanRequest ? "questionmark.bubble.fill" : "checklist")
+                Text(decision.isHumanRequest ? String(localized: "Question") : String(localized: "Review"))
+                Spacer(minLength: 4)
+                if busy { ProgressView().controlSize(.mini) }
             }
-            if case .review = decision.source {
-                Button("Withdraw") { Task { _ = await decide(.withdrawn, nil) } }
+            .font(.system(size: 11, weight: .bold))
+            .foregroundStyle(.orange)
+            Text(verbatim: decision.title)
+                .font(.system(size: 14.5, weight: .bold))
+                .lineLimit(4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+            FleetInsetBox {
+                if let verification = decision.verification {
+                    FleetVerificationChecks(verification: verification)
+                }
+                account
+                answering
             }
+            failureLabel
+            HStack(spacing: 6) {
+                if let asker = decision.asker {
+                    Text(verbatim: asker)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Text(verbatim: decision.host.alias)
+                    .lineLimit(1)
+                if let repo = decision.repo {
+                    Text(verbatim: "· \(repo)")
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                if let since = decision.since {
+                    Text(since, format: .relative(presentation: .numeric, unitsStyle: .abbreviated))
+                        .monospacedDigit()
+                        .fixedSize()
+                }
+            }
+            .font(TendType.meta)
+            .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .modifier(FleetEmphasisCardFrame(lane: .needsYou))
+    }
+
+    /// The asker's account: the summary under the question, the
+    /// recommendation, the evidence.
+    @ViewBuilder
+    private var account: some View {
+        if let detail = decision.detail {
+            Text(verbatim: detail)
+                .font(TendType.detail)
+                .foregroundStyle(.secondary)
+                .lineLimit(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        if let recommendation = decision.recommendation {
+            Label {
+                Text(verbatim: recommendation)
+                    .lineLimit(3)
+            } icon: {
+                Image(systemName: "lightbulb")
+                    .foregroundStyle(.orange)
+            }
+            .font(TendType.detail)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .help(String(localized: "What the asker recommends"))
+        }
+        if !decision.evidence.isEmpty {
+            FleetEvidenceChips(decision: decision, openRevision: openRevision)
+        }
+    }
+
+    @ViewBuilder
+    private var answering: some View {
+        if isComposing {
+            composer
+        } else {
+            actions
+        }
+    }
+
+    @ViewBuilder
+    private var failureLabel: some View {
+        if let failure {
+            Label(failure, systemImage: "exclamationmark.circle")
+                .font(TendType.meta)
+                .foregroundStyle(.red)
+                .lineLimit(3)
         }
     }
 
@@ -598,19 +789,22 @@ struct FleetDecisionCard: View {
     }
 
     private var actions: some View {
-        PipelineFlowLayout(spacing: 6) {
-            ForEach(decision.options, id: \.self) { option in
-                Button {
-                    composing = option
-                } label: {
-                    Text(verbatim: option)
-                        .lineLimit(2)
-                        .frame(maxWidth: 240)
-                        .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 6) {
+            if !decision.options.isEmpty {
+                // One full-width row per option: a long or multi-line option
+                // wraps under its own number instead of being cut off.
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(decision.options.enumerated()), id: \.offset) { index, option in
+                        FleetDecisionOptionRow(number: index + 1, text: option) { composing = option }
+                    }
                 }
-                .buttonStyle(.tendSecondary)
-                .help(String(localized: "Answer with this option; you see it before it is sent"))
             }
+            otherActions
+        }
+    }
+
+    private var otherActions: some View {
+        PipelineFlowLayout(spacing: 6) {
             switch decision.source {
             case .humanRequest:
                 Button(decision.options.isEmpty ? String(localized: "Answer…") : String(localized: "Other…")) {
@@ -658,5 +852,54 @@ struct FleetDecisionCard: View {
         Task {
             if await send() { composing = nil }
         }
+    }
+}
+
+/// One of the asker's options on a decision card: its number, then its
+/// whole text wrapped beside it. A click fills the answer for a look
+/// before it goes.
+struct FleetDecisionOptionRow: View {
+    let number: Int
+    let text: String
+    let choose: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: choose) {
+            HStack(alignment: .top, spacing: 8) {
+                Text(verbatim: "\(number)")
+                    .font(.system(size: 11, weight: .bold).monospacedDigit())
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 18, height: 18)
+                    .background(Color.accentColor.opacity(0.15), in: Circle())
+                Text(verbatim: text)
+                    .font(TendType.body)
+                    .foregroundStyle(.primary)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    // The first line centred on the number badge.
+                    .padding(.top, 1)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(hovering ? TendTheme.hover(colorScheme) : Color.secondary.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(TendTheme.inputBorder(colorScheme), lineWidth: 1)
+        )
+        .opacity(isEnabled ? 1 : 0.45)
+        .onHover { hovering = $0 && isEnabled }
+        .help(String(localized: "Answer with this option; you see it before it is sent"))
+        .accessibilityLabel(Text(verbatim: "\(number). \(text)"))
     }
 }

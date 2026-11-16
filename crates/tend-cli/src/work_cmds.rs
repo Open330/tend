@@ -494,6 +494,7 @@ mod work_list_view_tests {
                 })
                 .collect(),
             updated_at: time::OffsetDateTime::UNIX_EPOCH,
+            queue_lease: None,
         }
     }
 
@@ -559,6 +560,7 @@ mod work_list_view_tests {
                 ),
             ]),
             updated_at: now,
+            queue_lease: None,
         }
     }
 

@@ -39,7 +39,8 @@ pub const SYSTEM_ASK_CLEANUP_CAPABILITY: &str = "system_ask_cleanup_v1";
 /// How long an ask must have waited before "nobody is left to act on it"
 /// can close it. A week covers a weekend away and a provider's weekly limit
 /// reset, the longest ordinary reason an agent session is absent and then
-/// comes back; the rule also needs every session involved to be absent now.
+/// comes back; the rule also needs the sessions involved to be absent now
+/// (see [`abandoned`]).
 pub const SYSTEM_ASK_STALE_AFTER: time::Duration = time::Duration::days(7);
 
 /// Request ids listed in one item's text; the rest are counted.
@@ -192,8 +193,15 @@ fn session_live(session: &str, agents: &[Agent]) -> bool {
 /// Recovery: the answer is a decision for the original request's sender,
 /// read off that request. It is abandoned only when that sender is an
 /// agent session (not the operator console, not a Fleet initiator acting
-/// for a person) with no live row, and the recipient it was about is gone
-/// too. A reply wake: the reply's sender session is still gone.
+/// for a person) and the recipient it was about is gone, and either the
+/// sender has no live row either, or the recipient vanished
+/// (`binding_unavailable`: no agent row at all). A vanished recipient
+/// leaves nothing for a person to unblock: no prompt to answer, no account
+/// to fix. What is left is the live sender's own request, which its
+/// obligations keep listing as interrupted and which it (or `tend msg
+/// retire`) can resend or retire; a person's answer would only be a note
+/// on it. A recipient that comes back ends the episode by itself. A reply
+/// wake: the reply's sender session is still gone.
 pub(super) fn abandoned(
     kind: SystemAskKind,
     parent: &CollaborationRequest,
@@ -201,10 +209,14 @@ pub(super) fn abandoned(
 ) -> bool {
     match kind {
         SystemAskKind::Recovery => {
+            let vanished = parent
+                .interruption
+                .as_ref()
+                .is_some_and(|info| info.active && info.reason == "binding_unavailable");
             !parent.from.console
                 && parent.initiator.is_none()
                 && !parent.from.agent_session_id.starts_with("tend:")
-                && !session_live(&parent.from.agent_session_id, agents)
+                && (vanished || !session_live(&parent.from.agent_session_id, agents))
                 && super::recovery::exact_agent(&parent.to, agents).is_none()
                 && !session_live(&parent.to.agent_session_id, agents)
         }
@@ -834,6 +846,87 @@ mod tests {
         let mut aged = row(store, id).await;
         aged.interruption.as_mut().unwrap().observed_at -= time::Duration::days(days);
         put(store, &[aged]).await;
+    }
+
+    /// The recipient's agent row has been missing past the binding grace.
+    async fn recipient_vanishes(store: &CollaborationStore, id: &str, agents: &[Agent]) {
+        store.reconcile_peer_interruptions(agents).await.unwrap();
+        *store.missing_recipients.lock().await.get_mut(id).unwrap() -= time::Duration::minutes(3);
+        store.reconcile_peer_interruptions(agents).await.unwrap();
+        let held = row(store, id).await;
+        assert_eq!(held.interruption.unwrap().reason, "binding_unavailable");
+    }
+
+    #[tokio::test]
+    async fn a_vanished_recipient_does_not_keep_a_live_senders_item_open_past_the_grace() {
+        let store = CollaborationStore::in_memory(CollaborationOptions::default());
+        let (sender, coordinator) = actor("%1", "coord", AgentState::Idle).await;
+        let (recipient, _gone) = actor("%2", "peer", AgentState::Idle).await;
+        let parent = claimed(&store, &sender, &recipient, "work").await;
+        let agents = [coordinator.clone()];
+        recipient_vanishes(&store, &parent.id, &agents).await;
+        // The live coordinator never acknowledged: the person is asked.
+        episode_age(&store, &parent.id, 6).await;
+        store.reconcile_peer_interruptions(&agents).await.unwrap();
+        let item = open_system(&store).await.remove(0);
+        age(&store, &item.id, 6).await;
+        store.reconcile_peer_interruptions(&agents).await.unwrap();
+        assert_eq!(open_system(&store).await.len(), 1, "within the grace");
+        age(&store, &item.id, 2).await;
+        episode_age(&store, &parent.id, 2).await;
+        store.reconcile_peer_interruptions(&agents).await.unwrap();
+        assert!(
+            open_system(&store).await.is_empty(),
+            "a week without the recipient: nothing left for a person to unblock"
+        );
+        let record = row(&store, &item.id)
+            .await
+            .system_ask
+            .unwrap()
+            .closed
+            .unwrap();
+        assert_eq!(record.reason, SystemAskCloseReason::Stale);
+        // The sender's own request is untouched, still interrupted for it.
+        let held = row(&store, &parent.id).await;
+        assert_eq!(held.status, RequestStatus::Claimed);
+        assert!(held.peer_interrupted());
+        store.reconcile_peer_interruptions(&agents).await.unwrap();
+        assert!(open_system(&store).await.is_empty(), "not asked again");
+    }
+
+    #[tokio::test]
+    async fn a_failing_recipient_or_a_person_sender_keeps_the_item_however_old() {
+        // The recipient is still there, in error: someone can fix it.
+        let store = CollaborationStore::in_memory(CollaborationOptions::default());
+        let (sender, coordinator) = actor("%1", "coord", AgentState::Idle).await;
+        let (recipient, peer) = actor("%2", "peer", AgentState::Error).await;
+        let parent = claimed(&store, &sender, &recipient, "work").await;
+        let agents = [coordinator, peer];
+        store.reconcile_peer_interruptions(&agents).await.unwrap();
+        episode_age(&store, &parent.id, 30).await;
+        store.reconcile_peer_interruptions(&agents).await.unwrap();
+        let item = open_system(&store).await.remove(0);
+        age(&store, &item.id, 30).await;
+        store.reconcile_peer_interruptions(&agents).await.unwrap();
+        assert_eq!(open_system(&store).await.len(), 1);
+
+        // A person sent it: the vanished recipient is theirs to decide on.
+        let store = CollaborationStore::in_memory(CollaborationOptions::default());
+        let (recipient, _gone) = actor("%2", "peer", AgentState::Idle).await;
+        let console = Participant::console(recipient.room.clone());
+        let parent = claimed(&store, &console, &recipient, "work").await;
+        recipient_vanishes(&store, &parent.id, &[]).await;
+        let item = open_system(&store).await.remove(0);
+        age(&store, &item.id, 30).await;
+        episode_age(&store, &parent.id, 30).await;
+        store.reconcile_peer_interruptions(&[]).await.unwrap();
+        assert!(store
+            .cleanup_system_asks(&[], true)
+            .await
+            .unwrap()
+            .closed
+            .is_empty());
+        assert_eq!(open_system(&store).await.len(), 1);
     }
 
     #[tokio::test]
