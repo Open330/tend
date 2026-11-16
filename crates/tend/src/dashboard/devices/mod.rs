@@ -49,6 +49,20 @@ mod storage;
 #[cfg(test)]
 mod tests;
 
+/// Runs one `work up` for a device start; tests replace the real one.
+pub(in crate::dashboard) type WorkUpRunner = std::sync::Arc<
+    dyn Fn(
+            crate::work_control::WorkUpRequest,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<serde_json::Value, crate::work_control::WorkUpError>,
+                    > + Send,
+            >,
+        > + Send
+        + Sync,
+>;
+
 pub(in crate::dashboard) use routes::{
     admin_routes, device_auth, device_routes, operate_routes, pairing_routes,
 };
@@ -71,6 +85,12 @@ const MAX_LIFETIME: i64 = 90 * 24 * 3600;
 /// `last_seen_at` is written back at most this often per device.
 const TOUCH_INTERVAL: i64 = 3600;
 const MAX_NAME_CHARS: usize = 64;
+/// Starts per device per hour.
+const MAX_STARTS_PER_HOUR: usize = 20;
+/// How long a settled start is kept. An unknown or reserved one is kept
+/// until its device is removed: it may have run, so its key must never run
+/// again.
+const SETTLED_START_KEPT: i64 = 7 * 24 * 3600;
 /// No vowels (no words), no 0/O/1/I.
 const USER_CODE_ALPHABET: &[u8] = b"BCDFGHJKLMNPQRSTVWXZ23456789";
 const USER_CODE_LEN: usize = 8;
@@ -189,6 +209,38 @@ struct Registry {
     devices: Vec<Device>,
 }
 
+/// One start of new work by a device (`POST /api/device/work`), reserved
+/// before anything is dispatched. `state`: `reserved` (dispatching now),
+/// `started`, `failed`, `refused` or `unknown` (it may have run: a timeout,
+/// or a restart while reserved). A reserved or unknown start is never
+/// dispatched again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::dashboard) struct Start {
+    pub device: String,
+    pub key: String,
+    pub fingerprint: Vec<u8>,
+    pub work: String,
+    pub state: String,
+    pub detail: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// What reserving a start gave.
+#[derive(Debug)]
+pub(in crate::dashboard) enum Reservation {
+    /// Reserved now: dispatch it.
+    New(Start),
+    /// This key already has a start for the same request: its state.
+    Replay(Start),
+    /// This key already has a start for another request.
+    Conflict,
+    /// This device has a start in flight.
+    Busy,
+    /// This device started [`MAX_STARTS_PER_HOUR`] in the last hour.
+    RateLimited,
+}
+
 /// What `POST /auth/devices/token` answers.
 #[derive(Debug)]
 pub(in crate::dashboard) enum Poll {
@@ -215,6 +267,11 @@ pub(in crate::dashboard) struct Devices {
     /// start); always `None` for an in-memory registry.
     storage: Mutex<Option<Arc<storage::Storage>>>,
     path: Option<PathBuf>,
+    /// Devices with a capture in flight: one each.
+    captures: Mutex<std::collections::HashSet<String>>,
+    /// Starts of new work, mirrored from the store (or only here, for an
+    /// in-memory registry). Changed only under `transitions`.
+    starts: Mutex<Vec<Start>>,
 }
 
 fn sha256(value: &str) -> [u8; 32] {
@@ -301,6 +358,8 @@ impl Devices {
             registry: Mutex::new(Registry::default()),
             storage: Mutex::new(None),
             path: None,
+            captures: Mutex::default(),
+            starts: Mutex::default(),
         })
     }
 
@@ -314,14 +373,18 @@ impl Devices {
             registry: Mutex::new(Registry::default()),
             storage: Mutex::new(None),
             path: path.clone(),
+            captures: Mutex::default(),
+            starts: Mutex::default(),
         });
         if let Some(path) = path.filter(|path| path.exists()) {
             let (storage, stored) =
                 tokio::task::spawn_blocking(move || storage::Storage::open(&path))
                     .await
                     .map_err(std::io::Error::other)??;
+            let starts = storage.starts()?;
             *devices.storage_slot() = Some(Arc::new(storage));
             devices.registry().devices = stored;
+            *devices.start_list() = starts;
         }
         Ok(devices)
     }
@@ -589,6 +652,7 @@ impl Devices {
             storage.remove(id)?;
         }
         self.registry().devices.retain(|device| device.id != id);
+        self.start_list().retain(|start| start.device != id);
         Ok(true)
     }
 
@@ -641,7 +705,126 @@ impl Devices {
             storage.clear()?;
         }
         self.registry().devices.clear();
+        self.start_list().clear();
         Ok(count)
+    }
+
+    fn start_list(&self) -> std::sync::MutexGuard<'_, Vec<Start>> {
+        self.starts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Reserve a start of new work before anything is dispatched, durably
+    /// (the store's `synchronous=FULL`). The same key and fingerprint replay
+    /// the first start's state; nothing is ever dispatched twice for a key.
+    pub(in crate::dashboard) fn reserve_start(
+        &self,
+        device: &str,
+        key: &str,
+        fingerprint: &[u8],
+        work: &str,
+    ) -> std::io::Result<Reservation> {
+        let _transition = self.transition();
+        let at = now_unix();
+        if !self.registry().devices.iter().any(|d| d.id == device) {
+            return Ok(Reservation::Conflict);
+        }
+        {
+            let mut starts = self.start_list();
+            starts.retain(|start| match start.state.as_str() {
+                "reserved" | "unknown" => true,
+                _ => at - start.created_at < SETTLED_START_KEPT,
+            });
+            if let Some(start) = starts.iter().find(|s| s.device == device && s.key == key) {
+                return Ok(if start.fingerprint == fingerprint {
+                    Reservation::Replay(start.clone())
+                } else {
+                    Reservation::Conflict
+                });
+            }
+            let mine = starts.iter().filter(|s| s.device == device);
+            if mine.clone().any(|s| s.state == "reserved") {
+                return Ok(Reservation::Busy);
+            }
+            if mine.filter(|s| at - s.created_at < 3600).count() >= MAX_STARTS_PER_HOUR {
+                return Ok(Reservation::RateLimited);
+            }
+        }
+        let start = Start {
+            device: device.to_owned(),
+            key: key.to_owned(),
+            fingerprint: fingerprint.to_vec(),
+            work: work.to_owned(),
+            state: "reserved".into(),
+            detail: None,
+            created_at: at,
+            updated_at: at,
+        };
+        if let Some(storage) = self.storage()? {
+            let _ = storage.prune_starts(at - SETTLED_START_KEPT);
+            storage.reserve(&start)?;
+        }
+        self.start_list().push(start.clone());
+        Ok(Reservation::New(start))
+    }
+
+    /// The start this device made with this key, if any.
+    pub(in crate::dashboard) fn find_start(&self, device: &str, key: &str) -> Option<Start> {
+        self.start_list()
+            .iter()
+            .find(|start| start.device == device && start.key == key)
+            .cloned()
+    }
+
+    /// Record how a reserved start ended. A store that cannot be written
+    /// leaves it reserved in the store, which a restart turns into
+    /// unknown: never into a second dispatch.
+    pub(in crate::dashboard) fn finish_start(
+        &self,
+        device: &str,
+        key: &str,
+        state: &str,
+        detail: Option<&str>,
+    ) {
+        let _transition = self.transition();
+        let at = now_unix();
+        if let Ok(Some(storage)) = self.storage() {
+            if let Err(error) = storage.finish_start(device, key, state, detail, at) {
+                tracing::warn!(%error, %device, "could not record how a device start ended");
+            }
+        }
+        if let Some(start) = self
+            .start_list()
+            .iter_mut()
+            .find(|s| s.device == device && s.key == key)
+        {
+            state.clone_into(&mut start.state);
+            start.detail = detail.map(str::to_owned);
+            start.updated_at = at;
+        }
+    }
+
+    /// Take this device's capture slot; `false` while one is in flight.
+    pub(in crate::dashboard) fn begin_capture(&self, id: &str) -> bool {
+        self.captures
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(id.to_owned())
+    }
+
+    pub(in crate::dashboard) fn end_capture(&self, id: &str) {
+        self.captures
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(id);
+    }
+
+    #[cfg(test)]
+    pub(in crate::dashboard) fn age_starts(&self, seconds: i64) {
+        for start in self.start_list().iter_mut() {
+            start.created_at -= seconds;
+        }
     }
 
     #[cfg(test)]

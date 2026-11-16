@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <title>Home · tend</title>
-<link rel="icon" href="/static/icon.svg">
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="apple-touch-icon" href="/static/pwa/apple-touch-icon.png">
+<link rel="manifest" href="/static/manifest.webmanifest">
 <link rel="stylesheet" href="/static/tokens.css">
 <link rel="stylesheet" href="/static/home.css">
 </head>
@@ -35,6 +37,7 @@
           <button type="button" role="radio" data-layout="emphasis" aria-checked="true" data-t-label="layoutEmphasis" aria-label="Status emphasis"><span class="icon i-emphasis" aria-hidden="true"></span></button>
           <button type="button" role="radio" data-layout="compact" aria-checked="false" data-t-label="layoutCompact" aria-label="Compact list"><span class="icon i-list" aria-hidden="true"></span></button>
         </div>
+        <button type="button" class="btn" id="review-button" hidden><span class="icon i-checklist" aria-hidden="true"></span><span class="lbl-wide" data-t="review">Review</span><span class="badge" id="review-count" hidden></span></button>
         <details class="menu" id="filter-menu">
           <summary class="btn ghost" id="filter-button"><span class="icon i-filter" aria-hidden="true"></span><span id="filter-label" data-t="filter">Filter</span><span class="icon i-chevron" aria-hidden="true"></span></summary>
           <div class="popover" role="group">
@@ -54,6 +57,7 @@
       </div>
     </header>
     <div class="segments" id="segments" role="tablist">
+      <button type="button" role="tab" data-lane="backlog" aria-selected="false" id="seg-backlog-tab" hidden><span data-t="backlog">Backlog</span><span class="seg-count" id="seg-backlog"></span></button>
       <button type="button" role="tab" data-lane="needsYou" aria-selected="true"><span data-t="yourTurn">Your turn</span><span class="seg-count" id="seg-needsYou"></span></button>
       <button type="button" role="tab" data-lane="running" aria-selected="false"><span data-t="inProgress">In progress</span><span class="seg-count" id="seg-running"></span></button>
       <button type="button" role="tab" data-lane="finished" aria-selected="false"><span data-t="finished">Finished</span><span class="seg-count" id="seg-finished"></span></button>
@@ -87,6 +91,19 @@
     <p class="error" id="start-error" role="alert"></p>
     <div class="row end"><button type="button" class="btn ghost" id="start-cancel" data-t="cancel">Cancel</button><button type="submit" class="btn primary" id="start-submit" data-t="start">Start</button></div>
   </form>
+</dialog>
+<dialog id="review-dialog" class="review-dialog">
+  <header class="review-head">
+    <h2><span data-t="reviewTitle">Review</span> <span class="count" id="review-total"></span></h2>
+    <div class="seg" id="review-scope" role="radiogroup">
+      <button type="button" role="radio" data-scope="today" data-t="scopeToday">Today</button>
+      <button type="button" role="radio" data-scope="day" data-t="scopeDay">24 hours</button>
+      <button type="button" role="radio" data-scope="week" data-t="scopeWeek">This week</button>
+      <button type="button" role="radio" data-scope="all" data-t="scopeAll">All</button>
+    </div>
+    <button type="button" class="btn" id="review-done" data-t="done">Done</button>
+  </header>
+  <div class="review-list" id="review-list"></div>
 </dialog>
 <script type="module" src="/static/home.mjs"></script>
 </body>

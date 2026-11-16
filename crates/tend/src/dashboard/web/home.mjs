@@ -5,7 +5,7 @@
 // Windows app, in which case the page never sees it) or the OIDC operator
 // session cookie. Everything an agent wrote is set with textContent only.
 
-import { buildBoard, hostHue, LANES, TEND_PROJECT } from "./home-board.mjs";
+import { buildBoard, fromServerBoard, hostHue, LANES, productOf, replyTarget, reviewQueue, sameTarget, TEND_PROJECT } from "./home-board.mjs";
 import { languageOf, relativeTime, stringsFor, textOf } from "./home-strings.mjs";
 import { linkedItemOf } from "./needs-model.mjs";
 
@@ -23,7 +23,7 @@ const tx = (value) => textOf(S, value);
 const READ_TIMEOUT_MS = 8000;
 
 const state = {
-  data: { decisions: null, history: null, fleet: null, access: null },
+  data: { decisions: null, history: null, fleet: null, access: null, server: null },
   errors: { decisions: null, fleet: null, history: null },
   connection: "connecting",
   generation: 0,
@@ -33,9 +33,15 @@ const state = {
   layout: "emphasis",
   filter: { host: "", project: "" },
   showOlder: false,
+  /// Per lane, which of the Mac's folds are open (helpers, empty,
+  /// reviewed); `showOlder` is the older fold.
+  folds: { needsYou: {}, running: {}, finished: {}, reviewed: false },
+  reviewScope: "day",
   /// The one open composer, as on the Mac: {key, mode, option}.
   composer: null,
   drafts: new Map(),
+  /// Inspector replies by unit: { text, target } (see replyTarget).
+  replyDrafts: new Map(),
   busy: new Set(),
   results: new Map(),
   revealed: null,
@@ -461,9 +467,9 @@ function stageBar(unit) {
 
 function headlineText(unit) {
   if (typeof unit.headline === "string") return unit.headline;
-  if (unit.headline?.text) return unit.headline.text;
   if (unit.headline?.key === "state") return S.stateLabels[unit.headline.state] || unit.headline.state || "";
-  if (unit.headline?.key) return S[unit.headline.key] || "";
+  if (unit.headline?.key) return tx(unit.headline);
+  if (unit.headline?.text) return unit.headline.text;
   return "";
 }
 
@@ -473,7 +479,10 @@ function workCard(unit) {
   card.dataset.id = unit.id;
   card.setAttribute("aria-expanded", String(state.selected === unit.id));
   card.addEventListener("click", () => select(state.selected === unit.id ? null : unit.id));
-  card.append(el("div", "e-title", tx(unit.title)));
+  const titleRow = el("div", "title-row");
+  if (unit.orphanHelper) titleRow.append(el("span", "pill", S.helperPill));
+  titleRow.append(el("div", "e-title", tx(unit.title)));
+  card.append(titleRow);
   const single = unit.stages.length === 1;
   if (!(unit.lane === "finished" && single)) {
     card.append(stageBar(unit));
@@ -485,10 +494,15 @@ function workCard(unit) {
   const inset = el("div", "inset");
   const text = headlineText(unit);
   if (text) inset.append(el("div", "headline", text));
+  if (unit.handledLimit) {
+    const flag = el("div", "flag");
+    flag.append(icon("hourglass"), el("span", null, S.limitHandled));
+    inset.append(flag);
+  }
   if (inset.children.length) card.append(inset);
-  const mark = logo(unit.product);
+  const marks = (unit.products?.length ? unit.products : [unit.product]).slice(0, 3).map(logo).filter(Boolean);
   card.append(metaLine(unit.lane, [
-    mark,
+    ...marks,
     hostBadge(unit.host, !unit.remote),
     unit.project && unit.project !== TEND_PROJECT ? el("span", "repo", `· ${unit.project}`) : null,
     el("span", "when", when(unit.since)),
@@ -584,38 +598,204 @@ function renderLane(lane, data) {
     for (const unit of group.units) body.append(unitCard(unit));
   }
   if (!data.count && !error) body.append(el("div", "lane-empty", S[empty]));
-  if (data.older.length) {
-    body.append(button(state.showOlder ? S.hideOlder : S.olderCount(data.older.length), () => {
-      state.showOlder = !state.showOlder;
+  const fold = (list, open, show, hide, toggle) => {
+    if (!list?.length) return;
+    body.append(button(open ? hide : show(list.length), () => {
+      toggle();
       render();
     }, "btn ghost small fold"));
-    if (state.showOlder) for (const unit of data.older) body.append(unitCard(unit));
+    if (open) for (const unit of list) body.append(unitCard(unit));
+  };
+  // Each lane opens its own folds (FleetLaneColumn's own toggles).
+  const open = state.folds[lane];
+  fold(data.folds?.helpers, open.helpers, S.foldHelpers, S.hideHelpers, () => (open.helpers = !open.helpers));
+  fold(data.folds?.empty, open.empty, S.foldEmpty, S.hideEmpty, () => (open.empty = !open.empty));
+  fold(data.older, open.older, S.olderCount, S.hideOlder, () => (open.older = !open.older));
+  if (lane === "finished" && data.folds?.reviewed?.length) {
+    body.append(button(S.showReviewed(data.folds.reviewed.length), () => {
+      state.folds.reviewed = true;
+      render();
+    }, "btn ghost small fold"));
+  } else if (lane === "finished" && state.folds.reviewed && state.board?.server) {
+    body.append(button(S.hideReviewed, () => {
+      state.folds.reviewed = false;
+      render();
+    }, "btn ghost small fold"));
   }
   section.append(head, body);
   return section;
 }
 
+// ---- Backlog (FleetBacklog.swift) -----------------------------------------
+
+function renderBacklog(records) {
+  const section = el("section", `lane backlog ${state.layout}`);
+  section.setAttribute("aria-label", S.backlog);
+  const head = el("header", "lane-head");
+  head.append(el("h2", null, S.backlog), el("span", "count", String(records.length)), el("span", "sub", S.backlogSub));
+  const body = el("div", "lane-body");
+  for (const record of records) {
+    const card = el("article", "card backlog-card");
+    const key = `backlog:${record.workspace}/${record.work}`;
+    const top = el("div", "title-row");
+    top.append(el("div", "e-title", record.title || record.work));
+    if (record.priority != null) top.append(el("span", "pill", `P${record.priority}`));
+    card.append(top);
+    if (record.line) card.append(el("div", "headline", record.line));
+    card.append(el("div", "meta", [record.workspace, record.pipeline, record.external].filter(Boolean).join(" · ")));
+    if (canWrite() && state.data.access?.capabilities?.work_start) {
+      const row = el("div", "row");
+      const start = button(S.start, async () => {
+        state.busy.add(key);
+        render();
+        try {
+          const body = { work: record.work };
+          if (record.workspace) body.workspace = record.workspace;
+          if (record.external) body.external = record.external;
+          await write("/api/work-control/up", body);
+          state.results.delete(key);
+          setTimeout(refresh, 600);
+        } catch (error) {
+          state.results.set(key, { ok: false, text: error.message });
+        } finally {
+          state.busy.delete(key);
+          render();
+        }
+      }, "btn small", "play");
+      start.disabled = state.busy.has(key);
+      row.append(start);
+      card.append(row);
+    }
+    const line = resultLine(key);
+    if (line) card.append(line);
+    body.append(card);
+  }
+  section.append(head, body);
+  return section;
+}
+
+// ---- Review (FleetReviewView.swift, the list) ---------------------------
+
+const SCOPES = [["today", "scopeToday"], ["day", "scopeDay"], ["week", "scopeWeek"], ["all", "scopeAll"]];
+
+/// Review counts every finished result, whatever Home's host and project
+/// filters show (FleetHomeView passes the unfiltered units).
+function reviewBoard() {
+  if (!state.data.server) return null;
+  return fromServerBoard(state.data.server, { history: null, filter: {}, now: Date.now(), showReviewed: false });
+}
+
+function renderReviewButton(board) {
+  const buttonNode = $("review-button");
+  if (!buttonNode) return;
+  const all = reviewBoard();
+  const queue = all ? reviewQueue(all, state.reviewScope) : [];
+  buttonNode.hidden = !board.server;
+  const badge = $("review-count");
+  badge.hidden = !queue.length;
+  badge.textContent = queue.length > 99 ? "99+" : String(queue.length);
+  if ($("review-dialog")?.open) renderReviewSheet();
+}
+
+function renderReviewSheet() {
+  const list = $("review-list");
+  const all = reviewBoard();
+  const queue = all ? reviewQueue(all, state.reviewScope) : [];
+  $("review-total").textContent = String(queue.length);
+  for (const option of document.querySelectorAll("#review-scope button")) {
+    option.setAttribute("aria-checked", String(option.dataset.scope === state.reviewScope));
+  }
+  if (!queue.length) {
+    const empty = el("div", "review-empty");
+    empty.append(icon("test-pass", "big"), el("p", null, S.reviewEmpty));
+    list.replaceChildren(empty);
+    return;
+  }
+  list.replaceChildren(...queue.map((unit) => {
+    const key = `reviewed:${unit.id}`;
+    const row = el("article", "card review-row emphasis finished");
+    row.append(el("div", "e-title", tx(unit.title)));
+    const text = headlineText(unit);
+    if (text) {
+      const inset = el("div", "inset");
+      inset.append(el("div", "headline", text));
+      row.append(inset);
+    }
+    const actions = el("div", "row");
+    const marks = (unit.products?.length ? unit.products : [unit.product]).slice(0, 3).map(logo).filter(Boolean);
+    actions.append(metaLine("finished", [...marks, hostBadge(unit.host, !unit.remote), unit.project ? el("span", "repo", `· ${unit.project}`) : null, el("span", "when", when(unit.since))]));
+    if (canWrite()) {
+      const good = button(S.looksGood, () => markReviewed(unit, key), "btn small primary", "check");
+      good.disabled = state.busy.has(key);
+      actions.append(good);
+    }
+    row.append(actions);
+    const line = resultLine(key);
+    if (line) row.append(line);
+    return row;
+  }));
+}
+
+function wireReview() {
+  const dialog = $("review-dialog");
+  $("review-button")?.addEventListener("click", () => {
+    renderReviewSheet();
+    dialog.showModal?.();
+  });
+  $("review-done")?.addEventListener("click", () => dialog.close?.());
+  for (const option of document.querySelectorAll("#review-scope button")) {
+    option.addEventListener("click", () => {
+      state.reviewScope = option.dataset.scope;
+      try {
+        localStorage.setItem("tend.home.reviewScope", state.reviewScope);
+      } catch {
+        // A preference only.
+      }
+      render();
+      renderReviewSheet();
+    });
+  }
+}
+
 // ---- Inspector ---------------------------------------------------------
 
 function findUnit(id) {
-  if (!id || !state.board) return null;
+  return findIn(state.board, id);
+}
+
+function findIn(board, id) {
+  if (!id || !board) return null;
   for (const lane of LANES) {
-    const data = state.board.lanes[lane];
+    const data = board.lanes[lane];
     for (const group of data.groups) for (const unit of group.units) if (unit.id === id) return unit;
     for (const unit of data.older) if (unit.id === id) return unit;
+    for (const list of Object.values(data.folds || {})) for (const unit of list) if (unit.id === id) return unit;
   }
   return null;
 }
 
-async function sendToPane(unit, text, key) {
+/// Send a draft to the agent it was written for, and only to that one:
+/// checked against the latest board just before sending (the Mac checks
+/// `target.matches(current.agent)` the same way), so a replacement session
+/// in the same pane, or the same agent's next question, never receives it.
+async function sendToPane(target, text, key, unitId) {
+  const latest = findIn(currentBoard(), unitId);
+  if (!sameTarget(target, latest ? replyTarget(latest) : null)) {
+    state.results.set(key, { ok: false, text: S.staleDraft(target.owner || "") });
+    render();
+    return;
+  }
   state.busy.add(key);
   state.results.delete(key);
   render();
   try {
     const body = { text, submit: true };
-    if (unit.socket) body.socket = unit.socket;
-    await write(`/api/panes/${encodeURIComponent(unit.pane)}/prompt`, body);
-    state.drafts.delete(key);
+    if (target.socket) body.socket = target.socket;
+    await write(`/api/panes/${encodeURIComponent(target.pane)}/prompt`, body);
+    // Clear only what was sent: the draft is frozen while sending, but a
+    // retarget or a newer text must survive a late answer.
+    const now = state.replyDrafts.get(key);
+    if (now && now.text === text && sameTarget(now.target, target)) state.replyDrafts.delete(key);
     state.results.set(key, { ok: true, text: S.sent });
     setTimeout(refresh, 600);
   } catch (error) {
@@ -651,21 +831,44 @@ function renderInspector() {
   now.append(el("div", "label", unit.lane === "needsYou" ? S.needsDecision : unit.lane === "running" ? S.now : S.lastResult));
   const text = headlineText(unit);
   if (text) now.append(el("div", "text", text));
-  const key = `reply:${cardKey(unit)}`;
-  const replyable = Boolean(unit.pane) && !unit.remote && canWrite() && unit.lane !== "running";
+  const key = `reply:${unit.id}`;
+  const target = canWrite() ? replyTarget(unit) : null;
+  const replyable = Boolean(target);
   const paneLinks = Boolean(state.data.access);
-  if (replyable) {
+  // A draft keeps the agent and the question it was written for
+  // (FleetReplyDraft): text for one question never goes to another agent,
+  // a replacement session or the same agent's next question unasked.
+  const draft = state.replyDrafts.get(key);
+  if (draft?.text && !sameTarget(draft.target, target)) {
+    const stale = el("div", "stale");
+    stale.append(icon("exclaim"), el("span", null, S.staleDraft(draft.target?.owner || "")));
+    const row = el("div", "row");
+    if (target) {
+      row.append(button(S.useFor(target.owner), () => {
+        state.replyDrafts.set(key, { text: draft.text, target });
+        render();
+      }, "btn small"));
+    }
+    row.append(button(S.discard, () => {
+      state.replyDrafts.delete(key);
+      render();
+    }, "btn ghost small danger"));
+    stale.append(row);
+    now.append(stale);
+  } else if (replyable) {
     const area = el("textarea", "field");
     area.rows = 2;
     area.dataset.key = key;
     area.maxLength = 16384;
-    area.placeholder = unit.lane === "needsYou" ? S.yourAnswer : S.nextInstruction;
-    area.value = state.drafts.get(key) || "";
-    const send = button(unit.lane === "needsYou" ? S.answerVerb : S.sendBack, () => sendToPane(unit, area.value, key), "btn primary");
+    area.placeholder = target.kind === "answer" ? S.yourAnswer : S.nextInstruction;
+    area.value = draft?.text || "";
+    const send = button(target.kind === "answer" ? S.answerVerb : S.sendBack, () => sendToPane(target, area.value, key, unit.id), "btn primary");
+    // A draft being sent is frozen (FleetReplyDraft.pending).
+    area.disabled = state.busy.has(key);
     const sync = () => (send.disabled = !area.value.trim() || state.busy.has(key));
     area.addEventListener("input", () => {
-      if (area.value) state.drafts.set(key, area.value);
-      else state.drafts.delete(key);
+      if (area.value) state.replyDrafts.set(key, { text: area.value, target });
+      else state.replyDrafts.delete(key);
       sync();
     });
     area.addEventListener("keydown", (event) => {
@@ -690,6 +893,16 @@ function renderInspector() {
     row.append(open);
     now.append(row);
   }
+  // Looks Good: the review mark the Mac records, for a finished unit the
+  // daemon's board knows.
+  if (state.board?.server && unit.lane === "finished" && !unit.reviewed && canWrite()) {
+    const row = el("div", "row end");
+    const key = `reviewed:${unit.id}`;
+    row.append(button(S.looksGood, () => markReviewed(unit, key), "btn ghost", "check"));
+    const line = resultLine(key);
+    now.append(row);
+    if (line) now.append(line);
+  }
   body.append(now);
 
   const stages = el("section");
@@ -701,9 +914,9 @@ function renderInspector() {
     const mid = el("div");
     mid.append(el("div", "name", stage.name));
     const owner = el("div", "owner");
-    const mark = logo(unit.product);
+    const mark = logo(productOf(stage.kind) || unit.product);
     if (mark) owner.append(mark);
-    owner.append(el("span", null, `${stage.name} · ${unit.host}`));
+    owner.append(el("span", null, stage.owner || `${stage.name} · ${unit.host}`));
     mid.append(owner);
     row.append(mid, el("span", "st", stage.state === "needsYou" ? S.stageYourTurn : stage.state === "running" ? S.working : stage.state === "done" ? S.done : S.waiting));
     timeline.append(row);
@@ -711,17 +924,19 @@ function renderInspector() {
   stages.append(timeline);
   body.append(stages);
 
-  if (unit.agents?.length) {
+  for (const [label, list, help] of [[S.agents, unit.agents, null], [S.helpers, unit.helpers, S.helpersHelp]]) {
+    if (!list?.length) continue;
     const agents = el("section");
-    agents.append(el("div", "section-label", S.agents));
-    for (const agent of unit.agents) {
+    agents.append(el("div", "section-label", label));
+    if (help) agents.append(el("p", "help", help));
+    for (const agent of list) {
       const row = el("div", "agent-row");
       const tone = agent.state === "working" || agent.state === "starting" ? "connecting" : agent.state === "error" ? "bad" : agent.state?.startsWith("waiting") ? "warn" : "off";
       row.append(el("span", `dot ${tone}`));
       const mark = logo(agent.product);
       if (mark) row.append(mark);
-      row.append(el("span", "owner", agent.name || agent.kind || "agent"), el("span", "st", S.stateLabels[agent.state] || agent.state || ""));
-      if (agent.pane && !unit.remote && paneLinks) {
+      row.append(el("span", "owner", agent.owner || agent.name || agent.kind || "agent"), el("span", "st", agent.status ? tx(agent.status) : S.stateLabels[agent.state] || agent.state || ""));
+      if (agent.pane && !agent.remote && paneLinks) {
         const open = el("a", "btn small", S.open);
         open.href = paneLink(agent);
         row.append(open);
@@ -769,6 +984,35 @@ function renderDecidedDetail(box, unit) {
   if (unit.by) now.append(el("div", "sub", S.by(unit.by)));
   body.append(now);
   box.replaceChildren(head, body);
+}
+
+async function markReviewed(unit, key) {
+  state.busy.add(key);
+  render();
+  try {
+    // The key of the result on screen: tendd refuses (409) a unit that
+    // changed since, so a mark never accepts a newer result unseen.
+    await write("/api/home/reviewed", { id: unit.id, review_key: unit.reviewKey });
+    state.results.delete(key);
+    if (state.selected === unit.id) state.selected = null;
+    // Hidden at once; the next read confirms the mark.
+    if (state.data.server) markLocally(unit.id, unit.reviewKey);
+    setTimeout(refresh, 400);
+  } catch (error) {
+    if (error.auth && error.status === 401) return lostAccess(error);
+    state.results.set(key, { ok: false, text: error.message });
+    if (error.status === 409) setTimeout(refresh, 0);
+  } finally {
+    state.busy.delete(key);
+    render();
+  }
+}
+
+/// Mark a unit reviewed in the board on hand, until the next read.
+function markLocally(id, key) {
+  for (const group of state.data.server?.lanes?.finished?.groups || []) {
+    for (const item of group.items || []) if (item.id === id && item.review_key === key) item.reviewed = true;
+  }
 }
 
 function setLayout(layout) {
@@ -846,7 +1090,12 @@ function renderStatus(board) {
   badge.textContent = waiting > 99 ? "99+" : String(waiting);
   for (const lane of LANES) $(`seg-${lane}`).textContent = counts ? String(counts[lane].count) : "";
   // The four-room mark, rule A: a room lights when anything is in it.
-  const agents = (state.data.fleet?.hosts || []).flatMap((h) => h.remote?.agents || []);
+  // The agents on the board (the daemon's or the Fleet snapshot's).
+  const boardAgents = board
+    ? LANES.flatMap((lane) => [...board.lanes[lane].groups.flatMap((g) => g.units), ...Object.values(board.lanes[lane].folds || {}).flat()])
+        .flatMap((unit) => [...(unit.agents || []), ...(unit.helpers || [])])
+    : [];
+  const agents = [...(state.data.fleet?.hosts || []).flatMap((h) => h.remote?.agents || []), ...boardAgents];
   const lit = {
     waiting: waiting > 0,
     error: agents.some((a) => a.state === "error"),
@@ -872,7 +1121,7 @@ export function composing() {
 
 function render() {
   if (state.lost) return;
-  const board = buildBoard({ ...state.data, now: Date.now(), filter: state.filter });
+  const board = currentBoard();
   state.board = board;
   renderHeader(board);
   renderStatus(board);
@@ -880,10 +1129,18 @@ function render() {
   // "No work yet" only when every read answered and nothing is noted: an
   // empty board beside a failed Fleet read is not an empty fleet.
   const quiet = !Object.values(state.errors).some(Boolean) && LANES.every((lane) => !board.lanes[lane].notes.length);
-  const nothing = board.empty && quiet && Boolean(state.data.decisions);
+  const nothing = board.empty && quiet && Boolean(state.data.decisions || state.data.server) && !board.reviewedCount;
   $("empty-board").hidden = !nothing;
   lanes.hidden = nothing;
-  lanes.replaceChildren(...LANES.map((lane) => renderLane(lane, board.lanes[lane])));
+  const columns = LANES.map((lane) => renderLane(lane, board.lanes[lane]));
+  if (board.backlog?.length) columns.unshift(renderBacklog(board.backlog));
+  lanes.replaceChildren(...columns);
+  lanes.classList.toggle("with-backlog", Boolean(board.backlog?.length));
+  // The phone reaches the backlog through its own segment.
+  $("seg-backlog-tab").hidden = !board.backlog?.length;
+  $("seg-backlog").textContent = board.backlog?.length ? String(board.backlog.length) : "";
+  if (state.lane === "backlog" && !board.backlog?.length) state.lane = "needsYou";
+  renderReviewButton(board);
   $("board").dataset.lane = state.lane;
   for (const option of document.querySelectorAll("#layout-toggle button")) {
     option.setAttribute("aria-checked", String(option.dataset.layout === state.layout));
@@ -931,7 +1188,12 @@ function lostAccess(error) {
   state.generation += 1;
   state.lost = true;
   state.drafts.clear();
+  state.replyDrafts.clear();
   state.results.clear();
+  $("review-dialog").close?.();
+  $("review-list").replaceChildren();
+  $("review-total").textContent = "";
+  $("review-button").hidden = true;
   state.composer = null;
   state.selected = null;
   state.filter = { host: "", project: "" };
@@ -985,36 +1247,52 @@ export function refresh() {
 async function poll() {
   const generation = ++state.generation;
   const current = () => generation === state.generation;
-  const [decisions, fleet, history, access] = await Promise.allSettled([
-    read("/api/decisions"),
-    read("/api/fleet"),
+  // The daemon's board (GET /api/home) when it has one; otherwise, or
+  // where a proxy does not forward it (the Windows app) or a credential
+  // may only decide (a paired device), the queue and the Fleet snapshot,
+  // laid out here.
+  const [home, history, access] = await Promise.allSettled([
+    read("/api/home"),
     read("/api/decisions/history"),
     read("/api/access"),
   ]);
   if (!current()) return;
+  let decisions;
+  let fleet;
+  if (home.status === "fulfilled") {
+    decisions = { status: "fulfilled", value: null };
+    fleet = { status: "fulfilled", value: null };
+  } else {
+    [decisions, fleet] = await Promise.allSettled([read("/api/decisions"), read("/api/fleet")]);
+    if (!current()) return;
+  }
   // The queue is what Home is for: losing it (401/403) is losing access.
   // The other reads may be refused to a credential that may only decide (a
   // paired device gets 401 there, the Windows app's proxy 403) while the
   // queue still reads: that leaves those parts empty, not the page. A
   // session that ended fails the queue read too.
-  if (decisions.status === "rejected" && decisions.reason.auth) return lostAccess(decisions.reason);
+  if (home.status === "rejected" && decisions.status === "rejected" && decisions.reason.auth) return lostAccess(decisions.reason);
   state.lost = false;
   $("login").hidden = true;
-  const reached = [decisions, fleet, history].some((r) => r.status === "fulfilled" || r.reason?.status > 0);
+  const reached = [home, decisions, fleet, history].some((r) => r.status === "fulfilled" || r.reason?.status > 0);
   state.connection = reached ? "connected" : "failed";
   let narrowed = false;
   const take = (name, result) => {
     if (result.status === "fulfilled") {
       state.data[name] = result.value;
       state.errors[name] = null;
-    } else if (result.reason.auth) {
-      narrowed ||= state.data[name] != null;
+    } else if (result.reason.auth || result.reason.status === 404) {
+      narrowed ||= state.data[name] != null && result.reason.auth;
       state.data[name] = null;
       state.errors[name] = null;
     } else {
       state.errors[name] = result.reason.message;
     }
   };
+  take("server", home);
+  // Whenever the board read failed, what the page shows comes from the
+  // reads it fell back to, never a board left over from before.
+  if (home.status === "rejected") state.data.server = null;
   take("decisions", decisions);
   take("fleet", fleet);
   take("history", history);
@@ -1025,7 +1303,7 @@ async function poll() {
   // While someone types, the board waits, unless what this credential may
   // see or do just narrowed: then what it no longer may goes at once.
   if (composing() && !narrowed) {
-    renderStatus(buildBoard({ ...state.data, now: Date.now(), filter: state.filter }));
+    renderStatus(currentBoard());
     return;
   }
   if (narrowed && !canWrite()) {
@@ -1033,6 +1311,15 @@ async function poll() {
     $("start-dialog").close?.();
   }
   render();
+}
+
+/// The board to draw: the daemon's when it served one, else built here.
+function currentBoard() {
+  const now = Date.now();
+  if (state.data.server) {
+    return fromServerBoard(state.data.server, { history: state.data.history, filter: state.filter, now, showReviewed: state.folds.reviewed });
+  }
+  return buildBoard({ ...state.data, now, filter: state.filter });
 }
 
 // ---- Start Work ----------------------------------------------------------
@@ -1083,6 +1370,13 @@ export function start() {
   bootstrapToken();
   translate();
   wireStartWork();
+  wireReview();
+  try {
+    const scope = localStorage.getItem("tend.home.reviewScope");
+    if (SCOPES.some(([value]) => value === scope)) state.reviewScope = scope;
+  } catch {
+    // ignore
+  }
   $("filter-host").addEventListener("change", (event) => {
     state.filter.host = event.target.value;
     render();

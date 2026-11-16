@@ -11,6 +11,26 @@ struct Pairing: Codable, Hashable, Sendable {
     let origin: ServerOrigin
     let device: PairedDevice
     let token: String
+    /// What the dashboard issued; a pairing kept by build 1 has none and
+    /// may only decide.
+    var scope: DeviceScope
+
+    init(origin: ServerOrigin, device: PairedDevice, token: String, scope: DeviceScope = .decide) {
+        self.origin = origin
+        self.device = device
+        self.token = token
+        self.scope = scope
+    }
+
+    enum CodingKeys: String, CodingKey { case origin, device, token, scope }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        origin = try values.decode(ServerOrigin.self, forKey: .origin)
+        device = try values.decode(PairedDevice.self, forKey: .device)
+        token = try values.decode(String.self, forKey: .token)
+        scope = (try? values.decodeIfPresent(DeviceScope.self, forKey: .scope)) ?? .decide
+    }
 }
 
 enum CredentialStore {

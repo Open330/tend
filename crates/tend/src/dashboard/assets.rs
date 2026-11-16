@@ -155,6 +155,7 @@ fn mime_for(path: &str) -> &'static str {
         "js" | "mjs" => "application/javascript; charset=utf-8",
         "css" => "text/css; charset=utf-8",
         "json" => "application/json; charset=utf-8",
+        "webmanifest" => "application/manifest+json",
         "svg" => "image/svg+xml",
         "ico" => "image/x-icon",
         "png" => "image/png",
@@ -195,6 +196,17 @@ mod tests {
             );
         }
         assert!(WebAssets::get("landing.css").is_some());
+        // The tab icon and the installed-app icons (scripts/brand/tend_icons.py).
+        for icon in [
+            "favicon.svg",
+            "manifest.webmanifest",
+            "pwa/icon-192.png",
+            "pwa/icon-512.png",
+            "pwa/maskable-512.png",
+            "pwa/apple-touch-icon.png",
+        ] {
+            assert!(WebAssets::get(icon).is_some(), "missing {icon}");
+        }
         assert!(WebAssets::get("fonts/LICENSE-nerd-fonts-symbols.txt").is_some());
         for shot in ["board", "collaboration", "agents"] {
             for scheme in ["light", "dark"] {
@@ -283,6 +295,10 @@ mod tests {
         assert_eq!(mime_for("landing/shot.webp"), "image/webp");
         assert_eq!(mime_for("foo.jpg"), "image/jpeg");
         assert_eq!(mime_for("fonts/foo.woff2"), "font/woff2");
+        assert_eq!(
+            mime_for("manifest.webmanifest"),
+            "application/manifest+json"
+        );
         assert_eq!(mime_for("foo.unknown"), "application/octet-stream");
     }
 }

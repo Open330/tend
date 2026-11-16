@@ -4,6 +4,7 @@
 #
 #   apps/tend-ios/Scripts/scratch-tendd.sh up      # build nothing; start and seed
 #   apps/tend-ios/Scripts/scratch-tendd.sh seed    # add another question + result
+#   apps/tend-ios/Scripts/scratch-tendd.sh seed-home  # agents at work and finished
 #   apps/tend-ios/Scripts/scratch-tendd.sh down
 #
 # It never touches the tend you use: everything runs through
@@ -74,6 +75,37 @@ seed() {
   done
 }
 
+# Agents for Home's other lanes: three at work and two that finished, each
+# in its own pane and project folder, driven by the same hooks a real agent
+# fires. Nothing runs but `sleep`.
+seed_home() {
+  eval "$("$SANDBOX" env --name "$NAME")"
+  local n; n=$(date +%s)
+  agent() { # name folder state(working|idle) prompt [response]
+    local dir="$WRAP/work/$2"; mkdir -p "$dir"
+    local sid="ios-$1-$n"
+    local hook="$WRAP/tend hook claude --event"
+    local start="printf '%s' '{\"session_id\":\"$sid\",\"cwd\":\"$dir\",\"prompt\":\"$4\"}' | $hook user_prompt_submit"
+    local finish=":"
+    if [ "$3" = idle ]; then
+      finish="printf '%s' '{\"session_id\":\"$sid\",\"cwd\":\"$dir\",\"last_assistant_message\":\"$5\"}' | $hook stop"
+    fi
+    tmux new-window -d -c "$dir" -n "$1" "$start; $finish; sleep 3600"
+  }
+  agent api billing-api working "Add idempotency keys to the refund endpoint"
+  agent web web-app working "Make the settings page load without the blank flash"
+  agent docs tend working "Document the device pairing flow for operators"
+  agent cache billing-api idle "Cut the cache warm-up time in half" \
+    "Done. Warm-up now loads the hot keys first and the rest in the background: **41 s to 17 s** on the staging snapshot.\n\n- \`cache::warm\` takes a priority list\n- added a test for the ordering"
+  agent i18n web-app idle "Translate the onboarding screens to Korean" \
+    "All 14 onboarding strings are translated and reviewed against the glossary. Two need a product call: *workspace* and *run*."
+  local waited=0
+  until [ "$(curl -fsS -H "Authorization: Bearer $(token)" "http://127.0.0.1:$PORT/api/fleet" | grep -o "ios-[a-z0-9]*-$n" | sort -u | wc -l)" -ge 5 ]; do
+    waited=$((waited + 1)); [ "$waited" -lt 50 ] || die "the seeded agents never reached the snapshot"
+    sleep 0.2
+  done
+}
+
 up() {
   [ -n "${TMUX:-}" ] && ALLOW=--allow-inside-tmux || ALLOW=
   wrappers
@@ -95,7 +127,25 @@ scope = 'host'
 enabled = true
 bind = "127.0.0.1:$PORT"
 token = "$tok"
+# Lets the app's Start Work run here. The pipeline's only agent is not a
+# known agent kind, so tend registers the Run and launches nothing: the
+# whole start path runs, no agent does.
+allow_work_start = true
+
+[fleet]
+# SCRATCH_CAPTURE_POLICY=never checks that recent output is refused.
+capture_policy = "${SCRATCH_CAPTURE_POLICY:-selected}"
+
+[pipeline.solo]
+description = "one stand-in agent"
+
+[[pipeline.solo.agent]]
+alias = "impl"
+program = "$WRAP/stand-in-agent"
+role = "implementer"
 TOML
+  printf '#!/bin/sh\n# A stand-in agent: it only waits.\nexec sleep 600\n' > "$WRAP/stand-in-agent"
+  chmod +x "$WRAP/stand-in-agent"
   env -u TMUX -u TMUX_PANE "$SANDBOX" up --name "$NAME" --config "$cfg" \
     --tendd "$WRAP/tendd" --tend "$WRAP/tend" --extra-path "$WRAP" ${ALLOW:+$ALLOW}
   # Kept beside the wrappers, not in the sandbox root, whose `down` removes
@@ -125,7 +175,8 @@ down() {
 case "${1:-}" in
   up) up ;;
   seed) seed ;;
+  seed-home) seed_home ;;
   token) token ;;
   down) down ;;
-  *) die "usage: $0 up|seed|token|down" ;;
+  *) die "usage: $0 up|seed|seed-home|token|down" ;;
 esac

@@ -9,38 +9,28 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CSS_PATH, readTokens, renderCss } from "../../../scripts/design-tokens.mjs";
+import { CSS_PATH, readTokens, renderCss, renderSwift, SWIFT_PATH } from "../../../scripts/design-tokens.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../../..");
 const theme = readFileSync(join(ROOT, "apps/tend-macos/Sources/TendTheme.swift"), "utf8");
 const brand = readFileSync(join(ROOT, "apps/tend-macos/Sources/BrandMark.swift"), "utf8");
 const tokens = readTokens();
 
-test("tokens.css is generated from tokens.json", () => {
+test("tokens.css and TendDesignTokens.swift are generated from tokens.json", () => {
   assert.equal(readFileSync(CSS_PATH, "utf8"), renderCss(tokens), "run node scripts/design-tokens.mjs");
+  assert.equal(readFileSync(SWIFT_PATH, "utf8"), renderSwift(tokens), "run node scripts/design-tokens.mjs");
 });
 
-/// `static func name(_ scheme: ColorScheme) -> Color { scheme == .dark ? rgb(0xD) : rgb(0xL) }`,
-/// or the panelFill form spelled with srgbRed components.
-function swiftColor(name) {
-  const fn = new RegExp(`static func ${name}\\(_ scheme: ColorScheme\\) -> Color \\{\\s*scheme == \\.dark \\? rgb\\(0x([0-9A-Fa-f]{6})\\) : rgb\\(0x([0-9A-Fa-f]{6})\\)`);
-  const match = theme.match(fn);
-  if (match) return { dark: `#${match[1].toUpperCase()}`, light: `#${match[2].toUpperCase()}` };
-  const block = theme.match(new RegExp(`static let ${name} = [\\s\\S]*?\\}\\)`));
-  if (!block) return null;
-  const parts = [...block[0].matchAll(/srgbRed: 0x([0-9A-F]{2}) \/ 255, green: 0x([0-9A-F]{2}) \/ 255, blue: 0x([0-9A-F]{2}) \/ 255/gi)];
-  if (parts.length !== 2) return null;
-  const hex = (m) => `#${m[1]}${m[2]}${m[3]}`.toUpperCase();
-  return { dark: hex(parts[0]), light: hex(parts[1]) };
-}
+const camel = (name) => name.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
 
-test("TendTheme.swift surfaces match tokens.json", () => {
-  const named = Object.entries(tokens.color).filter(([, value]) => value.swift);
-  assert.ok(named.length >= 9);
-  for (const [token, value] of named) {
-    const swift = swiftColor(value.swift);
-    assert.ok(swift, `TendTheme.${value.swift} not found (token ${token})`);
-    assert.deepEqual(swift, { light: value.light.toUpperCase(), dark: value.dark.toUpperCase() }, `token ${token} vs TendTheme.${value.swift}`);
+test("TendTheme.swift draws its surfaces and metrics from the generated tokens", () => {
+  for (const [token, value] of Object.entries(tokens.color).filter(([, v]) => v.swift && v.swift !== "panelFill")) {
+    const body = theme.match(new RegExp(`static func ${value.swift}\\(_ scheme: ColorScheme\\) -> Color \\{\\s*([^\\n]+)`))?.[1] || "";
+    assert.match(body, new RegExp(`TendDesignTokens\\.${camel(token)}\\b`), `TendTheme.${value.swift} reads token ${token}`);
+  }
+  assert.match(theme, /static let panelFill = [\s\S]*?TendDesignTokens\.lane/);
+  for (const metric of ["rowHeight", "sectionHeaderHeight", "statusBarHeight", "activityBarWidth", "controlRadius", "panelRadius"]) {
+    assert.match(theme, new RegExp(`static let ${metric} = CGFloat\\(TendDesignTokens\\.Metric\\.${metric}\\)`), metric);
   }
 });
 
@@ -55,20 +45,5 @@ test("BrandMark.swift room colours match tokens.json", () => {
     match.slice(1, 4).map(Number).forEach((component, i) => {
       assert.ok(Math.abs(component * 255 - bytes[i]) <= 0.6, `${room}Color component ${i}: ${component} vs ${hex}`);
     });
-  }
-});
-
-test("TendTheme.swift metrics match tokens.json", () => {
-  const metric = (name) => theme.match(new RegExp(`static let ${name}: CGFloat = ([0-9.]+)`))?.[1];
-  const pairs = {
-    rowHeight: "row-height",
-    sectionHeaderHeight: "section-header-height",
-    statusBarHeight: "status-bar-height",
-    activityBarWidth: "activity-bar-width",
-    controlRadius: "control-radius",
-    panelRadius: "panel-radius",
-  };
-  for (const [swift, token] of Object.entries(pairs)) {
-    assert.equal(`${metric(swift)}px`, tokens.metric[token], `${swift} vs ${token}`);
   }
 });

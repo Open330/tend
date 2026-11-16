@@ -609,6 +609,12 @@ async fn run() -> Result<()> {
                 .map(|dir| dir.join("tend").join("dashboard-decisions.jsonl")),
             stats_config: dashboard_stats_config,
             fleet: Some(fleet_runtime.clone()),
+            home: Some(tend::home_board::HomeSources::new(
+                Some(pipeline_runs.clone()),
+                Some(automation.clone()),
+                Some(swap_jobs.clone()),
+                Some(work_store.clone()),
+            )),
         };
         tokio::spawn(async move {
             if let Err(e) = tend::dashboard::serve(

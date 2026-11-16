@@ -239,6 +239,7 @@ final class FleetDecisionFeed: ObservableObject {
         let merged = FleetDecisions.merge(queue: queue, reviews: reviews, messages: model.operatorMessages, localHost: local)
         let value = FleetDecisions.attachAskers(merged, index: model.hostedAgentIndex)
         cachedDecisions = (key, value)
+        drafts.prune(keeping: Set(value.map(\.id)))
         return value
     }
 
@@ -351,6 +352,18 @@ final class FleetDecisionDrafts {
     func binding(for id: String) -> Binding<String?> {
         let row = row(for: id)
         return Binding(get: { row.value }, set: { row.update($0) })
+    }
+
+    /// The decisions with a row, for tests.
+    var ids: Set<String> { Set(rows.keys) }
+
+    /// Forgets the rows of decisions that are gone, so answered and
+    /// withdrawn decisions do not pile up for the app's lifetime. The open
+    /// answer stays even if its decision is missing from one merge: a
+    /// queue that briefly fails to list it must not lose what is typed.
+    func prune(keeping ids: Set<String>) {
+        guard rows.keys.contains(where: { !ids.contains($0) && $0 != openID }) else { return }
+        rows = rows.filter { ids.contains($0.key) || $0.key == openID }
     }
 
     fileprivate func set(_ value: String?, for id: String) {

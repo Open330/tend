@@ -68,6 +68,7 @@ pub mod event;
 pub mod fleet;
 mod fleet_wait;
 pub mod history;
+pub mod home_board;
 pub mod hook_spool;
 pub mod ipc;
 pub mod launch_identity;

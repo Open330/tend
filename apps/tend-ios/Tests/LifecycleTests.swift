@@ -156,6 +156,58 @@ final class LifecycleTests: XCTestCase {
         XCTAssertNotNil(model.pairingProblem)
     }
 
+    private func operateModel() -> AppModel {
+        let origin = try! ServerOrigin(parsing: "https://tend.test")
+        CredentialStore.save(Pairing(origin: origin, device: PairedDevice(id: "dev_1", name: "phone"), token: "tdv_x", scope: .operate))
+        return AppModel()
+    }
+
+    private static let fleetJSON = #"{"hosts":[{"alias":"here","local":true,"state":"online","remote":{"agents":[{"kind":"claude_code","agent_session_id":"a","pane":"%1","state":"working"}]}}]}"#
+    private static let operateDevice = #"{"device":{"id":"dev_1","name":"phone"},"scope":["decisions","operate"],"features":["capture","work"]}"#
+
+    func testALateOperateAnswerNeverUndoesANarrowing() async {
+        StubProtocol.on("/api/device", .init(status: 200, body: Self.operateDevice, delay: 0.5))
+        StubProtocol.on("/api/device/fleet", .init(status: 403, body: #"{"error":"decide only"}"#))
+        StubProtocol.on("/api/decisions", .init(status: 200, body: Self.emptyQueue))
+        let model = operateModel()
+        let device = Task { await model.refreshDevice() }
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        await model.refresh()
+        XCTAssertFalse(model.operates, "the 403 narrows the device")
+        await device.value
+        XCTAssertFalse(model.operates, "an answer from before the narrowing widened it again")
+        XCTAssertFalse(model.canStartWork)
+        XCTAssertEqual(CredentialStore.load()?.scope, .decide)
+    }
+
+    func testAFleetAnswerFromBeforeANarrowingIsDropped() async {
+        StubProtocol.on("/api/device/fleet", .init(status: 200, body: Self.fleetJSON, delay: 0.5))
+        StubProtocol.on("/api/device", .init(status: 200, body: #"{"device":{"id":"dev_1","name":"phone"},"scope":["decisions"]}"#))
+        StubProtocol.on("/api/decisions", .init(status: 200, body: Self.emptyQueue))
+        let model = operateModel()
+        let read = Task { await model.refresh() }
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        await model.refreshDevice()
+        XCTAssertFalse(model.operates)
+        await read.value
+        XCTAssertNil(model.fleet, "the late snapshot came back after the narrowing")
+        XCTAssertTrue(model.inProgress.isEmpty)
+    }
+
+    func testANarrowedDeviceCannotStartWork() async throws {
+        StubProtocol.on("/api/device", .init(status: 200, body: #"{"device":{"id":"dev_1","name":"phone"},"scope":["decisions"]}"#))
+        let model = operateModel()
+        await model.refreshDevice()
+        let request = StartWorkRequest(idempotencyKey: UUID().uuidString, host: "here", project: "/w", pipeline: "solo", request: "x")
+        do {
+            _ = try await model.startWork(request)
+            XCTFail("a decide device sent a start")
+        } catch {
+            XCTAssertEqual(error as? DashboardError, .notAllowed)
+        }
+        XCTAssertFalse(StubProtocol.seen.contains("/api/device/work"))
+    }
+
     func testAllClearNeedsCompleteQueues() throws {
         func hosts(_ json: String) throws -> [HostQueue] {
             struct Hosts: Decodable { let hosts: [HostQueue] }

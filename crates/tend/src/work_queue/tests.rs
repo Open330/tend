@@ -144,7 +144,7 @@ fn to_agent(session: &str) -> QueueTarget {
 
 fn new_work(work: &str) -> QueueTarget {
     QueueTarget::NewWork {
-        request: WorkUpRequest {
+        request: Box::new(WorkUpRequest {
             work: work.into(),
             external: None,
             pipeline: Some("pair".into()),
@@ -159,7 +159,7 @@ fn new_work(work: &str) -> QueueTarget {
             queue_lease: None,
             route_key: None,
             host: None,
-        },
+        }),
     }
 }
 

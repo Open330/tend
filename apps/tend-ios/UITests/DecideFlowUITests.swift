@@ -62,6 +62,7 @@ final class DecideFlowUITests: XCTestCase {
         XCTAssertTrue(name.waitForExistence(timeout: 10))
         name.tap()
         name.typeText(deviceName)
+        app.buttons["scope-decide"].tap()
         app.buttons["pairButton"].tap()
         let code = app.staticTexts["userCode"]
         XCTAssertTrue(code.waitForExistence(timeout: 10), "no pairing code; is the scratch tendd up?")
@@ -97,11 +98,9 @@ final class DecideFlowUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Accepted."].waitForExistence(timeout: 15))
         attach(app, "decided-inline")
 
-        // The outcome under Decided.
-        if isPad {
-            app.staticTexts["Decided"].firstMatch.tap()
-        } else {
-            app.tabBars.buttons["Decided"].tap()
+        // The outcome under Finished (iPad shows all three lanes at once).
+        if app.buttons["lane-finished"].exists {
+            app.buttons["lane-finished"].tap()
         }
         XCTAssertTrue(app.staticTexts["Answered"].firstMatch.waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Accepted"].firstMatch.exists)
@@ -114,15 +113,28 @@ final class DecideFlowUITests: XCTestCase {
         let text = String(data: try JSONSerialization.data(withJSONObject: history ?? [:]), encoding: .utf8) ?? ""
         XCTAssertTrue(text.contains("app:\(deviceName)#"), "the decision was not recorded as the device")
 
+        // A decide-only device does not see agents, and says how to.
+        if app.buttons["lane-inProgress"].exists { app.buttons["lane-inProgress"].tap() }
+        XCTAssertTrue(app.staticTexts["Agents are not shown on this device"].firstMatch.waitForExistence(timeout: 5))
+
         // Sign out: the dashboard forgets this device.
         if isPad {
-            app.staticTexts["Settings"].firstMatch.tap()
+            let settings = app.descendants(matching: .any)["sidebarSettings"].firstMatch
+            if !settings.waitForExistence(timeout: 2) {
+                app.buttons["Show Sidebar"].firstMatch.tap()
+            }
+            XCTAssertTrue(settings.waitForExistence(timeout: 5))
+            settings.tap()
         } else {
             app.tabBars.buttons["Settings"].tap()
         }
+        // The confirmation is a sheet on iPhone and a popover on iPad. On
+        // iPad the first tap may only close the sidebar overlay.
+        let confirmSignOut = app.buttons.matching(NSPredicate(format: "label == 'Sign out' AND identifier != 'signOut'")).firstMatch
         app.buttons["signOut"].tap()
-        let confirmSignOut = app.sheets.buttons["Sign out"].exists ? app.sheets.buttons["Sign out"] : app.buttons.matching(identifier: "Sign out").element(boundBy: 1)
-        if confirmSignOut.waitForExistence(timeout: 5) { confirmSignOut.tap() }
+        if !confirmSignOut.waitForExistence(timeout: 2) { app.buttons["signOut"].tap() }
+        XCTAssertTrue(confirmSignOut.waitForExistence(timeout: 5))
+        confirmSignOut.tap()
         XCTAssertTrue(app.buttons["pairButton"].waitForExistence(timeout: 10))
         let (_, devices) = try operatorCall("GET", "/api/devices")
         let names = ((devices as? [String: Any])?["devices"] as? [[String: Any]])?.compactMap { $0["name"] as? String } ?? []

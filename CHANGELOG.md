@@ -7,8 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Tend for Mac now reads its surface colours and shell metrics from the
+  shared design-token file. `apps/shared/Design/tokens.json` generates
+  both the dashboard's `tokens.css` and `apps/shared/Sources/TendDesignTokens.swift`,
+  and `TendTheme` uses the generated values. The Mac app and the web
+  dashboard therefore change together, and a test fails when either
+  generated file is stale. The values are unchanged.
+
 ### Added
 
+- tendd computes Home's board itself (`GET /api/home`), by Tend for Mac's
+  rules:
+  - a pipeline run's agents grouped into one Work unit with stages;
+  - helper sessions folded into the unit they help;
+  - orphan, probable-helper and empty sessions marked;
+  - a usage cap covered by an automation rule kept in progress;
+  - the decision queue interleaved into Your turn;
+  - the backlog listed.
+
+  The dashboard, the Windows app and the iOS app can draw the same lanes the
+  Mac draws. `POST /api/home/reviewed` records Looks Good with the Mac's
+  review key, so a unit marked in either place is marked in both.
+- The dashboard's Home draws that board:
+  - Work units with their stages;
+  - folded helper, empty and older sessions;
+  - the Backlog column;
+  - Looks Good on a finished unit;
+  - the Review list in the header, with its four time ranges.
+
+  With an older tendd it lays out the queue and agents itself, as before.
+
+- The iPhone and iPad app looks and reads like Tend for Mac's Home. It has
+  the Mac's surfaces, type roles, state colours and cards, in light and dark
+  mode with Dynamic Type. **Your turn**, **In progress** and **Finished**
+  sit side by side on a wide iPad, as on the Mac. On iPhone a lane strip
+  shows all three counts above the chosen lane. **Hosts** shows each host's
+  state and agents, and an agent's latest result is rendered from Markdown.
+  Seeing agents needs a device paired with hosts (`operate`); a device that
+  only decides says how to pair again.
+
+- A paired device with `operate` can start new work.
+  `GET /api/device/work-options` lists whether `allow_work_start` is on, the
+  host's pipelines, and the project folders its agents use.
+  `POST /api/device/work` starts new work only. The dashboard mints the
+  Work id and launches with `new_only`. The project and pipeline must come
+  from those lists, and a route that would move the agents refuses the start.
+  Every start is reserved in the device store before it runs and is never
+  run twice for one idempotency key. A start that may have run is
+  `unknown`, never retried. The intent is audited and synced before
+  dispatch, or nothing starts. A device runs one start at a time, at most
+  20 an hour. `[dashboard] allow_work_start` still gates all of it.
+
+## [0.10.21] - 2026-11-16
+
+### Added
+
+- A paired device with `operate` can read one agent's recent output.
+  `POST /api/device/capture {host, session_id}` names the agent by its
+  session, and the server picks that agent's pane from the Fleet snapshot,
+  so a shell pane cannot be named. The output goes through Fleet under
+  `[fleet] capture_policy` and comes back as sanitized text, the last 400
+  lines and at most 64 KiB. A device runs one capture at a time. Every
+  attempt is an audit line, without the output. `GET /api/device` lists it
+  in `features`.
 - **Tend for Windows** (`tend-app.exe`, `crates/tend-app`): the tray app
   around a local tendd's Home, like Tend for Mac's menu bar. Notification
   area icon with the Tend mark, the dashboard's Home in a WebView2 window,
@@ -67,6 +130,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- With none of the Mac app's windows on screen and the Fleet push stream
+  connected, the 15 s reconciliation (re-listing sessions, runs, the
+  execution snapshot and Ask state) runs every 60 s; the menu bar and
+  notifications follow the pushed snapshots and mailbox events, and the
+  automation rules (which decide which caps need you) are still read every
+  15 s. With a window shown, until connected, or without a live push
+  stream it keeps its 15 s period. Measured on an optimized copy with its
+  window driven through shown, minimized, covered and hidden: 4 runs a
+  minute while shown, none in each 30 s minimized or hidden. Home's decision drafts are
+  dropped once their decisions are gone (the open answer stays), and the
+  status bar groups the fleet's usage readings once per publish of the
+  agents instead of on every chrome refresh: 45 groupings for 162 shown
+  refreshes in the same run.
 - A question on Home's Your turn can be dismissed in one click: **Dismiss**
   (also in the card's menu) closes it without an answer, on the host that
   holds it. It is recorded there as declined, so it leaves every client's
@@ -113,10 +189,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   time. It follows the browser's language
   (English or Korean) and colour scheme, and runs under a strict Content
   Security Policy. The workbench's "needs you" link now reads "Home".
+- CI has a Windows job (windows-latest): clippy over the workspace and
+  the tests of `tend-cli`, `tendd`, `tend-work` and `tend-app`, with rmux
+  installed so the live rmux tests run. cargo-deny runs once per supported
+  target instead of over their union, which flagged crates no build
+  compiles; the two advisory ignores that worked around it are gone.
 - Tend for Mac and the dashboard share one design-token file,
   `apps/shared/Design/tokens.json`; the dashboard's `tokens.css` is
   generated from it, and a test fails when it is stale or when the Mac
   app's surfaces, metrics or brand colours stop matching it.
+
+- The app icon is the four rooms themselves. They fill the icon edge to
+  edge and the graphite shows only in the corridors between them, where
+  before a wide graphite plate framed a mark that covered 58% of the icon
+  (the widest margin of any app in the Dock it was measured against). The
+  same icon now appears on:
+  - macOS and iOS;
+  - the browser tab (a new `favicon.svg`);
+  - the dashboard installed as a web app (a new `manifest.webmanifest` with
+    its icons);
+  - the landing page's Mac app tile, which still showed the pre-rebrand
+    logo;
+  - Windows: `tend-app.exe` now has an icon, and the taskbar and tray icons
+    have the graphite plate, so they no longer depend on the taskbar theme.
+
+  Every icon file is generated by `scripts/brand/tend_icons.py`
+  (`docs/proposals/ICON.md`).
 
 ## [0.10.20] - 2026-11-16
 

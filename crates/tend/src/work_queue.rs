@@ -121,8 +121,9 @@ impl QueueActor {
 pub enum QueueTarget {
     /// Start a new Work with `work up`: `request.work` is fixed when the
     /// item is added, `request.body` is the item's prompt at dispatch, and
-    /// the host is always this one.
-    NewWork { request: WorkUpRequest },
+    /// the host is always this one. Boxed: a `WorkUpRequest` is several
+    /// times the other variants (over 280 bytes on Windows).
+    NewWork { request: Box<WorkUpRequest> },
     /// Send the prompt to this agent session as its next turn, once it is
     /// idle. The pane follows the session.
     Agent {

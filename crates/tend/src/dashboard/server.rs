@@ -176,6 +176,10 @@ pub struct AppState {
     pub(in crate::dashboard) proof_node: Option<String>,
     /// Paired devices, whose tokens may only decide.
     pub(in crate::dashboard) devices: Arc<super::devices::Devices>,
+    /// The daemon stores Home's board reads besides agents and decisions.
+    pub(in crate::dashboard) home_sources: crate::home_board::HomeSources,
+    /// Tests stand in for `work up` here; `None` runs the real one.
+    pub(in crate::dashboard) device_work_up: Option<super::devices::WorkUpRunner>,
 }
 
 #[derive(Clone, Default)]
@@ -196,6 +200,9 @@ pub struct DashboardRuntimeConfig {
     pub decision_audit_path: Option<PathBuf>,
     pub stats_config: StatsConfig,
     pub fleet: Option<FleetRuntime>,
+    /// Pipeline runs, automation rules, swap health and the backlog for
+    /// Home's board (`GET /api/home`); absent ones leave their part empty.
+    pub home: Option<crate::home_board::HomeSources>,
 }
 
 impl AppState {
@@ -225,6 +232,8 @@ impl AppState {
             decision_audit: None,
             proof_node: None,
             devices: super::devices::Devices::memory(),
+            home_sources: crate::home_board::HomeSources::default(),
+            device_work_up: None,
             reviews: crate::review::ReviewStore::unavailable("review items are served by tendd"),
             work_store: Arc::new(tokio::sync::Mutex::new(WorkStore::memory())),
             agents_by_state_cache: Arc::new(tokio::sync::Mutex::new(AgentsByStateCache::default())),
@@ -255,6 +264,13 @@ impl AppState {
     #[must_use]
     pub fn with_decision_audit(mut self, path: Option<PathBuf>) -> Self {
         self.decision_audit = path;
+        self
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub(in crate::dashboard) fn with_work_up(mut self, run: super::devices::WorkUpRunner) -> Self {
+        self.device_work_up = Some(run);
         self
     }
 
@@ -345,7 +361,7 @@ impl AppState {
     /// multi-socket scanner; every active non-tmux backend contributes its
     /// own pane inventory. `/api/panes`, control routing, and the timeline's
     /// pane→session map therefore see the same multi-host set.
-    async fn refresh_pane_scan(&self) -> scanner::ScanResult {
+    pub(in crate::dashboard) async fn refresh_pane_scan(&self) -> scanner::ScanResult {
         let backends = self.backends.clone();
         self.pane_cache
             .get_or_refresh(|| multi_host_pane_scan(backends))
@@ -402,6 +418,7 @@ pub fn router(state: AppState) -> Router {
             "/api/terminal-sessions/{id}/terminate",
             post(terminal_terminate_handler),
         )
+        .route("/api/home/reviewed", post(super::home::reviewed_handler))
         .layer(DefaultBodyLimit::max(CONTROL_BODY_LIMIT_BYTES))
         .layer(write_auth_layer);
     // Operator-only reads. Pane output can hold secrets the redacted read
@@ -410,6 +427,8 @@ pub fn router(state: AppState) -> Router {
     // visitor needs the token (401). Being a GET it needs no CSRF proof.
     let operator_read_api = Router::new()
         .route("/api/panes/{pane}/output", get(pane_output_handler))
+        // Home's board: what every agent is on and what it asked.
+        .route("/api/home", get(super::home::board_handler))
         .route(
             "/api/panes/{pane}/output/stream",
             get(pane_output_stream_handler),
@@ -551,6 +570,7 @@ pub async fn serve(
         .with_stats_config(runtime.stats_config)
         .with_message_skills(runtime.message_skills)
         .with_fleet(runtime.fleet);
+    state.home_sources = runtime.home.unwrap_or_default();
     state.sharing = sharing;
     state.operator = operator;
     state.devices = devices;
@@ -4933,6 +4953,133 @@ mod tests {
             .get("body")
             .is_none());
         assert!(invalid_pat["requests"][0]["reply"].get("body").is_none());
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)] // one board, then each Looks Good outcome in turn
+    async fn home_board_is_operator_only_and_looks_good_marks_a_finished_unit() {
+        let state =
+            state_with_token("s3cret").with_reviews(crate::review::ReviewStore::in_memory());
+        let id = AgentId {
+            tmux_socket: None,
+            kind: AgentKind::Codex,
+            session_id: "done-1".into(),
+            surface: None,
+            pane: Some("%4".into()),
+            cwd: Some("/w/tend".into()),
+        };
+        let at = OffsetDateTime::now_utc() - time::Duration::minutes(3);
+        state
+            .store
+            .apply(&AgentEvent::Started { id: id.clone(), at })
+            .await;
+        state
+            .store
+            .apply(&AgentEvent::PromptSubmitted {
+                id: id.clone(),
+                prompt: "fix the toast".into(),
+                at,
+            })
+            .await;
+        state
+            .store
+            .apply(&AgentEvent::TurnStopped {
+                id,
+                response: Some("Toast fixed.".into()),
+                recap: None,
+                ai_title: None,
+                idle_confirmed: true,
+                at,
+            })
+            .await;
+        let app = router(state);
+        let call = |method: &'static str,
+                    uri: &'static str,
+                    bearer: Option<&'static str>,
+                    body: Option<serde_json::Value>| {
+            let app = app.clone();
+            async move {
+                let mut request = Request::builder().method(method).uri(uri);
+                if let Some(token) = bearer {
+                    request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
+                }
+                let body = match body {
+                    Some(json) => {
+                        request = request.header(header::CONTENT_TYPE, "application/json");
+                        Body::from(json.to_string())
+                    }
+                    None => Body::empty(),
+                };
+                app.oneshot(request.body(body).unwrap()).await.unwrap()
+            }
+        };
+        assert_eq!(
+            call("GET", "/api/home", None, None).await.status(),
+            StatusCode::UNAUTHORIZED
+        );
+        let board = body_json(call("GET", "/api/home", Some("s3cret"), None).await).await;
+        let finished = &board["lanes"]["finished"]["groups"][0]["items"][0];
+        assert_eq!(finished["title"], "fix the toast", "{board}");
+        assert_eq!(finished["headline"], "Toast fixed.");
+        assert_eq!(finished["repo"], "tend");
+        assert_eq!(finished["reviewed"], false);
+        let unit = finished["id"].as_str().unwrap().to_owned();
+        let key = finished["review_key"].as_str().unwrap().to_owned();
+        assert!(key.starts_with("home:"));
+        // Looks Good: anonymous is refused, an unknown unit is 404, the
+        // unit itself is recorded under the Mac's key.
+        // A mark names the result the person saw: another key is refused.
+        let seen_before = json!({"id": unit, "review_key": "home:00"});
+        assert_eq!(
+            call(
+                "POST",
+                "/api/home/reviewed",
+                Some("s3cret"),
+                Some(seen_before)
+            )
+            .await
+            .status(),
+            StatusCode::CONFLICT
+        );
+        let body = json!({"id": unit, "review_key": key});
+        assert_eq!(
+            call("POST", "/api/home/reviewed", None, Some(body.clone()))
+                .await
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            call(
+                "POST",
+                "/api/home/reviewed",
+                Some("s3cret"),
+                Some(json!({"id": "agent:nope", "review_key": "home:00"}))
+            )
+            .await
+            .status(),
+            StatusCode::NOT_FOUND
+        );
+        let marked = call(
+            "POST",
+            "/api/home/reviewed",
+            Some("s3cret"),
+            Some(body.clone()),
+        )
+        .await;
+        assert_eq!(marked.status(), StatusCode::OK);
+        assert_eq!(body_json(marked).await["review_key"], key);
+        let board = body_json(call("GET", "/api/home", Some("s3cret"), None).await).await;
+        assert_eq!(
+            board["lanes"]["finished"]["groups"][0]["items"][0]["reviewed"], true,
+            "{board}"
+        );
+        // The same mark again is a replay, not an error.
+        assert_eq!(
+            call("POST", "/api/home/reviewed", Some("s3cret"), Some(body))
+                .await
+                .status(),
+            StatusCode::OK
+        );
     }
 
     #[tokio::test]
