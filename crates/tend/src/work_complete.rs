@@ -244,7 +244,7 @@ mod tests {
     async fn started(path: &std::path::Path) -> (Arc<PipelineRunStore>, u64) {
         let runs = PipelineRunStore::load(Some(path.to_path_buf())).unwrap();
         let run = runs.register(registration()).await.unwrap();
-        runs.claim_ready(&run.identity, run.generation)
+        runs.claim_ready(&run.identity, run.generation, None)
             .await
             .unwrap();
         (runs, run.generation)

@@ -6521,3 +6521,14 @@ func workCapableHostsSkipDisabledHosts() {
     try await old.hello()
     await #expect(throws: (any Error).self) { _ = try await old.swapAccounts() }
 }
+
+@Test func newlineSearchStartsWhereTheLastReadEnded() {
+    let data = Data("abc\ndef\n".utf8)
+    #expect(UnixSocket.newlineIndex(in: data, from: 0) == 3)
+    #expect(UnixSocket.newlineIndex(in: data, from: 4) == 7)
+    #expect(UnixSocket.newlineIndex(in: data, from: 8) == nil)
+    #expect(UnixSocket.newlineIndex(in: Data("no newline".utf8), from: 0) == nil)
+    // A slice keeps its own indices.
+    let slice = Data("xx\nyy\nzz".utf8)[3...]
+    #expect(UnixSocket.newlineIndex(in: slice, from: 0) == 5)
+}

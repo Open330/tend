@@ -532,6 +532,19 @@ fn feed_stdin_with_timeout(
 /// submit semantics. The trailing submit CR (`submit:true`) is sent separately
 /// as a `send-keys` Enter and is unaffected.
 pub(crate) fn paste_text_on(socket: Option<&str>, pane_id: &str, text: &str) -> bool {
+    paste_text_checked(socket, pane_id, text) == crate::backend::TextSend::Sent
+}
+
+/// [`paste_text_on`], telling a failed `load-buffer` (nothing reached the
+/// pane: [`TextSend::Refused`](crate::backend::TextSend::Refused)) from a
+/// `paste-buffer` that failed or timed out after tmux got it (it may have
+/// pasted: `Unknown`).
+pub(crate) fn paste_text_checked(
+    socket: Option<&str>,
+    pane_id: &str,
+    text: &str,
+) -> crate::backend::TextSend {
+    use crate::backend::TextSend;
     let buf = paste_buffer_name();
 
     let mut load = tmux_command_targeting(socket);
@@ -544,7 +557,16 @@ pub(crate) fn paste_text_on(socket: Option<&str>, pane_id: &str, text: &str) -> 
     )
     .is_ok_and(|o| o.status.success());
     if !loaded {
-        return false;
+        // A partly loaded buffer is never pasted; only `paste-buffer`
+        // touches the pane.
+        let mut del = tmux_command_targeting(socket);
+        del.args(["delete-buffer", "-b", &buf]);
+        let _ = command_output_with_timeout(
+            del,
+            TMUX_COMMAND_TIMEOUT,
+            format!("tmux delete-buffer -b {buf}"),
+        );
+        return TextSend::Refused;
     }
 
     let mut paste = tmux_command_targeting(socket);
@@ -567,7 +589,11 @@ pub(crate) fn paste_text_on(socket: Option<&str>, pane_id: &str, text: &str) -> 
         format!("tmux delete-buffer -b {buf}"),
     );
 
-    pasted
+    if pasted {
+        TextSend::Sent
+    } else {
+        TextSend::Unknown
+    }
 }
 
 /// Inject `text` into `pane_id` as literal keystrokes on the env-scoped

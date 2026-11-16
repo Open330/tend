@@ -85,12 +85,24 @@ pub struct WorkUpRequest {
     pub no_ticket: bool,
     #[serde(default)]
     pub dry_run: bool,
+    /// Start only a Work that does not exist yet: refuse, before
+    /// anything runs, if it has a window, panes or a Run (`--new-only`).
+    /// What the Work queue launches with.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub new_only: bool,
+    /// The queue attempt launching a queued Work under its lease
+    /// (`--queue-lease`, with `new_only`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_lease: Option<String>,
     /// Fleet host alias that runs the CLI. Absent or `"local"` runs it next
     /// to the daemon that accepted the request; any other alias must be a
     /// configured host in `mode = "control"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
 }
+
+/// How a failed `work up` operation's message starts ([`WorkUpError::Failed`]).
+pub const WORK_UP_FAILED_PREFIX: &str = "tend work up failed:";
 
 #[derive(Debug, thiserror::Error)]
 pub enum WorkUpError {
@@ -207,6 +219,13 @@ impl WorkUpRequest {
         }
         if self.dry_run {
             args.push("--dry-run".into());
+        }
+        if self.new_only {
+            args.push("--new-only".into());
+        }
+        if let Some(lease) = self.queue_lease.as_deref() {
+            args.push("--queue-lease".into());
+            args.push(lease.to_string());
         }
         args
     }
@@ -889,6 +908,8 @@ mod tests {
             context: None,
             no_ticket: false,
             dry_run: false,
+            new_only: false,
+            queue_lease: None,
             host: host.map(str::to_string),
         }
     }
@@ -932,6 +953,8 @@ mod tests {
             context: None,
             no_ticket: true,
             dry_run: false,
+            new_only: false,
+            queue_lease: None,
             host: None,
         };
         assert!(matches!(input.validate(), Err(WorkUpError::Invalid(_))));

@@ -538,6 +538,14 @@ impl Effects for RealEffects {
     ) -> std::result::Result<String, String> {
         let base = explicit_work.map_or_else(|| session_base_name(dir), str::to_string);
         let work = crate::tmux_work::normalize_work_id(&base).map_err(|error| error.to_string())?;
+        // Queued Work ids belong to the Work queue; a watch rule never
+        // creates or joins one.
+        if tend::pipeline_run::is_queue_work_id(&work) {
+            return Err(format!(
+                "{}: Work {work} is a queued Work id; a watch rule cannot spawn it",
+                tend::pipeline_run::WORK_RESERVED_PREFIX
+            ));
+        }
         let cwd =
             tend::paths::canonicalize(dir).map_err(|error| format!("resolve {dir}: {error}"))?;
         let workspace =

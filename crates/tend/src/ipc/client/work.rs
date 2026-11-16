@@ -94,6 +94,25 @@ impl Client {
         serde_json::from_value(response["pipeline_run"].clone()).map_err(RuntimeError::Json)
     }
 
+    /// [`Self::pipeline_register`] for a Work that must not exist yet:
+    /// refused when it already has a Run (`pipeline_create_new_v1`).
+    /// `lease` is the queue attempt registering a queued Work.
+    pub async fn pipeline_register_new(
+        &self,
+        registration: &PipelineRunRegistration,
+        lease: Option<&str>,
+    ) -> Result<PipelineRun, RuntimeError> {
+        let req = serde_json::json!({
+            "protocol": PROTOCOL_VERSION,
+            "kind": "pipeline_register",
+            "registration": registration,
+            "create_new": true,
+            "lease": lease,
+        });
+        let response = self.call_checked(&req).await?;
+        serde_json::from_value(response["pipeline_run"].clone()).map_err(RuntimeError::Json)
+    }
+
     pub async fn pipeline_done(
         &self,
         identity: &WorkIdentity,
@@ -171,11 +190,23 @@ impl Client {
         identity: &WorkIdentity,
         generation: u64,
     ) -> Result<Vec<PipelineClaim>, RuntimeError> {
+        self.pipeline_claim_leased(identity, generation, None).await
+    }
+
+    /// [`Self::pipeline_claim`] as the queue attempt holding the Work's
+    /// lease (`pipeline_queue_lease_v1`).
+    pub async fn pipeline_claim_leased(
+        &self,
+        identity: &WorkIdentity,
+        generation: u64,
+        lease: Option<&str>,
+    ) -> Result<Vec<PipelineClaim>, RuntimeError> {
         let req = serde_json::json!({
             "protocol": PROTOCOL_VERSION,
             "kind": "pipeline_claim",
             "identity": identity,
             "generation": generation,
+            "lease": lease,
         });
         let response = self.call_checked(&req).await?;
         serde_json::from_value(response["pipeline_claims"].clone()).map_err(RuntimeError::Json)

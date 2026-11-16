@@ -145,9 +145,13 @@ pub struct PromptDelivery<'a> {
 pub enum DeliveryRefused {
     /// A worker drain paused this endpoint's input; nothing was typed.
     WorkerDraining,
-    /// The backend did not take the text; nothing landed, so a caller may
+    /// The backend refused before anything reached the pane; a caller may
     /// retry the whole delivery.
     NotSent,
+    /// The backend was asked to type and did not report success (a failed
+    /// or timed-out paste, a panic): the text may be in the pane. Retrying
+    /// may type it twice.
+    Unknown,
 }
 
 /// The text was typed. `submitted` says whether Enter was too.
@@ -218,8 +222,8 @@ pub async fn deliver_prompt_holding(
     let (sent, submitted) = tokio::task::spawn_blocking(move || {
         let _guard = guard;
         let socket = socket.as_deref();
-        let sent = backend.send_prompt_text_on(socket, &pane, &text);
-        let submitted = if sent && submit {
+        let sent = backend.send_prompt_text_checked(socket, &pane, &text);
+        let submitted = if sent == crate::TextSend::Sent && submit {
             if !text.is_empty() {
                 std::thread::sleep(crate::backend::prompt_submit_grace(&pane));
             }
@@ -230,19 +234,20 @@ pub async fn deliver_prompt_holding(
         (sent, submitted)
     })
     .await
-    .unwrap_or((false, false));
+    // A panic in either phase may have come after the text landed.
+    .unwrap_or((crate::TextSend::Unknown, false));
     if !submitted {
         if let Some(token) = expected {
             store.forget_expected_prompt(token);
         }
     }
-    if sent {
-        Ok(Delivered {
+    match sent {
+        crate::TextSend::Sent => Ok(Delivered {
             submitted,
             observer,
-        })
-    } else {
-        Err(DeliveryRefused::NotSent)
+        }),
+        crate::TextSend::Refused => Err(DeliveryRefused::NotSent),
+        crate::TextSend::Unknown => Err(DeliveryRefused::Unknown),
     }
 }
 

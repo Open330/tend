@@ -121,7 +121,9 @@ struct FleetChoicePanel<Fallback: View>: View {
                                             .multilineTextAlignment(.leading)
                                     }
                                 }
-                                Spacer(minLength: 0)
+                                // A long option wraps to its full height.
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                             }
                             .padding(8)
                             .contentShape(Rectangle())

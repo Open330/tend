@@ -151,6 +151,18 @@ impl PaneBackend for TmuxBackend {
         text.is_empty() || crate::tmux::paste_text_on(socket, pane_id, text)
     }
 
+    fn send_prompt_text_checked(
+        &self,
+        socket: Option<&str>,
+        pane_id: &str,
+        text: &str,
+    ) -> super::TextSend {
+        if text.is_empty() {
+            return super::TextSend::Sent;
+        }
+        crate::tmux::paste_text_checked(socket, pane_id, text)
+    }
+
     fn capture_pane_on(&self, socket: Option<&str>, pane_id: &str) -> Option<String> {
         // Control-plane capture pinned to the pane's recorded server, so a
         // shared pane id can't read the wrong screen. Best-effort → `None`.

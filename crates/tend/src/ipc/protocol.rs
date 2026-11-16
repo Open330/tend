@@ -159,6 +159,66 @@ pub(super) enum RequestBody {
         #[serde(default)]
         stage: Option<crate::work::WorkStage>,
     },
+    /// `work_queue_v1`: the queue, in order, with each waiting item's
+    /// reason. Finished items only with `include_finished`.
+    WorkQueueList {
+        #[serde(default)]
+        include_finished: bool,
+    },
+    /// `work_queue_v1`: add one item. The target is resolved here (a pane
+    /// to its agent session, a new Work to its id).
+    WorkQueueAdd {
+        item: crate::work_queue::QueueAddRequest,
+    },
+    /// `work_queue_v1`: edit a waiting item made at `expected_revision`.
+    WorkQueueEdit {
+        id: String,
+        #[serde(default)]
+        expected_revision: Option<u64>,
+        edit: crate::work_queue::QueueEditRequest,
+    },
+    /// `work_queue_v1`: move a waiting item to a 0-based place among the
+    /// items not finished.
+    WorkQueueMove {
+        id: String,
+        #[serde(default)]
+        expected_revision: Option<u64>,
+        to: usize,
+    },
+    /// `work_queue_v1`: cancel a waiting item (kept for status).
+    WorkQueueCancel {
+        id: String,
+        #[serde(default)]
+        expected_revision: Option<u64>,
+    },
+    /// `work_queue_v1`: forget an item that is not being dispatched. One
+    /// whose attempt may have reached the agent needs `ack_duplicate_risk`.
+    WorkQueueRemove {
+        id: String,
+        #[serde(default)]
+        ack_duplicate_risk: bool,
+    },
+    /// `work_queue_v1`: dispatch one item now, ahead of the queue order and
+    /// the launch throttle but never past a safety gate. A failed or
+    /// cancelled item gets a new attempt; an uncertain one only with
+    /// `allow_duplicate`.
+    WorkQueueRunNow {
+        id: String,
+        #[serde(default)]
+        expected_revision: Option<u64>,
+        #[serde(default)]
+        allow_duplicate: bool,
+    },
+    /// `work_queue_v1`: settle an uncertain item: `sent` marks it
+    /// dispatched, otherwise it waits again (needs `ack_duplicate_risk`).
+    WorkQueueResolve {
+        id: String,
+        sent: bool,
+        #[serde(default)]
+        ack_duplicate_risk: bool,
+    },
+    /// `work_queue_v1`: forget finished items (an agent: its own).
+    WorkQueueClear,
     /// Create or partially edit one Work record without launching it.
     WorkEdit {
         identity: crate::work::WorkIdentity,
@@ -309,6 +369,14 @@ pub(super) enum RequestBody {
     /// Create or update one desired Run and reconcile live pane evidence.
     PipelineRegister {
         registration: PipelineRunRegistration,
+        /// `pipeline_create_new_v1`: refuse, before anything changes, when
+        /// the Work already has a Run (a queued Work never joins one).
+        #[serde(default)]
+        create_new: bool,
+        /// `pipeline_queue_lease_v1`: the queue attempt registering a
+        /// queued Work under its lease.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lease: Option<String>,
     },
     /// Atomic, generation-checked completion event.
     PipelineDone {
@@ -330,6 +398,10 @@ pub(super) enum RequestBody {
     PipelineClaim {
         identity: WorkIdentity,
         generation: u64,
+        /// `pipeline_queue_lease_v1`: the queue attempt holding the Work's
+        /// lease. Without it a leased Work yields no claims.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lease: Option<String>,
     },
     /// Report the physical outcome of a claimed launch or re-prompt.
     PipelineReport {
@@ -1091,6 +1163,9 @@ pub(super) const CAPABILITIES: &[&str] = &[
     crate::work_complete::CAPABILITY,
     crate::work::WORK_RECENT_RESULTS_CAPABILITY,
     crate::work::WORK_EXTERNAL_CAPABILITY,
+    crate::work_queue::WORK_QUEUE_CAPABILITY,
+    crate::pipeline_run::PIPELINE_CREATE_NEW_CAPABILITY,
+    crate::pipeline_run::PIPELINE_QUEUE_LEASE_CAPABILITY,
     "pipeline_subscribe",
     "work_control_v1",
     "work_command_v1",
@@ -1339,6 +1414,15 @@ pub struct Response {
     /// `work_backlog_v1`: one Work record.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub work_record: Option<Box<crate::work::WorkRecord>>,
+    /// `work_queue_v1`: the queue.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work_queue: Option<Box<crate::work_queue::QueueSnapshot>>,
+    /// `work_queue_v1`: the item a change made or touched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work_queue_item: Option<Box<crate::work_queue::QueueItem>>,
+    /// `work_queue_v1`: how many finished items a clear forgot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work_queue_cleared: Option<usize>,
     /// `decision_queue_v1`: everything pending on the person.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decision_queue: Option<Box<crate::decision_queue::PendingQueue>>,
@@ -1470,6 +1554,9 @@ impl Response {
             system_ask_cleanup: None,
             work_records: None,
             work_record: None,
+            work_queue: None,
+            work_queue_item: None,
+            work_queue_cleared: None,
             pipeline_claims: None,
             work_operation: None,
             work_command: None,

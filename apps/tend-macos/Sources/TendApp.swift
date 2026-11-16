@@ -40,6 +40,7 @@ private final class TendApplicationDelegate: NSObject, NSApplicationDelegate {
         // working install. A module that is switched off is not probed, so
         // an operator who uses none still pays nothing.
         Task { await TendModuleRegistry.shared.probeEnabled() }
+        TendPerf.startDumping()
         if !AppModel.isRunningTests(), let model = Self.model {
             menuBar = TendMenuBarAgentController(model: model)
             model.start()
@@ -252,7 +253,10 @@ struct TendApp: App {
         // saved closed-window state would otherwise leave no visible window.
         // Detached modules continue to use their typed WindowGroup below.
         WindowGroup("Tend", id: "main") {
-            ContentView()
+            // Equatable: this scene redraws for every model publish, and
+            // the window's chrome follows its own inputs instead.
+            ContentView(model: model)
+                .equatable()
                 .environmentObject(model)
                 .preferredColorScheme(preferredColorScheme)
                 .presentsOnboardingOnLaunch()

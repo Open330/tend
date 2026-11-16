@@ -593,7 +593,7 @@ mod tests {
             .as_deref()
             .is_some_and(|prompt| prompt.contains("saved task")));
         store
-            .claim_ready(&identity, first.generation)
+            .claim_ready(&identity, first.generation, None)
             .await
             .unwrap();
         store

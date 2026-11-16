@@ -403,6 +403,22 @@ struct TendAgentWorkload: Decodable, Hashable, Sendable {
         helperCount = try values.decodeIfPresent(Int.self, forKey: .helperCount) ?? 0
         preview = try values.decodeIfPresent([TendAgentProcess].self, forKey: .preview) ?? []
     }
+
+    /// Two workloads are the same when the counts are: no view shows the
+    /// process preview, and its pids and commands churn every few seconds
+    /// on a busy host, which would otherwise make each fleet event a new
+    /// snapshot (`TendExecutionSnapshot.hasSameSource`) and redraw the app.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.processCount == rhs.processCount && lhs.shellCount == rhs.shellCount
+            && lhs.subagentCount == rhs.subagentCount && lhs.helperCount == rhs.helperCount
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(processCount)
+        hasher.combine(shellCount)
+        hasher.combine(subagentCount)
+        hasher.combine(helperCount)
+    }
 }
 
 struct TendAgentProcess: Decodable, Hashable, Identifiable, Sendable {
@@ -684,7 +700,7 @@ struct TendFleetHostIdentity: Hashable, Sendable {
     let mode: String
 }
 
-struct TendHostedAgent: Identifiable, Sendable {
+struct TendHostedAgent: Identifiable, Equatable, Sendable {
     let host: TendFleetHostIdentity
     let agent: TendAgent
     let pane: TendPaneInfo?
@@ -2538,12 +2554,17 @@ enum UnixSocket {
 
     fileprivate static func readLine(descriptor: Int32, buffered: inout Data) throws -> Data {
         var buffer = [UInt8](repeating: 0, count: 16 * 1024)
+        // Bytes already searched for a newline. A large response arrives in
+        // 16 KB reads; searching only what each read added keeps this linear
+        // rather than rescanning the whole buffer every time.
+        var scanned = 0
         while true {
-            if let newline = buffered.firstIndex(of: 0x0A) {
-                let line = Data(buffered.prefix(upTo: newline))
-                buffered.removeSubrange(...newline)
+            if let newline = newlineIndex(in: buffered, from: scanned) {
+                let line = Data(buffered[buffered.startIndex..<newline])
+                buffered.removeSubrange(buffered.startIndex...newline)
                 return line
             }
+            scanned = buffered.count
             let count = Darwin.read(descriptor, &buffer, buffer.count)
             if count < 0, errno == EINTR { continue }
             if count < 0 {
@@ -2560,6 +2581,18 @@ enum UnixSocket {
         let trailing = buffered
         buffered.removeAll(keepingCapacity: true)
         return trailing
+    }
+
+    /// The first `\n` in `data` at or after `offset` bytes, found with
+    /// `memchr` rather than a per-byte generic search.
+    static func newlineIndex(in data: Data, from offset: Int) -> Data.Index? {
+        guard offset < data.count else { return nil }
+        let found: Int? = data.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress,
+                  let hit = memchr(base + offset, 0x0A, raw.count - offset) else { return nil }
+            return base.distance(to: UnsafeRawPointer(hit))
+        }
+        return found.map { data.startIndex + $0 }
     }
 }
 

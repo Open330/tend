@@ -28,7 +28,10 @@ struct WorkbenchWindowPresenter: NSViewRepresentable {
 }
 
 struct WorkspaceTabBar: View {
-    @ObservedObject var model: AppModel
+    /// Read, not observed: `labels` publishes when a tab's title, state dot
+    /// or unread pane changes (`TendTabStripInputs`).
+    let model: AppModel
+    @ObservedObject var labels: TendChromeSlice<TendTabStripInputs>
     @ObservedObject var tabs: TendWorkbenchTabs
     let groupID: UUID
     /// The title bar row's height: the strip is the window's title bar.
@@ -159,12 +162,13 @@ struct WorkspaceTabBar: View {
     @ViewBuilder
     private var tabItems: some View {
         ForEach(group?.tabs ?? [], id: \.self) { selection in
+            let label = labels.value[selection] ?? TendTabLabel(selection, model: model)
             EditorTab(
                 selection: selection,
-                title: Self.title(for: selection, model: model),
+                title: label.title,
                 systemImage: tabIcon(for: selection),
-                stateColor: agentStatus(for: selection)?.color,
-                unreadPane: unreadPane(for: selection), // WS-A
+                stateColor: label.status?.color,
+                unreadPane: label.unreadPane, // WS-A
                 active: group?.active == selection,
                 preview: group?.preview == selection,
                 activate: { activate(selection) },
@@ -227,7 +231,7 @@ struct WorkspaceTabBar: View {
         case .work(let identity):
             model.workGroups.first { $0.identity == identity }?.title ?? identity.workID
         case .agent(let id):
-            model.hostedAgents.first { $0.id == id }.map {
+            model.hostedAgent(id: id).map {
                 $0.agent.aiTitle
                     ?? $0.pane?.agentAlias.map { "@\($0)" }
                     ?? $0.agent.kind.replacingOccurrences(of: "_", with: " ")
@@ -254,19 +258,19 @@ struct WorkspaceTabBar: View {
 
     /// The live state of the agent a tab shows, for the dot on its icon
     /// (Orca marks agent tabs the same way).
-    private func agentStatus(for selection: TendSidebarSelection) -> TendAgentStatus? {
+    static func agentStatus(for selection: TendSidebarSelection, model: AppModel) -> TendAgentStatus? {
         switch selection {
         case .pane(let id): model.executionSnapshot.watchPane(id: id)?.agent?.status
-        case .agent(let id): model.hostedAgents.first { $0.id == id }?.agent.status
+        case .agent(let id): model.hostedAgent(id: id)?.agent.status
         default: nil
         }
     }
 
     // WS-A: the pane whose unread dot a tab carries.
-    private func unreadPane(for selection: TendSidebarSelection) -> TendWatchPaneIdentity? {
+    static func unreadPane(for selection: TendSidebarSelection, model: AppModel) -> TendWatchPaneIdentity? {
         switch selection {
         case .pane(let id): id
-        case .agent(let id): model.hostedAgents.first { $0.id == id }.flatMap(TendAgentAttentionCenter.paneIdentity)
+        case .agent(let id): model.hostedAgent(id: id).flatMap(TendAgentAttentionCenter.paneIdentity)
         default: nil
         }
     }
@@ -395,20 +399,26 @@ private struct EditorTab: View {
 }
 
 struct WorkbenchStatusBar: View {
-    @ObservedObject var model: AppModel
+    /// For its actions; what it shows comes from `inputs`, published only
+    /// when that changes (`TendStatusBarInputs`).
+    let model: AppModel
+    @ObservedObject var inputs: TendChromeSlice<TendStatusBarInputs>
     let openPane: (TendWatchPaneIdentity) -> Void
 
     @Environment(\.colorScheme) private var colorScheme
+
+    private var shown: TendStatusBarInputs { inputs.value }
 
     /// Healthy, the bar is neutral like the rest of the chrome and only the
     /// leading chip carries the accent; a problem turns the whole bar its
     /// color so it can't be missed.
     private var healthy: Bool {
-        if case .connected = model.connectionState { return true }
+        if case .connected = shown.connectionState { return true }
         return false
     }
 
     var body: some View {
+        let _ = TendPerf.count("statusbar.body")
         HStack(spacing: 0) {
             connectionItems
                 .padding(.horizontal, 9)
@@ -420,7 +430,7 @@ struct WorkbenchStatusBar: View {
 
             HStack(spacing: 14) {
                 // WS-C usage: hidden while unhealthy, when the figures are stale.
-                if let error = model.agentActionError {
+                if let error = shown.agentActionError {
                     Button {
                         model.agentActionError = nil
                     } label: {
@@ -429,18 +439,21 @@ struct WorkbenchStatusBar: View {
                     }
                     .buttonStyle(.plain)
                     .help("Click to dismiss")
-                } else if let notice = model.agentActionNotice {
+                } else if let notice = shown.agentActionNotice {
                     Label(notice, systemImage: "checkmark.circle.fill")
                         .foregroundStyle(.green)
                         .lineLimit(1)
                 }
                 if healthy {
                     TendSwapStatusItem(swaps: model.swaps, openPane: openPane)
-                    TendUsageStatusItems(agents: model.hostedAgents, openPane: openPane)
+                    TendUsageStatusItems(
+                        items: shown.usage, more: shown.moreUsage, moreLevel: shown.moreUsageLevel,
+                        openPane: openPane
+                    )
                 }
-                Label("\(model.fleetHosts.count) hosts", systemImage: "server.rack")
-                Label("\(model.hostedAgents.count) agents", systemImage: "person.2")
-                Label("\(model.sessions.lazy.filter { !$0.exited }.count) shells", systemImage: "terminal")
+                Label("\(shown.hostCount) hosts", systemImage: "server.rack")
+                Label("\(shown.agentCount) agents", systemImage: "person.2")
+                Label("\(shown.shellCount) shells", systemImage: "terminal")
             }
             .labelStyle(StatusBarLabelStyle())
             .padding(.trailing, 10)
@@ -458,7 +471,7 @@ struct WorkbenchStatusBar: View {
     @ViewBuilder
     private var connectionItems: some View {
         HStack(spacing: 8) {
-            switch model.connectionState {
+            switch shown.connectionState {
             case .connecting:
                 ProgressView()
                     .controlSize(.mini)
@@ -486,7 +499,7 @@ struct WorkbenchStatusBar: View {
     }
 
     private var statusColor: Color {
-        switch model.connectionState {
+        switch shown.connectionState {
         case .connected: Color.accentColor
         case .connecting: Color(nsColor: .systemGray)
         case .upgradeRequired: Color.orange

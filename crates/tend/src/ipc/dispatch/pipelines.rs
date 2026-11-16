@@ -4,6 +4,7 @@
 
 use super::*;
 
+#[allow(clippy::too_many_lines)] // one arm per pipeline request
 pub(super) async fn handle(
     ctx: &ServerCtx,
     _conn: &mut Conn,
@@ -17,9 +18,20 @@ pub(super) async fn handle(
             *kind = "pipeline_runs";
             Response::with_pipeline_runs(pipeline_runs.list().await)
         }
-        RequestBody::PipelineRegister { registration } => {
+        RequestBody::PipelineRegister {
+            registration,
+            create_new,
+            lease,
+        } => {
             *kind = "pipeline_register";
-            match pipeline_runs.register(registration).await {
+            let registered = if create_new {
+                pipeline_runs
+                    .register_new(registration, lease.as_deref())
+                    .await
+            } else {
+                pipeline_runs.register(registration).await
+            };
+            match registered {
                 Ok(run) => Response::with_pipeline_run(run),
                 Err(error) => Response::err(error.to_string()),
             }
@@ -76,9 +88,13 @@ pub(super) async fn handle(
         RequestBody::PipelineClaim {
             identity,
             generation,
+            lease,
         } => {
             *kind = "pipeline_claim";
-            match pipeline_runs.claim_ready(&identity, generation).await {
+            match pipeline_runs
+                .claim_ready(&identity, generation, lease.as_deref())
+                .await
+            {
                 Ok(claims) => Response::with_pipeline_claims(claims),
                 Err(error) => Response::err(error.to_string()),
             }

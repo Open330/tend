@@ -1162,6 +1162,9 @@ async fn local_send_prompt(
         Err(tend::prompt_delivery::DeliveryRefused::NotSent) => {
             Err("backend refused text injection".to_string())
         }
+        Err(tend::prompt_delivery::DeliveryRefused::Unknown) => {
+            Err("backend did not confirm text injection; it may have been typed".to_string())
+        }
     }
 }
 
