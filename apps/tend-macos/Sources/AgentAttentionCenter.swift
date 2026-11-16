@@ -308,13 +308,47 @@ final class TendAgentAttentionCenter: ObservableObject {
         recompute()
     }
 
+    /// The last usage check that found nothing to do, and until when the
+    /// same inputs are sure to find nothing again.
+    private struct QuietUsageCheck {
+        let inputs: [TendUsageAlerts.Input]
+        let at: Date
+        let until: Date
+    }
+    private var quietUsageCheck: QuietUsageCheck?
+
+    private func quiet(
+        _ inputs: [TendUsageAlerts.Input], activity: [Date?], at date: Date, until expiry: Date?
+    ) {
+        let next = [TendUsageAlerts.Input.nextChange(inputs, activity: activity, after: date), expiry]
+            .compactMap { $0 }.min()
+        quietUsageCheck = QuietUsageCheck(inputs: inputs, at: date, until: next ?? .distantFuture)
+    }
+
     /// Announces each account window crossing a usage threshold, once.
+    ///
+    /// Most snapshots change nothing usage reads, so a check that found
+    /// nothing is not repeated for the same inputs until the time alone
+    /// could change the answer (`TendUsageAlerts.Input.nextChange`). Only
+    /// this method writes the receipts, and a quiet check writes none, so
+    /// they cannot have changed in between.
     private func postUsageAlerts(in snapshot: TendExecutionSnapshot, at date: Date) {
         guard let defaults, let poster, TendUsageAlerts.isEnabled(defaults) else { return }
+        let (inputs, activity) = TendUsageAlerts.Input.inputs(snapshot.hostedAgents, now: date)
+        if let quiet = quietUsageCheck, date >= quiet.at, date < quiet.until, quiet.inputs == inputs {
+            TendPerf.count("usage.skipped")
+            return
+        }
+        quietUsageCheck = nil
+        TendPerf.count("usage.checked")
         let groups = TendUsageGroup.groups(from: snapshot.hostedAgents, now: date)
         var notified = TendUsageAlerts.loadNotified(defaults)
         let due = TendUsageAlerts.due(groups: groups, notified: Set(notified.keys), now: date)
-        guard !due.alerts.isEmpty || !due.rearmed.isEmpty || !due.silent.isEmpty else { return }
+        guard !due.alerts.isEmpty || !due.rearmed.isEmpty || !due.silent.isEmpty else {
+            quiet(inputs, activity: activity, at: date, until: nil)
+            return
+        }
+        let loaded = notified
         for key in due.silent { notified[key] = date }
         for cycle in due.rearmed {
             for key in notified.keys where key.hasPrefix(cycle + "\u{1F}") { notified.removeValue(forKey: key) }
@@ -322,6 +356,13 @@ final class TendAgentAttentionCenter: ObservableObject {
         for (alert, crossed) in due.alerts {
             poster.post(TendUsageAlerts.notification(for: alert, sound: settings().sound))
             for key in crossed { notified[key] = date }
+        }
+        // A reset-less window reading low is rearmed on every check; once
+        // that removes nothing, the save would write back what is stored
+        // until the oldest receipt ages out.
+        if due.alerts.isEmpty, notified == loaded,
+           TendUsageAlerts.pruned(notified, now: date).count == notified.count {
+            quiet(inputs, activity: activity, at: date, until: notified.values.min().map(TendUsageAlerts.expiry))
         }
         TendUsageAlerts.saveNotified(notified, to: defaults, now: date)
     }

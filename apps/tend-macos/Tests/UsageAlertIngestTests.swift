@@ -249,4 +249,48 @@ private func threshold(_ notification: TendAgentNotification) -> String {
         try relaunched.ingest(snapshot([("local", [UsageFixture(fiveHour: 85)])]))
         #expect(h.take().isEmpty)
     }
+
+    @Test func unchangedUsageIsNotReCheckedUntilTimeCouldChangeTheAnswer() throws {
+        TendPerf.enableForTesting()
+        func checks() -> Int { TendPerf.snapshot()["usage.checked"] ?? 0 }
+        let h = UsageHarness()
+        let quiet = UsageFixture(fiveHour: 60)
+        try h.ingest([quiet])
+        let first = checks()
+        for _ in 0..<10 {
+            h.advance(5)
+            try h.ingest([quiet])
+        }
+        #expect(checks() == first)
+        // A changed reading is checked, and announces.
+        try h.ingest([UsageFixture(fiveHour: 85)])
+        #expect(checks() == first + 1)
+        #expect(h.take().map(threshold) == ["80"])
+        // Once announced, the same reading is quiet again.
+        try h.ingest([UsageFixture(fiveHour: 85)])
+        let settled = checks()
+        try h.ingest([UsageFixture(fiveHour: 85)])
+        #expect(checks() == settled)
+        // Past its freshness the reading is checked once more.
+        h.advance(TendUsageAlerts.freshness + 1)
+        try h.ingest([UsageFixture(fiveHour: 85)])
+        #expect(checks() == settled + 1)
+        #expect(h.take().isEmpty)
+    }
+
+    @Test func aRearmThatRemovesNothingIsQuietToo() throws {
+        TendPerf.enableForTesting()
+        func checks() -> Int { TendPerf.snapshot()["usage.checked"] ?? 0 }
+        let h = UsageHarness()
+        try h.ingest([UsageFixture(fiveHour: 85, fiveHourReset: nil)])
+        #expect(h.take().map(threshold) == ["80"])
+        try h.ingest([UsageFixture(fiveHour: 20, fiveHourReset: nil)])
+        #expect(TendUsageAlerts.loadNotified(h.defaults).isEmpty)
+        try h.ingest([UsageFixture(fiveHour: 20, fiveHourReset: nil)])
+        let settled = checks()
+        try h.ingest([UsageFixture(fiveHour: 20, fiveHourReset: nil)])
+        #expect(checks() == settled)
+        try h.ingest([UsageFixture(fiveHour: 85, fiveHourReset: nil)])
+        #expect(h.take().map(threshold) == ["80"])
+    }
 }

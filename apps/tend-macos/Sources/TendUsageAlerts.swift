@@ -26,6 +26,83 @@ enum TendUsageAlerts {
         let resetsAt: Date?
     }
 
+    /// What the alerts read from one agent: everything `TendUsageGroup`
+    /// and `due` look at, and nothing they don't. Agents reporting neither
+    /// a window nor a cap leave it out; the order is the snapshot's, since
+    /// it settles ties between equally fresh readings.
+    ///
+    /// The activity time only picks the freshest reading and says whether a
+    /// reading is fresh, so it is kept as its rank among the inputs (equal
+    /// times share one) and that flag: a working agent's heartbeat that
+    /// moves its time without passing another's changes nothing here.
+    struct Input: Equatable, Sendable {
+        let hostAlias: String
+        let hostLocal: Bool
+        let provider: String
+        let fiveHour: Double?
+        let fiveHourResetsAt: String?
+        let sevenDay: Double?
+        let sevenDayResetsAt: String?
+        let capScope: String?
+        let cappedUntil: String?
+        fileprivate(set) var activityRank = 0
+        fileprivate(set) var fresh = false
+
+        private init?(_ hosted: TendHostedAgent) {
+            let agent = hosted.agent
+            guard agent.rateLimit5hPercent != nil || agent.rateLimit7dPercent != nil || agent.rateLimitScope != nil
+            else { return nil }
+            hostAlias = hosted.host.alias
+            hostLocal = hosted.host.local
+            provider = agent.kind
+            fiveHour = agent.rateLimit5hPercent
+            fiveHourResetsAt = agent.rateLimit5hResetsAt
+            sevenDay = agent.rateLimit7dPercent
+            sevenDayResetsAt = agent.rateLimit7dResetsAt
+            capScope = agent.rateLimitScope
+            cappedUntil = agent.rateLimitedUntil
+        }
+
+        var reportsWindow: Bool { fiveHour != nil || sevenDay != nil }
+
+        /// The inputs of `agents` at `now`, and each one's activity time.
+        static func inputs(_ agents: [TendHostedAgent], now: Date) -> (inputs: [Input], activity: [Date?]) {
+            var inputs: [Input] = []
+            var activity: [Date?] = []
+            for hosted in agents {
+                guard var input = Input(hosted) else { continue }
+                let sampled = TendUsageTimestamp.parse(hosted.agent.lastActivityAt)
+                input.fresh = sampled.map { now.timeIntervalSince($0) <= freshness } ?? false
+                inputs.append(input)
+                activity.append(sampled)
+            }
+            // Ranked as `TendUsageGroup` compares them: no time is oldest.
+            let distinct = Set(activity.map { $0 ?? .distantPast }).sorted()
+            let rank = Dictionary(uniqueKeysWithValues: distinct.enumerated().map { ($1, $0) })
+            for index in inputs.indices { inputs[index].activityRank = rank[activity[index] ?? .distantPast] ?? 0 }
+            return (inputs, activity)
+        }
+
+        /// The first instant after `date` at which the same inputs can give
+        /// a different answer: a window's reset passing, a cap lifting, or
+        /// a fresh reading going stale. Those are the only ways `due`
+        /// depends on the time; nil when none lies ahead.
+        static func nextChange(_ inputs: [Input], activity: [Date?], after date: Date) -> Date? {
+            var next: Date?
+            func consider(_ instant: Date?) {
+                guard let instant, instant > date else { return }
+                if next.map({ instant < $0 }) ?? true { next = instant }
+            }
+            for (input, sampled) in zip(inputs, activity) {
+                if input.fiveHour != nil { consider(TendUsageTimestamp.parse(input.fiveHourResetsAt)) }
+                if input.sevenDay != nil { consider(TendUsageTimestamp.parse(input.sevenDayResetsAt)) }
+                if input.reportsWindow, input.fresh, let sampled { consider(sampled.addingTimeInterval(freshness)) }
+                if input.capScope != nil { consider(TendUsageTimestamp.parse(input.cappedUntil)) }
+            }
+            return next
+        }
+    }
+
     static func isEnabled(_ defaults: UserDefaults = .standard) -> Bool {
         defaults.object(forKey: enabledKey) as? Bool ?? true
     }
@@ -136,7 +213,16 @@ enum TendUsageAlerts {
     }
 
     static func saveNotified(_ notified: [String: Date], to defaults: UserDefaults, now: Date) {
-        let kept = notified.filter { now.timeIntervalSince($0.value) < 8 * 24 * 3600 }
+        let kept = pruned(notified, now: now)
         if let data = try? JSONEncoder().encode(kept) { defaults.set(data, forKey: notifiedKey) }
     }
+
+    static let receiptLifetime: TimeInterval = 8 * 24 * 3600
+
+    static func pruned(_ notified: [String: Date], now: Date) -> [String: Date] {
+        notified.filter { now.timeIntervalSince($0.value) < receiptLifetime }
+    }
+
+    /// When a receipt made at `date` is pruned by the next save.
+    static func expiry(_ date: Date) -> Date { date.addingTimeInterval(receiptLifetime) }
 }
