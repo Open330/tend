@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.21] - 2026-11-16
+
 ### Added
 
 - A paired device with `operate` can read one agent's recent output.
