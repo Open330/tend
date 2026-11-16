@@ -1306,10 +1306,10 @@ impl Executor {
 /// have started part of the Work, so it is uncertain.
 fn launch_failure(attempt: &str, at: OffsetDateTime, message: &str, took_over: bool) -> QueueState {
     match crate::work_queue::launch_refusal(message).filter(|_| !took_over) {
-        Some(detail) => QueueState::Failed {
+        Some((reason, detail)) => QueueState::Failed {
             attempt: Some(attempt.to_string()),
             at,
-            reason: FailReason::IdentityInUse,
+            reason,
             detail: detail.to_string(),
         },
         None => QueueState::Uncertain {

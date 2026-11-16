@@ -48,6 +48,10 @@ const FILE_VERSION: u8 = 1;
 /// Work already existed. The queue reads it as a clean failure; every other
 /// launch failure may have left part of a Work behind.
 pub const WORK_EXISTS_BEFORE_START: &str = "work_exists_before_start";
+/// Marker of a queued launch refused before anything ran because no
+/// directory was given and the route chosen now does not provide one: tendd
+/// never starts a queued Work in its own working directory.
+pub const NO_DIRECTORY_BEFORE_START: &str = "queue_no_directory_before_start";
 
 /// Longest prompt one item may carry.
 pub const MAX_PROMPT_BYTES: usize = 64 * 1024;
@@ -886,14 +890,15 @@ pub fn queued_workspace(given: Option<&str>, cwd: &Path) -> Result<String, Strin
 
 /// The refusals a new-only `work up` makes before it starts any agent:
 /// the Work existed before the launch looked, or its registration found
-/// one. `Some(detail)` for those; `None` for every other failure, which
-/// may have started part of the Work.
+/// one (`IdentityInUse`, final), or it had no directory to start in
+/// (`LaunchRefused`). `Some` for those; `None` for every other failure,
+/// which may have started part of the Work.
 ///
 /// The message is the operation's, `tend work up failed: ` and the last
 /// line the CLI printed, which may carry an anyhow chain index (`1: `);
 /// only the first token after those is compared.
 #[must_use]
-pub fn launch_refusal(message: &str) -> Option<&'static str> {
+pub fn launch_refusal(message: &str) -> Option<(FailReason, &'static str)> {
     let line = message.trim();
     let line = line
         .strip_prefix(crate::work_control::WORK_UP_FAILED_PREFIX)
@@ -907,9 +912,20 @@ pub fn launch_refusal(message: &str) -> Option<&'static str> {
     };
     let code = line.split(':').next().unwrap_or_default().trim();
     if code == WORK_EXISTS_BEFORE_START {
-        Some("the Work already existed; nothing was started. Queue it again under a new Work id")
+        Some((
+            FailReason::IdentityInUse,
+            "the Work already existed; nothing was started. Queue it again under a new Work id",
+        ))
     } else if code == crate::pipeline_run::WORK_EXISTS_PREFIX {
-        Some("the Work was started elsewhere first; no agent was started for this item (a worktree may have been prepared). Queue it again under a new Work id")
+        Some((
+            FailReason::IdentityInUse,
+            "the Work was started elsewhere first; no agent was started for this item (a worktree may have been prepared). Queue it again under a new Work id",
+        ))
+    } else if code == NO_DIRECTORY_BEFORE_START {
+        Some((
+            FailReason::LaunchRefused,
+            "no directory to start in: none was queued and the route chosen now provides none; nothing was started",
+        ))
     } else {
         None
     }

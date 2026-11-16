@@ -1026,6 +1026,13 @@ fn resolve_cwd(
         (None, Some(template)) => PathBuf::from(expand_tilde(&vars.render(template))),
         // Unpinned: the work window's own directory if it has one, so a
         // re-run from anywhere converges instead of arguing about cwd.
+        // A queued launch never guesses: tendd's own directory is not a
+        // project, and the route that provided one may be gone by now.
+        (None, None) if args.queue_lease.is_some() => bail!(
+            "{}: Work {} has no directory to start in: none was queued and its route provides none",
+            tend::work_queue::NO_DIRECTORY_BEFORE_START,
+            args.work
+        ),
         (None, None) => match (existing, &args.planned_cwd) {
             (Some(existing), _) => existing.cwd.clone(),
             (None, Some(planned)) => planned.clone(),
@@ -2239,6 +2246,36 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("set `cwd`"), "{error}");
+    }
+
+    /// A queued launch with no directory starts only where its route puts
+    /// it; the fallback to the current directory (tendd's own) is refused,
+    /// as when the route that provided one was removed after queueing.
+    #[test]
+    fn a_queued_launch_never_falls_back_to_the_current_directory() {
+        let queued = UpArgs {
+            new_only: true,
+            queue_lease: Some("attempt-1".into()),
+            ..up_args(None)
+        };
+        let plain = tend::config::RouteConfig::default();
+        let error = resolve_cwd(&queued, &plain, &Vars::new(), None)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.starts_with(tend::work_queue::NO_DIRECTORY_BEFORE_START),
+            "{error}"
+        );
+        // An ordinary `work up` keeps its fallback.
+        assert!(resolve_cwd(&up_args(None), &plain, &Vars::new(), None).is_ok());
+        // A route that names the directory still works for the queue.
+        let dir = tempfile::tempdir().unwrap();
+        let with_cwd = tend::config::RouteConfig {
+            cwd: Some(dir.path().display().to_string()),
+            ..tend::config::RouteConfig::default()
+        };
+        let (cwd, _, _) = resolve_cwd(&queued, &with_cwd, &Vars::new(), None).unwrap();
+        assert_eq!(cwd, tend::paths::canonicalize(dir.path()).unwrap());
     }
 
     #[test]
