@@ -688,6 +688,7 @@ fn tool_definitions(config: &tend::config::Config) -> Vec<Value> {
                 "additionalProperties": false
             },
         }),
+        crate::mcp_work_queue::definition(),
         json!({
             "name": "tend_swap_account",
             "description": "Move Claude/Codex agents to another account and resume each conversation in its pane (stop, relaunch on the account with the same session, answer startup dialogs, continue only cut-off turns). Default targets: agents stopped by a usage cap. dry_run=true shows the plan. CLI: `tend swap`.",
@@ -1822,6 +1823,10 @@ async fn call_tool_inner(
         }
         "tend_call_peer" => Ok(call_peer(client, &args, config).await),
         "tend_start_work" => Ok(start_work(client, &args, config).await),
+        "tend_work_queue" => Ok(match crate::mcp_work_queue::call(client, &args).await {
+            Ok(value) => json_result(&value),
+            Err(error) => error_result(&error),
+        }),
         "tend_swap_account" => Ok(swap_account(client, &args, config).await),
         "tend_peer_report" => Ok(peer_report(client, &args).await),
         "tend_set_identity" => {
@@ -3755,6 +3760,7 @@ async fn start_work(client: &Client, args: &Value, config: &tend::config::Config
         dry_run: flag("dry_run"),
         new_only: false,
         queue_lease: None,
+        route_key: None,
         show_prompts: false,
         yes: true,
         no_ticket: flag("no_ticket"),
@@ -7623,6 +7629,7 @@ mod tests {
                 "tend_status",
                 "tend_start_agent",
                 "tend_start_work",
+                "tend_work_queue",
                 "tend_swap_account",
                 "tend_manage_tmux",
                 "tend_send_prompt",

@@ -145,6 +145,54 @@ with, and GitHub owner/repo spellings that differ only in case are one item.
 fetched (`work_external_upsert`, `work_external_v1`) after checking it for
 control characters and size.
 
+## Work queue
+
+The backlog plans Work; the queue sends it. tendd keeps queued items in
+`$XDG_DATA_HOME/tend/work-queue.json` and works through them on its own:
+
+```sh
+tend work queue add "run the full suite and fix what breaks" --agent %12
+tend work queue add "review the diff" --work web/ENG-1@review
+tend work queue add "fix the login timeout" --new --cwd ~/src/webapp
+tend work queue list            # order, and why each item waits
+tend work queue move <id> 0     # next
+tend work queue run-now <id>    # now, if its agent is free
+tend work queue cancel <id>
+```
+
+- An **agent** item is typed as that agent's next turn once it is idle.
+  It never goes to an agent that is working, waiting on you (a permission
+  prompt, a choice, an open question), at a usage limit, in a worker drain,
+  or still holding an earlier queued prompt.
+- A **work** item goes to one agent of that Work, the one named by `@ALIAS`
+  or its only agent, once every agent in the Work is idle.
+- A **new Work** item starts with `tend work up` once fewer than
+  `[work_queue] max_busy_agents` agents are busy (default 3). The throttle
+  applies to the queue only, not to Work you start yourself. The Work gets an
+  id of the form `Q-<NAME>-<DATE>-<12 hex>`. Until the queue has started it,
+  nothing else can start, join or claim that Work.
+
+tendd sends each item **at most once on its own**. The attempt is on disk
+before anything is typed. If tendd cannot know whether the attempt went
+through, the item shows as *uncertain* and is never sent again without you.
+That happens when tendd stopped mid-send, when tmux did not confirm the
+paste, when Enter was not confirmed, or when a launch failed partway. Check
+the agent, then settle the item:
+
+```sh
+tend work queue resolve <id> --sent                         # it arrived
+tend work queue resolve <id> --not-sent --ack-duplicate-risk  # queue it again
+tend work queue run-now <id> --allow-duplicate              # send again now
+tend work queue rm <id> --ack-duplicate-risk                # forget it
+```
+
+After the queue types to an agent, it sends that agent nothing more until
+the agent's own hooks report a new prompt. `add` prints a request key; pass
+it back with `--request-key` to retry an add whose reply was lost without
+adding the item twice (tendd remembers the last 1000 keys for 7 days). Agents
+can queue too, through the `tend_work_queue` MCP tool. An agent manages only
+its own items and may target only worker agents or itself.
+
 ## Current tmux compatibility
 
 Managed tmux currently binds one workspace to a session, one active Work run to
@@ -168,3 +216,7 @@ reference owns provider status and URL.
   `Attention / Blocked / Error`는 별도 신호로 표시합니다.
 - 관리되지 않은 일반 window는 Work로 추론하지 않고 `Unlinked executions`로
   분리합니다.
+- `tend work queue`는 프롬프트를 에이전트가 쉴 때 다음 턴으로 보내거나, 바쁜
+  에이전트가 적을 때 새 Work로 시작합니다. tendd는 한 항목을 스스로 두 번
+  보내지 않으며, 결과를 알 수 없는 시도는 *uncertain*으로 남겨 사람이
+  정리하게 합니다.

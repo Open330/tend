@@ -404,10 +404,20 @@ async fn resolve_target(
             external,
             skill,
             context,
+            route_key,
         } => {
-            let cwd = cwd.ok_or("a queued Work needs the absolute directory to start in")?;
-            if !cwd.is_absolute() {
+            if cwd.as_ref().is_some_and(|cwd| !cwd.is_absolute()) {
                 return Err("a queued Work needs an absolute directory".into());
+            }
+            let named_workspace = workspace
+                .as_deref()
+                .map(str::trim)
+                .filter(|w| !w.is_empty());
+            if cwd.is_none() && named_workspace.is_none() {
+                return Err(
+                    "a queued Work needs a directory to start in, or a workspace when its route provides the directory"
+                        .into(),
+                );
             }
             // The identity is fixed here, the way `work up` would normalise
             // it, and handed to the launch explicitly, so nothing resolved
@@ -420,7 +430,13 @@ async fn resolve_target(
                 .filter(|w| !w.is_empty())
                 .unwrap_or(prompt);
             let work = crate::work_queue::make_work_id(hint, now());
-            let workspace = crate::work_queue::queued_workspace(workspace.as_deref(), &cwd)?;
+            let workspace = crate::work_queue::queued_workspace(
+                named_workspace,
+                cwd.as_deref().unwrap_or(std::path::Path::new("")),
+            )?;
+            let route_key = route_key
+                .map(|key| key.trim().to_string())
+                .filter(|key| !key.is_empty());
             if work_id_in_use(ctx, &work, except).await {
                 return Err(format!(
                     "Work id {work} is already in use; queue it under a new id"
@@ -433,7 +449,7 @@ async fn resolve_target(
                     external,
                     pipeline,
                     workspace: Some(workspace),
-                    cwd: Some(cwd),
+                    cwd,
                     skill,
                     body: None,
                     context,
@@ -441,6 +457,7 @@ async fn resolve_target(
                     dry_run: false,
                     new_only: true,
                     queue_lease: None,
+                    route_key,
                     host: None,
                 },
             })
@@ -504,8 +521,12 @@ async fn resolve_target(
             work,
             alias,
         } => Ok(QueueTarget::Work {
-            identity: WorkIdentity::new(workspace, work),
-            alias,
+            // As `work up` names a Work: workspace lowercase, Work id
+            // uppercase, both trimmed. The alias keeps its case.
+            identity: crate::work_queue::normalized_identity(&workspace, &work),
+            alias: alias
+                .map(|alias| alias.trim().to_string())
+                .filter(|alias| !alias.is_empty()),
         }),
     }
 }
@@ -1285,10 +1306,10 @@ impl Executor {
 /// have started part of the Work, so it is uncertain.
 fn launch_failure(attempt: &str, at: OffsetDateTime, message: &str, took_over: bool) -> QueueState {
     match crate::work_queue::launch_refusal(message).filter(|_| !took_over) {
-        Some(detail) => QueueState::Failed {
+        Some((reason, detail)) => QueueState::Failed {
             attempt: Some(attempt.to_string()),
             at,
-            reason: FailReason::IdentityInUse,
+            reason,
             detail: detail.to_string(),
         },
         None => QueueState::Uncertain {

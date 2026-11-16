@@ -36,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mid-send, a paste that failed after reaching the pane, Enter that was not
   confirmed, and a launch that failed partway. This release adds the daemon
   side; the CLI, MCP and Home come next.
+- `tend work queue add|list|edit|move|cancel|rm|run-now|resolve|clear`
+  manages the queue from the terminal. `add` takes `--agent`, `--work
+  WORKSPACE/WORK[@ALIAS]` or `--new --cwd DIR`, and prints a request key so
+  a retried add is not added twice. Agents get the same through the
+  `tend_work_queue` MCP tool (add, list, cancel, run now). See
+  docs/WORK_MODEL.md.
 - A queued Work gets an id in a reserved form, `Q-<NAME>-<DATE>-<12 hex>`, and
   is started under a lease on its pipeline Run (`pipeline_queue_lease_v1`).
   Until the queue releases the lease, `tend work up`, the pipeline

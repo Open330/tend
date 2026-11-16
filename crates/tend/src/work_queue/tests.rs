@@ -157,6 +157,7 @@ fn new_work(work: &str) -> QueueTarget {
             dry_run: false,
             new_only: false,
             queue_lease: None,
+            route_key: None,
             host: None,
         },
     }
@@ -1259,6 +1260,13 @@ async fn removing_or_unsending_an_uncertain_item_needs_the_acknowledgement() {
 fn only_the_two_pre_launch_refusals_are_clean_launch_failures() {
     assert!(launch_refusal("work_exists_before_start: Work X already exists").is_some());
     assert!(launch_refusal("1: work_exists: Work ws/X already has a Run").is_some());
+    assert_eq!(
+        launch_refusal(
+            "tend work up failed: queue_no_directory_before_start: Work Q-X has no directory"
+        )
+        .map(|(reason, _)| reason),
+        Some(FailReason::LaunchRefused)
+    );
     assert!(
         launch_refusal("tend work up failed: work_exists: Work ws/X already has a Run").is_some()
     );
@@ -1372,4 +1380,23 @@ async fn cancelling_or_removing_a_queued_work_releases_its_lease() {
     assert_eq!(intents.len(), 1);
     assert_eq!(intents[0].state, QueueLeaseState::Released);
     assert_eq!(intents[0].holder, None);
+}
+
+#[test]
+fn work_paths_are_normalised_like_work_up() {
+    assert_eq!(
+        QueueTargetSpec::work_path("  Web / eng-1 @Review ").unwrap(),
+        QueueTargetSpec::Work {
+            workspace: "web".into(),
+            work: "ENG-1".into(),
+            alias: Some("Review".into()),
+        }
+    );
+    for bad in ["ENG-1", "web/", "/ENG-1", "web/ENG-1@", "  /  "] {
+        assert!(QueueTargetSpec::work_path(bad).is_err(), "{bad}");
+    }
+    assert_eq!(
+        normalized_identity(" Web ", " eng-1 "),
+        crate::work::WorkIdentity::new("web", "ENG-1")
+    );
 }
