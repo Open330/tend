@@ -122,18 +122,26 @@ pub(in crate::dashboard) fn operate_routes(state: AppState) -> Router<AppState> 
             "/api/device/capture",
             post(super::operate::capture).layer(DefaultBodyLimit::max(1024)),
         )
-        .layer(middleware::from_fn(operate_only))
+        .layer(middleware::from_fn_with_state(state.clone(), operate_only))
         .layer(middleware::from_fn_with_state(state, device_only))
         .layer(middleware::map_response(no_store))
 }
 
-async fn operate_only(req: Request, next: Next) -> Response {
+async fn operate_only(State(state): State<AppState>, req: Request, next: Next) -> Response {
     match req.extensions().get::<DeviceAuth>() {
         Some(auth) if auth.scope == Scope::Operate => next.run(req).await,
-        Some(_) => error(
-            StatusCode::FORBIDDEN,
-            "this device may only decide; pair it again with hosts and new work",
-        ),
+        Some(auth) => {
+            // A device that may only decide tried more: worth a line.
+            let mut entry = super::operate::device_actor(auth);
+            entry["action"] = json!("device_operate_refused");
+            entry["path"] = json!(req.uri().path());
+            entry["status"] = json!(403);
+            audit(&state, entry).await;
+            error(
+                StatusCode::FORBIDDEN,
+                "this device may only decide; pair it again with hosts and new work",
+            )
+        }
         None => StatusCode::UNAUTHORIZED.into_response(),
     }
 }

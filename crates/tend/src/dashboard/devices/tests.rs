@@ -981,6 +981,10 @@ async fn an_operate_device_reads_one_agents_output_and_nothing_else() {
         "no other capture reached the host"
     );
 
+    // Too large to read: refused, and still recorded.
+    let big = Some(json!({"host": "mini", "session_id": "x".repeat(4096)}));
+    let (status, _) = call(&app, "POST", "/api/device/capture", Some(&token), big).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
     // A decide device may not; the audit names every attempt.
     let (decide, _) = pair_with(&app, "other", None, None).await;
     let (status, _) = call(
@@ -992,16 +996,31 @@ async fn an_operate_device_reads_one_agents_output_and_nothing_else() {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-    let lines = std::fs::read_to_string(&audit).unwrap();
-    let captures: Vec<Value> = lines
+    let lines: Vec<Value> = std::fs::read_to_string(&audit)
+        .unwrap()
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
-        .filter(|line| line["action"] == "device_capture")
         .collect();
-    assert_eq!(captures.len(), 5);
+    let action = |name: &str| {
+        lines
+            .iter()
+            .filter(|l| l["action"] == name)
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let captures = action("device_capture");
+    assert_eq!(captures.len(), 6);
     assert_eq!(captures[0]["status"], 200);
     assert_eq!(captures[0]["account"]["device"], device.as_str());
-    assert!(!lines.contains("line 999"), "the audit never holds output");
+    assert_eq!(captures[5]["status"], 413);
+    let requested = action("device_capture_requested");
+    assert_eq!(requested.len(), 1, "an intent line before the one dispatch");
+    assert_eq!(requested[0]["pane"], "%3");
+    assert_eq!(action("device_operate_refused").len(), 1);
+    assert!(
+        !serde_json::to_string(&lines).unwrap().contains("line 999"),
+        "the audit never holds output"
+    );
 }
 
 #[test]
@@ -1014,4 +1033,32 @@ fn capture_tails_are_bounded_in_lines_and_bytes() {
     assert!(out.len() <= 64 * 1024);
     assert!(out.chars().all(|c| c == 'é' || c == '\n'));
     assert_eq!(super::operate::tail("a\nb\n"), "a\nb");
+}
+
+#[test]
+fn an_agents_pane_is_told_apart_by_its_endpoint_or_not_at_all() {
+    let pane = |id: &str, socket: Option<&str>| -> crate::tmux::PaneInfo {
+        serde_json::from_value(json!({
+            "pane_id": id, "session_id": "$1", "session": "s", "window_id": "@1",
+            "window_name": "w", "window_index": "0", "pane_index": "0", "tty": "/dev/ttys1",
+            "current_command": "zsh", "title": "t", "current_path": "/", "pane_pid": 1,
+            "socket": socket
+        }))
+        .unwrap()
+    };
+    let panes = [
+        pane("%3", Some("private-shell")),
+        pane("%3", Some("default")),
+    ];
+    let pick = |socket| super::operate::agent_pane(&panes, "%3", socket).map(|p| p.socket.clone());
+    // No socket on the agent: two %3 panes, so neither.
+    assert_eq!(pick(None), None);
+    assert_eq!(pick(Some("default")), Some(Some("default".into())));
+    assert_eq!(pick(Some("elsewhere")), None);
+    // One %3 pane: an agent without a socket gets it.
+    let single = [pane("%3", Some("default"))];
+    assert!(super::operate::agent_pane(&single, "%3", None).is_some());
+    // A pane that names no socket does not match an agent that names one.
+    let unnamed = [pane("%3", None)];
+    assert!(super::operate::agent_pane(&unnamed, "%3", Some("default")).is_none());
 }

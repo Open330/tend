@@ -179,6 +179,28 @@ pub(super) fn tail(text: &str) -> String {
     out
 }
 
+/// The one pane that is this agent's. With a socket, the pane on that
+/// endpoint (compared as the backend identifies endpoints: a tmux short
+/// name and its full path are one server; rmux and cmux keep full paths).
+/// Without one, a pane id that exists once. Anything else is ambiguous.
+pub(super) fn agent_pane<'a>(
+    panes: &'a [crate::tmux::PaneInfo],
+    pane_id: &str,
+    socket: Option<&str>,
+) -> Option<&'a crate::tmux::PaneInfo> {
+    let mut candidates = panes.iter().filter(|pane| {
+        pane.pane_id == pane_id
+            && match socket {
+                Some(socket) => pane.socket.as_deref().is_some_and(|observed| {
+                    crate::backend::pane_endpoints_match(Some(pane_id), socket, observed)
+                }),
+                None => true,
+            }
+    });
+    let pane = candidates.next()?;
+    candidates.next().is_none().then_some(pane)
+}
+
 /// Releases a device's capture slot when the capture ends.
 struct Slot<'a>(&'a super::Devices, String);
 
@@ -188,16 +210,31 @@ impl Drop for Slot<'_> {
     }
 }
 
+/// Who a device line names: the label, the device and who approved it.
+pub(super) fn device_actor(device: &DeviceAuth) -> Value {
+    json!({
+        "by": super::Device::label(&device.name, &device.id),
+        "account": { "credential": "device", "device": device.id, "approved_by": device.approved_by },
+        "scope": device.scope,
+    })
+}
+
 pub(super) async fn capture(
     State(state): State<AppState>,
     Extension(device): Extension<DeviceAuth>,
-    body: Bytes,
+    body: Result<Bytes, axum::extract::rejection::BytesRejection>,
 ) -> Response {
-    let parsed = serde_json::from_slice::<CaptureBody>(&body);
+    // A body refused before it was read (too large) is an attempt too.
+    let parsed = match &body {
+        Ok(bytes) => {
+            serde_json::from_slice::<CaptureBody>(bytes).map_err(|_| StatusCode::BAD_REQUEST)
+        }
+        Err(rejection) => Err(rejection.status()),
+    };
     let outcome = match &parsed {
         Ok(body) => capture_for(&state, &device, body).await,
-        Err(_) => Err((
-            StatusCode::BAD_REQUEST,
+        Err(status) => Err((
+            *status,
             "expected {\"host\": \"...\", \"session_id\": \"...\"}".to_owned(),
         )),
     };
@@ -208,16 +245,12 @@ pub(super) async fn capture(
         Ok(_) => StatusCode::OK,
         Err((status, _)) => *status,
     };
-    super::routes::audit_entry(
-        &state,
-        json!({
-            "by": super::Device::label(&device.name, &device.id),
-            "account": { "credential": "device", "device": device.id, "approved_by": device.approved_by },
-            "action": "device_capture", "scope": device.scope,
-            "host": host, "session_id": session, "status": status.as_u16(),
-        }),
-    )
-    .await;
+    let mut entry = device_actor(&device);
+    entry["action"] = json!("device_capture");
+    entry["host"] = json!(host);
+    entry["session_id"] = json!(session);
+    entry["status"] = json!(status.as_u16());
+    super::routes::audit_entry(&state, entry).await;
     match outcome {
         Ok(text) => Json(json!({ "capture": text })).into_response(),
         Err((status, message)) => refuse(status, &message),
@@ -254,14 +287,10 @@ async fn capture_for(
         .find(|agent| !body.session_id.is_empty() && agent.session_id == body.session_id)
         .ok_or_else(not_found)?;
     let pane_id = agent.pane.as_deref().ok_or_else(not_found)?;
-    let pane = remote
-        .panes
-        .iter()
-        .find(|pane| {
-            pane.pane_id == pane_id
-                && (agent.tmux_socket.is_none() || pane.socket == agent.tmux_socket)
-        })
-        .ok_or_else(not_found)?;
+    let pane = agent_pane(&remote.panes, pane_id, agent.tmux_socket.as_deref()).ok_or((
+        StatusCode::CONFLICT,
+        "this agent's pane cannot be told apart from another; read it on a computer".to_owned(),
+    ))?;
     let kind = crate::backend::pane_id_host_kind(&pane.pane_id).ok_or_else(not_found)?;
     let key = crate::topology::PaneKey::from_pane(kind, pane);
     let Some(_slot) = state
@@ -274,6 +303,14 @@ async fn capture_for(
             "this device is already reading output; try again in a moment".into(),
         ));
     };
+    // Recorded before the host is asked, so an interrupted capture still
+    // leaves a line naming the device and the agent.
+    let mut intent = device_actor(device);
+    intent["action"] = json!("device_capture_requested");
+    intent["host"] = json!(host.alias);
+    intent["session_id"] = json!(body.session_id);
+    intent["pane"] = json!(pane.pane_id);
+    super::routes::audit_entry(state, intent).await;
     let result = fleet
         .execute(
             host.alias.clone(),
