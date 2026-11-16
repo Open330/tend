@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Home in the Mac app has two card layouts, chosen in Settings → General →
+  Home or with the toggle in Home's header. Status emphasis (the default)
+  leads each card with its lane's colour stripe and a bold title, puts the
+  question and its choices in an inset box, keeps host, project and time on
+  one subdued line, tints Your turn cards, and labels In progress and
+  Finished cards with their state. Compact list shows one row per item (a
+  status dot, the title, the host, how long ago); selecting a row opens its
+  details beside the board, where a decision is answered and a unit's agent
+  answered, opened or marked Looks Good as before.
+
 ### Fixed
 
 - On Home in the Mac app, the side bar's divider no longer runs up through

@@ -117,6 +117,8 @@ enum TendPreferences {
     static let appearanceKey = "tend.appearance"
     static let showWorkbenchOnLaunchKey = "tend.showWorkbenchOnLaunch"
     static let homeAnimatesMovesKey = "tend.home.animatesMoves"
+    /// How Home draws its items: `FleetCardLayout`.
+    static let homeCardLayoutKey = "tend.home.cardLayout"
     static let settingsTabKey = "tend.settings.selectedTab"
     static let fleetSettingsSectionKey = "tend.settings.fleetSection"
     static let workDirectoryKey = "nativeWorkDirectory"
@@ -674,6 +676,7 @@ private struct TendGeneralSettingsView: View {
     @AppStorage(TendPreferences.appearanceKey) private var appearance = TendAppearance.system.rawValue
     @AppStorage(TendPreferences.showWorkbenchOnLaunchKey) private var showWorkbenchOnLaunch = true
     @AppStorage(TendPreferences.homeAnimatesMovesKey) private var homeAnimatesMoves = true
+    @AppStorage(TendPreferences.homeCardLayoutKey) private var homeCardLayout: FleetCardLayout = .emphasis
     @AppStorage(TendHotKeyPreset.defaultsKey) private var agentsHotKey = TendHotKeyPreset.off.rawValue
     @ObservedObject private var globalHotKey = TendGlobalHotKey.shared
     @AppStorage(TendPreferences.workDirectoryKey) private var workDirectory = ""
@@ -708,6 +711,12 @@ private struct TendGeneralSettingsView: View {
             }
 
             Section("Home") {
+                Picker("Card layout", selection: $homeCardLayout) {
+                    ForEach(FleetCardLayout.allCases) { layout in
+                        Text(layout.title).tag(layout)
+                    }
+                }
+                TendSettingsCaption("Status emphasis shows each item as a card with its question and choices. Compact list shows one row per item and opens the details beside the board.")
                 Toggle("Animate cards moving between lanes", isOn: $homeAnimatesMoves)
                 TendSettingsCaption("A card glides to its new lane and shows where it came from for a few seconds.")
             }
