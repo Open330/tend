@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.22] - 2026-11-16
+
 ### Fixed
 
 - The dashboard's state colours are now the values the Mac app draws on
