@@ -18,6 +18,31 @@ cargo install --path crates/tend-cli --locked
 tend init --component tmux-popup,tmux-peek,claude-hooks,codex-hooks,tendd-shellrc
 ```
 
+### On a new machine
+
+What a clean Windows 11 Pro install (26H2, checked 2026-11-16) lacks before
+the commands above work:
+
+- **A C++ toolchain.** `cargo install` needs the Visual Studio 2022 Build
+  Tools with only *MSVC x64/x86 build tools* and a *Windows 11 SDK*
+  (about 4.3 GB), then [rustup](https://rustup.rs) (MSVC host) and Git.
+  A release build of `tendd`, `tend` and `tend-app` takes about 18 minutes
+  on 4 cores and about 2 GB of `target`.
+- **rmux.** `winget install Helvesec.RMUX` works from a signed-in terminal
+  (the first winget run asks to accept the `msstore` source terms); the
+  release's Windows zip works too. winget is not available to a service or
+  `SYSTEM` session.
+- **PowerShell 7.** Windows ships only Windows PowerShell 5.1, whose
+  default execution policy is `Restricted` (no profile runs). The
+  `tendd-shellrc` autostart is written to the PowerShell 7 profile
+  (`RemoteSigned` by default), so install PowerShell 7. On the clean machine
+  an rmux server's `default-shell` was `cmd.exe` (from `%COMSPEC%`), which
+  reads no profile: set `set -g default-shell pwsh` in `~/.rmux.conf` for
+  the autostart to run.
+- **Nothing for the app itself.** WebView2 ships with Windows 11 (157 here).
+  An OpenSSH server is needed only when another machine reaches this one as
+  a Fleet host.
+
 `tend init` writes its bindings to `~/.rmux.conf` on Windows — rmux reads that
 file (then `%APPDATA%\rmux\rmux.conf`) and never `~/.tmux.conf` — and accepts
 rmux in place of tmux in its pre-flight. Run it from inside an rmux pane so the
