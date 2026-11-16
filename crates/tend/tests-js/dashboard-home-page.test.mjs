@@ -91,9 +91,11 @@ const fleet = { hosts: [{ alias: "mba", local: true, state: "online", remote: { 
 const status = { home: 404, decisions: 200, fleet: 200, history: 200, access: 200 };
 let serverBoard = null;
 const posts = [];
+let postGate = null;
 globalThis.fetch = async (path, init = {}) => {
   if (init.method === "POST") {
     posts.push({ path, init });
+    if (postGate) await postGate;
     return { ok: true, status: 200, json: async () => ({ request_id: "req_9", status: "completed" }) };
   }
   const name = path.includes("/api/home") ? "home" : path.includes("history") ? "history" : path.includes("decisions") ? "decisions" : path.includes("fleet") ? "fleet" : "access";
@@ -242,6 +244,57 @@ test("the daemon's board, when it has one, is what the page draws", async () => 
   await home.refresh();
   assert.doesNotMatch(lanes().text, /write docs/, "no leftover board");
   assert.match(lanes().text, /Ship it\?/, "the fallback queue");
+  status.home = 404;
+  serverBoard = null;
+  await home.refresh();
+});
+
+test("a reply goes only to the agent and question it was written for", async () => {
+  const unitAt = (session, since) => ({
+    type: "unit", id: "work:ws/job", lane: "needs_you", title: "job", repo: "tend", headline: "Which way?",
+    stages: [{ name: "impl", state: "needs_you" }], shown_time: recent, host_aliases: ["mba"], agent_kinds: ["claude_code"],
+    agents: [], helpers: [], recent: true,
+    focus: { host: "mba", local: true, pane: "%1", socket: "s", state: "waiting_input", session_id: session, state_entered_at: since, owner: `claude · mba` },
+  });
+  const boardWith = (unit) => ({
+    hosts: [{ alias: "mba", local: true, state: "online" }], decision_hosts: [], backlog: [],
+    lanes: { needs_you: { count: 1, groups: [{ project: "tend", items: [unit] }] }, running: { groups: [] }, finished: { groups: [] } },
+  });
+  serverBoard = boardWith(unitAt("first", "t1"));
+  status.home = 200;
+  await home.refresh();
+  find(lanes(), (n) => n.dataset?.id === "work:ws/job").click();
+  const inspector = document.getElementById("inspector");
+  const area = find(inspector, (n) => n.tag === "textarea");
+  assert.ok(area, "a reply field for the waiting agent");
+  area.value = "ANSWER FOR FIRST";
+  area.fire("input");
+  const send = find(inspector, (n) => n.tag === "button" && n.text.includes("Answer"));
+  // Another session takes the same pane while the field keeps focus: the
+  // page does not redraw under the cursor, but the old Send must not send.
+  document.activeElement = { value: area.value, closest: (sel) => (sel === ".composer" ? {} : null) };
+  serverBoard = boardWith(unitAt("second", "t2"));
+  await home.refresh();
+  const before = posts.length;
+  send.click();
+  await settle();
+  assert.equal(posts.length, before, "nothing typed to the replacement session");
+  document.activeElement = null;
+  // The same agent at the same question: sent, and the draft frozen while
+  // the answer is pending.
+  serverBoard = boardWith(unitAt("first", "t1"));
+  await home.refresh();
+  const area2 = find(document.getElementById("inspector"), (n) => n.tag === "textarea");
+  assert.equal(area2?.value, "ANSWER FOR FIRST", "the draft kept its own target");
+  let release;
+  postGate = new Promise((resolve) => (release = resolve));
+  find(document.getElementById("inspector"), (n) => n.tag === "button" && n.text.includes("Answer")).click();
+  await settle();
+  assert.equal(posts.at(-1).path, "/api/panes/%251/prompt");
+  assert.equal(find(document.getElementById("inspector"), (n) => n.tag === "textarea")?.disabled, true, "frozen while sending");
+  release();
+  postGate = null;
+  await settle();
   status.home = 404;
   serverBoard = null;
   await home.refresh();

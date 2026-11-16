@@ -585,5 +585,7 @@ export function replyTarget(unit) {
 
 /// A draft's target is still the agent at the same question.
 export function sameTarget(a, b) {
-  return Boolean(a && b && a.kind === b.kind && a.session === b.session && a.state === b.state && a.since === b.since && a.pane === b.pane);
+  return Boolean(
+    a && b && a.kind === b.kind && a.session === b.session && a.state === b.state && a.since === b.since && a.pane === b.pane && a.socket === b.socket,
+  );
 }

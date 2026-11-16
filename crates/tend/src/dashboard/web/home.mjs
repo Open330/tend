@@ -760,9 +760,13 @@ function wireReview() {
 // ---- Inspector ---------------------------------------------------------
 
 function findUnit(id) {
-  if (!id || !state.board) return null;
+  return findIn(state.board, id);
+}
+
+function findIn(board, id) {
+  if (!id || !board) return null;
   for (const lane of LANES) {
-    const data = state.board.lanes[lane];
+    const data = board.lanes[lane];
     for (const group of data.groups) for (const unit of group.units) if (unit.id === id) return unit;
     for (const unit of data.older) if (unit.id === id) return unit;
     for (const list of Object.values(data.folds || {})) for (const unit of list) if (unit.id === id) return unit;
@@ -770,8 +774,17 @@ function findUnit(id) {
   return null;
 }
 
-/// Send a draft to the agent it was written for, and only to that one.
-async function sendToPane(target, text, key) {
+/// Send a draft to the agent it was written for, and only to that one:
+/// checked against the latest board just before sending (the Mac checks
+/// `target.matches(current.agent)` the same way), so a replacement session
+/// in the same pane, or the same agent's next question, never receives it.
+async function sendToPane(target, text, key, unitId) {
+  const latest = findIn(currentBoard(), unitId);
+  if (!sameTarget(target, latest ? replyTarget(latest) : null)) {
+    state.results.set(key, { ok: false, text: S.staleDraft(target.owner || "") });
+    render();
+    return;
+  }
   state.busy.add(key);
   state.results.delete(key);
   render();
@@ -779,7 +792,10 @@ async function sendToPane(target, text, key) {
     const body = { text, submit: true };
     if (target.socket) body.socket = target.socket;
     await write(`/api/panes/${encodeURIComponent(target.pane)}/prompt`, body);
-    state.replyDrafts.delete(key);
+    // Clear only what was sent: the draft is frozen while sending, but a
+    // retarget or a newer text must survive a late answer.
+    const now = state.replyDrafts.get(key);
+    if (now && now.text === text && sameTarget(now.target, target)) state.replyDrafts.delete(key);
     state.results.set(key, { ok: true, text: S.sent });
     setTimeout(refresh, 600);
   } catch (error) {
@@ -846,7 +862,9 @@ function renderInspector() {
     area.maxLength = 16384;
     area.placeholder = target.kind === "answer" ? S.yourAnswer : S.nextInstruction;
     area.value = draft?.text || "";
-    const send = button(target.kind === "answer" ? S.answerVerb : S.sendBack, () => sendToPane(target, area.value, key), "btn primary");
+    const send = button(target.kind === "answer" ? S.answerVerb : S.sendBack, () => sendToPane(target, area.value, key, unit.id), "btn primary");
+    // A draft being sent is frozen (FleetReplyDraft.pending).
+    area.disabled = state.busy.has(key);
     const sync = () => (send.disabled = !area.value.trim() || state.busy.has(key));
     area.addEventListener("input", () => {
       if (area.value) state.replyDrafts.set(key, { text: area.value, target });
