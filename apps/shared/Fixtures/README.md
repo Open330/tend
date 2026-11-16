@@ -14,3 +14,8 @@ The dashboard's per-host `queue` and `history` are the daemon's
 `decision_queue` / `decision_history` documents, the ones Tend for Mac reads
 over IPC, so these also cover the shared models in `../Sources`. Re-record
 them when those documents change.
+- `device-fleet.json`: `GET /api/device/fleet` for an `operate` device
+  (2026-11-16): one host with agents at work, finished and waiting, from
+  `scratch-tendd.sh seed` and `seed-home`. Folder paths rewritten to
+  `/Users/dev/work/…`. The web Home's lane rules (`home-model.mjs`) and the
+  iOS app's (`Fleet.swift`) both read this shape.

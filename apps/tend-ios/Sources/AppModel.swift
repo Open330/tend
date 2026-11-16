@@ -202,6 +202,16 @@ final class AppModel {
 
     private(set) var phase: Phase
     private(set) var hosts: [HostQueue] = []
+    /// Every host and its agents; nil until read, or when this device may
+    /// only decide.
+    private(set) var fleet: FleetSnapshot?
+    /// What this device may do, as the dashboard last said.
+    private(set) var scope: DeviceScope = .decide
+    /// Why the hosts could not be read (the queue may still be fine).
+    private(set) var fleetProblem: String?
+    /// What this dashboard serves the device beyond the hosts (`capture`,
+    /// `work`), from `GET /api/device`.
+    private(set) var features: Set<String> = []
     private(set) var history: [HostHistory] = []
     private(set) var loaded = false
     private(set) var historyLoaded = false
@@ -231,7 +241,35 @@ final class AppModel {
         if ProcessInfo.processInfo.arguments.contains("-TendResetState") {
             CredentialStore.clear()
         }
-        phase = CredentialStore.load().map(Phase.paired) ?? .unpaired
+        let stored = CredentialStore.load()
+        phase = stored.map(Phase.paired) ?? .unpaired
+        scope = stored?.scope ?? .decide
+    }
+
+    /// Whether this device may see hosts and agents.
+    var operates: Bool { scope == .operate }
+    /// Whether it can read an agent's recent output here.
+    var canCapture: Bool { operates && features.contains("capture") }
+    /// Whether it can start work here.
+    var canStartWork: Bool { operates && features.contains("work") }
+
+    /// Re-read what the dashboard says this device is and may do.
+    func refreshDevice() async {
+        guard let client else { return }
+        let mine = session
+        do {
+            let info = try await client.device()
+            guard session == mine else { return }
+            features = info.features
+            if info.scope != scope {
+                if info.scope == .decide { narrow() } else { scope = info.scope }
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            guard session == mine else { return }
+            _ = handle(error, session: mine)
+        }
     }
 
     var pairing: Pairing? {
@@ -263,7 +301,7 @@ final class AppModel {
 
     // MARK: Pairing
 
-    func startPairing(address: String, name: String) {
+    func startPairing(address: String, name: String, scope wanted: DeviceScope = .decide) {
         pairingProblem = nil
         let origin: ServerOrigin
         do {
@@ -285,7 +323,7 @@ final class AppModel {
                 return self
             }
             do {
-                let request = try await client.requestPairing(name: deviceName, platform: platform)
+                let request = try await client.requestPairing(name: deviceName, platform: platform, scope: wanted)
                 guard let model = current() else { return }
                 let expires = Date().addingTimeInterval(TimeInterval(request.expiresIn))
                 model.phase = .waitingForApproval(origin: origin, userCode: request.userCode, expires: expires)
@@ -294,8 +332,9 @@ final class AppModel {
                     try await Task.sleep(nanoseconds: interval * 1_000_000_000)
                     let answer = try await client.pollPairing(deviceCode: request.deviceCode)
                     guard let model = current() else { return }
-                    if case .issued(let device, let token) = answer {
-                        model.paired(Pairing(origin: origin, device: device, token: token))
+                    if case .issued(let device, let token, let scope) = answer {
+                        model.paired(Pairing(origin: origin, device: device, token: token, scope: scope))
+                        await model.refreshDevice()
                         await model.refresh()
                         return
                     }
@@ -317,6 +356,7 @@ final class AppModel {
         attempt = UUID()
         session = UUID()
         signOutProblem = nil
+        scope = pairing.scope
         phase = .paired(pairing)
     }
 
@@ -361,6 +401,10 @@ final class AppModel {
         phase = .unpaired
         hosts = []
         history = []
+        fleet = nil
+        fleetProblem = nil
+        features = []
+        scope = .decide
         loaded = false
         historyLoaded = false
         problem = nil
@@ -395,19 +439,111 @@ final class AppModel {
             refreshAgain = false
             guard let client else { return }
             let mine = session
+            async let fleetRead: Void = refreshFleet(client, session: mine)
             do {
                 let read = try await client.queue()
-                guard session == mine else { return }
+                guard session == mine else { await fleetRead; return }
                 hosts = read
                 loaded = true
                 problem = nil
             } catch is CancellationError {
+                await fleetRead
                 return
             } catch {
-                guard session == mine else { return }
+                guard session == mine else { await fleetRead; return }
                 problem = handle(error, session: mine)
             }
+            await fleetRead
         } while refreshAgain
+    }
+
+    /// Read the hosts when this device may. A 403 means the dashboard
+    /// narrowed it to deciding: say so and stop asking.
+    private func refreshFleet(_ client: DashboardClient, session mine: UUID) async {
+        guard scope == .operate else { return }
+        do {
+            let read = try await client.fleet()
+            guard session == mine else { return }
+            if fleet != read { fleet = read }
+            fleetProblem = nil
+        } catch DashboardError.notAllowed {
+            guard session == mine else { return }
+            narrow()
+        } catch is CancellationError {
+            return
+        } catch {
+            guard session == mine else { return }
+            fleetProblem = handle(error, session: mine)
+        }
+    }
+
+    /// The dashboard limited this device to deciding.
+    private func narrow() {
+        scope = .decide
+        fleet = nil
+        fleetProblem = DashboardError.notAllowed.localizedDescription
+        if var pairing {
+            pairing.scope = .decide
+            if CredentialStore.save(pairing) { phase = .paired(pairing) }
+        }
+    }
+
+    // MARK: Lanes
+
+    var inProgress: [LaneAgent] { fleet.map(FleetLanes.inProgress) ?? [] }
+    var finishedAgents: [LaneAgent] { fleet.map { FleetLanes.finished($0) } ?? [] }
+
+    func count(_ lane: Lane) -> Int {
+        switch lane {
+        case .yourTurn: pending.count
+        case .inProgress: inProgress.count
+        case .finished: past.filter { $0.at.map { Date().timeIntervalSince($0) <= FleetLanes.finishedWindow } ?? false }.count + finishedAgents.count
+        }
+    }
+
+    // MARK: Agents and work
+
+    func capture(_ agent: LaneAgent) async throws -> String {
+        guard let client, !agent.agent.sessionID.isEmpty else { return "" }
+        let mine = session
+        do {
+            return try await client.capture(host: agent.host, sessionID: agent.agent.sessionID)
+        } catch DashboardError.notAllowed {
+            if session == mine { narrow() }
+            throw DashboardError.notAllowed
+        } catch {
+            _ = handle(error, session: mine)
+            throw error
+        }
+    }
+
+    func workOptions(host: String) async throws -> WorkOptions {
+        guard let client else { throw DashboardError.signedOut }
+        return try await client.workOptions(host: host)
+    }
+
+    /// Start new work. The caller has already asked for Face ID. The answer
+    /// says whether it started, failed, or may have started (unknown).
+    func startWork(_ request: StartWorkRequest) async throws -> StartedWork {
+        guard let client else { throw DashboardError.signedOut }
+        let mine = session
+        do {
+            let started = try await client.startWork(request)
+            guard session == mine else { return started }
+            outcome = switch started.state {
+            case "started": String(localized: "Started.")
+            case "unknown": String(localized: "It may have started; check the host.")
+            default: String(localized: "Not started.")
+            }
+            await refresh()
+            return started
+        } catch DashboardError.notAllowed {
+            if session == mine { narrow() }
+            throw DashboardError.notAllowed
+        } catch {
+            _ = handle(error, session: mine)
+            throw error
+        }
     }
 
     func refreshHistory() async {

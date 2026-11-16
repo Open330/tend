@@ -1,103 +1,33 @@
-// The screens: Your turn (what needs you, per host), Decided, and the
-// device's settings. iPhone gets them as tabs; iPad gets Tend for Mac's
-// sidebar (Your turn, Decided, then the hosts) beside the selected one.
+// The app's shell, as Tend for Mac lays it out: Home first, then the
+// hosts, then Settings. iPad gets the Mac's sidebar beside the selected
+// screen; iPhone gets them as tabs.
 import SwiftUI
 import UIKit
 
-struct YourTurnView: View {
-    /// Only this host's section; nil for every host.
-    var host: String?
-    @Environment(AppModel.self) private var model
-
-    private var sections: [HostQueue] {
-        model.hosts.filter { host == nil || $0.alias == host }
-    }
-
-    var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 14) {
-                if let outcome = model.outcome {
-                    Label(outcome, systemImage: "checkmark.circle.fill")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(TendColor.done)
-                        .accessibilityIdentifier("outcome")
-                }
-                if let problem = model.problem {
-                    Label(problem, systemImage: "exclamationmark.triangle")
-                        .font(.footnote)
-                        .foregroundStyle(TendColor.error)
-                        .accessibilityIdentifier("problem")
-                }
-                if !model.loaded {
-                    ProgressView().frame(maxWidth: .infinity).padding(.top, 40)
-                } else if AppModel.allClear(sections) {
-                    empty
-                }
-                ForEach(sections) { section in
-                    HostSectionView(section: section, showsHeader: host == nil)
-                }
-            }
-            .padding(16)
-            .frame(maxWidth: 760)
-            .frame(maxWidth: .infinity)
-        }
-        .background(Color(uiColor: .systemGroupedBackground))
-        .refreshable { await model.refresh() }
-        .navigationTitle(host ?? String(localized: "Your turn"))
-    }
-
-    private var empty: some View {
-        VStack(spacing: 12) {
-            TendMark(waiting: false, error: false, working: true, done: true)
-                .frame(width: 56, height: 56)
-            Text("Nothing needs you").font(.headline)
-            Text("Questions your agents ask and results they file for review appear here.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.top, 48)
-        .accessibilityIdentifier("emptyQueue")
-    }
-}
-
+/// One host's part of Your turn: its heading, what could not be read, and
+/// its cards.
 struct HostSectionView: View {
     let section: HostQueue
-    var showsHeader = true
 
     var body: some View {
         let decisions = PendingDecision.from(section)
         VStack(alignment: .leading, spacing: 10) {
-            if showsHeader, !decisions.isEmpty || !section.unavailable.isEmpty || !section.queue.isComplete {
-                HStack(spacing: 6) {
-                    Image(systemName: "server.rack")
-                    Text(verbatim: section.alias).font(.subheadline.weight(.semibold))
-                    if section.local { Text("this dashboard").foregroundStyle(.secondary) }
-                    Spacer()
-                    if !decisions.isEmpty {
-                        Text("\(decisions.count)").monospacedDigit().foregroundStyle(.secondary)
-                    }
-                }
-                .font(.subheadline)
-            }
             ForEach(section.unavailable, id: \.self) { reason in
-                Label(String(localized: "Not everything could be read: \(reason)"), systemImage: "exclamationmark.triangle")
-                    .font(.footnote)
+                Label(String(localized: "\(section.alias): not everything could be read: \(reason)"), systemImage: "exclamationmark.triangle")
+                    .font(TendType.meta)
                     .foregroundStyle(.secondary)
             }
             if section.queue.truncated {
-                Text("Showing the first \(decisions.count); more are waiting.")
-                    .font(.footnote)
+                Text("\(section.alias): showing the first \(decisions.count); more are waiting.")
+                    .font(TendType.meta)
                     .foregroundStyle(.secondary)
             }
             if section.queue.undecoded > 0 {
                 Label(String(localized: "\(section.queue.undecoded) more need you in a form this app cannot show yet. Open the dashboard in a browser, or update the app."), systemImage: "exclamationmark.triangle")
-                    .font(.footnote)
-                    .foregroundStyle(TendColor.waiting)
+                    .font(TendType.meta)
+                    .foregroundStyle(.orange)
                     .accessibilityIdentifier("undecoded")
             }
-
             ForEach(decisions) { decision in
                 DecisionCard(decision: decision)
             }
@@ -105,66 +35,10 @@ struct HostSectionView: View {
     }
 }
 
-struct DecidedView: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        List {
-            if !model.historyLoaded {
-                ProgressView().frame(maxWidth: .infinity)
-            } else if model.past.isEmpty, model.history.allSatisfy({ $0.history.isComplete && $0.unavailable.isEmpty }) {
-                Text("Nothing decided yet.").foregroundStyle(.secondary)
-            }
-            ForEach(model.history.filter { !$0.history.isComplete || !$0.unavailable.isEmpty }) { section in
-                Label(historyGap(section), systemImage: "exclamationmark.triangle")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-            ForEach(model.past) { past in
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Chip(text: past.outcome, color: past.isPositive ? TendColor.done : TendColor.error)
-                            .accessibilityIdentifier("pastOutcome")
-                        Text(verbatim: past.host).font(.caption).foregroundStyle(.secondary)
-                        Spacer()
-                        if let at = past.at {
-                            Text(at, format: .relative(presentation: .numeric, unitsStyle: .abbreviated))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    Text(verbatim: past.title).font(.subheadline.weight(.semibold))
-                        .accessibilityIdentifier("pastTitle")
-                    if let text = past.text {
-                        Text(verbatim: text).font(.subheadline).foregroundStyle(.secondary)
-                    }
-                    if let by = past.by {
-                        Text("by \(by)").font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.vertical, 2)
-                .accessibilityElement(children: .combine)
-                .accessibilityIdentifier("pastDecision")
-            }
-        }
-        .refreshable { await model.refreshHistory() }
-        .task { await model.refreshHistory() }
-        .navigationTitle(String(localized: "Decided"))
-    }
-}
-
-private func historyGap(_ section: HostHistory) -> String {
-    var parts = section.unavailable + section.history.unavailable
-    if section.history.truncated { parts.append(String(localized: "only the latest are shown")) }
-    if section.history.undecoded > 0 {
-        parts.append(String(localized: "\(section.history.undecoded) this app cannot show"))
-    }
-    return String(localized: "\(section.alias): \(parts.joined(separator: "; "))")
-}
-
 struct DeviceSettingsView: View {
     @Environment(AppModel.self) private var model
     @State private var confirming = false
+    @State private var repairing = false
 
     var body: some View {
         Form {
@@ -172,16 +46,38 @@ struct DeviceSettingsView: View {
                 Section(String(localized: "Paired with")) {
                     LabeledContent(String(localized: "Dashboard"), value: pairing.origin.display)
                     LabeledContent(String(localized: "This device"), value: pairing.device.name)
+                    LabeledContent(String(localized: "Access")) {
+                        Text(model.operates ? String(localized: "Decide, hosts and new work") : String(localized: "Decide only"))
+                            .accessibilityIdentifier("scopeLabel")
+                    }
                 }
                 Section {
-                    Text("This device's key can read and answer what needs you on every host the dashboard covers, and nothing else. It stops working after 30 days unused, 90 days after pairing, or when removed under access ▸ Devices.")
-                        .font(.footnote)
+                    Text(model.operates ? Self.operateText : Self.decideText)
+                        .font(TendType.meta)
                         .foregroundStyle(.secondary)
+                    if !model.operates {
+                        Button(String(localized: "Pair again with hosts and new work…")) { repairing = true }
+                            .accessibilityIdentifier("repair")
+                            .confirmationDialog(String(localized: "Pair this device again?"), isPresented: $repairing) {
+                                Button(String(localized: "Pair again")) {
+                                    let address = pairing.origin.display
+                                    let name = pairing.device.name
+                                    Task {
+                                        await model.signOut()
+                                        if model.pairing == nil {
+                                            model.startPairing(address: address, name: name, scope: .operate)
+                                        }
+                                    }
+                                }
+                            } message: {
+                                Text("This device signs out, then asks the dashboard again, for hosts and new work. An operator approves the new code on the dashboard and may still allow deciding only.")
+                            }
+                    }
                 }
                 if let problem = model.signOutProblem {
                     Section {
                         Label(problem, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(TendColor.error)
+                            .foregroundStyle(.red)
                             .accessibilityIdentifier("signOutProblem")
                         Button(String(localized: "Forget this device here only"), role: .destructive) {
                             model.forgetLocally()
@@ -204,19 +100,24 @@ struct DeviceSettingsView: View {
                 }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(TendSurface.panel)
         .navigationTitle(String(localized: "Settings"))
     }
+
+    private static let decideText = String(localized: "This device's key can read and answer what needs you on every host the dashboard covers, and nothing else. It stops working after 30 days unused, 90 days after pairing, or when removed under access ▸ Devices.")
+    private static let operateText = String(localized: "This device's key can also see every host and agent, read their recent output, and start new work, which runs agents on your hosts. Starting work asks for Face ID or your passcode. It stops working after 30 days unused, 90 days after pairing, or when removed or limited to deciding under access ▸ Devices.")
 }
 
 enum SidebarItem: Hashable {
-    case yourTurn, decided, host(String), settings
+    case home, host(String), settings
 }
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.scenePhase) private var scenePhase
-    @State private var selection: SidebarItem? = .yourTurn
+    @State private var selection: SidebarItem? = .home
 
     var body: some View {
         Group {
@@ -228,12 +129,17 @@ struct RootView: View {
                 tabs
             }
         }
-        // Re-read when the app comes forward, and every 20 s while it is.
+        // Re-read when the app comes forward, and every 10 s while it is.
         .task(id: TaskKey(paired: model.pairing != nil, active: scenePhase == .active)) {
             guard model.pairing != nil, scenePhase == .active else { return }
+            await model.refreshDevice()
+            await model.refreshHistory()
+            var round = 0
             while !Task.isCancelled {
                 await model.refresh()
-                try? await Task.sleep(nanoseconds: 20_000_000_000)
+                round += 1
+                if round % 6 == 0 { await model.refreshHistory() }
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
             }
         }
     }
@@ -245,11 +151,15 @@ struct RootView: View {
 
     private var tabs: some View {
         TabView {
-            NavigationStack { YourTurnView() }
-                .tabItem { Label(String(localized: "Your turn"), systemImage: "tray.full") }
-                .badge(model.actionableCount)
-            NavigationStack { DecidedView() }
-                .tabItem { Label(String(localized: "Decided"), systemImage: "checkmark.seal") }
+            NavigationStack {
+                HomeView().withAgentDestinations()
+            }
+            .tabItem { Label(String(localized: "Home"), systemImage: "house") }
+            .badge(model.actionableCount)
+            NavigationStack {
+                HostsView().withAgentDestinations()
+            }
+            .tabItem { Label(String(localized: "Hosts"), systemImage: "server.rack") }
             NavigationStack { DeviceSettingsView() }
                 .tabItem { Label(String(localized: "Settings"), systemImage: "gearshape") }
         }
@@ -258,39 +168,44 @@ struct RootView: View {
     private var split: some View {
         NavigationSplitView {
             List(selection: $selection) {
-                Label(String(localized: "Your turn"), systemImage: "tray.full")
+                Label(String(localized: "Home"), systemImage: "house")
                     .badge(model.actionableCount)
-                    .tag(SidebarItem.yourTurn)
-                    .accessibilityIdentifier("sidebarYourTurn")
-                Label(String(localized: "Decided"), systemImage: "checkmark.seal")
-                    .tag(SidebarItem.decided)
-                    .accessibilityIdentifier("sidebarDecided")
+                    .tag(SidebarItem.home)
+                    .accessibilityIdentifier("sidebarHome")
                 Section(String(localized: "Hosts")) {
-                    ForEach(model.hosts) { host in
-                        Label {
-                            Text(verbatim: host.alias)
-                        } icon: {
-                            Image(systemName: host.unavailable.isEmpty ? "server.rack" : "exclamationmark.triangle")
+                    if let fleet = model.fleet {
+                        ForEach(fleet.ordered) { host in
+                            HostRow(host: host)
+                                .accessibilityIdentifier("sidebarHost")
+                                .tag(SidebarItem.host(host.alias))
                         }
-                        .badge(PendingDecision.from(host).count)
-                        .tag(SidebarItem.host(host.alias))
+                    } else {
+                        ForEach(model.hosts) { section in
+                            HStack(spacing: 10) {
+                                HostBadge(alias: section.alias, local: section.local, state: section.unavailable.isEmpty ? "online" : "degraded", size: 24)
+                                Text(verbatim: section.alias)
+                            }
+                            .badge(PendingDecision.from(section).count)
+                        }
                     }
                 }
                 Label(String(localized: "Settings"), systemImage: "gearshape")
                     .tag(SidebarItem.settings)
                     .accessibilityIdentifier("sidebarSettings")
             }
+            .scrollContentBackground(.hidden)
+            .background(TendSurface.sideBar)
             .navigationTitle("Tend")
         } detail: {
             NavigationStack {
-                switch selection ?? .yourTurn {
-                case .yourTurn: YourTurnView()
-                case .decided: DecidedView()
-                case .host(let alias): YourTurnView(host: alias)
+                switch selection ?? .home {
+                case .home: HomeView().withAgentDestinations()
+                case .host(let alias): HostDetailView(alias: alias).withAgentDestinations()
                 case .settings: DeviceSettingsView()
                 }
             }
         }
+        .navigationSplitViewStyle(.prominentDetail)
     }
 }
 

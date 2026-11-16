@@ -8,7 +8,7 @@ struct PairingView: View {
     @State private var address = ProcessInfo.processInfo.environment["TEND_SERVER"]
         ?? UserDefaults.standard.string(forKey: "lastServer") ?? ""
     @State private var name = ""
-    @State private var starting = false
+    @State private var scope: DeviceScope = .operate
 
     var body: some View {
         NavigationStack {
@@ -35,6 +35,7 @@ struct PairingView: View {
                 .frame(maxWidth: 560, alignment: .leading)
                 .frame(maxWidth: .infinity)
             }
+            .background(TendSurface.panel)
             .navigationBarTitleDisplayMode(.inline)
         }
     }
@@ -43,8 +44,8 @@ struct PairingView: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Pair with your dashboard")
                 .font(.title3.bold())
-            Text("Enter the address of the tend dashboard you use in the browser. This phone gets its own key, which can only read and answer what needs you, on every host that dashboard covers. It cannot see pane output or type into panes. An answer can still tell an agent to go ahead.")
-                .font(.callout)
+            Text("Enter the address of the tend dashboard you use in the browser. This device gets its own key for every host that dashboard covers. It never types into panes.")
+                .font(TendType.body)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             VStack(alignment: .leading, spacing: 6) {
@@ -66,10 +67,22 @@ struct PairingView: View {
                     .submitLabel(.go)
                     .onSubmit(start)
             }
+            VStack(alignment: .leading, spacing: 8) {
+                Text("What this device may do").font(.footnote.weight(.semibold))
+                ScopeChoice(scope: $scope, value: .operate,
+                            title: String(localized: "Decide, see hosts and start work"),
+                            detail: String(localized: "Answer what needs you; see every host and agent and their recent output; start new work, which runs agents on your hosts (Face ID first)."))
+                ScopeChoice(scope: $scope, value: .decide,
+                            title: String(localized: "Decide only"),
+                            detail: String(localized: "Read and answer what needs you. An answer can still tell an agent to go ahead."))
+                Text("The operator who approves this device on the dashboard chooses too, and may allow deciding only.")
+                    .font(TendType.meta)
+                    .foregroundStyle(.secondary)
+            }
             if let problem = model.pairingProblem {
                 Label(problem, systemImage: "exclamationmark.circle")
                     .font(.callout)
-                    .foregroundStyle(TendColor.error)
+                    .foregroundStyle(.red)
                     .accessibilityIdentifier("pairingProblem")
             }
             Button(action: start) {
@@ -87,7 +100,7 @@ struct PairingView: View {
             Text("Approve this phone")
                 .font(.title3.bold())
             Text("On a computer where you are signed in to \(origin.display), open **access ▸ Devices** and enter this code:")
-                .font(.callout)
+                .font(TendType.body)
                 .fixedSize(horizontal: false, vertical: true)
             Text(verbatim: userCode)
                 .font(.system(size: 40, weight: .bold, design: .monospaced))
@@ -113,6 +126,37 @@ struct PairingView: View {
 
     private func start() {
         UserDefaults.standard.set(address, forKey: "lastServer")
-        model.startPairing(address: address, name: name)
+        model.startPairing(address: address, name: name, scope: scope)
+    }
+}
+
+/// One of the two scopes, as a selectable card.
+private struct ScopeChoice: View {
+    @Binding var scope: DeviceScope
+    let value: DeviceScope
+    let title: String
+    let detail: String
+
+    var body: some View {
+        let selected = scope == value
+        Button {
+            scope = value
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+                    .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+                    .font(.title3)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title).font(TendType.body.weight(.semibold)).foregroundStyle(.primary)
+                    Text(detail).font(TendType.meta).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .tendCard(stroke: selected ? Color.accentColor.opacity(0.6) : TendSurface.border, lineWidth: selected ? 1.5 : 1)
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityIdentifier("scope-\(value.rawValue)")
     }
 }

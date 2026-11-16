@@ -1,19 +1,22 @@
 # Tend for iPhone and iPad
 
-A client of one tend dashboard: it pairs as a device that may only decide,
-shows what needs you on every host the dashboard covers, and answers
-questions and decides results through the dashboard's own decision routes.
+A client of one tend dashboard, laid out like Tend for Mac's Home: Your
+turn, In progress and Finished (side by side on a wide iPad, a lane strip
+with all three counts on iPhone), the hosts and their agents, and an
+agent's latest result. It pairs as a device that may only decide or, if the
+approving operator allows it, also sees the hosts (`operate`). Questions are
+answered and results decided through the dashboard's own decision routes.
 Design and plan: [docs/proposals/IOS_APP.md](../../docs/proposals/IOS_APP.md).
 Pairing on the server: [DASHBOARD.md](../../docs/DASHBOARD.md#paired-devices).
 
 | Path | What |
 | --- | --- |
-| `Sources/` | The app (SwiftUI, iOS 17+, one universal target). |
+| `Sources/` | The app (SwiftUI, iOS 17+, one universal target). `Theme.swift` holds the Mac app's design values: surfaces, type roles, state colours and lane words. |
 | `../shared/Sources/` | Decision models shared with Tend for Mac. |
 | `../shared/Fixtures/` | Responses recorded from a real tendd, decoded by the unit tests. |
-| `Tests/` | Unit tests (origin rules, fixture decoding). |
-| `UITests/` | The pair → answer → decide → Decided → sign out flow against a scratch tendd. |
-| `Scripts/scratch-tendd.sh` | A sandboxed scratch tendd with the dashboard on `127.0.0.1:7979`, seeded with a question and a result. |
+| `Tests/` | Unit tests: origin rules, fixture decoding, lifecycle, Fleet lanes. |
+| `UITests/` | `DecideFlowUITests`: pair (decide only) → answer → decide → Finished → sign out. `HomeUITests`: pair with hosts, then the three lanes, an agent and a host, with screenshots. Both run against a scratch tendd. |
+| `Scripts/scratch-tendd.sh` | A sandboxed scratch tendd with the dashboard on `127.0.0.1:7979`, seeded with a question and a result; `seed-home` adds agents at work and finished. |
 
 ## Build and test
 
@@ -29,6 +32,7 @@ xcodebuild -project TendiOS.xcodeproj -scheme Tend \
 # UI tests against a scratch tendd (built from this checkout).
 cargo build -p tendd -p tend-cli
 Scripts/scratch-tendd.sh up        # prints server= and token=
+Scripts/scratch-tendd.sh seed-home # agents for In progress and Finished
 TEST_RUNNER_TEND_SERVER=http://127.0.0.1:7979 \
 TEST_RUNNER_TEND_TOKEN=$(Scripts/scratch-tendd.sh token) \
 xcodebuild -project TendiOS.xcodeproj -scheme Tend \

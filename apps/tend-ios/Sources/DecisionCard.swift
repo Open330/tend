@@ -17,37 +17,38 @@ struct DecisionCard: View {
     private var busy: Bool { model.busy.contains(decision.id) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 9) {
             header
             if let verification = decision.verification, !verification.checks.isEmpty {
                 VerificationChecks(verification: verification)
             }
             Text(verbatim: decision.title)
-                .font(.headline)
+                .font(TendType.cardTitle)
+                .lineLimit(composing == nil ? 6 : nil)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
                 .accessibilityIdentifier("cardTitle")
             if let detail = decision.detail {
                 Text(verbatim: detail)
-                    .font(.subheadline)
+                    .font(TendType.body)
                     .foregroundStyle(.secondary)
+                    .lineLimit(5)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             if let recommendation = decision.recommendation {
                 Label {
-                    Text(verbatim: recommendation)
+                    Text(verbatim: recommendation).foregroundStyle(.primary)
                 } icon: {
-                    Image(systemName: "lightbulb").foregroundStyle(TendColor.waiting)
+                    Image(systemName: "lightbulb.fill").foregroundStyle(.orange)
                 }
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .font(TendType.detail)
             }
             if !decision.evidence.isEmpty {
                 EvidenceList(evidence: decision.evidence, open: { openURL($0) })
             }
             if !decision.decidable {
                 Label(notHere, systemImage: "desktopcomputer")
-                    .font(.footnote)
+                    .font(TendType.meta)
                     .foregroundStyle(.secondary)
             } else if composing != nil {
                 composer
@@ -56,17 +57,12 @@ struct DecisionCard: View {
             }
             if let failure = model.failures[decision.id] {
                 Label(failure, systemImage: "exclamationmark.circle")
-                    .font(.footnote)
-                    .foregroundStyle(TendColor.error)
+                    .font(TendType.meta)
+                    .foregroundStyle(.red)
                     .accessibilityIdentifier("cardFailure")
             }
         }
-        .padding(14)
-        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(TendColor.waiting.opacity(decision.decidable ? 0.5 : 0.2), lineWidth: 1)
-        )
+        .tendCard(stroke: Color.orange.opacity(decision.decidable ? 0.45 : 0.2))
         .disabled(busy)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("card")
@@ -82,12 +78,23 @@ struct DecisionCard: View {
     private var header: some View {
         HStack(spacing: 6) {
             switch decision.kind {
-            case .question: Chip(text: String(localized: "Question"), color: TendColor.waiting)
-            case .result: Chip(text: String(localized: "Review"), color: TendColor.waiting)
-            case .waiting: Chip(text: String(localized: "Waiting"), color: .secondary)
+            case .question:
+                Label(String(localized: "Question"), systemImage: "questionmark.bubble.fill")
+                    .foregroundStyle(.orange)
+            case .result:
+                Label(String(localized: "Review"), systemImage: "checklist")
+                    .foregroundStyle(.orange)
+            case .waiting:
+                Label(String(localized: "Waiting"), systemImage: "hand.raised.fill")
+                    .foregroundStyle(.orange)
             }
             if let asker = decision.asker {
+                Text(verbatim: "·")
                 Text(verbatim: asker).lineLimit(1).truncationMode(.middle)
+            }
+            if !decision.hostIsLocal {
+                HostGlyph(alias: decision.host, size: 14)
+                Text(verbatim: decision.host).lineLimit(1)
             }
             Spacer(minLength: 4)
             if busy {
@@ -95,24 +102,28 @@ struct DecisionCard: View {
             } else if let since = decision.since {
                 Text(since, format: .relative(presentation: .numeric, unitsStyle: .abbreviated))
                     .monospacedDigit()
+                    .lineLimit(1)
+                    .fixedSize()
             }
         }
-        .font(.caption)
+        .font(TendType.meta.weight(.medium))
         .foregroundStyle(.secondary)
+        .labelStyle(.titleAndIcon)
+        .lineLimit(1)
     }
 
     @ViewBuilder
     private var actions: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(decision.options, id: \.self) { option in
+            ForEach(Array(decision.options.enumerated()), id: \.offset) { index, option in
                 Button {
                     chosenOption = option
                     composing = decision.isQuestion ? option : ""
                 } label: {
-                    Text(verbatim: option)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    OptionRow(number: index + 1, text: option)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text(verbatim: option))
                 .accessibilityIdentifier("option")
             }
             HStack(spacing: 8) {
@@ -122,17 +133,17 @@ struct DecisionCard: View {
                         chosenOption = nil
                         composing = ""
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.bordered)
                     .accessibilityIdentifier("answerButton")
                 case .result:
                     Button("Accept") { Task { await model.review(decision, .accepted) } }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.bordered)
                         .accessibilityIdentifier("acceptButton")
                     Button("Return…") {
                         chosenOption = nil
                         composing = ""
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.borderless)
                     .accessibilityIdentifier("returnButton")
                     Spacer()
                     Menu {
@@ -154,15 +165,22 @@ struct DecisionCard: View {
         return VStack(alignment: .leading, spacing: 8) {
             if let chosenOption, !decision.isQuestion {
                 Label(String(localized: "Accept with: \(chosenOption)"), systemImage: "checkmark.circle")
-                    .font(.subheadline)
+                    .font(TendType.body)
             }
             TextField(
                 decision.isQuestion ? String(localized: "Your answer") : String(localized: "Note for the asker"),
                 text: text,
                 axis: .vertical
             )
-            .textFieldStyle(.roundedBorder)
+            .font(TendType.body)
             .lineLimit(1...6)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(TendSurface.inputBackground, in: RoundedRectangle(cornerRadius: TendSurface.controlRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: TendSurface.controlRadius, style: .continuous)
+                    .strokeBorder(TendSurface.inputBorder, lineWidth: 1)
+            )
             .accessibilityIdentifier("composer")
             HStack(spacing: 8) {
                 Button("Cancel") {
@@ -210,68 +228,107 @@ struct DecisionCard: View {
     }
 }
 
+/// A numbered option (`FleetDecisionViews` option rows).
+struct OptionRow: View {
+    let number: Int
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(verbatim: "\(number)")
+                .font(TendType.meta.weight(.bold))
+                .monospacedDigit()
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 22, height: 22)
+                .background(Color.accentColor.opacity(0.15), in: Circle())
+                .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 5 }
+            Text(verbatim: text)
+                .font(TendType.body)
+                .foregroundStyle(.primary)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: TendSurface.controlRadius, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: TendSurface.controlRadius, style: .continuous)
+                .strokeBorder(TendSurface.inputBorder, lineWidth: 1)
+        )
+        .contentShape(Rectangle())
+    }
+}
+
+/// What tend checked itself: a green or red seal per check.
 struct VerificationChecks: View {
     let verification: TendVerification
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Label(verification.headline, systemImage: "checkmark.shield")
-                .font(.caption.weight(.semibold))
             ForEach(Array(verification.checks.enumerated()), id: \.offset) { _, check in
                 Label {
                     Text(verbatim: check.name ?? check.command).lineLimit(2)
                 } icon: {
-                    Image(systemName: check.passed ? "checkmark.circle.fill" : "xmark.circle.fill")
-                        .foregroundStyle(check.passed ? TendColor.done : TendColor.error)
+                    Image(systemName: check.passed ? "checkmark.seal.fill" : "xmark.seal.fill")
+                        .foregroundStyle(check.passed ? Color.green : Color.red)
                 }
-                .font(.caption)
+                .font(TendType.meta.weight(.medium))
+                .foregroundStyle(.secondary)
             }
         }
-        .foregroundStyle(.secondary)
     }
 }
 
+/// Evidence as chips (`FleetDecisionViews` evidence): links open in
+/// Safari, which never gets the key; tests are tinted by their result.
 struct EvidenceList: View {
     let evidence: [TendEvidence]
     let open: (URL) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        FlowLayout(spacing: 6) {
             ForEach(Array(evidence.enumerated()), id: \.offset) { _, item in
-                row(item)
+                chip(item)
             }
         }
-        .font(.caption)
     }
 
     @ViewBuilder
-    private func row(_ item: TendEvidence) -> some View {
+    private func chip(_ item: TendEvidence) -> some View {
         switch item {
         case .pullRequest(let url):
+            let label = Self.shortPR(url)
             if let link = URL(string: url), link.scheme == "https" {
                 Button { open(link) } label: {
-                    Label(url, systemImage: "arrow.triangle.pull").lineLimit(1).truncationMode(.middle)
+                    Chip(text: label, color: .accentColor, symbol: "arrow.triangle.pull")
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text(verbatim: url))
             } else {
-                Label(url, systemImage: "arrow.triangle.pull").foregroundStyle(.secondary)
+                Chip(text: label, symbol: "arrow.triangle.pull")
             }
         case .commit(let sha, _):
-            Label(String(sha.prefix(12)), systemImage: "smallcircle.filled.circle")
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
+            Chip(text: String(sha.prefix(8)), symbol: "smallcircle.filled.circle")
         case .diff(let range, _):
-            Label(range, systemImage: "plusminus").foregroundStyle(.secondary)
+            Chip(text: range, symbol: "plusminus")
         case .test(let command, let passed, _):
-            Label {
-                Text(verbatim: command).lineLimit(2)
-            } icon: {
-                Image(systemName: passed == true ? "checkmark.circle" : passed == false ? "xmark.circle" : "circle")
-                    .foregroundStyle(passed == true ? TendColor.done : passed == false ? TendColor.error : .secondary)
-            }
-            .foregroundStyle(.secondary)
+            Chip(
+                text: command,
+                color: passed == true ? .green : passed == false ? .red : .secondary,
+                symbol: passed == true ? "checkmark" : passed == false ? "xmark" : "circle"
+            )
         case .path(let path):
-            Label(path, systemImage: "doc").lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
+            Chip(text: (path as NSString).lastPathComponent, symbol: "doc")
         }
+    }
+
+    /// "Open330/tend#1" for a GitHub pull request, else the URL's path.
+    static func shortPR(_ url: String) -> String {
+        guard let parsed = URL(string: url) else { return url }
+        let parts = parsed.pathComponents.filter { $0 != "/" }
+        if parts.count >= 4, parts[2] == "pull" {
+            return "\(parts[0])/\(parts[1])#\(parts[3])"
+        }
+        return parsed.host.map { $0 + parsed.path } ?? url
     }
 }
