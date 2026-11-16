@@ -239,7 +239,7 @@ function agentUnit(agent, host, lane, overrides = {}) {
     since: agent.state_entered_at || agent.last_activity_at || null,
     pane: agent.pane || null,
     socket: agent.tmux_socket || null,
-    agents: [{ kind: agent.kind, name: kindName(agent.kind), product: productOf(agent.kind), state: agent.state, host: host.alias, pane: agent.pane || null, socket: agent.tmux_socket || null }],
+    agents: [{ kind: agent.kind, name: kindName(agent.kind), product: productOf(agent.kind), state: agent.state, host: host.alias, pane: host.local ? agent.pane || null : null, socket: host.local ? agent.tmux_socket || null : null, session: agent.agent_session_id || null, since: agent.state_entered_at || null, owner: `${kindName(agent.kind)} · ${host.alias}`, remote: !host.local, status: agent.awaiting_reply ? { key: "status", status: "asked" } : null }],
     ...overrides,
   };
 }
@@ -390,4 +390,202 @@ export function hostList(fleet, decisions) {
 /// Which lane a decision ends up in once decided: none (it leaves the queue).
 export function laneCounts(board) {
   return Object.fromEntries(LANES.map((lane) => [lane, board.lanes[lane].count]));
+}
+
+// ---- The daemon's board (GET /api/home) ---------------------------------
+//
+// tendd computes the board once for every client (crates/tend/src/
+// home_board.rs, Tend for Mac's FleetBoard rules: Work units with stages,
+// helpers folded, usage-cap coverage, reviewed marks). This turns it into
+// the shape the page draws; `buildBoard` above stays the fallback for a
+// daemon without the read or a proxy that does not forward it.
+
+const STAGE = { needs_you: "needsYou", running: "running", done: "done", waiting: "waiting" };
+const LANE = { needs_you: "needsYou", running: "running", finished: "finished" };
+
+function serverAgent(ref) {
+  return {
+    kind: ref?.kind || null,
+    name: ref?.name || null,
+    product: productOf(ref?.kind),
+    state: ref?.state || null,
+    status: ref?.status || null,
+    owner: ref?.owner || null,
+    host: ref?.host || null,
+    session: ref?.session_id || null,
+    since: ref?.state_entered_at || null,
+    needsAttention: ref?.needs_attention === true,
+    pane: ref?.local ? ref?.pane || null : null,
+    socket: ref?.local ? ref?.socket || null : null,
+    remote: !ref?.local,
+  };
+}
+
+function serverUnit(item) {
+  // The daemon's focus, null included: a blocked stage nobody is on has
+  // no agent to answer, and no other agent stands in for it.
+  const focus = item.focus || null;
+  const lane = LANE[item.lane] || "running";
+  return {
+    type: "work",
+    lane,
+    id: item.id,
+    source: item.source || null,
+    focus: focus ? serverAgent(focus) : null,
+    host: focus?.host || item.host_aliases?.[0] || item.agents?.[0]?.host || "",
+    hosts: item.host_aliases || [],
+    remote: focus ? !focus.local : !(item.agents || []).some((a) => a.local),
+    title: item.title,
+    headline: item.headline,
+    stages: (item.stages || []).map((stage) => ({ name: stage.name, owner: stage.owner, state: STAGE[stage.state] || "waiting", kind: stage.kind })),
+    agentKind: focus?.kind || null,
+    product: productOf(item.agent_kinds?.[0] || focus?.kind),
+    products: [...new Set((item.agent_kinds || []).map(productOf).filter(Boolean))],
+    project: item.repo || "",
+    since: item.shown_time || item.since || null,
+    pane: focus?.local ? focus.pane || null : null,
+    socket: focus?.local ? focus.socket || null : null,
+    agents: (item.agents || []).map(serverAgent),
+    helpers: (item.helpers || []).map(serverAgent),
+    handledLimit: item.handled_limit === true,
+    orphanHelper: item.orphan_helper === true,
+    probableHelper: item.probable_helper === true,
+    emptySession: item.empty_session === true,
+    recent: item.recent !== false,
+    reviewed: item.reviewed === true,
+    reviewKey: item.review_key || null,
+    requestedByPerson: item.requested_by_person === true,
+  };
+}
+
+function serverDecision(item, sections) {
+  const section = sections.find((s) => s.alias === item.host) || {};
+  const host = { alias: item.host, local: item.local === true, control: section.control !== false, decides_reviews: section.decides_reviews === true };
+  const unit = decisionUnit(item.entry || {}, host, agentIndex(null));
+  if (!unit) return null;
+  // The asker as the daemon found it: its pane on its own socket.
+  const asker = item.asker && item.asker.local ? { pane: item.asker.pane || unit.pane, socket: item.asker.socket || null } : null;
+  return {
+    ...unit,
+    project: item.system ? TEND_PROJECT : item.repo || "",
+    actionable: item.actionable !== false,
+    system: item.system === true,
+    pane: asker ? asker.pane : unit.pane,
+    socket: asker ? asker.socket : unit.socket,
+  };
+}
+
+/// The daemon's board in the page's shape, with what was decided (the
+/// history) after the finished units, and the folds the Mac applies.
+export function fromServerBoard(server, { history = null, filter = {}, now = Date.now(), window = FINISHED_WINDOW_MS, showReviewed = false } = {}) {
+  const sections = Array.isArray(server?.decision_hosts) ? server.decision_hosts : [];
+  const lanes = { needsYou: [], running: [], finished: [] };
+  for (const [key, lane] of Object.entries(LANE)) {
+    for (const group of server?.lanes?.[key]?.groups || []) {
+      for (const item of group.items || []) {
+        const unit = item.type === "decision" ? serverDecision(item, sections) : serverUnit(item);
+        if (unit) lanes[lane].push(unit);
+      }
+    }
+  }
+  const notes = { needsYou: [], running: [], finished: [] };
+  for (const section of sections) {
+    if (section.truncated) notes.needsYou.push({ key: "more", host: section.alias });
+    for (const source of section.unavailable || []) notes.needsYou.push({ key: "unavailable", host: section.alias, what: source });
+    if (!section.local && section.control === false) notes.needsYou.push({ key: "observeOnly", host: section.alias });
+  }
+  for (const host of server?.hosts || []) {
+    if (!host.local && host.state && host.state !== "online") notes.running.push({ key: "hostState", host: host.alias, state: host.state, error: host.error || null });
+  }
+  for (const host of ordered(Array.isArray(history?.hosts) ? history.hosts : [])) {
+    for (const item of host.history?.items || []) {
+      const unit = decidedUnit(item, host, now);
+      if (!unit) continue;
+      const at = instant(unit.since);
+      if (at && now - at > window) unit.older = true;
+      lanes.finished.push(unit);
+    }
+  }
+  const keep = (unit) =>
+    (!filter.host || unit.host === filter.host || unit.hosts?.includes(filter.host)) && (!filter.project || unit.project === filter.project);
+  const result = {};
+  for (const lane of LANES) {
+    const visible = lanes[lane].filter(keep);
+    // The Mac's folds, outside Your turn: possible helpers, empty
+    // sessions, then older than a day; reviewed units hide behind
+    // "Show N reviewed".
+    const folds = { helpers: [], empty: [], older: [], reviewed: [] };
+    const shown = [];
+    for (const unit of visible) {
+      if (lane === "needsYou") shown.push(unit);
+      else if (unit.reviewed && !showReviewed) folds.reviewed.push(unit);
+      else if (unit.probableHelper) folds.helpers.push(unit);
+      else if (unit.emptySession) folds.empty.push(unit);
+      else if (unit.recent === false || unit.older) folds.older.push(unit);
+      else shown.push(unit);
+    }
+    result[lane] = {
+      count: visible.length - folds.reviewed.length,
+      groups: groupByProject(shown),
+      older: folds.older,
+      folds,
+      notes: notes[lane],
+    };
+  }
+  const reviewedCount = result.finished.folds.reviewed.length;
+  return {
+    server: true,
+    lanes: result,
+    projects: Array.isArray(server?.projects) ? server.projects : [],
+    hosts: ordered((server?.hosts || []).map((h) => ({ alias: h.alias, local: Boolean(h.local), state: h.local ? "online" : h.state || "unknown", error: h.error || null, hue: hostHue(h.alias) }))),
+    agentCount: Number(server?.agent_count) || 0,
+    backlog: (Array.isArray(server?.backlog) ? server.backlog : []).filter((b) => !filter.project || b.project === filter.project),
+    reviewedCount,
+    empty: LANES.every((lane) => lanes[lane].length === 0) && !(server?.backlog || []).length,
+  };
+}
+
+/// Units Review lists (FleetReview.reviewQueue): finished, asked for by a
+/// person, not yet marked, changed since the scope's start; newest first.
+export function reviewQueue(board, scope = "day", now = Date.now()) {
+  const start =
+    scope === "all" ? -Infinity :
+    scope === "week" ? now - 7 * 86400_000 :
+    scope === "today" ? new Date(new Date(now).setHours(0, 0, 0, 0)).getTime() :
+    now - 86400_000;
+  const all = [
+    ...board.lanes.finished.groups.flatMap((g) => g.units),
+    ...board.lanes.finished.older,
+    ...Object.values(board.lanes.finished.folds || {}).flat(),
+  ];
+  const seen = new Set();
+  return all
+    .filter((u) => u.type === "work" && u.requestedByPerson && !u.reviewed && !seen.has(u.id) && seen.add(u.id))
+    .filter((u) => (instant(u.since) || -Infinity) >= start)
+    .sort((a, b) => instant(b.since) - instant(a.since));
+}
+
+
+/// What the person may type to a unit's agent, and to whom
+/// (FleetBoard.reply(for:) and FleetReplyTarget): an answer to an agent
+/// asking or waiting for input in Your turn, or the next instruction to an
+/// agent done with its turn in Finished. A choice dialog, an error or a
+/// working agent is handled in the pane.
+export function replyTarget(unit) {
+  // The daemon names a focus (null for nobody); a unit built here is one agent.
+  const focus = "focus" in unit ? unit.focus : unit.agents?.length === 1 ? unit.agents[0] : null;
+  if (!focus || !focus.pane || focus.remote) return null;
+  const asked = focus.status?.status === "asked" || (focus.state === "idle" && unit.lane === "needsYou");
+  let kind = null;
+  if (unit.lane === "needsYou" && (asked || focus.state === "waiting_input")) kind = "answer";
+  else if (unit.lane === "finished" && (focus.state === "idle" || focus.state === "done")) kind = "sendBack";
+  if (!kind) return null;
+  return { kind, session: focus.session || null, state: focus.state || null, since: focus.since || null, owner: focus.owner || focus.name || focus.kind || "", pane: focus.pane, socket: focus.socket || null };
+}
+
+/// A draft's target is still the agent at the same question.
+export function sameTarget(a, b) {
+  return Boolean(
+    a && b && a.kind === b.kind && a.session === b.session && a.state === b.state && a.since === b.since && a.pane === b.pane && a.socket === b.socket,
+  );
 }

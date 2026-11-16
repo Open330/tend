@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The dashboard, the Windows app and the iOS app can draw the same lanes the
   Mac draws. `POST /api/home/reviewed` records Looks Good with the Mac's
   review key, so a unit marked in either place is marked in both.
+- The dashboard's Home draws that board:
+  - Work units with their stages;
+  - folded helper, empty and older sessions;
+  - the Backlog column;
+  - Looks Good on a finished unit;
+  - the Review list in the header, with its four time ranges.
+
+  With an older tendd it lays out the queue and agents itself, as before.
 
 ## [0.10.21] - 2026-11-16
 
