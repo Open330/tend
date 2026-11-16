@@ -717,6 +717,12 @@ private struct MenuReplyError: LocalizedError {
     let pane = try #require(TendAgentAttentionCenter.paneIdentity(for: first.hostedAgents[0]))
     #expect(inputs(first, []) != inputs(first, [pane]), "unread is shown")
     #expect(TendMenuBarInputs(hosted: first.hostedAgents, unread: [], connection: .connecting) != inputs(first, []))
+    // Grouping by Work or window changes the cluster with the same names.
+    let workA = try menuBarSnapshot([("coder", "working", "1")], workspace: "tend", work: "A")
+    let workB = try menuBarSnapshot([("coder", "working", "1")], workspace: "tend", work: "B")
+    #expect(inputs(workA, []) != inputs(workB, []), "moving to another Work regroups the chip")
+    let otherWindow = try menuBarSnapshot([("coder", "working", "1"), ("reviewer", "idle", "1")], window: "@2")
+    #expect(inputs(first, []) != inputs(otherWindow, []), "another window regroups by window")
 }
 
 @Test func menuBarPollsLessOftenFarFromEveryMenuBar() {

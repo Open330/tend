@@ -49,14 +49,17 @@ struct TendMenuBarAgent: Identifiable {
 /// a response the cluster does not show) skips the refresh.
 @MainActor
 struct TendMenuBarInputs: Equatable {
+    /// Everything a folded chip is built from: the name, logo and status,
+    /// the unread stamp, and the whole host identity and pane (Work and
+    /// window grouping, place, host icon, connection).
     struct Agent: Equatable {
         let id: String
         let stamp: String
         let status: TendAgentStatus
         let name: String
-        let location: String
-        let connected: Bool
-        let pane: TendWatchPaneIdentity?
+        let kind: String
+        let host: TendFleetHostIdentity
+        let pane: TendPaneInfo?
     }
 
     let agents: [Agent]
@@ -67,7 +70,7 @@ struct TendMenuBarInputs: Equatable {
         agents = hosted.map { hosted in
             let item = TendMenuBarAgent(hosted: hosted, unread: false)
             return Agent(id: item.id, stamp: TendUnreadRules.stamp(hosted.agent), status: item.status,
-                         name: item.name, location: item.location, connected: item.connected, pane: item.pane)
+                         name: item.name, kind: hosted.agent.kind, host: hosted.host, pane: hosted.pane)
         }
         self.unread = unread
         self.connection = connection

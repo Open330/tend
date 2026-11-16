@@ -9,9 +9,11 @@ enum TendMenuBarPolling {
         return idle(distanceToMenuBar: distanceToMenuBar)
     }
 
-    /// A pointer far from every menu bar cannot reach one before the next
-    /// look even at a fast flick (about 3000 points a second), so it is
-    /// checked less often; near one, at 15 Hz as before.
+    /// A pointer far from every menu bar is checked less often; near one,
+    /// at 15 Hz as before. Each interval is what a fast flick (about 3000
+    /// points a second) needs to cover the distance: a guide for keeping
+    /// hover responsive, not a guarantee (the timer has a quarter-interval
+    /// tolerance, and a warped pointer jumps).
     static func idle(distanceToMenuBar distance: CGFloat) -> TimeInterval {
         switch distance {
         case 1500...: 0.5
