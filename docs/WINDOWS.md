@@ -352,11 +352,15 @@ label, outside the caller's job, so they run over SSH too.
 In `cargo test -p tend --lib` the last count was 23 of 1,229 failing, on Unix
 assumptions in fixtures: paths like `/tmp/...` that are not absolute without
 a drive prefix, so request validation rejects them, and bounded-command
-tests that run `sh`. CI runs on Linux and macOS only.
+tests that run `sh`. CI's `windows` job (windows-latest, rmux 0.10.0 from
+its release zip) runs clippy over the workspace and the tests of `tend-cli`,
+`tendd`, `tend-work` and `tend-app`; the desktop end-to-end test of the app
+(`scripts/windows-app-e2e.ps1 -Desktop`) stays a manual check before a
+release, since it needs a logged-on desktop.
 
 ## What is left
 
-Teaching `tend`'s own test fixtures a second path grammar, so Windows could
-join CI (an owner decision); the gaps listed above.
+Teaching `tend`'s own test fixtures a second path grammar, so its unit tests
+can join the Windows job; the gaps listed above.
 
 [`PaneBackend`]: ../crates/tend/src/backend/mod.rs

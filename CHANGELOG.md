@@ -78,6 +78,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- CI has a Windows job (windows-latest): clippy over the workspace and
+  the tests of `tend-cli`, `tendd`, `tend-work` and `tend-app`, with rmux
+  installed so the live rmux tests run. cargo-deny runs once per supported
+  target instead of over their union, which flagged crates no build
+  compiles; the two advisory ignores that worked around it are gone.
 - Tend for Mac and the dashboard share one design-token file,
   `apps/shared/Design/tokens.json`; the dashboard's `tokens.css` is
   generated from it, and a test fails when it is stale or when the Mac
