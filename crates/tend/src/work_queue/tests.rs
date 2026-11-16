@@ -1373,3 +1373,22 @@ async fn cancelling_or_removing_a_queued_work_releases_its_lease() {
     assert_eq!(intents[0].state, QueueLeaseState::Released);
     assert_eq!(intents[0].holder, None);
 }
+
+#[test]
+fn work_paths_are_normalised_like_work_up() {
+    assert_eq!(
+        QueueTargetSpec::work_path("  Web / eng-1 @Review ").unwrap(),
+        QueueTargetSpec::Work {
+            workspace: "web".into(),
+            work: "ENG-1".into(),
+            alias: Some("Review".into()),
+        }
+    );
+    for bad in ["ENG-1", "web/", "/ENG-1", "web/ENG-1@", "  /  "] {
+        assert!(QueueTargetSpec::work_path(bad).is_err(), "{bad}");
+    }
+    assert_eq!(
+        normalized_identity(" Web ", " eng-1 "),
+        crate::work::WorkIdentity::new("web", "ENG-1")
+    );
+}

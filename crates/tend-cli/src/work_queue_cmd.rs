@@ -84,7 +84,8 @@ pub struct AddArgs {
     title: Option<String>,
     /// Idempotency key (a UUID). The same key with the same item returns
     /// the item already added instead of adding another; tendd remembers
-    /// the last 1000 keys for 7 days. Generated when omitted and printed.
+    /// the last 1000 keys for 7 days. Generated when omitted and printed to
+    /// stderr before sending, so a lost reply can be retried with it.
     #[arg(long)]
     request_key: Option<String>,
     #[arg(long)]
@@ -262,21 +263,7 @@ fn read_prompt(prompt: String) -> Result<String> {
 
 /// Parse `--work WORKSPACE/WORK[@ALIAS]`.
 fn work_target(spec: &str) -> Result<QueueTargetSpec> {
-    let (path, alias) = match spec.split_once('@') {
-        Some((path, alias)) => (path, Some(alias.to_string())),
-        None => (spec, None),
-    };
-    let Some((workspace, work)) = path.split_once('/') else {
-        bail!("--work takes WORKSPACE/WORK or WORKSPACE/WORK@ALIAS");
-    };
-    if workspace.trim().is_empty() || work.trim().is_empty() {
-        bail!("--work takes WORKSPACE/WORK or WORKSPACE/WORK@ALIAS");
-    }
-    Ok(QueueTargetSpec::Work {
-        workspace: workspace.trim().into(),
-        work: work.trim().into(),
-        alias,
-    })
+    QueueTargetSpec::work_path(spec).map_err(|error| anyhow::anyhow!("--work: {error}"))
 }
 
 fn add_target(args: &AddArgs) -> Result<QueueTargetSpec> {
@@ -331,7 +318,13 @@ async fn add(args: AddArgs, client: &Client) -> Result<()> {
         prompt: read_prompt(args.prompt.clone())?,
         target,
     };
-    let item = client.work_queue_add(&request).await?;
+    // Shown before sending: if tendd adds it and the reply is lost, the
+    // same key makes the retry return that item instead of adding another.
+    if !args.json {
+        eprintln!("request key {request_key}");
+    }
+    let item = added(client.work_queue_add(&request).await, &request.request_key)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
     if args.json {
         println!(
             "{}",
@@ -342,9 +335,22 @@ async fn add(args: AddArgs, client: &Client) -> Result<()> {
         );
     } else {
         println!("queued {} ({})", item.id, target_text(&item.target));
-        println!("request key {request_key} (pass --request-key to retry safely)");
     }
     Ok(())
+}
+
+/// An add's reply. A failure names the request key and how to retry with
+/// it safely, since the add may have reached tendd before the reply was
+/// lost.
+fn added(
+    reply: Result<QueueItem, tend::ipc::RuntimeError>,
+    request_key: &str,
+) -> Result<QueueItem, String> {
+    reply.map_err(|error| {
+        format!(
+            "{error}\nIt may have been added anyway. Retry with --request-key {request_key} to add it at most once."
+        )
+    })
 }
 
 /// Resolve an id or unique prefix to the full id and its revision.
@@ -478,19 +484,54 @@ mod tests {
     use super::*;
 
     #[test]
-    fn work_targets_parse_with_and_without_an_alias() {
+    fn work_targets_parse_normalised_with_and_without_an_alias() {
         assert!(matches!(
-            work_target("web/ENG-1@impl").unwrap(),
+            work_target(" Web / eng-1 @Review").unwrap(),
             QueueTargetSpec::Work { workspace, work, alias: Some(alias) }
-                if workspace == "web" && work == "ENG-1" && alias == "impl"
+                if workspace == "web" && work == "ENG-1" && alias == "Review"
         ));
         assert!(matches!(
             work_target("web/ENG-1").unwrap(),
             QueueTargetSpec::Work { alias: None, .. }
         ));
-        for bad in ["ENG-1", "/ENG-1", "web/", "@impl"] {
+        for bad in ["ENG-1", "/ENG-1", "web/", "@impl", "web/ENG-1@", " / "] {
             assert!(work_target(bad).is_err(), "{bad}");
         }
+    }
+
+    /// tendd added the item but the reply was lost: the error names the
+    /// key, and a retry with it (tendd answers a known key with the item it
+    /// made) leaves one item.
+    #[test]
+    fn a_lost_add_reply_can_be_retried_with_the_key_it_names() {
+        let mut stored: Vec<String> = Vec::new();
+        let mut daemon = |key: &str, drop_reply: bool| {
+            if !stored.iter().any(|known| known == key) {
+                stored.push(key.to_string());
+            }
+            if drop_reply {
+                return Err(tend::ipc::RuntimeError::Daemon("connection reset".into()));
+            }
+            Ok(serde_json::from_value::<QueueItem>(serde_json::json!({
+                "id": "q-0", "revision": 1, "prompt": "p",
+                "target": {"kind": "agent", "session_id": "s"},
+                "created_by": {"kind": "operator"},
+                "created_at": "2026-11-16T12:00:00Z",
+                "updated_at": "2026-11-16T12:00:00Z",
+                "state": {"state": "waiting"}
+            }))
+            .unwrap())
+        };
+        let lost = added(daemon("k-1", true), "k-1").unwrap_err();
+        let key = lost
+            .split("--request-key ")
+            .nth(1)
+            .and_then(|rest| rest.split_whitespace().next())
+            .unwrap()
+            .to_string();
+        assert_eq!(key, "k-1");
+        assert_eq!(added(daemon(&key, false), &key).unwrap().id, "q-0");
+        assert_eq!(stored.len(), 1);
     }
 
     #[test]

@@ -22,7 +22,7 @@ pub(crate) fn definition() -> Value {
                 "cwd": {"type": "string", "description": "new_work: absolute directory."},
                 "pipeline": {"type": "string"},
                 "title": {"type": "string"},
-                "request_key": {"type": "string", "description": "Reuse on retry so the item is added once."},
+                "request_key": {"type": "string", "description": "Your key for this add; reuse it on retry so it is added once. Pass one: if the reply is lost entirely, the key tendd made is lost with it."},
                 "id": {"type": "string"},
                 "include_finished": {"type": "boolean"}
             },
@@ -59,19 +59,7 @@ pub(crate) fn target(args: &Value) -> Result<QueueTargetSpec, String> {
         });
     }
     if let Some(work) = text(args, "work") {
-        let (path, alias) = match work.split_once('@') {
-            Some((path, alias)) => (path.to_string(), Some(alias.to_string())),
-            None => (work.clone(), None),
-        };
-        let (workspace, work) = path
-            .split_once('/')
-            .filter(|(w, id)| !w.is_empty() && !id.is_empty())
-            .ok_or("work takes WORKSPACE/WORK or WORKSPACE/WORK@ALIAS")?;
-        return Ok(QueueTargetSpec::Work {
-            workspace: workspace.into(),
-            work: work.into(),
-            alias,
-        });
+        return QueueTargetSpec::work_path(&work);
     }
     let pane = text(args, "pane");
     let session_id = text(args, "session_id");
@@ -84,6 +72,14 @@ pub(crate) fn target(args: &Value) -> Result<QueueTargetSpec, String> {
         socket: None,
         label: None,
     })
+}
+
+/// An add that failed may still have reached tendd: name the key to retry
+/// with, so the retry returns that item instead of adding another.
+fn lost_add_error(error: &str, request_key: &str) -> String {
+    format!(
+        "{error}. It may have been added anyway: retry with request_key {request_key:?} to add it at most once."
+    )
 }
 
 pub(crate) async fn call(client: &Client, args: &Value) -> Result<Value, String> {
@@ -118,7 +114,7 @@ pub(crate) async fn call(client: &Client, args: &Value) -> Result<Value, String>
                 .work_queue_add(&request)
                 .await
                 .map(|item| json!({"item": item, "request_key": request_key}))
-                .map_err(|error| error.to_string())
+                .map_err(|error| lost_add_error(&error.to_string(), &request_key))
         }
         "cancel" => item(client.work_queue_cancel(&id()?, None).await),
         "run_now" => item(client.work_queue_run_now(&id()?, None, false).await),
@@ -149,5 +145,12 @@ mod tests {
         assert!(target(&json!({"new_work": true})).is_err());
         assert!(target(&json!({})).is_err());
         assert!(target(&json!({"work": "ENG-1"})).is_err());
+        assert!(matches!(
+            target(&json!({"work": " Web/eng-1@Review "})),
+            Ok(QueueTargetSpec::Work { workspace, work, alias: Some(a) })
+                if workspace == "web" && work == "ENG-1" && a == "Review"
+        ));
+        let error = lost_add_error("connection reset", "k-9");
+        assert!(error.contains("\"k-9\""), "{error}");
     }
 }

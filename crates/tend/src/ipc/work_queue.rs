@@ -504,8 +504,12 @@ async fn resolve_target(
             work,
             alias,
         } => Ok(QueueTarget::Work {
-            identity: WorkIdentity::new(workspace, work),
-            alias,
+            // As `work up` names a Work: workspace lowercase, Work id
+            // uppercase, both trimmed. The alias keeps its case.
+            identity: crate::work_queue::normalized_identity(&workspace, &work),
+            alias: alias
+                .map(|alias| alias.trim().to_string())
+                .filter(|alias| !alias.is_empty()),
         }),
     }
 }

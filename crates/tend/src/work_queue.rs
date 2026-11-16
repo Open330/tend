@@ -821,6 +821,42 @@ pub fn make_work_id(hint: &str, now: OffsetDateTime) -> String {
     )
 }
 
+/// A Work identity as `work up` normalises one: the workspace trimmed and
+/// lowercased, the Work id trimmed and uppercased.
+#[must_use]
+pub fn normalized_identity(workspace: &str, work: &str) -> WorkIdentity {
+    WorkIdentity::new(
+        workspace.trim().to_ascii_lowercase(),
+        work.trim().to_ascii_uppercase(),
+    )
+}
+
+impl QueueTargetSpec {
+    /// One agent of an existing Work, from `WORKSPACE/WORK[@ALIAS]`, with
+    /// the identity normalised as `work up` does (the alias keeps its
+    /// case). Shared by the CLI and the MCP tool.
+    pub fn work_path(path: &str) -> Result<Self, String> {
+        let usage = "a Work target is WORKSPACE/WORK or WORKSPACE/WORK@ALIAS";
+        let (path, alias) = match path.split_once('@') {
+            Some((path, alias)) => (path, Some(alias.trim().to_string())),
+            None => (path, None),
+        };
+        let (workspace, work) = path.split_once('/').ok_or(usage)?;
+        let identity = normalized_identity(workspace, work);
+        if identity.workspace_id.is_empty()
+            || identity.work_id.is_empty()
+            || alias.as_deref().is_some_and(str::is_empty)
+        {
+            return Err(usage.into());
+        }
+        Ok(Self::Work {
+            workspace: identity.workspace_id,
+            work: identity.work_id,
+            alias,
+        })
+    }
+}
+
 /// The workspace a queued Work starts in, fixed when it is queued: the
 /// one named, else the directory's name, normalised as `work up` does
 /// (`tend_work::tmux_work::workspace_id_for_cwd`).
