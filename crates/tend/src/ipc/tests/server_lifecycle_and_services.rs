@@ -428,6 +428,11 @@ async fn client_disconnect_before_response_is_clean_handler_exit() {
             crate::dashboard::work_store::WorkStore::memory(),
         )),
         work_up: WorkUpManager::new(PathBuf::from("/tmp/tend-disconnect-test.sock")),
+        work_queue: crate::ipc::work_queue::QueueRuntime::new(
+            crate::work_queue::WorkQueueStore::in_memory(),
+            3,
+        )
+        .0,
         mux_snapshots: crate::mux_snapshot_control::MuxSnapshotControl::new(PathBuf::from(
             "/tmp/tend-disconnect-test.sock",
         )),

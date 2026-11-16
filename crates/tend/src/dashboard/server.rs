@@ -1998,6 +1998,10 @@ fn delivery_refused(refused: crate::prompt_delivery::DeliveryRefused, what: &str
             StatusCode::BAD_GATEWAY,
             format!("{what}: pane gone or backend unreachable"),
         ),
+        crate::prompt_delivery::DeliveryRefused::Unknown => control_error(
+            StatusCode::BAD_GATEWAY,
+            format!("{what}: the backend did not confirm the text; it may have been typed"),
+        ),
     }
 }
 

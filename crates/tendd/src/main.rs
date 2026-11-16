@@ -666,6 +666,10 @@ async fn run() -> Result<()> {
         .with_pipeline_runs(pipeline_runs.clone())
         .with_reviews(reviews)
         .with_work_store(work_store)
+        .with_work_queue(
+            tend::work_queue::WorkQueueStore::load(tend::work_queue::default_work_queue_file()),
+            cfg.work_queue.max_busy_agents,
+        )
         .with_mux_snapshots(mux_snapshots) // WS-F: snapshot
         .with_swap(Some(swap_jobs))
         .with_restart_controller(Arc::clone(&restart));

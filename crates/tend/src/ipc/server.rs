@@ -25,6 +25,9 @@ pub struct Server {
     /// Durable Work records (the backlog), shared with the dashboard.
     pub(super) work_store: crate::dashboard::work_store::SharedWorkStore,
     pub(super) work_up: Arc<WorkUpManager>,
+    pub(super) work_queue: Arc<super::work_queue::QueueRuntime>,
+    /// Taken by `run`, which starts the queue executor.
+    pub(super) work_queue_commands: Option<tokio::sync::mpsc::Receiver<super::work_queue::RunNow>>,
     pub(super) mux_snapshots: Arc<crate::mux_snapshot_control::MuxSnapshotControl>, // WS-F: snapshot
     /// The daemon's `config.toml`, for the requests that read and replace it
     /// whole. `None` when tendd was started without one.
@@ -55,6 +58,7 @@ impl Server {
             reviews: self.reviews.clone(),
             work_store: self.work_store.clone(),
             work_up: self.work_up.clone(),
+            work_queue: self.work_queue.clone(),
             mux_snapshots: self.mux_snapshots.clone(),
             config_path: self.config_path.clone(),
             swap: self.swap.clone(),
@@ -64,6 +68,10 @@ impl Server {
     pub fn new(socket_path: PathBuf, store: SharedStore) -> Self {
         let backend = default_backend();
         let work_up = WorkUpManager::new(socket_path.clone());
+        let (work_queue, work_queue_commands) = super::work_queue::QueueRuntime::new(
+            crate::work_queue::WorkQueueStore::in_memory(),
+            crate::work_queue::WorkQueueConfig::default().max_busy_agents,
+        );
         let mux_snapshots =
             crate::mux_snapshot_control::MuxSnapshotControl::new(socket_path.clone());
         let ask = AskStore::in_memory(crate::ask::AskOptions::default());
@@ -87,6 +95,8 @@ impl Server {
                 crate::dashboard::work_store::WorkStore::memory(),
             )),
             work_up,
+            work_queue,
+            work_queue_commands: Some(work_queue_commands),
             mux_snapshots,
             config_path: None,
             swap: None,
@@ -236,6 +246,20 @@ impl Server {
         self
     }
 
+    /// Serve and dispatch the Work queue from `store`, starting new Work
+    /// only while fewer than `max_busy_agents` agents are busy.
+    #[must_use]
+    pub fn with_work_queue(
+        mut self,
+        store: Arc<crate::work_queue::WorkQueueStore>,
+        max_busy_agents: usize,
+    ) -> Self {
+        let (work_queue, commands) = super::work_queue::QueueRuntime::new(store, max_busy_agents);
+        self.work_queue = work_queue;
+        self.work_queue_commands = Some(commands);
+        self
+    }
+
     /// Serve review items from `reviews` (see `crate::review`).
     #[must_use]
     pub fn with_reviews(mut self, reviews: crate::review::ReviewStore) -> Self {
@@ -266,7 +290,7 @@ impl Server {
     /// final flush, losing that event on the next restart. Drained with
     /// a bounded timeout so a hung handler can't block daemon exit.
     #[allow(clippy::too_many_lines)] // accept loop plus bounded drain and socket cleanup
-    pub async fn run(self, mut shutdown: broadcast::Receiver<()>) -> Result<(), RuntimeError> {
+    pub async fn run(mut self, mut shutdown: broadcast::Receiver<()>) -> Result<(), RuntimeError> {
         // Held until `run` returns, so a second daemon can never clear this
         // one's socket.
         let _claim = self.claim_endpoint().await?;
@@ -274,6 +298,10 @@ impl Server {
         let mut listener = Listener::bind(&self.socket_path)?;
         let mut bound = transport::endpoint_identity(&self.socket_path);
         tracing::info!(socket = %self.socket_path.display(), "listening");
+        // Only the daemon that holds the endpoint dispatches the queue.
+        if let Some(commands) = self.work_queue_commands.take() {
+            super::work_queue::spawn(self.dispatch_ctx(), commands, shutdown.resubscribe());
+        }
         let mut endpoint_check = tokio::time::interval(self.endpoint_check);
         endpoint_check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
