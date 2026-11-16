@@ -43,18 +43,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- A paired device with `operate` can start new work.
-  `GET /api/device/work-options` lists whether `allow_work_start` is on, the
-  host's pipelines, and the project folders its agents use.
-  `POST /api/device/work` starts new work only. The dashboard mints the
-  Work id and launches with `new_only`. The project and pipeline must come
-  from those lists, and a route that would move the agents refuses the start.
-  Every start is reserved in the device store before it runs and is never
-  run twice for one idempotency key. A start that may have run is
-  `unknown`, never retried. The intent is audited and synced before
-  dispatch, or nothing starts. A device runs one start at a time, at most
-  20 an hour. `[dashboard] allow_work_start` still gates all of it.
-
 - A paired device with `operate` can read one agent's recent output.
   `POST /api/device/capture {host, session_id}` names the agent by its
   session, and the server picks that agent's pane from the Fleet snapshot,
