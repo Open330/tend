@@ -120,6 +120,8 @@ final class AppModel: ObservableObject {
     private(set) var askersRevision: UInt64 = 0
     /// What Home's board draws, published only when that changes.
     let homeBoard = FleetHomeBoard()
+    /// What the workbench window's chrome draws, published on change.
+    let chrome = TendWindowChrome()
     private(set) var operatorMessagesRevision: UInt64 = 0
     /// Materialized off the main actor, once per workspace projection.
     @Published private(set) var homeWorks: [FleetWork] = []
@@ -343,6 +345,7 @@ final class AppModel: ObservableObject {
             }
         if TendPerf.isEnabled { installPerfCounters() }
         homeBoard.follow(self)
+        chrome.follow(self)
     }
 
     /// Test seam. The app ingests execution snapshots through `refresh`, which
@@ -350,6 +353,10 @@ final class AppModel: ObservableObject {
     /// refreshes have hosts to read. Not used by production code.
     func ingestExecutionSnapshotForTesting(_ snapshot: TendExecutionSnapshot) {
         executionSnapshot = snapshot
+    }
+
+    func rebuildProjectionsForTesting() async {
+        await rebuildWorkspaceProjections()
     }
 
     nonisolated static func isRunningTests(

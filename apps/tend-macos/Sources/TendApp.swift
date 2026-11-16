@@ -253,7 +253,7 @@ struct TendApp: App {
         // saved closed-window state would otherwise leave no visible window.
         // Detached modules continue to use their typed WindowGroup below.
         WindowGroup("Tend", id: "main") {
-            ContentView()
+            ContentView(model: model)
                 .environmentObject(model)
                 .preferredColorScheme(preferredColorScheme)
                 .presentsOnboardingOnLaunch()

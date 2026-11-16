@@ -3,7 +3,11 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct ContentView: View {
-    @EnvironmentObject private var model: AppModel
+    /// Read, not observed: what the body shows comes from `inputs`
+    /// (`TendContentInputs`), published only when it changes. Editors other
+    /// than Home observe the model themselves (`TendEditorDetail`).
+    let model: AppModel
+    @ObservedObject private var inputs: TendChromeSlice<TendContentInputs>
     @StateObject private var tabs = TendWorkbenchTabs()
     @State private var paletteMode: TendPaletteMode?
     @State private var pendingPaletteAction: TendPaletteAction?
@@ -12,6 +16,21 @@ struct ContentView: View {
     @State private var chrome = TitleBarMetrics.fallback
     @State private var showingShortcuts = false
     @AppStorage("tend.sidebar.visible") private var sidebarVisible = true
+
+    init(model: AppModel) {
+        self.model = model
+        _inputs = ObservedObject(wrappedValue: model.chrome.content)
+    }
+
+    private var shown: TendContentInputs { inputs.value }
+
+    /// A binding that shows the published input and writes the model.
+    private func binding(
+        _ read: KeyPath<TendContentInputs, Bool>, _ write: ReferenceWritableKeyPath<AppModel, Bool>
+    ) -> Binding<Bool> {
+        let model = model
+        return Binding(get: { inputs.value[keyPath: read] }, set: { model[keyPath: write] = $0 })
+    }
     /// Exited shells closed from the Shells list, kept here so they stay
     /// hidden while the side bar is folded away and rebuilt.
     @State private var dismissedShellIDs: Set<String> = []
@@ -24,7 +43,7 @@ struct ContentView: View {
     /// cover while the lists are folded away, nothing otherwise.
     private var firstStripInset: CGFloat {
         if !sidebarVisible { return chrome.leadingInset }
-        if model.isSidebarListCollapsed { return max(0, chrome.leadingInset - collapsedSidebarWidth) }
+        if shown.isSidebarListCollapsed { return max(0, chrome.leadingInset - collapsedSidebarWidth) }
         return 0
     }
 
@@ -37,12 +56,12 @@ struct ContentView: View {
                 // runs the window's full height, through the traffic lights
                 // over the narrow rail. The rail draws its own edge below
                 // the title bar row instead.
-                if sidebarVisible, model.isSidebarListCollapsed {
+                if sidebarVisible, shown.isSidebarListCollapsed {
                     sidebar
                         .frame(width: collapsedSidebarWidth)
                 }
                 HSplitView {
-                    if sidebarVisible, !model.isSidebarListCollapsed {
+                    if sidebarVisible, !shown.isSidebarListCollapsed {
                         sidebar
                             .frame(minWidth: 260, idealWidth: 300, maxWidth: 380)
                     }
@@ -51,17 +70,18 @@ struct ContentView: View {
                 }
             }
             // WS-C usage: the usage popover jumps to a capped agent's pane.
-            WorkbenchStatusBar(model: model, openPane: { id in
+            WorkbenchStatusBar(model: model, inputs: model.chrome.statusBar, openPane: { id in
                 model.selectWatchPane(id)
                 tabs.openPinned(.pane(id))
             })
         }
         .ignoresSafeArea(.container, edges: .top)
         .background(TitleBarMetricsReader(metrics: $chrome).allowsHitTesting(false))
+        .background(TendWindowVisibilityReader(board: model.chrome))
         .frame(minWidth: 920, minHeight: 580)
         .alert(
             "Replace the running tendd?",
-            isPresented: $model.isConfirmingDaemonReplacement
+            isPresented: binding(\.isConfirmingDaemonReplacement, \.isConfirmingDaemonReplacement)
         ) {
             Button("Cancel", role: .cancel) {}
             Button("Replace Daemon", role: .destructive) {
@@ -88,23 +108,26 @@ struct ContentView: View {
         .sheet(isPresented: $showingShortcuts) {
             TendShortcutsSheet { showingShortcuts = false }
         }
-        .sheet(isPresented: $model.isPresentingFleetDispatch) {
+        .sheet(isPresented: binding(\.isPresentingFleetDispatch, \.isPresentingFleetDispatch)) {
             FleetDispatchView(model: model)
         }
-        .sheet(isPresented: $model.isPresentingWorkStart) {
-            WorkStartView(model: model, isPresented: $model.isPresentingWorkStart)
+        .sheet(isPresented: binding(\.isPresentingWorkStart, \.isPresentingWorkStart)) {
+            WorkStartView(model: model, isPresented: binding(\.isPresentingWorkStart, \.isPresentingWorkStart))
         }
-        .sheet(isPresented: $model.isPresentingHostRegistration) {
+        .sheet(isPresented: binding(\.isPresentingHostRegistration, \.isPresentingHostRegistration)) {
             HostRegistrationView(model: model)
         }
         // WS-F: snapshot
-        .sheet(item: $model.sessionSnapshotSheet) { sheet in
+        .sheet(item: Binding(
+            get: { shown.sessionSnapshotSheet },
+            set: { model.sessionSnapshotSheet = $0 }
+        )) { sheet in
             SessionSnapshotSheetHost(model: model, sheet: sheet)
         }
         // While the template manager is open, it presents the editor on
         // itself (a window shows one sheet at a time).
         .sheet(item: Binding(
-            get: { model.isPresentingTemplates ? nil : model.pipelineEditorTarget },
+            get: { shown.isPresentingTemplates ? nil : shown.pipelineEditorTarget },
             set: { model.pipelineEditorTarget = $0 }
         )) { target in
             PipelineEditorView(target: target, model: model)
@@ -116,11 +139,11 @@ struct ContentView: View {
             model.activateEditor(tabs.focusedSelection)
             model.start()
         }
-        .onChange(of: model.sidebarSelection) { selection in
+        .onChange(of: shown.sidebarSelection) { selection in
             guard let selection, tabs.focusedSelection != selection else { return }
             tabs.openPreview(selection)
         }
-        .onChange(of: model.workspaceRevision) { _ in
+        .onReceive(model.chrome.workspaceRevised) { _ in
             tabs.prune(where: model.isSelectionAvailable)
             if model.sidebarSelection != tabs.focusedSelection {
                 model.activateEditor(tabs.focusedSelection)
@@ -132,6 +155,8 @@ struct ContentView: View {
             model.activateEditor(tabs.focusedSelection)
         }
         .background(WorkbenchWindowPresenter())
+        .onAppear { model.chrome.setOpenTabs(tabs.groups.flatMap(\.tabs)) }
+        .onReceive(tabs.$groups) { groups in model.chrome.setOpenTabs(groups.flatMap(\.tabs)) }
         // WS-A: unread tracking and notification-click routing.
         .modifier(TendAttentionTracking(model: model, tabs: tabs, attention: model.attention, open: openAgentPane))
         .focusedSceneValue(\.tendEditorCommands, editorCommands)
@@ -158,7 +183,7 @@ struct ContentView: View {
                 Label("Start Work", systemImage: "play.square.stack")
             }
             .help("Start Work")
-            .disabled(!model.isConnected || model.isStartingWork)
+            .disabled(!shown.isConnected || shown.isStartingWork)
 
             Button {
                 model.createShell()
@@ -166,7 +191,7 @@ struct ContentView: View {
                 Label("New shell", systemImage: "plus")
             }
             .help("New shell")
-            .disabled(!model.isConnected || model.isCreatingSession)
+            .disabled(!shown.isConnected || shown.isCreatingSession)
 
             // WS-B: new agent
             Button {
@@ -175,7 +200,7 @@ struct ContentView: View {
                 Label("New Agent…", systemImage: "sparkles.rectangle.stack")
             }
             .help("New Agent… (⌥⇧⌘T)")
-            .disabled(!model.isConnected || model.isStartingAgent)
+            .disabled(!shown.isConnected || shown.isStartingAgent)
 
             Menu {
                 Button("Open File…") { chooseFile() }
@@ -183,15 +208,15 @@ struct ContentView: View {
                 Divider()
                 Button("Commands…") { paletteMode = .commands }
                 Button("Refresh") { Task { await model.refresh() } }
-                    .disabled(!model.isConnected)
+                    .disabled(!shown.isConnected)
                 Divider()
                 Button("Terminate Session", role: .destructive) {
                     model.terminateSelectedSession()
                 }
                 .disabled(
-                    !model.isConnected
-                        || model.selectedSessionID == nil
-                        || model.isTerminatingSession
+                    !shown.isConnected
+                        || shown.selectedSessionID == nil
+                        || shown.isTerminatingSession
                 )
             } label: {
                 Image(systemName: "ellipsis")
@@ -208,6 +233,7 @@ struct ContentView: View {
     private var sidebar: some View {
         TendSidebar(
             model: model,
+            inputs: model.chrome.sidebar,
             chrome: chrome,
             openPinnedSession: { id in
                 model.selectWatchSession(id)
@@ -235,6 +261,7 @@ struct ContentView: View {
                 VStack(spacing: 0) {
                     WorkspaceTabBar(
                         model: model,
+                        labels: model.chrome.tabStrip,
                         tabs: tabs,
                         groupID: group.id,
                         height: chrome.rowHeight,
@@ -292,78 +319,20 @@ struct ContentView: View {
         for selection: TendSidebarSelection?,
         groupID: UUID
     ) -> some View {
-        switch selection {
-        case .file(let location):
-            ArtifactPreviewView(location: location, model: model, isFocused: groupID == tabs.focusedGroupID, openFile: openFile)
-                .id(location)
-        case .workBoard:
-            // Equatable: ContentView redraws for every model publish, and
-            // Home's state wrappers would otherwise make SwiftUI treat it as
-            // changed each time.
+        if case .workBoard? = selection {
+            // Equatable: Home's state wrappers would otherwise make SwiftUI
+            // treat it as changed each time this view redraws.
             FleetHomeView(model: model, homeBoard: model.homeBoard)
                 .equatable()
-        case .watch:
-            NativeWatchView(model: model)
-        case .inbox:
-            TendOperatorInboxView(model: model)
-        case .ask:
-            TendAskView(model: model)
-        case .work(let identity):
-            if let work = model.workGroups.first(where: { $0.identity == identity }) {
-                WorkDetailView(work: work, model: model)
-                    .id(work.identity)
-            } else {
-                TendEmptyDetail(model: model)
-            }
-        case .agent(let id):
-            if let participant = model.hostedAgents.first(where: { $0.id == id }) {
-                FleetAgentDetailView(participant: participant, model: model)
-                    .id(participant.id)
-            } else {
-                TendEmptyDetail(model: model)
-            }
-        case .host(let id):
-            if let host = model.fleetHosts.first(where: { $0.id == id }) {
-                FleetHostDetailView(host: host, model: model)
-                    .id(host.id)
-            } else {
-                TendEmptyDetail(model: model)
-            }
-        case .fleetSession(let id):
-            if let session = model.executionSnapshot.watchSession(id: id) {
-                FleetSessionDetailView(session: session, model: model)
-                    .id(session.id)
-            } else {
-                TendEmptyDetail(model: model)
-            }
-        case .fleetWindow(let id):
-            if let window = model.executionSnapshot.watchWindow(id: id) {
-                FleetWindowDetailView(window: window, model: model)
-                    .id(window.id)
-            } else {
-                TendEmptyDetail(model: model)
-            }
-        case .shell(let id):
-            if let session = model.sessions.first(where: { $0.id == id }) {
-                TerminalPane(
-                    client: model.client,
-                    sessionID: session.id,
-                    replayInitialHistory: session.hasBeenAttached == true,
-                    onExit: { closeExitedShell(id: session.id, groupID: groupID) }
-                )
-                .id(session.id)
-            } else {
-                TendEmptyDetail(model: model)
-            }
-        case .pane(let id):
-            if let pane = model.executionSnapshot.watchPane(id: id) {
-                FleetPaneModuleView(pane: pane, model: model)
-                    .id(pane.id)
-            } else {
-                TendEmptyDetail(model: model)
-            }
-        case nil:
-            TendEmptyDetail(model: model)
+        } else {
+            TendEditorDetail(
+                model: model,
+                tabs: tabs,
+                selection: selection,
+                groupID: groupID,
+                openFile: openFile,
+                shellExited: { closeExitedShell(id: $0, groupID: groupID) }
+            )
         }
     }
 
@@ -388,7 +357,7 @@ struct ContentView: View {
     private var editorCommands: TendEditorCommandActions {
         // WS-A: nil while nothing is unread, which disables the menu item.
         let attention = model.attention
-        let markAllRead: (() -> Void)? = attention.hasUnread ? { attention.markAllRead() } : nil
+        let markAllRead: (() -> Void)? = shown.hasUnread ? { attention.markAllRead() } : nil
         return TendEditorCommandActions(
             // An empty workbench has no close-tab action; the window-owned
             // keymap consumes ⌘W so it cannot close the whole window.
@@ -468,9 +437,9 @@ struct ContentView: View {
             findInFile: fileFindAction,
             openFile: chooseFile,
             showFiles: showFiles,
-            isEnabled: paletteMode == nil && !showingShortcuts && !model.isPresentingWorkStart
-                && !model.isPresentingHostRegistration && model.pipelineEditorTarget == nil
-                && !model.isConfirmingDaemonReplacement
+            isEnabled: paletteMode == nil && !showingShortcuts && !shown.isPresentingWorkStart
+                && !shown.isPresentingHostRegistration && shown.pipelineEditorTarget == nil
+                && !shown.isConfirmingDaemonReplacement
         )
     }
 
@@ -773,5 +742,89 @@ enum TendSurfacePalette {
 
     static func workspace(for colorScheme: ColorScheme) -> Color {
         TendTheme.editor(colorScheme)
+    }
+}
+
+/// Every editor but Home, observing the model as the whole window used to:
+/// what each shows is looked up in the model's current state.
+private struct TendEditorDetail: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var tabs: TendWorkbenchTabs
+    let selection: TendSidebarSelection?
+    let groupID: UUID
+    let openFile: (TendFileLocation, Bool) -> Void
+    let shellExited: (String) -> Void
+
+    var body: some View {
+        switch selection {
+        case .file(let location):
+            ArtifactPreviewView(location: location, model: model, isFocused: groupID == tabs.focusedGroupID, openFile: openFile)
+                .id(location)
+        case .workBoard:
+            FleetHomeView(model: model, homeBoard: model.homeBoard)
+                .equatable()
+        case .watch:
+            NativeWatchView(model: model)
+        case .inbox:
+            TendOperatorInboxView(model: model)
+        case .ask:
+            TendAskView(model: model)
+        case .work(let identity):
+            if let work = model.workGroups.first(where: { $0.identity == identity }) {
+                WorkDetailView(work: work, model: model)
+                    .id(work.identity)
+            } else {
+                TendEmptyDetail(model: model)
+            }
+        case .agent(let id):
+            if let participant = model.hostedAgents.first(where: { $0.id == id }) {
+                FleetAgentDetailView(participant: participant, model: model)
+                    .id(participant.id)
+            } else {
+                TendEmptyDetail(model: model)
+            }
+        case .host(let id):
+            if let host = model.fleetHosts.first(where: { $0.id == id }) {
+                FleetHostDetailView(host: host, model: model)
+                    .id(host.id)
+            } else {
+                TendEmptyDetail(model: model)
+            }
+        case .fleetSession(let id):
+            if let session = model.executionSnapshot.watchSession(id: id) {
+                FleetSessionDetailView(session: session, model: model)
+                    .id(session.id)
+            } else {
+                TendEmptyDetail(model: model)
+            }
+        case .fleetWindow(let id):
+            if let window = model.executionSnapshot.watchWindow(id: id) {
+                FleetWindowDetailView(window: window, model: model)
+                    .id(window.id)
+            } else {
+                TendEmptyDetail(model: model)
+            }
+        case .shell(let id):
+            if let session = model.sessions.first(where: { $0.id == id }) {
+                TerminalPane(
+                    client: model.client,
+                    sessionID: session.id,
+                    replayInitialHistory: session.hasBeenAttached == true,
+                    onExit: { shellExited(session.id) }
+                )
+                .id(session.id)
+            } else {
+                TendEmptyDetail(model: model)
+            }
+        case .pane(let id):
+            if let pane = model.executionSnapshot.watchPane(id: id) {
+                FleetPaneModuleView(pane: pane, model: model)
+                    .id(pane.id)
+            } else {
+                TendEmptyDetail(model: model)
+            }
+        case nil:
+            TendEmptyDetail(model: model)
+        }
     }
 }
