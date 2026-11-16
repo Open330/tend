@@ -290,7 +290,7 @@ async fn capture_for(
     let pane_id = agent.pane.as_deref().ok_or_else(not_found)?;
     let pane = agent_pane(&remote.panes, pane_id, agent.tmux_socket.as_deref()).ok_or((
         StatusCode::CONFLICT,
-        "this agent's pane cannot be told apart from another; read it on a computer".to_owned(),
+        "this agent's pane is not in the host's latest snapshot, or cannot be told apart from another; try again shortly, or read it on a computer".to_owned(),
     ))?;
     let kind = crate::backend::pane_id_host_kind(&pane.pane_id).ok_or_else(not_found)?;
     let key = crate::topology::PaneKey::from_pane(kind, pane);
