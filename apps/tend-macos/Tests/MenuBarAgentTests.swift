@@ -703,3 +703,40 @@ private struct MenuReplyError: LocalizedError {
     controller.showOverview()
     #expect(!reopened.isShown, "Browsing an agent inside overview must not change its toggle destination")
 }
+
+@Test @MainActor func menuBarSkipsSnapshotsThatChangeNothingItShows() throws {
+    let first = try menuBarSnapshot([("coder", "working", "1"), ("reviewer", "idle", "1")])
+    // Same agents, states and names: a heartbeat the cluster does not show.
+    let same = try menuBarSnapshot([("coder", "working", "1"), ("reviewer", "idle", "1")])
+    let moved = try menuBarSnapshot([("coder", "waiting_input", "2"), ("reviewer", "idle", "1")])
+    let inputs = { (snapshot: TendExecutionSnapshot, unread: Set<TendWatchPaneIdentity>) in
+        TendMenuBarInputs(hosted: snapshot.hostedAgents, unread: unread, connection: .connected)
+    }
+    #expect(inputs(first, []) == inputs(same, []))
+    #expect(inputs(first, []) != inputs(moved, []), "a new state is shown")
+    let pane = try #require(TendAgentAttentionCenter.paneIdentity(for: first.hostedAgents[0]))
+    #expect(inputs(first, []) != inputs(first, [pane]), "unread is shown")
+    #expect(TendMenuBarInputs(hosted: first.hostedAgents, unread: [], connection: .connecting) != inputs(first, []))
+    // Grouping by Work or window changes the cluster with the same names.
+    let workA = try menuBarSnapshot([("coder", "working", "1")], workspace: "tend", work: "A")
+    let workB = try menuBarSnapshot([("coder", "working", "1")], workspace: "tend", work: "B")
+    #expect(inputs(workA, []) != inputs(workB, []), "moving to another Work regroups the chip")
+    let otherWindow = try menuBarSnapshot([("coder", "working", "1"), ("reviewer", "idle", "1")], window: "@2")
+    #expect(inputs(first, []) != inputs(otherWindow, []), "another window regroups by window")
+}
+
+@Test func menuBarPollsLessOftenFarFromEveryMenuBar() {
+    let band = CGRect(x: 0, y: 1400, width: 2560, height: 40)
+    #expect(TendMenuBarPolling.distance(from: CGPoint(x: 100, y: 1410), to: [band]) == 0)
+    #expect(TendMenuBarPolling.distance(from: CGPoint(x: 100, y: 400), to: [band]) == 1000)
+    #expect(TendMenuBarPolling.interval(pointerInside: false, animating: false, popoverShown: false, distanceToMenuBar: 0) == 1.0 / 15)
+    #expect(TendMenuBarPolling.interval(pointerInside: false, animating: false, popoverShown: false, distanceToMenuBar: 1000) == 0.3)
+    #expect(TendMenuBarPolling.interval(pointerInside: false, animating: false, popoverShown: false, distanceToMenuBar: 2000) == 0.5)
+    // Tracking a hover or an animation is never slowed.
+    #expect(TendMenuBarPolling.interval(pointerInside: true, animating: false, popoverShown: false, distanceToMenuBar: 2000) == 1.0 / 60)
+    #expect(TendMenuBarPolling.interval(pointerInside: false, animating: true, popoverShown: false, distanceToMenuBar: 2000) == 1.0 / 60)
+    // A pointer can cover the distance only in more than one interval.
+    for distance in stride(from: CGFloat(0), through: 3000, by: 50) {
+        #expect(TendMenuBarPolling.idle(distanceToMenuBar: distance) * 3000 <= max(distance, 200))
+    }
+}

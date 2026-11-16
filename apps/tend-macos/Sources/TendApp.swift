@@ -40,6 +40,7 @@ private final class TendApplicationDelegate: NSObject, NSApplicationDelegate {
         // working install. A module that is switched off is not probed, so
         // an operator who uses none still pays nothing.
         Task { await TendModuleRegistry.shared.probeEnabled() }
+        TendPerf.startDumping()
         if !AppModel.isRunningTests(), let model = Self.model {
             menuBar = TendMenuBarAgentController(model: model)
             model.start()

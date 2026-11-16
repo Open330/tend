@@ -231,8 +231,54 @@ extension FleetBoard {
     /// One key per result: the unit and the exact state it was reviewed
     /// in, hashed to fit the store's key limit. Reviewing it again after it
     /// changed is a new result.
+    ///
+    /// Home asks for it several times per finished card on every render
+    /// (hidden or not, the card's reviewed state, the review list), so the
+    /// key is memoized per (id, revision) and hex-encoded without
+    /// `String(format:)`. The string is byte-for-byte what tendd already
+    /// stores; changing it would unhide every reviewed result.
     static func reviewKey(_ work: FleetWork) -> String {
-        let digest = SHA256.hash(data: Data("\(work.id)\n\(work.revision)".utf8))
-        return "home:" + digest.map { String(format: "%02x", $0) }.joined()
+        FleetReviewKeyCache.shared.key(id: work.id, revision: work.revision)
+    }
+}
+
+/// `FleetBoard.reviewKey` results by unit id. A new revision replaces the
+/// old key; departed units linger until the bounded cache is flushed.
+/// Entries are keyed and matched by UTF-8 bytes, not `String` equality:
+/// Swift compares strings by canonical equivalence, but the hash covers raw
+/// bytes, so "é" and "e\u{301}" must not share a cached key.
+final class FleetReviewKeyCache: @unchecked Sendable {
+    static let shared = FleetReviewKeyCache()
+
+    private let lock = NSLock()
+    private var entries: [[UInt8]: (revision: [UInt8], key: String)] = [:]
+
+    func key(id: String, revision: String) -> String {
+        let idBytes = Array(id.utf8)
+        lock.lock()
+        if let entry = entries[idBytes], entry.revision.elementsEqual(revision.utf8) {
+            lock.unlock()
+            return entry.key
+        }
+        lock.unlock()
+        let key = Self.compute(id: id, revision: revision)
+        lock.lock()
+        if entries.count >= 4_096 { entries.removeAll(keepingCapacity: true) }
+        entries[idBytes] = (Array(revision.utf8), key)
+        lock.unlock()
+        return key
+    }
+
+    private static let hex = Array("0123456789abcdef".utf8)
+
+    static func compute(id: String, revision: String) -> String {
+        let digest = SHA256.hash(data: Data("\(id)\n\(revision)".utf8))
+        var bytes = Array("home:".utf8)
+        bytes.reserveCapacity(5 + 64)
+        for byte in digest {
+            bytes.append(hex[Int(byte >> 4)])
+            bytes.append(hex[Int(byte & 0x0f)])
+        }
+        return String(decoding: bytes, as: UTF8.self)
     }
 }

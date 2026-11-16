@@ -9,11 +9,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Home in the Mac app does far less work per redraw. Each finished card's
+  review key (a SHA-256 hex string) was recomputed about four times per
+  render; it is now cached per card and revision and hex-encoded without
+  `String(format:)`, and the board decides which cards are hidden in one
+  pass. Reading a large tendd response no longer rescans the whole buffer
+  after every 16 KB read. A 15 s CPU sample of the idle app showed these
+  paths at the top.
 - Typing `exit` in the live tour while a step was opening could end the tour
   on a tmux error and a backtrace, without the closing summary. The tour
   checked once per poll that the sandbox server was alive, then made several
   tmux calls; an `exit` between them failed the next one. A failure after the
   server has gone now ends the tour the same way `exit` does.
+- The idle Mac app stops publishing values that did not change. Home's
+  decision poll (every 5 s) and backlog poll (every 15 s) assigned an
+  unchanged status on each read, which redrew the whole board; the
+  15-second projection rebuild replaced the agent, Work and Home lists even
+  when nothing differed; pruning editor tabs after every Fleet event
+  published and wrote the tab layout to the defaults several times; and
+  every Inbox read rewrote the notification receipts. Each now publishes or
+  writes only on a change. A process preview that no view shows no longer
+  counts as a new Fleet snapshot, and typing a decision answer redraws only
+  that card. `TEND_PERF_COUNTERS=<seconds>` prints debug counters for this
+  work (body evaluations, publishes, projections, polls) to standard error.
+- Home merges its decisions (the queue, review items and every host's
+  questions, with their dates parsed and sorted) once per change of those
+  inputs instead of on every redraw, and finds each asking agent through an
+  index built with the agent list rather than a scan per decision. Tabs and
+  Home's cards look agents up the same way.
+- Home no longer redraws for every change anywhere in the Mac app. It
+  watched the whole app model, so the Inbox's progress, Ask, a remote
+  agent's heartbeat or the workspace revision each re-evaluated the entire
+  board. It now watches its own board state: its units (replaced only when
+  something Home shows changes, not when an agent's last-activity time or
+  process list moves), the hosts' names and states, the connection, and
+  what its decisions are built from, plus a 15-second clock so "5 min ago"
+  and the day-old fold keep moving.
+- While the Mac app's window is hidden, minimized, fully covered or on
+  another Space, Home pauses its decision (5 s) and backlog (15 s) polls,
+  holds new board state and stops its clock. Showing the window again
+  applies what arrived and reads both feeds at once. Notifications, the menu
+  bar and unread tracking keep running from the app model.
+- The menu-bar cluster skips a Fleet snapshot that changes nothing it
+  shows (each agent's state, name, place, connection and unread mark),
+  measures the hover capsule only when one unfolds, and checks the pointer
+  less often while it is far from every menu bar (down to twice a second
+  1500 points away; 15 times a second near one, as before).
+- Markdown in the Mac app's rows (agent responses, asked context) is parsed
+  once per text and kept in a bounded cache, instead of on every redraw.
+
 - CI builds with `--locked`, so a PR whose `Cargo.lock` is out of date fails
   instead of breaking `cargo install --locked` after release (v0.10.19
   shipped such a lock). Release binaries are built `--locked` too, matching
