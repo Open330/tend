@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Typing `exit` in the live tour while a step was opening could end the tour
+  on a tmux error and a backtrace, without the closing summary. The tour
+  checked once per poll that the sandbox server was alive, then made several
+  tmux calls; an `exit` between them failed the next one. A failure after the
+  server has gone now ends the tour the same way `exit` does.
 - CI builds with `--locked`, so a PR whose `Cargo.lock` is out of date fails
   instead of breaking `cargo install --locked` after release (v0.10.19
   shipped such a lock). Release binaries are built `--locked` too, matching
