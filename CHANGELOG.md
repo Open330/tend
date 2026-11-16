@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The dashboard, the Windows app and the iOS app can draw the same lanes the
   Mac draws. `POST /api/home/reviewed` records Looks Good with the Mac's
   review key, so a unit marked in either place is marked in both.
+<<<<<<< HEAD
 - The dashboard's Home draws that board:
   - Work units with their stages;
   - folded helper, empty and older sessions;
@@ -29,6 +30,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - the Review list in the header, with its four time ranges.
 
   With an older tendd it lays out the queue and agents itself, as before.
+=======
+- The iPhone and iPad app looks and reads like Tend for Mac's Home. It has
+  the Mac's surfaces, type roles, state colours and cards, in light and dark
+  mode with Dynamic Type. **Your turn**, **In progress** and **Finished**
+  sit side by side on a wide iPad, as on the Mac. On iPhone a lane strip
+  shows all three counts above the chosen lane. **Hosts** shows each host's
+  state and agents, and an agent's latest result is rendered from Markdown.
+  Seeing agents needs a device paired with hosts (`operate`); a device that
+  only decides says how to pair again.
+>>>>>>> d5e0914a (docs(changelog): the iOS Home entry belongs under Unreleased)
 
 ## [0.10.21] - 2026-11-16
 
@@ -42,15 +53,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lines and at most 64 KiB. A device runs one capture at a time. Every
   attempt is an audit line, without the output. `GET /api/device` lists it
   in `features`.
-- The iPhone and iPad app looks and reads like Tend for Mac's Home. It has
-  the Mac's surfaces, type roles, state colours and cards, in light and dark
-  mode with Dynamic Type. **Your turn**, **In progress** and **Finished**
-  sit side by side on a wide iPad, as on the Mac. On iPhone a lane strip
-  shows all three counts above the chosen lane. **Hosts** shows each host's
-  state and agents, and an agent's latest result is rendered from Markdown.
-  Seeing agents needs a device paired with hosts (`operate`); a device that
-  only decides says how to pair again.
-
 - **Tend for Windows** (`tend-app.exe`, `crates/tend-app`): the tray app
   around a local tendd's Home, like Tend for Mac's menu bar. Notification
   area icon with the Tend mark, the dashboard's Home in a WebView2 window,
