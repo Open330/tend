@@ -69,7 +69,7 @@ function WaitFor([scriptblock]$cond, [int]$seconds, [string]$what) {
         try { if (& $cond) { return $true } } catch { }
         Start-Sleep -Milliseconds 500
     }
-    Say "timed out waiting for: $what"
+    Say "timed out waiting for: $what" | Out-Null
     return $false
 }
 function RandomHex([int]$bytes) {
@@ -240,12 +240,13 @@ Start-Sleep 3600
     $driven = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $ui -ProcessId ((Get-Process tend-app | Where-Object { $_.Path -eq $app } | Select-Object -First 1).Id) 2>&1
     $driven | ForEach-Object { Say "uia: $_" }
 
-    function History { @((Api "/api/decisions/history").hosts | ForEach-Object { [pscustomobject]@{ alias = $_.alias; items = @($_.history.items) } }) }
-    $answeredLocal = WaitFor { ((History | Where-Object alias -eq "local").items | Where-Object { $_.kind -eq "human_answer" -and $_.answer -eq "yes" }).Count -ge 2 } 30 "local answers"
+    function DecisionHistory { @((Api "/api/decisions/history").hosts | ForEach-Object { [pscustomobject]@{ alias = $_.alias; items = @($_.history.items) } }) }
+    $answeredLocal = WaitFor { ((DecisionHistory | Where-Object alias -eq "local").items | Where-Object { $_.kind -eq "human_answer" -and $_.answer -eq "yes" }).Count -ge 2 } 30 "local answers"
     Check $answeredLocal "both local questions answered 'yes' from Home"
-    Check (WaitFor { ((History | Where-Object alias -eq "win-b").items | Where-Object { $_.kind -eq "human_answer" -and $_.answer -eq "yes" }).Count -ge 1 } 30 "remote answer") "the win-b question answered over Fleet from Home"
-    Check (WaitFor { ((History | Where-Object alias -eq "local").items | Where-Object { $_.kind -eq "review" -and $_.disposition.kind -eq "accepted" }).Count -ge 2 } 30 "local reviews") "both local results accepted from Home"
-    Check (WaitFor { ((History | Where-Object alias -eq "win-b").items | Where-Object { $_.kind -eq "review" -and $_.disposition.kind -eq "accepted" }).Count -ge 1 } 30 "remote review") "the win-b result accepted over Fleet from Home"
+    Check (WaitFor { ((DecisionHistory | Where-Object alias -eq "win-b").items | Where-Object { $_.kind -eq "human_answer" -and $_.answer -eq "yes" }).Count -ge 1 } 30 "remote answer") "the win-b question answered over Fleet from Home"
+    if (-not $answeredLocal) { (Api "/api/decisions/history") | ConvertTo-Json -Depth 12 | Set-Content (Join-Path $Root "history.json") }
+    Check (WaitFor { ((DecisionHistory | Where-Object alias -eq "local").items | Where-Object { $_.kind -eq "review" -and $_.disposition.kind -eq "accepted" }).Count -ge 2 } 30 "local reviews") "both local results accepted from Home"
+    Check (WaitFor { ((DecisionHistory | Where-Object alias -eq "win-b").items | Where-Object { $_.kind -eq "review" -and $_.disposition.kind -eq "accepted" }).Count -ge 1 } 30 "remote review") "the win-b result accepted over Fleet from Home"
     Check ((QueueItems).Count -eq 0) "nothing is left in the queue"
     $audit = Get-ChildItem "$Root\local\data" -Recurse -Filter "dashboard-decisions.jsonl" | Select-Object -First 1
     Check ($audit -and ((Get-Content $audit.FullName) | Where-Object { $_ -match '"web:token"' }).Count -ge 6) "every decision is audited as web:token"
