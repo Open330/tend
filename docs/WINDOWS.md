@@ -34,8 +34,9 @@ the commands above work:
   `SYSTEM` session.
 - **PowerShell 7.** Windows ships only Windows PowerShell 5.1, whose
   default execution policy is `Restricted` (no profile runs). The
-  `tendd-shellrc` autostart is written to the PowerShell 7 profile
-  (`RemoteSigned` by default), so install PowerShell 7. On the clean machine
+  `tendd-shellrc` autostart is written to the PowerShell 7 profile, so
+  install PowerShell 7 (its policy was `RemoteSigned` on the tested machine;
+  if the profile does not load, see `Get-ExecutionPolicy -List`). On the clean machine
   an rmux server's `default-shell` was `cmd.exe` (from `%COMSPEC%`), which
   reads no profile: set `set -g default-shell pwsh` in `~/.rmux.conf` for
   the autostart to run.
