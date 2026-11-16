@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   counts as a new Fleet snapshot, and typing a decision answer redraws only
   that card. `TEND_PERF_COUNTERS=<seconds>` prints debug counters for this
   work (body evaluations, publishes, projections, polls) to standard error.
+- Markdown in the Mac app's rows (agent responses, asked context) is parsed
+  once per text and kept in a bounded cache, instead of on every redraw.
 
 ### Fixed
 
