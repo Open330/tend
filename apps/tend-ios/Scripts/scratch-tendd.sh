@@ -127,7 +127,25 @@ scope = 'host'
 enabled = true
 bind = "127.0.0.1:$PORT"
 token = "$tok"
+# Lets the app's Start Work run here. The pipeline's only agent is not a
+# known agent kind, so tend registers the Run and launches nothing: the
+# whole start path runs, no agent does.
+allow_work_start = true
+
+[fleet]
+# SCRATCH_CAPTURE_POLICY=never checks that recent output is refused.
+capture_policy = "${SCRATCH_CAPTURE_POLICY:-selected}"
+
+[pipeline.solo]
+description = "one stand-in agent"
+
+[[pipeline.solo.agent]]
+alias = "impl"
+program = "$WRAP/stand-in-agent"
+role = "implementer"
 TOML
+  printf '#!/bin/sh\n# A stand-in agent: it only waits.\nexec sleep 600\n' > "$WRAP/stand-in-agent"
+  chmod +x "$WRAP/stand-in-agent"
   env -u TMUX -u TMUX_PANE "$SANDBOX" up --name "$NAME" --config "$cfg" \
     --tendd "$WRAP/tendd" --tend "$WRAP/tend" --extra-path "$WRAP" ${ALLOW:+$ALLOW}
   # Kept beside the wrappers, not in the sandbox root, whose `down` removes
