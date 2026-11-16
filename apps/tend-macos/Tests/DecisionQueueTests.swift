@@ -227,7 +227,9 @@ private func message(host: TendFleetHostIdentity, id: String, created: String, s
         let fresh = try #require(attached.first { $0.id == "human:mini:req_new" })
         #expect(fresh.askerUnlisted)
         #expect(!fresh.asksUnlisted(at: now))
-        #expect(fresh.asksUnlisted(at: now.addingTimeInterval(FleetDecision.unlistedGrace)))
+        let asked = try #require(fresh.since)
+        #expect(!fresh.asksUnlisted(at: asked.addingTimeInterval(FleetDecision.unlistedGrace - 1)))
+        #expect(fresh.asksUnlisted(at: asked.addingTimeInterval(FleetDecision.unlistedGrace)))
         #expect(FleetDecisions.attachAskers(decisions, agents: []).allSatisfy { !$0.askerUnlisted })
     }
 
