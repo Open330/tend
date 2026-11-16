@@ -116,6 +116,9 @@ final class FleetQueueFeed: ObservableObject {
     /// a later answer (a read after a change races the poll).
     private var generation = 0
     private weak var client: TendIPCClient?
+    /// Home is on screen and polling. Off screen, a queued add is not read
+    /// now: Home reads the queue at once when it is shown again.
+    var isActive = false
     private var subscriptions: [AnyCancellable] = []
 
     init(center: NotificationCenter = .default) {
@@ -123,7 +126,7 @@ final class FleetQueueFeed: ObservableObject {
         center.publisher(for: .tendWorkQueued)
             .sink { [weak self] _ in
                 Task { @MainActor [weak self] in
-                    guard let self, let client = self.client else { return }
+                    guard let self, self.isActive, let client = self.client else { return }
                     await self.load(client)
                 }
             }
@@ -134,12 +137,17 @@ final class FleetQueueFeed: ObservableObject {
     var shown: [TendQueueItem] { queue?.pending ?? [] }
 
     func load(_ client: TendIPCClient) async {
-        TendPerf.count("queue.poll")
         self.client = client
+        await load { try await client.workQueue() }
+    }
+
+    /// One read through `read` (nil: the daemon has no queue).
+    func load(_ read: () async throws -> TendWorkQueue?) async {
+        TendPerf.count("queue.poll")
         generation &+= 1
         let started = generation
         do {
-            let queue = try await client.workQueue()
+            let queue = try await read()
             guard started == generation else { return }
             apply(queue)
         } catch is CancellationError {

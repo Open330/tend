@@ -254,20 +254,32 @@ struct TendQueueNewWork: Equatable, Sendable {
     var requestKey = UUID().uuidString
     var title: String?
     var prompt: String
+    /// The typed Work id; tendd makes a reserved one when absent.
     var work: String?
+    /// The name `[[route]]` rules match: the id the Start Work form
+    /// previews and routes by. An older tendd ignores it.
+    var routeKey: String?
     var workspace: String?
-    /// Absolute; tendd refuses a new Work without one.
-    var cwd: String
+    /// Absolute. Left out only when a route provides the directory and the
+    /// workspace is known.
+    var cwd: String?
     var pipeline: String?
     var external: String?
     var skill: String?
     var context: String?
 
+    /// The same request apart from its key: a retry of the same intent.
+    func sameRequest(as other: TendQueueNewWork) -> Bool {
+        var mine = self
+        mine.requestKey = other.requestKey
+        return mine == other
+    }
+
     var payload: [String: Any] {
-        var target: [String: Any] = ["kind": "new_work", "cwd": cwd]
+        var target: [String: Any] = ["kind": "new_work"]
         for (key, value) in [
-            ("work", work), ("workspace", workspace), ("pipeline", pipeline),
-            ("external", external), ("skill", skill), ("context", context),
+            ("work", work), ("route_key", routeKey), ("workspace", workspace), ("cwd", cwd),
+            ("pipeline", pipeline), ("external", external), ("skill", skill), ("context", context),
         ] {
             if let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
                 target[key] = value

@@ -237,3 +237,183 @@ private final class QueueDaemon: @unchecked Sendable {
         #expect(feed.queue == nil && feed.shown.isEmpty)
     }
 }
+
+// MARK: - Add to Queue
+
+/// Holds a request open until the test lets it go.
+private actor Gate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var opened = false
+
+    func wait() async {
+        if opened { return }
+        await withCheckedContinuation { continuation = $0 }
+    }
+
+    func open() {
+        opened = true
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
+private func ready(_ plan: WorkQueueForm.Plan) throws -> TendQueueNewWork {
+    guard case .ready(let work) = plan else {
+        Issue.record("expected a ready plan, got \(plan)")
+        throw CancellationError()
+    }
+    return work
+}
+
+private let engineering = TendWorkOptions(
+    configured: true,
+    routes: [
+        TendWorkOptions.Route(match: "^ENG-", workspace: "engineering", pipeline: "special"),
+        TendWorkOptions.Route(match: "^WT-", workspace: "trees", worktree: true),
+        TendWorkOptions.Route(match: "^TPL-", workspace: "{{work}}", prepare: true),
+    ],
+    pipelines: [
+        TendWorkOptions.Pipeline(name: "default", agents: []),
+        TendWorkOptions.Pipeline(name: "special", agents: []),
+    ]
+)
+
+@Suite struct WorkQueueSubmitTests {
+    @Test func aQueuedWorkRoutesLikeThePreview() throws {
+        // Blank form fields: the route supplies the pipeline and workspace,
+        // and routes match the previewed id, not tendd's reserved one.
+        let form = WorkQueueForm(prompt: "Ship it", work: "ENG-42", routeKey: "ENG-42", folder: "/src/eng")
+        let work = try ready(form.plan(options: engineering))
+        #expect(work.routeKey == "ENG-42" && work.work == "ENG-42")
+        #expect(work.pipeline == "special" && work.workspace == "engineering")
+        #expect(work.cwd == "/src/eng")
+        let target = try #require(work.payload["target"] as? [String: Any])
+        #expect(target["route_key"] as? String == "ENG-42")
+        #expect(target["pipeline"] as? String == "special")
+        #expect(target["workspace"] as? String == "engineering")
+
+        // Explicit choices win over the route's.
+        var chosen = form
+        chosen.pipeline = "default"
+        chosen.workspace = "mine"
+        let explicit = try ready(chosen.plan(options: engineering))
+        #expect(explicit.pipeline == "default" && explicit.workspace == "mine")
+
+        // A made-up id from the task routes too; no typed id is sent.
+        let untyped = try ready(WorkQueueForm(prompt: "p", routeKey: "ENG-made-up", folder: "~/x").plan(options: engineering))
+        #expect(untyped.work == nil && untyped.routeKey == "ENG-made-up")
+        #expect(untyped.cwd?.hasPrefix("/") == true)
+    }
+
+    @Test func aRouteThatProvidesTheFolderSendsNoCwd() throws {
+        let worktree = try ready(WorkQueueForm(prompt: "p", routeKey: "WT-1").plan(options: engineering))
+        #expect(worktree.cwd == nil && worktree.workspace == "trees")
+        let target = try #require(worktree.payload["target"] as? [String: Any])
+        #expect(target["cwd"] == nil)
+
+        // A templated workspace is not known here, so a folder is needed.
+        #expect(WorkQueueForm(prompt: "p", routeKey: "TPL-1").plan(options: engineering) == .noFolder)
+        // ...unless one is typed.
+        #expect(try ready(WorkQueueForm(prompt: "p", routeKey: "TPL-1", workspace: "w").plan(options: engineering)).cwd == nil)
+        // No folder and no such route: nothing to start in.
+        #expect(WorkQueueForm(prompt: "p", routeKey: "ENG-1").plan(options: engineering) == .noFolder)
+        #expect(WorkQueueForm(prompt: "p", routeKey: "X", folder: "/a").plan(options: nil) != .noFolder)
+        #expect(WorkQueueForm(prompt: "p", routeKey: "X", folder: "rel/dir").plan(options: nil) == .relativeFolder)
+        #expect(WorkQueueForm(prompt: " ", routeKey: "X", folder: "/a").plan(options: nil) == .noPrompt)
+    }
+
+    @MainActor
+    @Test func startWorkWaitsWhileAnAddIsInFlight() async throws {
+        let submitter = WorkStartSubmitter()
+        let gate = Gate()
+        let draft = try ready(WorkQueueForm(prompt: "p", routeKey: "X", folder: "/a").plan(options: nil))
+        let queueing = Task { @MainActor in
+            await submitter.queue(draft) { _ in await gate.wait() }
+        }
+        while !submitter.isQueueing { await Task.yield() }
+
+        var launches = 0
+        let started = await submitter.start { launches += 1; return true }
+        #expect(!started && launches == 0)
+        // A second add of the same thing is refused too.
+        let again = await submitter.queue(draft) { _ in Issue.record("a second add went out") }
+        #expect(!again)
+
+        await gate.open()
+        #expect(await queueing.value)
+        // A start the app is already running elsewhere blocks a queue.
+        let duringStart = await submitter.queue(draft, busy: true) { _ in Issue.record("queued during a start") }
+        #expect(!duringStart)
+        #expect(await submitter.start { launches += 1; return true })
+        #expect(launches == 1)
+    }
+
+    @MainActor
+    @Test func aRetryAfterALostReplyAddsOnlyOnce() async throws {
+        let submitter = WorkStartSubmitter()
+        // A daemon that keys adds by request_key, as tendd does, and whose
+        // first reply is lost after the add committed.
+        var stored: [String: TendQueueNewWork] = [:]
+        var dropNextReply = true
+        let add: (TendQueueNewWork) async throws -> Void = { request in
+            if stored[request.requestKey] == nil { stored[request.requestKey] = request }
+            if dropNextReply {
+                dropNextReply = false
+                throw TendIPCError.posix(operation: "read", code: ECONNRESET)
+            }
+        }
+        let form = WorkQueueForm(prompt: "Ship it", routeKey: "ENG-42", folder: "/src")
+
+        // Each click plans afresh, with a fresh key, as the view does.
+        func click(_ form: WorkQueueForm, _ add: (TendQueueNewWork) async throws -> Void) async throws -> Bool {
+            let draft = try ready(form.plan(options: engineering))
+            return await submitter.queue(draft, add: add)
+        }
+        #expect(try await click(form, add) == false)
+        let error = try #require(submitter.queueError)
+        #expect(error.contains("It may have been queued; Add to Queue again will not add it twice."))
+        #expect(try await click(form, add))
+        #expect(stored.count == 1)
+        #expect(submitter.queueError == nil && submitter.pendingAdd == nil)
+
+        // After a success, the same form is a new intent with a new key.
+        #expect(try await click(form, add))
+        #expect(stored.count == 2)
+
+        // An edit after a failure is a new request too.
+        dropNextReply = true
+        #expect(try await click(form, add) == false)
+        var edited = form
+        edited.prompt = "Ship it today"
+        #expect(try await click(edited, add))
+        #expect(stored.count == 4)
+
+        // tendd's own refusal is final: no "may have been queued".
+        let refuse: (TendQueueNewWork) async throws -> Void = { _ in throw TendIPCError.server("cwd must be absolute") }
+        #expect(try await click(form, refuse) == false)
+        #expect(submitter.queueError == "cwd must be absolute")
+    }
+
+    @MainActor
+    @Test func queueProblemsShowWithoutRows() async throws {
+        struct Down: Error, LocalizedError { var errorDescription: String? { "tendd is not running" } }
+        let feed = FleetQueueFeed(center: NotificationCenter())
+        await feed.load { throw Down() }
+        #expect(feed.queue == nil && feed.shown.isEmpty)
+        #expect(feed.problem == "Could not read the queue: tendd is not running")
+
+        await feed.load { TendWorkQueue(items: [], revision: 1) }
+        #expect(feed.problem == nil)
+
+        await feed.load { TendWorkQueue(items: [], revision: 2, broken: "bad JSON at line 3") }
+        #expect(feed.shown.isEmpty)
+        #expect(feed.problem?.contains("bad JSON at line 3") == true)
+
+        await feed.load { TendWorkQueue(items: [], revision: 3, unsaved: true) }
+        #expect(feed.problem == "tendd could not save the queue; nothing new goes until it can")
+
+        // A daemon without the queue shows nothing at all.
+        await feed.load { nil }
+        #expect(feed.problem == nil && feed.queue == nil)
+    }
+}

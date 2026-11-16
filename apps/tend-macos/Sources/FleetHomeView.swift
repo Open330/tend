@@ -136,6 +136,7 @@ struct FleetHomeView: View {
             }
         }
         .task(id: homeBoard.isVisible) {
+            queueFeed.isActive = homeBoard.isVisible
             guard homeBoard.isVisible else { return }
             while !Task.isCancelled {
                 await queueFeed.load(model.client)
@@ -512,10 +513,12 @@ struct FleetHomeView: View {
         Group {
             // A decision read that failed keeps the lanes, so its warning
             // shows instead of an ordinary empty Home.
-            let problem = decisionFeed.problem == nil && backlogFeed.problem == nil ? 0 : 1
-            let backlog = backlog
             // The queue is this Mac's, like the backlog.
-            let queued = hostFilter == nil || hostFilter == homeBoard.localHostAlias ? queueFeed.shown : []
+            let queueIsShown = hostFilter == nil || hostFilter == homeBoard.localHostAlias
+            let queued = queueIsShown ? queueFeed.shown : []
+            let queueProblem = queueIsShown ? queueFeed.problem : nil
+            let problem = decisionFeed.problem == nil && backlogFeed.problem == nil && queueProblem == nil ? 0 : 1
+            let backlog = backlog
             if FleetBoard.showsEmptyBoard(visible: works.count + decisions.count + backlog.count + queued.count + problem, reviewed: reviewedCount) {
                 FleetEmptyBoard(
                     isConnected: homeBoard.isConnected,
@@ -532,7 +535,8 @@ struct FleetHomeView: View {
                             Task { await feed.start(record, model: model) }
                         }
                     }
-                    if !queued.isEmpty {
+                    // A failed or stuck queue shows its column with the reason.
+                    if !queued.isEmpty || queueProblem != nil {
                         FleetQueueColumn(feed: queueFeed, items: queued, client: model.client)
                     }
                     ForEach(FleetLane.allCases) { lane in

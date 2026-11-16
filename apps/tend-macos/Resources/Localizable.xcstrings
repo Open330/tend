@@ -24262,6 +24262,36 @@
           }
         }
       }
+    },
+    "Choose a folder, or a Work ID whose route provides one and names a workspace" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "폴더를 선택하거나, 폴더를 제공하고 워크스페이스를 지정하는 route에 맞는 Work ID를 쓰세요"
+          }
+        }
+      }
+    },
+    "Write the task to queue it" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대기열에 넣으려면 작업 내용을 쓰세요"
+          }
+        }
+      }
+    },
+    "It may have been queued; Add to Queue again will not add it twice." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이미 대기열에 들어갔을 수 있습니다. 다시 '대기열에 추가'해도 두 번 추가되지 않습니다."
+          }
+        }
+      }
     }
   },
   "version" : "1.0"
