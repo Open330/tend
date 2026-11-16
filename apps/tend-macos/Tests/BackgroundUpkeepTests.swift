@@ -11,12 +11,33 @@ import Testing
         let model = AppModel(client: TendIPCClient(socketPath: "/tmp/tend-upkeep-\(UUID().uuidString).sock"))
         let now = Date()
         model.markReconciledForTesting(at: now)
-        #expect(model.reconciliationDue(at: now + 15, windowOnScreen: false), "no push stream: every 15 s")
-        model.setFleetStreamLiveForTesting(true)
+        let stream = model.fleetStreamOpened()
+        model.fleetStreamReady(stream)
+        #expect(model.reconciliationDue(at: now + 15, windowOnScreen: false), "not connected yet: every 15 s")
+        model.setConnectedForTesting()
         #expect(model.reconciliationDue(at: now + 15, windowOnScreen: true), "a window on screen: every 15 s")
         #expect(!model.reconciliationDue(at: now + 15, windowOnScreen: false))
         #expect(!model.reconciliationDue(at: now + 45, windowOnScreen: false))
         #expect(model.reconciliationDue(at: now + AppModel.backgroundReconciliation, windowOnScreen: false))
+        model.fleetStreamEnded(stream)
+        #expect(model.reconciliationDue(at: now + 15, windowOnScreen: false), "no push stream: every 15 s")
+    }
+
+    @Test func onlyTheCurrentPushStreamCountsAsLive() {
+        let model = AppModel(client: TendIPCClient(socketPath: "/tmp/tend-upkeep-\(UUID().uuidString).sock"))
+        let old = model.fleetStreamOpened()
+        model.fleetStreamEnded(old)
+        model.fleetStreamReady(old)
+        #expect(!model.fleetStreamLive, "a hello that arrives after its stream ended")
+        let first = model.fleetStreamOpened()
+        let second = model.fleetStreamOpened()
+        model.fleetStreamReady(second)
+        model.fleetStreamEnded(first)
+        #expect(model.fleetStreamLive, "an older attempt's cleanup leaves the newer stream live")
+        model.fleetStreamReady(first)
+        #expect(model.fleetStreamLive)
+        model.fleetStreamEnded(second)
+        #expect(!model.fleetStreamLive)
     }
 
     @Test func draftsOfDecisionsThatAreGoneArePruned() {

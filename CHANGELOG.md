@@ -70,9 +70,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - With none of the Mac app's windows on screen and the Fleet push stream
   connected, the 15 s reconciliation (re-listing sessions, runs, the
   execution snapshot and Ask state) runs every 60 s; the menu bar and
-  notifications follow the pushed snapshots and mailbox events. With a
-  window shown, while disconnected or without a push stream it keeps its
-  15 s period. Measured on an optimized copy with its window driven
+  notifications follow the pushed snapshots and mailbox events, and the
+  automation rules (which decide which caps need you) are still read every
+  15 s. With a window shown, until connected, or without a live push
+  stream it keeps its 15 s period. Measured on an optimized copy with its window driven
   through shown, minimized, covered and hidden: 4 runs a minute while
   shown, none in each 30 s minimized or hidden. Home's decision drafts are
   dropped once their decisions are gone (the open answer stays), and the
