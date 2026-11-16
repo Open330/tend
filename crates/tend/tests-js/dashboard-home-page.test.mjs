@@ -188,6 +188,8 @@ test("a lost sign-in drops everything private and offers sign-in back to the car
   assert.equal(document.getElementById("hosts-list").children.length, 0, "no host names left");
   assert.equal(document.getElementById("filter-host").children.length, 0, "no filter options left");
   assert.equal(document.getElementById("start-work").hidden, true);
+  assert.equal(document.getElementById("review-list").children.length, 0, "no Review contents left");
+  assert.equal(document.getElementById("review-button").hidden, true);
   status.decisions = 200;
   await home.refresh();
   assert.equal(login.hidden, true, "back once the queue reads again");
@@ -234,6 +236,12 @@ test("the daemon's board, when it has one, is what the page draws", async () => 
   assert.doesNotMatch(text, /fix toast/, "a reviewed unit hides");
   assert.match(text, /Show 1 reviewed/);
   assert.equal(document.getElementById("review-count").textContent, "1", "Review counts what a person asked for and nobody marked");
+  // A board read that fails now draws what the fallback reads, not the
+  // board from before.
+  status.home = 503;
+  await home.refresh();
+  assert.doesNotMatch(lanes().text, /write docs/, "no leftover board");
+  assert.match(lanes().text, /Ship it\?/, "the fallback queue");
   status.home = 404;
   serverBoard = null;
   await home.refresh();

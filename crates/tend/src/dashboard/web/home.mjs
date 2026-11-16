@@ -5,7 +5,7 @@
 // Windows app, in which case the page never sees it) or the OIDC operator
 // session cookie. Everything an agent wrote is set with textContent only.
 
-import { buildBoard, fromServerBoard, hostHue, LANES, productOf, reviewQueue, TEND_PROJECT } from "./home-board.mjs";
+import { buildBoard, fromServerBoard, hostHue, LANES, productOf, replyTarget, reviewQueue, sameTarget, TEND_PROJECT } from "./home-board.mjs";
 import { languageOf, relativeTime, stringsFor, textOf } from "./home-strings.mjs";
 import { linkedItemOf } from "./needs-model.mjs";
 
@@ -35,11 +35,13 @@ const state = {
   showOlder: false,
   /// Per lane, which of the Mac's folds are open (helpers, empty,
   /// reviewed); `showOlder` is the older fold.
-  folds: { helpers: false, empty: false, reviewed: false },
+  folds: { needsYou: {}, running: {}, finished: {}, reviewed: false },
   reviewScope: "day",
   /// The one open composer, as on the Mac: {key, mode, option}.
   composer: null,
   drafts: new Map(),
+  /// Inspector replies by unit: { text, target } (see replyTarget).
+  replyDrafts: new Map(),
   busy: new Set(),
   results: new Map(),
   revealed: null,
@@ -604,9 +606,11 @@ function renderLane(lane, data) {
     }, "btn ghost small fold"));
     if (open) for (const unit of list) body.append(unitCard(unit));
   };
-  fold(data.folds?.helpers, state.folds.helpers, S.foldHelpers, S.hideHelpers, () => (state.folds.helpers = !state.folds.helpers));
-  fold(data.folds?.empty, state.folds.empty, S.foldEmpty, S.hideEmpty, () => (state.folds.empty = !state.folds.empty));
-  fold(data.older, state.showOlder, S.olderCount, S.hideOlder, () => (state.showOlder = !state.showOlder));
+  // Each lane opens its own folds (FleetLaneColumn's own toggles).
+  const open = state.folds[lane];
+  fold(data.folds?.helpers, open.helpers, S.foldHelpers, S.hideHelpers, () => (open.helpers = !open.helpers));
+  fold(data.folds?.empty, open.empty, S.foldEmpty, S.hideEmpty, () => (open.empty = !open.empty));
+  fold(data.older, open.older, S.olderCount, S.hideOlder, () => (open.older = !open.older));
   if (lane === "finished" && data.folds?.reviewed?.length) {
     body.append(button(S.showReviewed(data.folds.reviewed.length), () => {
       state.folds.reviewed = true;
@@ -674,20 +678,29 @@ function renderBacklog(records) {
 
 const SCOPES = [["today", "scopeToday"], ["day", "scopeDay"], ["week", "scopeWeek"], ["all", "scopeAll"]];
 
+/// Review counts every finished result, whatever Home's host and project
+/// filters show (FleetHomeView passes the unfiltered units).
+function reviewBoard() {
+  if (!state.data.server) return null;
+  return fromServerBoard(state.data.server, { history: null, filter: {}, now: Date.now(), showReviewed: false });
+}
+
 function renderReviewButton(board) {
   const buttonNode = $("review-button");
   if (!buttonNode) return;
-  const queue = board.server ? reviewQueue(board, state.reviewScope) : [];
+  const all = reviewBoard();
+  const queue = all ? reviewQueue(all, state.reviewScope) : [];
   buttonNode.hidden = !board.server;
   const badge = $("review-count");
   badge.hidden = !queue.length;
   badge.textContent = queue.length > 99 ? "99+" : String(queue.length);
-  if ($("review-dialog")?.open) renderReviewSheet(board);
+  if ($("review-dialog")?.open) renderReviewSheet();
 }
 
-function renderReviewSheet(board = state.board) {
+function renderReviewSheet() {
   const list = $("review-list");
-  const queue = board?.server ? reviewQueue(board, state.reviewScope) : [];
+  const all = reviewBoard();
+  const queue = all ? reviewQueue(all, state.reviewScope) : [];
   $("review-total").textContent = String(queue.length);
   for (const option of document.querySelectorAll("#review-scope button")) {
     option.setAttribute("aria-checked", String(option.dataset.scope === state.reviewScope));
@@ -757,15 +770,16 @@ function findUnit(id) {
   return null;
 }
 
-async function sendToPane(unit, text, key) {
+/// Send a draft to the agent it was written for, and only to that one.
+async function sendToPane(target, text, key) {
   state.busy.add(key);
   state.results.delete(key);
   render();
   try {
     const body = { text, submit: true };
-    if (unit.socket) body.socket = unit.socket;
-    await write(`/api/panes/${encodeURIComponent(unit.pane)}/prompt`, body);
-    state.drafts.delete(key);
+    if (target.socket) body.socket = target.socket;
+    await write(`/api/panes/${encodeURIComponent(target.pane)}/prompt`, body);
+    state.replyDrafts.delete(key);
     state.results.set(key, { ok: true, text: S.sent });
     setTimeout(refresh, 600);
   } catch (error) {
@@ -801,21 +815,42 @@ function renderInspector() {
   now.append(el("div", "label", unit.lane === "needsYou" ? S.needsDecision : unit.lane === "running" ? S.now : S.lastResult));
   const text = headlineText(unit);
   if (text) now.append(el("div", "text", text));
-  const key = `reply:${cardKey(unit)}`;
-  const replyable = Boolean(unit.pane) && !unit.remote && canWrite() && unit.lane !== "running";
+  const key = `reply:${unit.id}`;
+  const target = canWrite() ? replyTarget(unit) : null;
+  const replyable = Boolean(target);
   const paneLinks = Boolean(state.data.access);
-  if (replyable) {
+  // A draft keeps the agent and the question it was written for
+  // (FleetReplyDraft): text for one question never goes to another agent,
+  // a replacement session or the same agent's next question unasked.
+  const draft = state.replyDrafts.get(key);
+  if (draft?.text && !sameTarget(draft.target, target)) {
+    const stale = el("div", "stale");
+    stale.append(icon("exclaim"), el("span", null, S.staleDraft(draft.target?.owner || "")));
+    const row = el("div", "row");
+    if (target) {
+      row.append(button(S.useFor(target.owner), () => {
+        state.replyDrafts.set(key, { text: draft.text, target });
+        render();
+      }, "btn small"));
+    }
+    row.append(button(S.discard, () => {
+      state.replyDrafts.delete(key);
+      render();
+    }, "btn ghost small danger"));
+    stale.append(row);
+    now.append(stale);
+  } else if (replyable) {
     const area = el("textarea", "field");
     area.rows = 2;
     area.dataset.key = key;
     area.maxLength = 16384;
-    area.placeholder = unit.lane === "needsYou" ? S.yourAnswer : S.nextInstruction;
-    area.value = state.drafts.get(key) || "";
-    const send = button(unit.lane === "needsYou" ? S.answerVerb : S.sendBack, () => sendToPane(unit, area.value, key), "btn primary");
+    area.placeholder = target.kind === "answer" ? S.yourAnswer : S.nextInstruction;
+    area.value = draft?.text || "";
+    const send = button(target.kind === "answer" ? S.answerVerb : S.sendBack, () => sendToPane(target, area.value, key), "btn primary");
     const sync = () => (send.disabled = !area.value.trim() || state.busy.has(key));
     area.addEventListener("input", () => {
-      if (area.value) state.drafts.set(key, area.value);
-      else state.drafts.delete(key);
+      if (area.value) state.replyDrafts.set(key, { text: area.value, target });
+      else state.replyDrafts.delete(key);
       sync();
     });
     area.addEventListener("keydown", (event) => {
@@ -943,7 +978,7 @@ async function markReviewed(unit, key) {
     state.results.delete(key);
     if (state.selected === unit.id) state.selected = null;
     // Hidden at once; the next read confirms the mark.
-    if (state.data.server) markLocally(unit.id);
+    if (state.data.server) markLocally(unit.id, unit.reviewKey);
     setTimeout(refresh, 400);
   } catch (error) {
     if (error.auth && error.status === 401) return lostAccess(error);
@@ -956,9 +991,9 @@ async function markReviewed(unit, key) {
 }
 
 /// Mark a unit reviewed in the board on hand, until the next read.
-function markLocally(id) {
+function markLocally(id, key) {
   for (const group of state.data.server?.lanes?.finished?.groups || []) {
-    for (const item of group.items || []) if (item.id === id) item.reviewed = true;
+    for (const item of group.items || []) if (item.id === id && item.review_key === key) item.reviewed = true;
   }
 }
 
@@ -1037,7 +1072,12 @@ function renderStatus(board) {
   badge.textContent = waiting > 99 ? "99+" : String(waiting);
   for (const lane of LANES) $(`seg-${lane}`).textContent = counts ? String(counts[lane].count) : "";
   // The four-room mark, rule A: a room lights when anything is in it.
-  const agents = (state.data.fleet?.hosts || []).flatMap((h) => h.remote?.agents || []);
+  // The agents on the board (the daemon's or the Fleet snapshot's).
+  const boardAgents = board
+    ? LANES.flatMap((lane) => [...board.lanes[lane].groups.flatMap((g) => g.units), ...Object.values(board.lanes[lane].folds || {}).flat()])
+        .flatMap((unit) => [...(unit.agents || []), ...(unit.helpers || [])])
+    : [];
+  const agents = [...(state.data.fleet?.hosts || []).flatMap((h) => h.remote?.agents || []), ...boardAgents];
   const lit = {
     waiting: waiting > 0,
     error: agents.some((a) => a.state === "error"),
@@ -1078,6 +1118,10 @@ function render() {
   if (board.backlog?.length) columns.unshift(renderBacklog(board.backlog));
   lanes.replaceChildren(...columns);
   lanes.classList.toggle("with-backlog", Boolean(board.backlog?.length));
+  // The phone reaches the backlog through its own segment.
+  $("seg-backlog-tab").hidden = !board.backlog?.length;
+  $("seg-backlog").textContent = board.backlog?.length ? String(board.backlog.length) : "";
+  if (state.lane === "backlog" && !board.backlog?.length) state.lane = "needsYou";
   renderReviewButton(board);
   $("board").dataset.lane = state.lane;
   for (const option of document.querySelectorAll("#layout-toggle button")) {
@@ -1126,7 +1170,12 @@ function lostAccess(error) {
   state.generation += 1;
   state.lost = true;
   state.drafts.clear();
+  state.replyDrafts.clear();
   state.results.clear();
+  $("review-dialog").close?.();
+  $("review-list").replaceChildren();
+  $("review-total").textContent = "";
+  $("review-button").hidden = true;
   state.composer = null;
   state.selected = null;
   state.filter = { host: "", project: "" };
@@ -1223,6 +1272,9 @@ async function poll() {
     }
   };
   take("server", home);
+  // Whenever the board read failed, what the page shows comes from the
+  // reads it fell back to, never a board left over from before.
+  if (home.status === "rejected") state.data.server = null;
   take("decisions", decisions);
   take("fleet", fleet);
   take("history", history);
