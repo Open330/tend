@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Home in the Mac app has two card layouts, chosen in Settings → General →
+  Home or with the toggle in Home's header. Status emphasis (the default)
+  leads each card with its lane's colour stripe and a bold title, puts the
+  question and its choices in an inset box, keeps host, project and time on
+  one subdued line, tints Your turn cards, and labels In progress and
+  Finished cards with their state. Compact list shows one row per item (a
+  status dot, the title, the host, how long ago); selecting a row opens its
+  details beside the board, where a decision is answered and a unit's agent
+  answered, opened or marked Looks Good as before.
 - tendd keeps a Work queue (`work_queue_v1`): prompts it sends to an agent
   once that agent is free, and Work it starts once fewer than
   `[work_queue] max_busy_agents` (default 3) agents are busy. The queue lives

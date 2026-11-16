@@ -30,6 +30,7 @@ struct FleetHomeView: View {
     @State private var revisionTarget: FleetRevisionTarget?
     @AppStorage("home.review.scope") private var reviewScope: FleetReviewScope = .day
     @AppStorage(TendPreferences.homeAnimatesMovesKey) private var animatesMoves = true
+    @AppStorage(TendPreferences.homeCardLayoutKey) private var cardLayout: FleetCardLayout = .emphasis
     @Namespace private var cardSpace
     /// Each unit's lane at the last update, to tell which cards moved.
     @State private var lastLanes: [String: FleetLane] = [:]
@@ -173,6 +174,10 @@ struct FleetHomeView: View {
             Text("Home")
                 .font(.system(size: 17, weight: .semibold))
             Spacer(minLength: 8)
+            TendSegmented(selection: $cardLayout, options: FleetCardLayout.allCases) { layout in
+                Text(Image(systemName: layout.systemImage)).accessibilityLabel(layout.title)
+            }
+            .help("Card layout: status emphasis or compact list")
             reviewButton
             filterMenu
             hostsButton
@@ -337,7 +342,12 @@ struct FleetHomeView: View {
         let hidden = Set(all.lazy.filter { marks.hides($0) }.map(\.id))
         let works = showsReviewed ? all : all.filter { !hidden.contains($0.id) }
         let hiddenCount = hidden.count
+        // A unit, or (picked from the compact list) a decision.
         let selected = all.first { $0.id == selectedID }
+        let selectedDecision = selected == nil
+            ? decisions.first { FleetTurnItem.decision($0).id == selectedID }
+            : nil
+        let shownID = selected?.id ?? selectedDecision.map { FleetTurnItem.decision($0).id }
         return GeometryReader { geometry in
             // Beside the board while all three lanes keep a readable width;
             // over the board in a narrower window.
@@ -345,15 +355,15 @@ struct FleetHomeView: View {
             ZStack(alignment: .trailing) {
                 HStack(spacing: 0) {
                     lanes(works, decisions: decisions, reviewedCount: hiddenCount)
-                    if let selected, !floats {
+                    if shownID != nil, !floats {
                         Divider()
-                        inspector(selected)
+                        detailPanel(work: selected, decision: selectedDecision)
                             .frame(width: 400)
                             .transition(.move(edge: .trailing))
                     }
                 }
-                if let selected, floats {
-                    inspector(selected)
+                if shownID != nil, floats {
+                    detailPanel(work: selected, decision: selectedDecision)
                         .frame(width: min(400, geometry.size.width - 40))
                         .background(.background)
                         .overlay(alignment: .leading) { Divider() }
@@ -362,7 +372,12 @@ struct FleetHomeView: View {
                 }
             }
         }
-        .animation(.easeOut(duration: 0.18), value: selected?.id)
+        .animation(.easeOut(duration: 0.18), value: shownID)
+        // A decision opens in the panel only from the compact list; the
+        // cards answer it in place.
+        .onChange(of: cardLayout) { layout in
+            if layout == .emphasis, selectedID?.hasPrefix("decision:") == true { selectedID = nil }
+        }
         .onExitCommand { selectedID = nil }
         // Display filters hide units; they are not gone. Prune review marks
         // against the whole board.
@@ -398,6 +413,22 @@ struct FleetHomeView: View {
     /// A draft for one of the unit's other waiting agents.
     private static func agentDraftKey(_ work: FleetWork, _ hosted: TendHostedAgent) -> String {
         "\(work.id)#\(hosted.id)"
+    }
+
+    @ViewBuilder
+    private func detailPanel(work: FleetWork?, decision: FleetDecision?) -> some View {
+        if let work {
+            inspector(work)
+        } else if let decision {
+            let asker = decision.askerAgentID.flatMap(model.hostedAgent(id:))
+            FleetDecisionDetail(
+                decision: decision,
+                card: decisionCard(decision) { revisionTarget = $0 },
+                openAsker: asker.map { hosted in { open(hosted) } },
+                close: { selectedID = nil }
+            )
+            .id(decision.id)
+        }
     }
 
     private func inspector(_ work: FleetWork) -> some View {
@@ -504,10 +535,12 @@ struct FleetHomeView: View {
                             reviewedCount: lane == .finished ? reviewedCount : 0,
                             showsReviewed: $showsReviewed,
                             cardSpace: animatesMoves ? cardSpace : nil,
-                            movedFrom: movedFrom
+                            movedFrom: movedFrom,
+                            layout: cardLayout
                         )
                     }
                 }
+                .environment(\.fleetCardEmphasis, cardLayout == .emphasis)
                 .animation(
                     animatesMoves ? .spring(response: 0.5, dampingFraction: 0.86) : nil,
                     value: works.map { "\($0.id)|\($0.lane.rawValue)" }
@@ -553,7 +586,7 @@ extension FleetHomeView: @MainActor Equatable {
 
 // MARK: - Lanes and cards
 
-private struct FleetLaneColumn: View {
+struct FleetLaneColumn: View {
     let lane: FleetLane
     let works: [FleetWork]
     /// The daemon's decisions, in Your turn only, among the Work cards by
@@ -570,6 +603,7 @@ private struct FleetLaneColumn: View {
     /// Set when cards should glide between lanes.
     var cardSpace: Namespace.ID?
     var movedFrom: [String: FleetLane] = [:]
+    var layout: FleetCardLayout = .emphasis
     @State private var showsOlder = false
     @State private var showsProbable = false
     @State private var showsEmpty = false
@@ -640,7 +674,7 @@ private struct FleetLaneColumn: View {
             .padding(.top, 10)
             .padding(.bottom, 8)
             ScrollView {
-                LazyVStack(spacing: 8) {
+                LazyVStack(spacing: layout == .compact ? 2 : 8) {
                     if let decisionProblem {
                         Label(decisionProblem, systemImage: "exclamationmark.circle")
                             .font(TendType.meta)
@@ -667,7 +701,13 @@ private struct FleetLaneColumn: View {
                             ForEach(group.items) { item in
                                 switch item {
                                 case .decision(let decision):
-                                    decisionCard?(decision)
+                                    if layout == .compact {
+                                        FleetCompactRow(decision: decision, isSelected: item.id == selectedID) {
+                                            select(item.id)
+                                        }
+                                    } else {
+                                        decisionCard?(decision)
+                                    }
                                 case .work(let work):
                                     workCard(work)
                                 }
@@ -731,19 +771,28 @@ private struct FleetLaneColumn: View {
         .background(TendTheme.panelFill, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
     }
 
+    @ViewBuilder
     private func workCard(_ work: FleetWork) -> some View {
-        FleetWorkCard(
-            work: work,
-            isSelected: work.id == selectedID,
-            select: { select(work.id) },
-            movedFrom: movedFrom[work.id]
-        )
-        .modifier(FleetCardMotion(id: work.id, space: cardSpace))
+        switch layout {
+        case .emphasis:
+            FleetWorkCard(
+                work: work,
+                isSelected: work.id == selectedID,
+                select: { select(work.id) },
+                movedFrom: movedFrom[work.id]
+            )
+            .modifier(FleetCardMotion(id: work.id, space: cardSpace))
+        case .compact:
+            FleetCompactRow(work: work, isSelected: work.id == selectedID, movedFrom: movedFrom[work.id]) {
+                select(work.id)
+            }
+            .modifier(FleetCardMotion(id: work.id, space: cardSpace))
+        }
     }
 }
 
 /// A project's name over its units in a lane.
-private struct FleetProjectHeader: View {
+struct FleetProjectHeader: View {
     let project: String?
     let count: Int
     /// tendd's own items rather than a project.
@@ -769,110 +818,8 @@ private struct FleetProjectHeader: View {
     }
 }
 
-private struct FleetWorkCard: View {
-    let work: FleetWork
-    let isSelected: Bool
-    let select: () -> Void
-    var movedFrom: FleetLane?
-    @Environment(\.colorScheme) private var colorScheme
-
-    private var laneTint: Color {
-        switch work.lane {
-        case .needsYou: .orange
-        case .running: .blue
-        case .finished: .green
-        }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                if work.isOrphanHelper {
-                    Text("Helper")
-                        .font(.system(size: 10, weight: .semibold))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(Color.secondary.opacity(0.15), in: Capsule())
-                        .foregroundStyle(.secondary)
-                        .help("Working on another agent's request; that agent is no longer running")
-                }
-                Text(work.title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                if let movedFrom {
-                    Label(String(localized: "From \(movedFrom.title)"), systemImage: "arrow.turn.down.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(laneTint.opacity(0.18), in: Capsule())
-                        .foregroundStyle(laneTint)
-                        .fixedSize()
-                        .transition(.opacity)
-                }
-            }
-            if work.lane != .finished || work.stages.count > 1 {
-                FleetStageBar(work: work)
-            }
-            Text(work.headline)
-                .font(TendType.body)
-                .foregroundStyle(work.lane == .needsYou ? Color.primary : Color.secondary)
-                .lineLimit(work.lane == .needsYou ? 3 : 2)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            if work.handledLimit {
-                Label("Rate limited · the limit policy will resume it", systemImage: "arrow.triangle.2.circlepath")
-                    .font(TendType.meta)
-                    .foregroundStyle(.secondary)
-            }
-            if work.lane == .needsYou, FleetBoard.waiting(work).count > 1 {
-                Label(String(localized: "\(FleetBoard.waiting(work).count) agents wait on you"), systemImage: "person.2.badge.gearshape")
-                    .font(TendType.meta)
-                    .foregroundStyle(.orange)
-            }
-            HStack(spacing: 6) {
-                if !work.agentKinds.isEmpty {
-                    TendAgentLogoStack(kinds: work.agentKinds, size: 12)
-                }
-                if let repo = work.repo {
-                    Text(repo)
-                }
-                FleetHostBadges(hosts: work.hosts)
-                if !work.helpers.isEmpty {
-                    Label("\(work.helpers.count)", systemImage: "person.2")
-                        .labelStyle(.titleAndIcon)
-                        .help("\(work.helpers.count) helper sessions")
-                }
-                Spacer(minLength: 4)
-                if let since = work.since {
-                    Text(since, format: .relative(presentation: .numeric, unitsStyle: .abbreviated))
-                        .monospacedDigit()
-                }
-            }
-            .font(TendType.meta)
-            .foregroundStyle(.tertiary)
-        }
-        .padding(12)
-        .background(TendSurfacePalette.workspace(for: colorScheme), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(isSelected ? Color.accentColor : TendTheme.border(colorScheme), lineWidth: isSelected ? 1.5 : 1)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(laneTint, lineWidth: 2)
-                .opacity(movedFrom == nil ? 0 : 0.9)
-                .allowsHitTesting(false)
-        )
-        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .onTapGesture(perform: select)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction(named: Text("Inspect"), select)
-    }
-}
-
 /// One segment per stage, with the current stage named under it.
-private struct FleetStageBar: View {
+struct FleetStageBar: View {
     let work: FleetWork
 
     var body: some View {
@@ -1348,7 +1295,7 @@ struct FleetHostBadges: View {
 
 /// Lets a card glide from its old lane to its new one: the same id in one
 /// namespace across the lanes. Off when the setting is.
-private struct FleetCardMotion: ViewModifier {
+struct FleetCardMotion: ViewModifier {
     let id: String
     let space: Namespace.ID?
 
