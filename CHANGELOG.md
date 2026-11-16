@@ -57,6 +57,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reconciler, `tend work start` and watch rules all refuse to register,
   claim, launch or join that Work. A launch interrupted by a restart stays
   held until you settle it in the queue.
+- Home shows a Queued column while tendd's Work queue holds anything: each
+  item's title, target and status, and why it is still waiting. Move items
+  up or down, edit a waiting prompt, cancel, remove, or start one now. An
+  item that may already have been sent is flagged; mark it sent, or say it
+  was not sent or send it again after confirming it may arrive twice. The
+  Start Work sheet gains Add to Queue, which queues the new Work on this Mac
+  instead of starting it now.
 
 ### Fixed
 

@@ -23752,6 +23752,546 @@
           }
         }
       }
+    },
+    "Waiting for the agent to finish its turn" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트가 이번 턴을 마치기를 기다리는 중"
+          }
+        }
+      }
+    },
+    "Waiting: the agent needs you first" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대기 중: 먼저 에이전트가 당신을 기다립니다"
+          }
+        }
+      }
+    },
+    "Waiting: the agent is at its usage limit" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대기 중: 에이전트가 사용 한도에 도달했습니다"
+          }
+        }
+      }
+    },
+    "Waiting: the agent shows an error" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대기 중: 에이전트에 오류가 있습니다"
+          }
+        }
+      }
+    },
+    "Waiting: the agent is not running" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대기 중: 에이전트가 실행 중이 아닙니다"
+          }
+        }
+      }
+    },
+    "Waiting: the agent shows in more than one pane" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대기 중: 에이전트가 여러 패인에 보입니다"
+          }
+        }
+      }
+    },
+    "Waiting: the Work has several agents; name one" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대기 중: 이 Work에 에이전트가 여럿입니다. 하나를 지정하세요"
+          }
+        }
+      }
+    },
+    "Waiting: the agent's input is paused" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대기 중: 에이전트 입력이 일시 중지되었습니다"
+          }
+        }
+      }
+    },
+    "Waiting: an earlier queued prompt to this agent has not been picked up" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대기 중: 이 에이전트에 먼저 대기열에 넣은 프롬프트가 아직 처리되지 않았습니다"
+          }
+        }
+      }
+    },
+    "Waiting behind an earlier item for the same agent" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "같은 에이전트의 앞선 항목 뒤에서 대기 중"
+          }
+        }
+      }
+    },
+    "Waiting for a free slot: too many agents are busy" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "빈 자리를 기다리는 중: 바쁜 에이전트가 너무 많습니다"
+          }
+        }
+      }
+    },
+    "Waiting: another queued Work is starting" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대기 중: 대기열의 다른 Work가 시작되는 중입니다"
+          }
+        }
+      }
+    },
+    "Will try again shortly" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "곧 다시 시도합니다"
+          }
+        }
+      }
+    },
+    "Paused: tendd could not save the queue" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "일시 중지: tendd가 대기열을 저장하지 못했습니다"
+          }
+        }
+      }
+    },
+    "The agent went away" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트가 사라졌습니다"
+          }
+        }
+      }
+    },
+    "The target is not a worker agent" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대상이 작업자 에이전트가 아닙니다"
+          }
+        }
+      }
+    },
+    "The pane would not take the text" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "패인이 텍스트를 받지 않았습니다"
+          }
+        }
+      }
+    },
+    "tendd refused to start it" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "tendd가 시작을 거부했습니다"
+          }
+        }
+      }
+    },
+    "That Work ID is already in use" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 Work ID는 이미 사용 중입니다"
+          }
+        }
+      }
+    },
+    "The target is not on this Mac" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대상이 이 Mac에 있지 않습니다"
+          }
+        }
+      }
+    },
+    "Agent %@" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트 %@"
+          }
+        }
+      }
+    },
+    "Unknown target" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "알 수 없는 대상"
+          }
+        }
+      }
+    },
+    "Sending" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "보내는 중"
+          }
+        }
+      }
+    },
+    "Uncertain" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "불확실"
+          }
+        }
+      }
+    },
+    "Unknown" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "알 수 없음"
+          }
+        }
+      }
+    },
+    "May already have been sent — check the agent" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이미 보냈을 수 있습니다 — 에이전트를 확인하세요"
+          }
+        }
+      }
+    },
+    "Could not read the queue: %@" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대기열을 읽지 못했습니다: %@"
+          }
+        }
+      }
+    },
+    "tendd could not read the queue; it is read-only: %@" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "tendd가 대기열을 읽지 못해 읽기 전용입니다: %@"
+          }
+        }
+      }
+    },
+    "tendd could not save the queue; nothing new goes until it can" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "tendd가 대기열을 저장하지 못했습니다. 저장될 때까지 새 항목은 보내지 않습니다"
+          }
+        }
+      }
+    },
+    "tendd sent a queue this app cannot read" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "tendd가 이 앱이 읽을 수 없는 대기열을 보냈습니다"
+          }
+        }
+      }
+    },
+    "Goes when its target is ready" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대상이 준비되면 보냅니다"
+          }
+        }
+      }
+    },
+    "It may already have reached the agent. Sending it again can deliver it twice." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이미 에이전트에 전달되었을 수 있습니다. 다시 보내면 두 번 전달될 수 있습니다."
+          }
+        }
+      }
+    },
+    "If it did reach the agent, it will arrive twice when it goes again." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "실제로 전달되었다면, 다시 보낼 때 두 번 도착합니다."
+          }
+        }
+      }
+    },
+    "It may already have reached the agent. Removing it lets tendd send that agent new prompts." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이미 에이전트에 전달되었을 수 있습니다. 제거하면 tendd가 그 에이전트에 새 프롬프트를 보낼 수 있게 됩니다."
+          }
+        }
+      }
+    },
+    "Send Again" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다시 보내기"
+          }
+        }
+      }
+    },
+    "Mark Not Sent" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "보내지 않음으로 표시"
+          }
+        }
+      }
+    },
+    "Start Now" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "지금 시작"
+          }
+        }
+      }
+    },
+    "Send it now, ahead of the queue, once its target is safe to use" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대상을 안전하게 쓸 수 있으면 대기열보다 먼저 지금 보냅니다"
+          }
+        }
+      }
+    },
+    "Edit Prompt…" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "프롬프트 편집…"
+          }
+        }
+      }
+    },
+    "Mark as Sent" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "보냄으로 표시"
+          }
+        }
+      }
+    },
+    "It reached the agent: finish it" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트에 전달되었습니다: 완료로 처리합니다"
+          }
+        }
+      }
+    },
+    "Not Sent…" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "보내지 않음…"
+          }
+        }
+      }
+    },
+    "It did not reach the agent: queue it again" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트에 전달되지 않았습니다: 다시 대기열에 넣습니다"
+          }
+        }
+      }
+    },
+    "Send Again (may duplicate)…" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다시 보내기(중복될 수 있음)…"
+          }
+        }
+      }
+    },
+    "Edit Prompt" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "프롬프트 편집"
+          }
+        }
+      }
+    },
+    "Add to Queue" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대기열에 추가"
+          }
+        }
+      }
+    },
+    "Only this Mac's tendd keeps a queue" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대기열은 이 Mac의 tendd에만 있습니다"
+          }
+        }
+      }
+    },
+    "A plan is not queued; turn off Plan only" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "계획은 대기열에 넣지 않습니다. '계획만'을 끄세요"
+          }
+        }
+      }
+    },
+    "tendd starts this Work when the queue's turn and a free slot come" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대기열 차례가 오고 빈 자리가 생기면 tendd가 이 Work를 시작합니다"
+          }
+        }
+      }
+    },
+    "Choose an absolute folder to queue this Work" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 Work를 대기열에 넣으려면 절대 경로 폴더를 선택하세요"
+          }
+        }
+      }
+    },
+    "Queued: %@" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대기열에 추가됨: %@"
+          }
+        }
+      }
+    },
+    "Choose a folder, or a Work ID whose route provides one and names a workspace" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "폴더를 선택하거나, 폴더를 제공하고 워크스페이스를 지정하는 route에 맞는 Work ID를 쓰세요"
+          }
+        }
+      }
+    },
+    "Write the task to queue it" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대기열에 넣으려면 작업 내용을 쓰세요"
+          }
+        }
+      }
+    },
+    "It may have been queued; Add to Queue again will not add it twice." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이미 대기열에 들어갔을 수 있습니다. 다시 '대기열에 추가'해도 두 번 추가되지 않습니다."
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

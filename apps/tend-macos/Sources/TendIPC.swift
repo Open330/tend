@@ -1239,6 +1239,7 @@ actor TendIPCClient {
     let configClientCache = IPCLazyClient<TendConfigClient>()
     let workComposeClientCache = IPCLazyClient<TendWorkComposeClient>()
     let agentStartClientCache = IPCLazyClient<TendAgentStartClient>()
+    let workQueueClientCache = IPCLazyClient<TendWorkQueueClient>()
 
     init(socketPath: String = TendIPCClient.defaultSocketPath()) {
         self.socketPath = socketPath
