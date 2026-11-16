@@ -569,13 +569,9 @@ fn started_answer(start: &super::Start) -> Response {
 pub(super) async fn work(
     State(state): State<AppState>,
     Extension(device): Extension<DeviceAuth>,
-    body: Bytes,
+    body: Result<Bytes, axum::extract::rejection::BytesRejection>,
 ) -> Response {
-    let who = json!({
-        "by": super::Device::label(&device.name, &device.id),
-        "account": { "credential": "device", "device": device.id, "approved_by": device.approved_by },
-        "scope": device.scope,
-    });
+    let who = device_actor(&device);
     let audit_refusal = |status: StatusCode, message: &str, host: Option<&str>| {
         let mut entry = who.clone();
         entry["action"] = json!("device_work_refused");
@@ -584,15 +580,19 @@ pub(super) async fn work(
         entry["status"] = json!(status.as_u16());
         entry
     };
-    let Ok(body) = serde_json::from_slice::<WorkBody>(&body) else {
-        let message = "expected {idempotency_key, host, project, pipeline, request}";
-        super::routes::audit_entry(
-            &state,
-            audit_refusal(StatusCode::BAD_REQUEST, message, None),
-        )
-        .await;
-        return refuse(StatusCode::BAD_REQUEST, message);
+    let parsed = match &body {
+        Ok(bytes) => serde_json::from_slice::<WorkBody>(bytes).map_err(|_| StatusCode::BAD_REQUEST),
+        Err(rejection) => Err(rejection.status()),
     };
+    let body = match parsed {
+        Ok(body) => body,
+        Err(status) => {
+            let message = "expected {idempotency_key, host, project, pipeline, request}";
+            super::routes::audit_entry(&state, audit_refusal(status, message, None)).await;
+            return refuse(status, message);
+        }
+    };
+
     match prepare(&state, &body).await {
         Err((status, message)) => {
             super::routes::audit_entry(&state, audit_refusal(status, &message, Some(&body.host)))
