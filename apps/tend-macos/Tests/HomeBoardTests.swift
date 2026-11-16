@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 import Testing
@@ -110,6 +111,9 @@ private func waitFor(_ condition: () -> Bool) async throws {
 
     @Test func anOffScreenBoardHoldsUnitsAndTheClockUntilShown() throws {
         let board = FleetHomeBoard()
+        let owner = NSObject()
+        let window = ObjectIdentifier(owner)
+        defer { withExtendedLifetime(owner) {} }
         var publishes = 0
         let subscription = board.objectWillChange.sink { publishes += 1 }
         defer { subscription.cancel() }
@@ -117,7 +121,7 @@ private func waitFor(_ condition: () -> Bool) async throws {
         board.setWorks(first)
         #expect(board.works.count == 1 && publishes == 1)
 
-        board.setVisible(false)
+        board.setVisible(false, reader: window)
         let hidden = publishes
         board.setWorks(works(try snapshot(activity: "2026-11-16T01:00:02Z", state: "waiting_input")))
         board.setWorks(works(try snapshot(activity: "2026-11-16T01:00:03Z", state: "idle")))
@@ -129,14 +133,56 @@ private func waitFor(_ condition: () -> Bool) async throws {
         #expect(board.works.first?.focus?.agent.state == "working")
         let clock = board.clock
 
-        board.setVisible(true)
+        board.setVisible(true, reader: window)
         #expect(board.isVisible)
         #expect(board.works.first?.focus?.agent.state == "idle", "the latest units show at once")
         #expect(board.clock != clock, "relative times catch up at once")
         #expect(board.decisionsRevision != revision, "a held decisions change applies")
-        board.setVisible(true)
+        board.setVisible(true, reader: window)
         let shown = publishes
         board.tick()
         #expect(publishes == shown + 1)
+    }
+
+    /// What the projection does: publish to the board only when the new
+    /// units differ from its baseline.
+    private func project(_ works: [FleetWork], to board: FleetHomeBoard) {
+        if !TendProjectionEquality.same(works, board.latestWorks, by: TendProjectionEquality.sameOnHome) {
+            board.setWorks(works)
+        }
+    }
+
+    @Test func aHiddenChangeThatReturnsToWhatIsShownLeavesNothingStaleHeld() throws {
+        let board = FleetHomeBoard()
+        let owner = NSObject()
+        let window = ObjectIdentifier(owner)
+        defer { withExtendedLifetime(owner) {} }
+        let a = works(try snapshot(activity: "2026-11-16T01:00:01Z"))
+        let b = works(try snapshot(activity: "2026-11-16T01:00:02Z", state: "waiting_input"))
+        project(a, to: board)
+        board.setVisible(false, reader: window)
+        project(b, to: board)
+        project(a, to: board)
+        board.setVisible(true, reader: window)
+        #expect(board.works.first?.focus?.agent.state == "working", "A, as the model has it now; not the held B")
+    }
+
+    @Test func homeStaysLiveWhileAnyOfItsWindowsIsOnScreen() throws {
+        let board = FleetHomeBoard()
+        let windows = (NSObject(), NSObject())
+        let front = ObjectIdentifier(windows.0), back = ObjectIdentifier(windows.1)
+        defer { withExtendedLifetime(windows) {} }
+        board.setVisible(true, reader: front)
+        board.setVisible(false, reader: back)
+        #expect(board.isVisible, "a covered second window does not pause the visible one")
+        board.setVisible(false, reader: front)
+        #expect(!board.isVisible)
+        board.removeReader(back)
+        #expect(!board.isVisible)
+        board.removeReader(front)
+        #expect(board.isVisible, "with no Home mounted nothing is held")
+        board.setVisible(false, reader: back)
+        board.removeReader(back)
+        #expect(board.isVisible)
     }
 }

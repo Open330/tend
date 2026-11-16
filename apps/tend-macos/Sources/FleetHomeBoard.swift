@@ -25,16 +25,23 @@ final class FleetHomeBoard: ObservableObject {
     /// model's constant publishes.
     @Published private(set) var clock: UInt64 = 0
     static let clockPeriod: TimeInterval = 15
-    /// Whether Home's window is on screen (not hidden, minimized, fully
-    /// covered, or on another Space), as `TendWindowVisibilityReader` in
-    /// Home reports it. While it is not, the board holds
-    /// new units back, the clock stops, and Home pauses its decision and
-    /// backlog polls; showing the window again applies what arrived and
-    /// reloads once. Menu-bar, notification and attention inputs come from
-    /// the model and keep running.
+    /// Whether any window showing Home is on screen (not hidden, minimized,
+    /// fully covered, or on another Space), as each Home's
+    /// `TendWindowVisibilityReader` reports it; true while no Home is
+    /// mounted. While it is false, the board holds new units back, the
+    /// clock stops, and Home pauses its decision and backlog polls; showing
+    /// a window again applies what arrived and reloads once. Menu-bar,
+    /// notification and attention inputs come from the model and keep
+    /// running.
     @Published private(set) var isVisible = true
-    /// Units that arrived while the window was off screen.
-    private var heldWorks: [FleetWork]?
+    /// The latest units from the projection, published or held. The
+    /// projection compares against this, never against `works`, so a hidden
+    /// change that returns to what is on screen still replaces what is held.
+    private(set) var latestWorks: [FleetWork] = []
+    /// `latestWorks` is newer than `works`.
+    private var worksHeld = false
+    /// Each mounted Home's window, and whether it is on screen.
+    private var readers: [ObjectIdentifier: Bool] = [:]
     /// A decisions change that arrived while the window was off screen.
     private var heldDecisions = false
 
@@ -67,12 +74,28 @@ final class FleetHomeBoard: ObservableObject {
         ]
     }
 
-    func setVisible(_ visible: Bool) {
+    /// One Home's window went on or off screen.
+    func setVisible(_ visible: Bool, reader: ObjectIdentifier) {
+        readers[reader] = visible
+        updateVisibility()
+    }
+
+    /// That Home is gone.
+    func removeReader(_ reader: ObjectIdentifier) {
+        guard readers.removeValue(forKey: reader) != nil else { return }
+        updateVisibility()
+    }
+
+    private func updateVisibility() {
+        setVisible(readers.isEmpty || readers.values.contains(true))
+    }
+
+    private func setVisible(_ visible: Bool) {
         guard visible != isVisible else { return }
         TendPerf.count(visible ? "board.shown" : "board.hidden")
-        if visible, let heldWorks {
-            self.heldWorks = nil
-            works = heldWorks
+        if visible, worksHeld {
+            worksHeld = false
+            works = latestWorks
         }
         if visible, heldDecisions {
             heldDecisions = false
@@ -89,9 +112,10 @@ final class FleetHomeBoard: ObservableObject {
     }
 
     func setWorks(_ works: [FleetWork]) {
+        latestWorks = works
         guard isVisible else {
             TendPerf.count("board.held")
-            heldWorks = works
+            worksHeld = true
             return
         }
         TendPerf.count("board.works")
@@ -118,33 +142,48 @@ final class FleetHomeBoard: ObservableObject {
 
 /// Reports whether the window this view is in is on screen: shown, not
 /// minimized, not fully covered or on another Space, and the app not
-/// hidden. Reports on attaching to a window and on each change.
+/// hidden. Reports on attaching to a window and on each change, and nil
+/// when it leaves its window or is removed.
 struct TendWindowVisibilityReader: NSViewRepresentable {
-    let changed: (Bool) -> Void
+    let board: FleetHomeBoard
 
     func makeNSView(context: Context) -> ReaderView {
         let view = ReaderView()
-        view.changed = changed
+        view.changed = Self.report(to: board, from: view)
         return view
     }
 
     func updateNSView(_ view: ReaderView, context: Context) {
-        view.changed = changed
+        view.changed = Self.report(to: board, from: view)
+    }
+
+    /// Each reader is one entry in the board's set of Home windows.
+    private static func report(to board: FleetHomeBoard, from view: ReaderView) -> (Bool?) -> Void {
+        let reader = ObjectIdentifier(view)
+        return { [weak board] visible in
+            guard let board else { return }
+            if let visible { board.setVisible(visible, reader: reader) } else { board.removeReader(reader) }
+        }
     }
 
     static func dismantleNSView(_ view: ReaderView, coordinator: ()) {
-        view.stopObserving()
+        view.detach()
     }
 
     final class ReaderView: NSView {
-        var changed: ((Bool) -> Void)?
+        var changed: ((Bool?) -> Void)?
         private var observers: [NSObjectProtocol] = []
         private var reported: Bool?
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             stopObserving()
-            guard let window else { return }
+            // Each attachment states its window afresh.
+            reported = nil
+            guard let window else {
+                changed?(nil)
+                return
+            }
             let center = NotificationCenter.default
             let windowEvents: [Notification.Name] = [
                 NSWindow.didChangeOcclusionStateNotification, NSWindow.didMiniaturizeNotification,
@@ -163,6 +202,12 @@ struct TendWindowVisibilityReader: NSViewRepresentable {
             }
             // Out of the view update that attached it.
             DispatchQueue.main.async { [weak self] in self?.report() }
+        }
+
+        func detach() {
+            stopObserving()
+            reported = nil
+            changed?(nil)
         }
 
         func stopObserving() {

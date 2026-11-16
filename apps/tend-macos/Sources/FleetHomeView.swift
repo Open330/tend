@@ -106,7 +106,7 @@ struct FleetHomeView: View {
             board
         }
         .background(TendSurfacePalette.workspace(for: colorScheme).ignoresSafeArea())
-        .background(TendWindowVisibilityReader { [homeBoard] visible in homeBoard.setVisible(visible) })
+        .background(TendWindowVisibilityReader(board: homeBoard))
         .sheet(item: $approvalSeed) { seed in
             FleetApprovalRuleSheet(model: model, seed: seed)
         }

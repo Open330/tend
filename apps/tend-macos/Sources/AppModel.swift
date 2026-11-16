@@ -962,7 +962,7 @@ final class AppModel: ObservableObject {
             let connection = connectionGeneration
             let snapshot = executionSnapshot, runs = pipelineRuns
             let published = (agents: hostedAgents, groups: workGroups, works: homeWorks)
-            let board = homeBoard.works, askers = hostedAgentIndex.askers
+            let board = homeBoard.latestWorks, askers = hostedAgentIndex.askers
             let now = Date()
             TendPerf.count("projection.built")
             return await Task.detached(priority: .userInitiated) {
