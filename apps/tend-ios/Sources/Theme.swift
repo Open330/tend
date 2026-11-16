@@ -28,25 +28,47 @@ extension Color {
     }
 }
 
+extension Color {
+    /// A colour from apps/shared/Design/tokens.json (TendDesignTokens.swift).
+    init(token: TendTokenColor) {
+        self.init(uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(hex: token.dark, alpha: token.darkAlpha)
+                : UIColor(hex: token.light, alpha: token.lightAlpha)
+        })
+    }
+}
+
+/// The state colours: the macOS/iOS 26 system palette, as tokens.json
+/// records it. Tend for Mac draws the system colours, which are this
+/// palette on macOS 26; reading the tokens keeps an iPhone on iOS 17 or 18
+/// (whose system colours are the older ones) the same as the Mac.
+enum TendPalette {
+    static let orange = Color(token: TendDesignTokens.orange)
+    static let blue = Color(token: TendDesignTokens.blue)
+    static let green = Color(token: TendDesignTokens.green)
+    static let red = Color(token: TendDesignTokens.red)
+    static let purple = Color(token: TendDesignTokens.purple)
+    static let mint = Color(token: TendDesignTokens.mint)
+    /// controlAccentColor's default; the app's tint (AccentColor).
+    static let accent = Color(token: TendDesignTokens.accent)
+}
+
 /// The Mac app's surfaces (`TendTheme.swift`, `TendSurfacePalette`).
 enum TendSurface {
     /// The board behind the lanes, and a card's fill (`workspace`).
-    static let workspace = Color.tend(light: 0xFFFFFF, dark: 0x1F1F1F)
+    static let workspace = Color(token: TendDesignTokens.editor)
     /// A lane column, a summary box (`panelFill`).
-    static let panel = Color.tend(light: 0xF8F8F8, dark: 0x252526)
+    static let panel = Color(token: TendDesignTokens.lane)
     /// The sidebar (`sideBar`).
-    static let sideBar = Color.tend(light: 0xF8F8F8, dark: 0x181818)
-    static let border = Color.tend(light: 0xE5E5E5, dark: 0x2B2B2B)
-    static let inputBackground = Color.tend(light: 0xFFFFFF, dark: 0x313131)
-    static let inputBorder = Color.tend(light: 0xCECECE, dark: 0x3C3C3C)
+    static let sideBar = Color(token: TendDesignTokens.sideBar)
+    static let border = Color(token: TendDesignTokens.border)
+    static let inputBackground = Color(token: TendDesignTokens.inputBackground)
+    static let inputBorder = Color(token: TendDesignTokens.inputBorder)
     /// Meta rows (agent, project, host, time): readable on a card in both
     /// schemes, quieter than body text. The Mac's tertiary washes out at
     /// phone sizes; this is its secondary text token (`tokens.json`).
-    static let metaText = Color(uiColor: UIColor { traits in
-        traits.userInterfaceStyle == .dark
-            ? UIColor(white: 1, alpha: 0.55)
-            : UIColor(white: 0, alpha: 0.5)
-    })
+    static let metaText = Color(token: TendDesignTokens.textSecondary)
 
     static let cardRadius: CGFloat = 10
     static let laneRadius: CGFloat = 12
@@ -83,13 +105,20 @@ enum TendColor {
 }
 
 /// Home's three lanes (`FleetLane`), in the Mac app's words and tints.
-enum Lane: String, CaseIterable, Identifiable, Hashable {
+enum Lane: String, CaseIterable, Identifiable, Hashable, Sendable {
+    /// Planned Work, not started; shown left of Your turn only when there
+    /// is some (the Mac's `FleetBacklogColumn`).
+    case backlog
     case yourTurn, inProgress, finished
+
+    /// The three lanes every Home shows.
+    static let board: [Lane] = [.yourTurn, .inProgress, .finished]
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
+        case .backlog: String(localized: "Backlog")
         case .yourTurn: String(localized: "Your turn")
         case .inProgress: String(localized: "In progress")
         case .finished: String(localized: "Finished")
@@ -98,6 +127,7 @@ enum Lane: String, CaseIterable, Identifiable, Hashable {
 
     var subtitle: String {
         switch self {
+        case .backlog: String(localized: "Planned, not started")
         case .yourTurn: String(localized: "Decide or review")
         case .inProgress: String(localized: "Agents are on it")
         case .finished: String(localized: "Ready for the next instruction")
@@ -106,6 +136,7 @@ enum Lane: String, CaseIterable, Identifiable, Hashable {
 
     var empty: String {
         switch self {
+        case .backlog: String(localized: "Nothing planned.")
         case .yourTurn: String(localized: "Nothing needs you right now.")
         case .inProgress: String(localized: "No agent is working.")
         case .finished: String(localized: "Nothing finished yet.")
@@ -114,9 +145,10 @@ enum Lane: String, CaseIterable, Identifiable, Hashable {
 
     var tint: Color {
         switch self {
-        case .yourTurn: .orange
-        case .inProgress: .blue
-        case .finished: .green
+        case .backlog: Color.secondary
+        case .yourTurn: TendPalette.orange
+        case .inProgress: TendPalette.blue
+        case .finished: TendPalette.green
         }
     }
 }
@@ -140,12 +172,12 @@ enum AgentStatus: Hashable, Sendable {
 
     var color: Color {
         switch self {
-        case .error: .red
-        case .needsInput, .asked: .orange
-        case .limited: .purple
-        case .working: .blue
-        case .idle: .mint
-        case .done: .green
+        case .error: TendPalette.red
+        case .needsInput, .asked: TendPalette.orange
+        case .limited: TendPalette.purple
+        case .working: TendPalette.blue
+        case .idle: TendPalette.mint
+        case .done: TendPalette.green
         case .other: .secondary
         }
     }
@@ -199,10 +231,10 @@ struct AgentStatusTag: View {
 enum HostState {
     static func color(_ state: String) -> Color {
         switch state {
-        case "online": .green
-        case "connecting": .blue
-        case "degraded", "version_skew": .orange
-        case "auth_failed": .red
+        case "online": TendPalette.green
+        case "connecting": TendPalette.blue
+        case "degraded", "version_skew": TendPalette.orange
+        case "auth_failed": TendPalette.red
         default: .secondary
         }
     }

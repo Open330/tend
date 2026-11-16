@@ -25,7 +25,7 @@ struct HostSectionView: View {
             if section.queue.undecoded > 0 {
                 Label(String(localized: "\(section.queue.undecoded) more need you in a form this app cannot show yet. Open the dashboard in a browser, or update the app."), systemImage: "exclamationmark.triangle")
                     .font(TendType.meta)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(TendPalette.orange)
                     .accessibilityIdentifier("undecoded")
             }
             ForEach(decisions) { decision in
@@ -77,7 +77,7 @@ struct DeviceSettingsView: View {
                 if let problem = model.signOutProblem {
                     Section {
                         Label(problem, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.red)
+                            .foregroundStyle(TendPalette.red)
                             .accessibilityIdentifier("signOutProblem")
                         Button(String(localized: "Forget this device here only"), role: .destructive) {
                             model.forgetLocally()

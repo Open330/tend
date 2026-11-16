@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `GET /api/device/home` now includes the backlog: planned Work with its
+  title, line, priority, pipeline and project, without its ticket
+  reference. A paired device shows it but cannot start it, because that
+  would name an existing Work.
+- The iOS app's Home now reads the daemon's board from `GET
+  /api/device/home` when the device may see hosts. The lanes are those of
+  Tend for Mac: Work units with their stage bars, project groups, and
+  Your turn in the daemon's order. Possible helper sessions, empty
+  sessions, older units and reviewed results are folded behind their own
+  buttons, as on the Mac. A Backlog column (a fourth segment on iPhone)
+  appears when there is planned Work. A Work with stages or helpers opens
+  a detail with its stages and agents. A device that may only decide, or
+  a dashboard without the board, keeps the previous lanes.
+
+### Changed
+
+- The iOS app draws the state colours and the accent from the shared
+  design tokens (the macOS/iOS 26 palette), so an iPhone on iOS 17 or 18
+  shows the same colours as Tend for Mac. Its surfaces come from the
+  generated `TendDesignTokens.swift`, and the token test now compares
+  hex values.
+
 ## [0.10.22] - 2026-11-16
 
 ### Fixed

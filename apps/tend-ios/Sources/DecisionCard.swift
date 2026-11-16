@@ -39,7 +39,7 @@ struct DecisionCard: View {
                 Label {
                     Text(verbatim: recommendation).foregroundStyle(.primary)
                 } icon: {
-                    Image(systemName: "lightbulb.fill").foregroundStyle(.orange)
+                    Image(systemName: "lightbulb.fill").foregroundStyle(TendPalette.orange)
                 }
                 .font(TendType.detail)
             }
@@ -58,11 +58,11 @@ struct DecisionCard: View {
             if let failure = model.failures[decision.id] {
                 Label(failure, systemImage: "exclamationmark.circle")
                     .font(TendType.meta)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(TendPalette.red)
                     .accessibilityIdentifier("cardFailure")
             }
         }
-        .tendCard(stroke: Color.orange.opacity(decision.decidable ? 0.45 : 0.2))
+        .tendCard(stroke: TendPalette.orange.opacity(decision.decidable ? 0.45 : 0.2))
         .disabled(busy)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("card")
@@ -80,13 +80,13 @@ struct DecisionCard: View {
             switch decision.kind {
             case .question:
                 Label(String(localized: "Question"), systemImage: "questionmark.bubble.fill")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(TendPalette.orange)
             case .result:
                 Label(String(localized: "Review"), systemImage: "checklist")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(TendPalette.orange)
             case .waiting:
                 Label(String(localized: "Waiting"), systemImage: "hand.raised.fill")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(TendPalette.orange)
             }
             if let asker = decision.asker {
                 Text(verbatim: "·")
@@ -272,7 +272,7 @@ struct VerificationChecks: View {
                     Text(verbatim: check.name ?? check.command).lineLimit(2)
                 } icon: {
                     Image(systemName: check.passed ? "checkmark.seal.fill" : "xmark.seal.fill")
-                        .foregroundStyle(check.passed ? Color.green : Color.red)
+                        .foregroundStyle(check.passed ? TendPalette.green : TendPalette.red)
                 }
                 .font(TendType.meta.weight(.medium))
                 .foregroundStyle(.secondary)
@@ -316,7 +316,7 @@ struct EvidenceList: View {
         case .test(let command, let passed, _):
             Chip(
                 text: command,
-                color: passed == true ? .green : passed == false ? .red : .secondary,
+                color: passed == true ? TendPalette.green : passed == false ? TendPalette.red : .secondary,
                 symbol: passed == true ? "checkmark" : passed == false ? "xmark" : "circle"
             )
         case .path(let path):

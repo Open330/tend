@@ -125,7 +125,7 @@ struct DecidedCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 6) {
-                Chip(text: past.outcome, color: past.isPositive ? .green : .orange, symbol: past.isPositive ? "checkmark" : "arrow.uturn.backward")
+                Chip(text: past.outcome, color: past.isPositive ? TendPalette.green : TendPalette.orange, symbol: past.isPositive ? "checkmark" : "arrow.uturn.backward")
                     .accessibilityIdentifier("pastOutcome")
                 Spacer(minLength: 4)
                 if let at = past.at {
@@ -243,4 +243,235 @@ struct CardButtonStyle: ButtonStyle {
 extension ButtonStyle where Self == CardButtonStyle {
     static var card: CardButtonStyle { CardButtonStyle() }
     static var cardPrimary: CardButtonStyle { CardButtonStyle(primary: true) }
+}
+
+// MARK: - Work units (Home's board)
+
+extension Lane {
+    /// The state word on a card's meta row (`FleetLane.statusLabel`).
+    var statusLabel: String {
+        switch self {
+        case .backlog: String(localized: "Planned")
+        case .yourTurn: String(localized: "Your turn")
+        case .inProgress: String(localized: "Working")
+        case .finished: String(localized: "Finished")
+        }
+    }
+
+    var statusImage: String {
+        switch self {
+        case .backlog: "tray"
+        case .yourTurn: "hand.raised.fill"
+        case .inProgress: "circle.dotted.circle"
+        case .finished: "checkmark.circle.fill"
+        }
+    }
+}
+
+extension BoardStage.State {
+    /// The Mac's stage colours (`FleetWorkStage.State.color`).
+    var color: Color {
+        switch self {
+        case .done: TendPalette.green
+        case .running: TendPalette.blue
+        case .needsYou: TendPalette.orange
+        case .waiting: Color.secondary.opacity(0.25)
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .done: String(localized: "Done")
+        case .running: String(localized: "Working")
+        case .needsYou: String(localized: "Your turn")
+        case .waiting: String(localized: "Waiting")
+        }
+    }
+}
+
+/// The stage bar: one segment per stage, then the stage on now and how
+/// many are done (`FleetStageBar`).
+struct StageBar: View {
+    let unit: BoardUnit
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 3) {
+                ForEach(Array(unit.stages.enumerated()), id: \.offset) { _, stage in
+                    Capsule().fill(stage.state.color).frame(height: 4)
+                }
+            }
+            .accessibilityHidden(true)
+            if let index = unit.currentStage {
+                HStack {
+                    Text(verbatim: unit.stages[index].name).fontWeight(.medium).foregroundStyle(.secondary)
+                    Spacer()
+                    if unit.stages.count > 1 {
+                        Text(verbatim: "\(unit.doneStages)/\(unit.stages.count)").monospacedDigit()
+                    }
+                }
+                .font(TendType.meta)
+                .foregroundStyle(.tertiary)
+            }
+        }
+    }
+}
+
+/// The inset box a card's headline sits in (`FleetInsetBox`).
+struct InsetBox<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) { content }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(token: TendDesignTokens.inset), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Color(token: TendDesignTokens.insetBorder)))
+    }
+}
+
+/// The products' marks side by side (`TendAgentLogoStack`).
+struct AgentLogoStack: View {
+    let kinds: [String]
+    var size: CGFloat = 14
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(Array(Self.products(kinds).prefix(3)), id: \.self) { AgentLogo(kind: $0, size: size) }
+        }
+    }
+
+    /// One mark per product, in order.
+    static func products(_ kinds: [String]) -> [String] {
+        var seen: [String] = []
+        for kind in kinds where !seen.contains(kind) { seen.append(kind) }
+        return seen
+    }
+}
+
+/// A unit of work as the Mac draws it (`FleetWorkCard`): a Helper pill, the
+/// title, the stage bar (not for a finished single-stage unit), the
+/// headline in its inset box, then state, agents, hosts, project, helpers
+/// and time on one line.
+struct WorkCard: View {
+    let unit: BoardUnit
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                if unit.orphanHelper {
+                    Chip(text: String(localized: "Helper"))
+                }
+                Text(verbatim: unit.titleText)
+                    .font(TendType.cardTitle)
+                    .foregroundStyle(unit.lane == .finished ? Color.primary.opacity(0.82) : Color.primary)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if unit.lane != .finished || unit.stages.count > 1 {
+                StageBar(unit: unit)
+            }
+            if unit.headlineText != nil || unit.handledLimit {
+                InsetBox {
+                    if let headline = unit.headlineText {
+                        // One paragraph on the card; the detail shows it whole.
+                        Text(TendMarkdown.inline(headline.split(whereSeparator: \.isNewline).joined(separator: " ")))
+                            .font(unit.lane == .yourTurn ? TendType.body.weight(.medium) : TendType.body)
+                            .foregroundStyle(unit.lane == .yourTurn ? Color.primary : Color.secondary)
+                            .lineLimit(unit.lane == .yourTurn ? 4 : 2)
+                            // Measured and drawn at the same height in a lazy lane.
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    if unit.handledLimit {
+                        Label(String(localized: "Rate limited · the limit policy will resume it"), systemImage: "arrow.triangle.2.circlepath")
+                            .font(TendType.meta)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            meta
+        }
+        .tendCard(stroke: unit.lane == .yourTurn ? TendPalette.orange.opacity(0.45) : TendSurface.border)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("workCard")
+    }
+
+    /// In a narrow column the host names, then the project, give way
+    /// first; the state and the time always stay.
+    private var meta: some View {
+        ViewThatFits(in: .horizontal) {
+            metaRow(hostNames: true, project: true)
+            metaRow(hostNames: false, project: true)
+            metaRow(hostNames: false, project: false)
+        }
+        .font(TendType.meta)
+        .foregroundStyle(TendSurface.metaText)
+    }
+
+    private func metaRow(hostNames: Bool, project: Bool) -> some View {
+        HStack(spacing: 6) {
+            Label(unit.lane.statusLabel, systemImage: unit.lane.statusImage)
+                .labelStyle(.titleAndIcon)
+                .fontWeight(.semibold)
+                .foregroundStyle(unit.lane.tint)
+                .fixedSize()
+            if !unit.agentKinds.isEmpty {
+                AgentLogoStack(kinds: unit.agentKinds, size: 13)
+            }
+            ForEach(unit.hosts.prefix(2), id: \.self) { alias in
+                HStack(spacing: 3) {
+                    HostGlyph(alias: alias, size: 14)
+                    if hostNames { Text(verbatim: alias).fixedSize() }
+                }
+            }
+            if project, let repo = unit.repo {
+                Text(verbatim: "· \(repo)").fixedSize()
+            }
+            if !unit.helpers.isEmpty {
+                Label("\(unit.helpers.count)", systemImage: "person.2")
+                    .labelStyle(.titleAndIcon)
+                    .fixedSize()
+                    .accessibilityLabel(Text("\(unit.helpers.count) helper sessions"))
+            }
+            Spacer(minLength: 4)
+            if let time = unit.time {
+                Text(time, format: .relative(presentation: .numeric, unitsStyle: .abbreviated))
+                    .monospacedDigit()
+                    .fixedSize()
+            }
+        }
+        .lineLimit(1)
+    }
+}
+
+/// Planned Work in the backlog (`FleetBacklogCard`), without Start: a
+/// phone starts new work only, never a Work that already exists.
+struct BacklogCard: View {
+    let record: BacklogRecord
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(verbatim: record.titleText)
+                    .font(TendType.cardTitle)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if let priority = record.priority {
+                    Chip(text: "P\(priority)")
+                }
+            }
+            if let line = record.line?.nonEmpty {
+                Text(verbatim: line).font(TendType.body).foregroundStyle(.secondary).lineLimit(2)
+            }
+            let meta = [record.workspace, record.pipeline].compactMap { $0?.nonEmpty }
+            if !meta.isEmpty {
+                Text(verbatim: meta.joined(separator: " · ")).font(TendType.meta).foregroundStyle(TendSurface.metaText).lineLimit(1)
+            }
+        }
+        .tendCard()
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("backlogCard")
+    }
 }

@@ -7,6 +7,7 @@ extension View {
     /// Agent cards and rows push the agent's detail.
     func withAgentDestinations() -> some View {
         navigationDestination(for: LaneAgent.self) { AgentDetailView(agent: $0) }
+            .navigationDestination(for: BoardUnit.self) { WorkDetailView(unit: $0) }
     }
 }
 
@@ -34,7 +35,7 @@ struct HostRow: View {
                     .foregroundStyle(.white)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 2)
-                    .background(Color.orange, in: Capsule())
+                    .background(TendPalette.orange, in: Capsule())
                     .accessibilityLabel(Text("\(attention) need you"))
             }
         }
@@ -143,7 +144,7 @@ struct HostDetailView: View {
                     .font(TendType.meta)
                     .foregroundStyle(.secondary)
                 if let error = host.error, !host.online {
-                    Text(verbatim: error).font(TendType.meta).foregroundStyle(.red).lineLimit(3)
+                    Text(verbatim: error).font(TendType.meta).foregroundStyle(TendPalette.red).lineLimit(3)
                 }
             }
         }
@@ -238,7 +239,7 @@ struct NowBox: View {
     let agent: FleetAgent
 
     var body: some View {
-        let tint: Color = agent.status.needsAttention ? .orange : agent.running ? .blue : .green
+        let tint: Color = agent.status.needsAttention ? TendPalette.orange : agent.running ? TendPalette.blue : TendPalette.green
         let label = agent.status.needsAttention ? String(localized: "Needs you")
             : agent.running ? String(localized: "Now") : String(localized: "Last result")
         let text = agent.status.needsAttention

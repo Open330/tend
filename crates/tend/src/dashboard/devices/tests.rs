@@ -1677,3 +1677,25 @@ fn a_device_gets_decisions_unchanged_and_knows_when_history_is_partial() {
         20_000
     );
 }
+
+#[test]
+fn a_device_sees_the_backlog_without_its_ticket_and_with_bounded_text() {
+    let board = json!({"backlog": [
+        {"workspace": "tend", "work": "next", "title": "Next", "line": "z".repeat(20_000),
+         "priority": 2, "pipeline": "solo", "external": "TICKET-1", "project": "tend"},
+        "not a record",
+    ]});
+    let device = super::operate::device_board(&board, None);
+    let backlog = device["backlog"].as_array().unwrap();
+    assert_eq!(backlog.len(), 1, "{device}");
+    let record = &backlog[0];
+    assert_eq!(record["work"], "next");
+    assert_eq!(record["priority"], 2);
+    assert_eq!(record["project"], "tend");
+    assert!(record.get("external").is_none(), "{record}");
+    assert!(record["line"].as_str().unwrap().len() < 20_000);
+    assert_eq!(
+        super::operate::device_board(&json!({}), None)["backlog"],
+        json!([])
+    );
+}

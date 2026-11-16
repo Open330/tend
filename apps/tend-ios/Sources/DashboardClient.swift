@@ -445,6 +445,16 @@ struct DashboardClient: Sendable {
         return try decode(FleetSnapshot.self, data)
     }
 
+    /// `GET /api/device/home`: Home's board as tendd computes it (Work
+    /// units, decisions, folds, backlog). 403 means this device may only
+    /// decide.
+    func home() async throws -> DeviceHome {
+        let (status, data) = try await send("GET", "/api/device/home", authorized: true)
+        if status == 403 { throw DashboardError.notAllowed }
+        try check(status, data)
+        return try decode(DeviceHome.self, data)
+    }
+
     /// `POST /api/device/capture`: the recent output of one agent's pane,
     /// named by its session id.
     func capture(host: String, sessionID: String) async throws -> String {
