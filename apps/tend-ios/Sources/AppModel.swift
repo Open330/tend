@@ -215,6 +215,9 @@ final class AppModel {
     /// What this dashboard serves the device beyond the hosts (`capture`,
     /// `work`), from `GET /api/device`.
     private(set) var features: Set<String> = []
+    /// Bumped whenever this device's capabilities shrink: a device or
+    /// Fleet read that started before then is stale and is dropped.
+    private var capability = UUID()
     private(set) var history: [HostHistory] = []
     private(set) var loaded = false
     private(set) var historyLoaded = false
@@ -256,17 +259,21 @@ final class AppModel {
     /// Whether it can start work here.
     var canStartWork: Bool { operates && features.contains("work") }
 
-    /// Re-read what the dashboard says this device is and may do.
+    /// Re-read what the dashboard says this device is and may do. Scope
+    /// only ever narrows for one key: an answer can never widen it, and an
+    /// answer that started before a narrowing is dropped.
     func refreshDevice() async {
         guard let client else { return }
         let mine = session
+        let generation = capability
         do {
             let info = try await client.device()
-            guard session == mine else { return }
-            features = info.features
-            if info.scope != scope {
-                if info.scope == .decide { narrow() } else { scope = info.scope }
+            guard session == mine, capability == generation else { return }
+            if info.scope == .decide, scope == .operate {
+                narrow()
+                return
             }
+            features = scope == .operate ? info.features : []
         } catch is CancellationError {
             return
         } catch {
@@ -464,9 +471,11 @@ final class AppModel {
     /// narrowed it to deciding: say so and stop asking.
     private func refreshFleet(_ client: DashboardClient, session mine: UUID) async {
         guard scope == .operate else { return }
+        let generation = capability
         do {
             let read = try await client.fleet()
-            guard session == mine else { return }
+            // Narrowed while this was in flight: the answer is no longer ours.
+            guard session == mine, capability == generation, scope == .operate else { return }
             if fleet != read { fleet = read }
             fleetProblem = nil
         } catch DashboardError.notAllowed {
@@ -482,7 +491,9 @@ final class AppModel {
 
     /// The dashboard limited this device to deciding.
     private func narrow() {
+        capability = UUID()
         scope = .decide
+        features = []
         fleet = nil
         fleetProblem = DashboardError.notAllowed.localizedDescription
         if var pairing {
@@ -493,8 +504,10 @@ final class AppModel {
 
     // MARK: Lanes
 
-    var inProgress: [LaneAgent] { fleet.map(FleetLanes.inProgress) ?? [] }
-    var finishedAgents: [LaneAgent] { fleet.map { FleetLanes.finished($0) } ?? [] }
+    /// The hosts, only while this device may see them.
+    var visibleFleet: FleetSnapshot? { operates ? fleet : nil }
+    var inProgress: [LaneAgent] { visibleFleet.map(FleetLanes.inProgress) ?? [] }
+    var finishedAgents: [LaneAgent] { visibleFleet.map { FleetLanes.finished($0) } ?? [] }
 
     func count(_ lane: Lane) -> Int {
         switch lane {
@@ -508,6 +521,7 @@ final class AppModel {
 
     func capture(_ agent: LaneAgent) async throws -> String {
         guard let client, !agent.agent.sessionID.isEmpty else { return "" }
+        guard canCapture else { throw DashboardError.notAllowed }
         let mine = session
         do {
             return try await client.capture(host: agent.host, sessionID: agent.agent.sessionID)
@@ -522,6 +536,7 @@ final class AppModel {
 
     func workOptions(host: String) async throws -> WorkOptions {
         guard let client else { throw DashboardError.signedOut }
+        guard canStartWork else { throw DashboardError.notAllowed }
         return try await client.workOptions(host: host)
     }
 
@@ -529,6 +544,7 @@ final class AppModel {
     /// says whether it started, failed, or may have started (unknown).
     func startWork(_ request: StartWorkRequest) async throws -> StartedWork {
         guard let client else { throw DashboardError.signedOut }
+        guard canStartWork else { throw DashboardError.notAllowed }
         let mine = session
         do {
             let started = try await client.startWork(request)

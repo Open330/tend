@@ -235,7 +235,7 @@ struct LaneContent: View {
     private var inProgress: some View {
         if !model.operates {
             DecideOnlyNotice()
-        } else if model.fleet == nil {
+        } else if model.visibleFleet == nil {
             if let problem = model.fleetProblem {
                 Label(problem, systemImage: "exclamationmark.triangle").font(TendType.meta).foregroundStyle(.secondary)
             } else {
@@ -409,7 +409,7 @@ struct HostsSummary: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        if let fleet = model.fleet {
+        if let fleet = model.visibleFleet {
             let online = fleet.hosts.filter(\.online).count
             HStack(spacing: 5) {
                 Circle().fill(online == fleet.hosts.count ? Color.green : Color.orange).frame(width: 7, height: 7)

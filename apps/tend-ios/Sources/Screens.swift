@@ -173,7 +173,7 @@ struct RootView: View {
                     .tag(SidebarItem.home)
                     .accessibilityIdentifier("sidebarHome")
                 Section(String(localized: "Hosts")) {
-                    if let fleet = model.fleet {
+                    if let fleet = model.visibleFleet {
                         ForEach(fleet.ordered) { host in
                             HostRow(host: host)
                                 .accessibilityIdentifier("sidebarHost")

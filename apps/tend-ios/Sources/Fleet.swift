@@ -113,7 +113,8 @@ struct FleetAgent: Decodable, Sendable, Equatable, Hashable, Identifiable {
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         func text(_ key: CodingKeys) -> String? {
-            (try? values.decodeIfPresent(String.self, forKey: key)) ?? nil
+            // An empty string is no value, as the web's truthiness reads it.
+            ((try? values.decodeIfPresent(String.self, forKey: key)) ?? nil).flatMap { $0.isEmpty ? nil : $0 }
         }
         kind = text(.kind) ?? "agent"
         sessionID = text(.sessionID) ?? ""

@@ -65,7 +65,7 @@ struct HostsView: View {
             LazyVStack(alignment: .leading, spacing: 12) {
                 if !model.operates {
                     DecideOnlyNotice()
-                } else if let fleet = model.fleet {
+                } else if let fleet = model.visibleFleet {
                     ForEach(fleet.ordered) { host in
                         NavigationLink(value: host) {
                             HostRow(host: host).tendCard()
@@ -94,7 +94,7 @@ struct HostDetailView: View {
     let alias: String
     @Environment(AppModel.self) private var model
 
-    private var host: FleetHost? { model.fleet?.hosts.first { $0.alias == alias } }
+    private var host: FleetHost? { model.visibleFleet?.hosts.first { $0.alias == alias } }
 
     var body: some View {
         ScrollView {
@@ -177,7 +177,7 @@ struct AgentDetailView: View {
 
     /// The current record for this agent, refreshed with the snapshot.
     private var current: FleetAgent {
-        model.fleet?.hosts.first { $0.alias == agent.host }?.agents.first { $0.id == agent.agent.id } ?? agent.agent
+        model.visibleFleet?.hosts.first { $0.alias == agent.host }?.agents.first { $0.id == agent.agent.id } ?? agent.agent
     }
 
     var body: some View {

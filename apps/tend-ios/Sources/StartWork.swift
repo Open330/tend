@@ -25,11 +25,12 @@ struct StartWorkView: View {
 
     /// Hosts that can take work: online, in control mode.
     private var hosts: [FleetHost] {
-        (model.fleet?.ordered ?? []).filter { $0.online && ($0.local || $0.control) }
+        (model.visibleFleet?.ordered ?? []).filter { $0.online && ($0.local || $0.control) }
     }
 
     private var canStart: Bool {
-        !task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        model.canStartWork
+            && !task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !host.isEmpty
             && !starting
             && options?.allowed == true
@@ -151,6 +152,11 @@ struct StartWorkView: View {
                 taskFocused = true
             }
             .task(id: host) { await loadOptions() }
+            // The device lost Start Work (narrowed, or the dashboard stopped
+            // offering it) while the sheet was open.
+            .onChange(of: model.canStartWork) { _, allowed in
+                if !allowed { dismiss() }
+            }
         }
     }
 
@@ -172,8 +178,19 @@ struct StartWorkView: View {
 
     private func start() async {
         problem = nil
+        let pairing = model.pairing
         guard await Self.confirmOwner(reason: String(localized: "Start agents on \(host)")) else {
             problem = String(localized: "Not started: Face ID or the passcode is needed to start work.")
+            return
+        }
+        // Face ID takes a while: check again that this device, this host and
+        // these choices still hold before anything is sent.
+        guard canStart, model.pairing == pairing,
+              hosts.contains(where: { $0.alias == host }),
+              options?.projects.contains(folder) == true,
+              options?.pipelines.contains(where: { $0.name == pipeline }) == true
+        else {
+            problem = String(localized: "Not started: what this device may do changed. Check and try again.")
             return
         }
         starting = true
