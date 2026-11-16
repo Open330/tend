@@ -200,12 +200,24 @@ struct TendWindowVisibilityReader: NSViewRepresentable {
                     MainActor.assumeIsolated { self?.report() }
                 })
             }
-            // Out of the view update that attached it.
-            DispatchQueue.main.async { [weak self] in self?.report() }
+            // Out of the view update that attached it, unless it was
+            // detached or moved again by then.
+            attachment &+= 1
+            let current = attachment
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.attachment == current, self.isAttached else { return }
+                self.report()
+            }
         }
+
+        /// Bumped on each attachment and detach, so a queued first report
+        /// from an earlier one is dropped.
+        private var attachment: UInt64 = 0
+        private var isAttached: Bool { !observers.isEmpty }
 
         func detach() {
             stopObserving()
+            attachment &+= 1
             reported = nil
             changed?(nil)
         }
@@ -216,7 +228,7 @@ struct TendWindowVisibilityReader: NSViewRepresentable {
         }
 
         private func report() {
-            guard let window else { return }
+            guard isAttached, let window else { return }
             let visible = window.isVisible && !window.isMiniaturized && !NSApp.isHidden
                 && window.occlusionState.contains(.visible)
             guard visible != reported else { return }
