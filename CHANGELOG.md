@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- tendd computes Home's board itself (`GET /api/home`), by Tend for Mac's
+  rules:
+  - a pipeline run's agents grouped into one Work unit with stages;
+  - helper sessions folded into the unit they help;
+  - orphan, probable-helper and empty sessions marked;
+  - a usage cap covered by an automation rule kept in progress;
+  - the decision queue interleaved into Your turn;
+  - the backlog listed.
+
+  The dashboard, the Windows app and the iOS app can draw the same lanes the
+  Mac draws. `POST /api/home/reviewed` records Looks Good with the Mac's
+  review key, so a unit marked in either place is marked in both.
+
 ## [0.10.21] - 2026-11-16
 
 ### Added
@@ -19,7 +34,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lines and at most 64 KiB. A device runs one capture at a time. Every
   attempt is an audit line, without the output. `GET /api/device` lists it
   in `features`.
-
 - **Tend for Windows** (`tend-app.exe`, `crates/tend-app`): the tray app
   around a local tendd's Home, like Tend for Mac's menu bar. Notification
   area icon with the Tend mark, the dashboard's Home in a WebView2 window,

@@ -480,6 +480,56 @@ dashboard_url`, else `[dashboard.login] public_url`'s origin; set
 `dashboard_url = ""` for no link. Opening it still needs an operator
 sign-in.
 
+### The board read (`GET /api/home`)
+
+Home's lanes are computed in tendd, once for every client
+(`crates/tend/src/home_board.rs`), by the rules Tend for Mac's Home uses
+(`FleetBoard`):
+
+- **Units.** A pipeline run's agents form one Work unit, with one stage per
+  agent the pipeline asks for and the run's alias states. Agents in a pane
+  stamped with a Work no run lists form one unit per Work. Any other agent
+  is a unit of its own.
+- **Helpers.** An agent that took another agent's request (a claimed peer
+  request, or a `[tend:req_…]` delivery) folds into the unit of the agent
+  it helps. A helper whose requester is gone is marked `orphan_helper`. A
+  session that only typed a request id is `probable_helper`. A session with
+  no prompt, response or recap is `empty_session`.
+- **Titles and lines.** The AI title, else the prompt read as a title, for a
+  solo agent; the Work id for a Work. The headline is the question when the
+  unit needs you, else the recap or the last response.
+- **Lanes.** Your turn when any stage needs you, Finished when every stage
+  is done, In progress otherwise. A finished unit with a working helper is
+  in progress; any unit with a helper that needs you is in Your turn.
+- **Usage caps.** A cap on this host's agent that an enabled
+  `rate_limited` rule (`swap_account` or `send_prompt`) covers keeps it in
+  progress, as `handled_limit`. Any other cap counts as needing you.
+- **Your turn order.** The decision queue (the same sections
+  `/api/decisions` returns) is interleaved with the units: longest wait
+  first, tend's own asks last.
+- **Grouping.** Each lane is grouped by project, a project placed where its
+  first item is.
+- **Finished units** carry `recent` (changed in the last 24 hours),
+  `reviewed`, `review_key` and `requested_by_person`. `requested_by_person`
+  is what counts toward Review.
+- **Backlog.** Queued Work that is not running is listed in `backlog`.
+
+Words a client owns (state labels, the fixed headlines such as "Waiting on
+claude · mini: …") come back as `{"key": …, …}` objects, so each client
+says them in its own language. The read is operator-only, like the decision
+queue: a viewer gets 403, an anonymous visitor 401. A paired device does not
+reach it.
+
+`POST /api/home/reviewed` with `{"id": "<unit id>", "review_key": "<the
+unit's review_key>"}` is **Looks Good** on a finished unit. The key names
+the result the person saw: if the unit changed since (another turn
+finished), tendd answers 409 and records nothing, so a mark never accepts a
+result nobody looked at. It records the same review mark Tend for Mac records (an
+accepted review whose idempotency key is `home:` plus the SHA-256 of the
+unit's id and revision), so a unit marked on the web is marked on the Mac
+too, and shows again once it changes. It is a control write (the token, or
+an operator session with the CSRF proof), audited like the decisions.
+
 ## Paired devices
 
 A phone (the Tend app for iPhone and iPad) does not use the dashboard
