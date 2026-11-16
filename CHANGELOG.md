@@ -7,18 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.10.21] - 2026-11-16
-
 ### Added
 
-- A paired device with `operate` can read one agent's recent output.
-  `POST /api/device/capture {host, session_id}` names the agent by its
-  session, and the server picks that agent's pane from the Fleet snapshot,
-  so a shell pane cannot be named. The output goes through Fleet under
-  `[fleet] capture_policy` and comes back as sanitized text, the last 400
-  lines and at most 64 KiB. A device runs one capture at a time. Every
-  attempt is an audit line, without the output. `GET /api/device` lists it
-  in `features`.
 - tendd computes Home's board itself (`GET /api/home`), by Tend for Mac's
   rules:
   - a pipeline run's agents grouped into one Work unit with stages;
@@ -32,6 +22,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Mac draws. `POST /api/home/reviewed` records Looks Good with the Mac's
   review key, so a unit marked in either place is marked in both.
 
+## [0.10.21] - 2026-11-16
+
+### Added
+
+- A paired device with `operate` can read one agent's recent output.
+  `POST /api/device/capture {host, session_id}` names the agent by its
+  session, and the server picks that agent's pane from the Fleet snapshot,
+  so a shell pane cannot be named. The output goes through Fleet under
+  `[fleet] capture_policy` and comes back as sanitized text, the last 400
+  lines and at most 64 KiB. A device runs one capture at a time. Every
+  attempt is an audit line, without the output. `GET /api/device` lists it
+  in `features`.
 - **Tend for Windows** (`tend-app.exe`, `crates/tend-app`): the tray app
   around a local tendd's Home, like Tend for Mac's menu bar. Notification
   area icon with the Tend mark, the dashboard's Home in a WebView2 window,
