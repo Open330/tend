@@ -9,7 +9,100 @@ WSL2 remains an option if you would rather run tmux.
 This document records what is true today, why, and what the platform gates in
 the tree are protecting.
 
+## Install a release
+
+Each release publishes `tend-vX.Y.Z-x86_64-pc-windows-msvc.zip` (`tend.exe`,
+`tendd.exe`, `tend-app.exe`, the licences and this page), its checksum
+`tend-vX.Y.Z-x86_64-pc-windows-msvc.sha256`, and `install-tend.ps1`. In a normal (not elevated) PowerShell:
+
+```powershell
+irm https://github.com/Open330/tend/releases/latest/download/install-tend.ps1 -OutFile install-tend.ps1
+powershell -ExecutionPolicy Bypass -File install-tend.ps1
+```
+
+It needs no administrator rights and changes only your user:
+
+- checks the zip against the published SHA-256 and stops on a mismatch;
+- installs into `%LOCALAPPDATA%\Programs\tend` (or `-InstallDir`, a new or
+  empty folder) and adds that folder to
+  your user PATH (terminals opened afterwards see it), warning when another
+  `tend.exe` comes first on PATH;
+- registers a Task Scheduler task, `tend-daemon-<your SID>`, that starts
+  tendd at logon (`tend daemon start`, at your normal level, with no console
+  window);
+- turns on the local dashboard the app talks to
+  (`tend init --component dashboard`, which keeps an existing `[dashboard]`);
+- starts tendd, and starts `tend-app --install`, which registers its
+  notifications and starts it with Windows (the tray menu's *Start with
+  Windows* turns that off);
+- adds *Tend* to the Start menu;
+- records what it created in `install-tend.json` in the install folder.
+
+It changes nothing that belongs to another install: a task, Start menu
+entry or start-with-Windows entry that points elsewhere is left alone (or
+the install stops before changing anything), and tend commands it runs
+ignore a `TEND_SOCKET`, `TEND_CONFIG` or `XDG_*` set only in that shell.
+
+Options: `-Version v0.10.24` for a given release (default the latest),
+`-NoApp` for the CLI and daemon only, `-NoShortcut`, `-NoStart`, `-InstallDir`,
+and `-Archive <zip>` to install a zip you already have (its `.sha256` next to
+it). The installed copy remembers its folder and whether it has the app and
+the shortcut. It warns when rmux is missing (`winget install Helvesec.RMUX`); tendd
+runs without it but sees no panes. Then run `tend init` from an rmux pane for
+agent hooks and key bindings (see *Native install* below).
+
+**Upgrade**: run the installed copy again, with `-Version` for anything
+other than the latest. It stops tend-app and tendd from the install folder,
+replaces the binaries and starts both:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\Programs\tend\install-tend.ps1"
+```
+
+`tend upgrade` still builds from a source checkout and does not update a
+release install.
+
+**Uninstall**: `tend init --uninstall` first if you ran `tend init` (it removes
+the hooks and rmux bindings), then
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\Programs\tend\install-tend.ps1" -Uninstall
+```
+
+which removes what `install-tend.json` lists: the start-with-Windows entry
+and notification registration (when they point at this install), tendd and
+tend-app, the logon task, the Start menu entry, the PATH entry, the
+installed files, and the folder if nothing else is in it. Settings and data stay in
+`%APPDATA%\tend` and `%LOCALAPPDATA%\tend`; delete those by hand to start
+over.
+
+**Not code-signed.** The binaries carry no signature, so Windows treats them
+as from an unknown publisher. What that looked like on a clean Windows 11
+(checked 2026-11-19):
+
+- Through the script, nothing is shown: `Invoke-WebRequest` does not mark
+  files as downloaded from the internet, and the script unblocks the
+  installed files.
+- A zip downloaded in a browser and unpacked in Explorer keeps that mark,
+  and opening `tend-app.exe` from it shows Microsoft Defender SmartScreen's
+  *Windows protected your PC: Microsoft Defender SmartScreen prevented an
+  unrecognized app from starting*. *More info* then *Run anyway* starts it;
+  installing through the script avoids the prompt.
+- Smart App Control was in evaluation mode there and blocked nothing. When
+  it is **on** (enforcement), it lets an app run only if Microsoft's
+  intelligence recognises it as safe or it is signed by a trusted
+  publisher, so an unrecognised unsigned Tend build may be blocked, with no
+  per-app override. Enforcement mode was not tested.
+- A script downloaded in a browser is marked too, so PowerShell's default
+  `RemoteSigned` refuses it; `-ExecutionPolicy Bypass` above runs it for that
+  one call.
+
+There is no winget package yet.
+
 ## Native install (rmux)
+
+From source:
+
 
 ```powershell
 winget install Helvesec.RMUX          # or any rmux >= 0.10 on PATH (see below)
@@ -136,8 +229,8 @@ real client:
   tmux server and is not expected to work.
 - **`tend fleet attach`** through Windows OpenSSH can let a remote tmux's
   terminal-query reply (`…;42c`) reach the remote shell as typed text.
-- **`tend upgrade`** needs a source checkout on Windows (no prebuilt release
-  is published for it). It moves the running `tend.exe`/`tendd.exe` aside
+- **`tend upgrade`** needs a source checkout on Windows; a release install
+  upgrades by running `install-tend.ps1` again. It moves the running `tend.exe`/`tendd.exe` aside
   before `cargo install`, since Windows refuses to overwrite a running
   executable but allows renaming one.
 - Re-exec on upgrade spawns a successor and exits instead of `exec`ing in
@@ -166,6 +259,9 @@ Mac's menu bar and Home: an icon in the notification area with the Tend
 mark (amber when something needs you, red when the dashboard cannot be
 reached), a Home window, toasts, and start with Windows. Design and its
 security review: [proposals/WINDOWS_APP.md](proposals/WINDOWS_APP.md).
+
+`install-tend.ps1` (see *Install a release*) sets all of this up. From
+source:
 
 ```powershell
 tend init --component dashboard       # the app talks to the local dashboard

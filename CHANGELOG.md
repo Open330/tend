@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Windows releases: each tag publishes
+  `tend-vX.Y.Z-x86_64-pc-windows-msvc.zip` (tend, tendd and tend-app) with its
+  SHA-256, and `install-tend.ps1`, a per-user installer that checks the
+  checksum, puts Tend on PATH, starts tendd at logon and tend-app with
+  Windows, upgrades in place when run again and removes everything but your
+  data with `-Uninstall` (docs/WINDOWS.md, *Install a release*). The
+  binaries are not code-signed.
+
 ### Changed
 
 - Tend for Windows shows the same Home board as the browser: Work units,
