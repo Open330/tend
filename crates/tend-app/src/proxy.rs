@@ -3,10 +3,12 @@
 //! The `WebView` loads Home from the app's own origin and every request it
 //! makes comes here; the app forwards it over a proved connection and adds
 //! the token, so the page never holds it. Only what Home uses is forwarded:
-//! its pages and assets, the health, Fleet and decision reads, and the two
-//! audited decision writes. Pane prompts, Fleet commands, terminal input,
-//! work control and operator administration are refused even though the
-//! token would allow them.
+//! its pages and assets, the health, board, Fleet and decision reads, and
+//! the audited decision writes (answer or decide an item, mark a finished
+//! unit looked at). Pane prompts, Fleet commands, terminal input, work
+//! control and operator administration are refused even though the token
+//! would allow them. `/api/access` is refused too: without it the page
+//! hides Explore, Settings, pane links and Start Work, which need those.
 
 use crate::client::{Client, ClientError, Response};
 
@@ -29,14 +31,18 @@ pub fn allowed(method: &str, path: &str) -> bool {
                 "/home"
                     | "/needs"
                     | "/api/health"
+                    | "/api/home"
                     | "/api/fleet"
                     | "/api/decisions"
                     | "/api/decisions/history"
             ) || path.strip_prefix("/static/").is_some_and(asset_path)
         }
-        "POST" => ["/api/decisions/requests/", "/api/decisions/reviews/"]
-            .iter()
-            .any(|prefix| path.strip_prefix(prefix).is_some_and(single_segment)),
+        "POST" => {
+            path == "/api/home/reviewed"
+                || ["/api/decisions/requests/", "/api/decisions/reviews/"]
+                    .iter()
+                    .any(|prefix| path.strip_prefix(prefix).is_some_and(single_segment))
+        }
         _ => false,
     }
 }
@@ -182,6 +188,9 @@ mod tests {
             ("GET", "/api/decisions?limit=50"),
             ("GET", "/api/decisions/history"),
             ("GET", "/api/health"),
+            ("GET", "/api/home"),
+            ("GET", "/api/home?limit=200"),
+            ("POST", "/api/home/reviewed"),
             ("POST", "/api/decisions/requests/req_18e8_1"),
             ("POST", "/api/decisions/reviews/rv_b884376fd0844f2e"),
         ] {
@@ -192,6 +201,13 @@ mod tests {
             ("GET", "/api/agents"),
             ("GET", "/api/panes/%251/output"),
             ("GET", "/api/operators"),
+            ("GET", "/api/access"),
+            ("GET", "/api/home/"),
+            ("GET", "/api/home/reviewed"),
+            ("GET", "/api/device/home"),
+            ("POST", "/api/home"),
+            ("POST", "/api/home/reviewed/x"),
+            ("PUT", "/api/home/reviewed"),
             ("GET", "/static/"),
             ("GET", "/static/../api/agents"),
             ("POST", "/api/panes/%251/prompt"),
