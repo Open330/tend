@@ -5,10 +5,24 @@
 # calls. install-tend.ps1 v0.10.24 shipped that way: the default online
 # install asked for tend-v0.10.24-.zip.
 #
+# What counts: the script's names are its parameters and every variable it
+# assigns outside a function ($x or $script:x). A function collides when it
+# assigns or loops over one of those names unqualified or as $local:x; a
+# write to $script:x, $global:x, $private:x (invisible to callees) or a
+# provider path ($env:x) does not. Function *parameters* are not analysed:
+# a parameter that shares a script name is a deliberate input and needs a
+# reviewer's eye, not this check. scripts/check-ps-scope.tests.ps1 holds the
+# cases.
+#
 #   pwsh -NoProfile -File scripts/check-ps-scope.ps1 scripts/install-windows.ps1
 param([Parameter(Mandatory = $true)][string[]]$Path)
 $ErrorActionPreference = 'Stop'
 $problems = New-Object System.Collections.Generic.List[string]
+
+# The name without a scope qualifier, lower-cased: $script:Target -> target.
+function Bare($variablePath) {
+    ($variablePath.UserPath -replace '^(script|local|private|global|using):', '').ToLowerInvariant()
+}
 
 function NameOf($expression) {
     # $x = ..., [type]$x = ...
@@ -27,7 +41,7 @@ foreach ($file in $Path) {
 
     $scriptNames = @{}
     if ($ast.ParamBlock) {
-        foreach ($p in $ast.ParamBlock.Parameters) { $scriptNames[$p.Name.VariablePath.UserPath.ToLowerInvariant()] = $true }
+        foreach ($p in $ast.ParamBlock.Parameters) { $scriptNames[(Bare $p.Name.VariablePath)] = $true }
     }
     # Assignments outside any function body are the script's own.
     $outside = $ast.FindAll({
@@ -40,7 +54,7 @@ foreach ($file in $Path) {
     }
     foreach ($assignment in $outside) {
         $name = NameOf $assignment.Left
-        if ($name -and -not $name.IsScript) { $scriptNames[$name.UserPath.ToLowerInvariant()] = $true }
+        if ($name -and -not $name.IsDriveQualified) { $scriptNames[(Bare $name)] = $true }
     }
 
     $functions = $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)
@@ -51,10 +65,10 @@ foreach ($file in $Path) {
         $locals += @($function.Body.FindAll({ param($node) $node -is [System.Management.Automation.Language.ForEachStatementAst] }, $true) |
             ForEach-Object { $_.Variable.VariablePath })
         foreach ($local in $locals) {
-            if (-not $local -or $local.IsScript -or $local.IsGlobal -or $local.IsDriveQualified) { continue }
-            $key = $local.UserPath.ToLowerInvariant()
+            if (-not $local -or $local.IsScript -or $local.IsGlobal -or $local.IsPrivate -or $local.IsDriveQualified) { continue }
+            $key = Bare $local
             if ($scriptNames.ContainsKey($key)) {
-                $problems.Add("${file}: function $($function.Name) sets `$$($local.UserPath), which hides the script's own `$$($local.UserPath) from what it calls; rename it")
+                $problems.Add("${file}: function $($function.Name) sets `$$($local.UserPath), which hides the script's own `$$(Bare $local) from what it calls; rename it")
             }
         }
     }
@@ -64,4 +78,4 @@ if ($problems.Count) {
     $problems | Sort-Object -Unique | ForEach-Object { Write-Output "::error::$_" }
     exit 1
 }
-Write-Output "ok: no function shadows a script-level variable in $($Path -join ', ')"
+Write-Output "ok: no function assigns or loops over a script-level name in $($Path -join ', ') (function parameters are not checked)"

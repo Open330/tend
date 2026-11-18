@@ -204,7 +204,9 @@ jobs:
       # one (PowerShell names ignore case), which broke the v0.10.24 install.
       - name: install-tend.ps1 scope check
         shell: pwsh
-        run: pwsh -NoProfile -File scripts/check-ps-scope.ps1 scripts/install-windows.ps1
+        run: |
+          pwsh -NoProfile -File scripts/check-ps-scope.tests.ps1
+          pwsh -NoProfile -File scripts/check-ps-scope.ps1 scripts/install-windows.ps1
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
