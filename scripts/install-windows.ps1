@@ -108,6 +108,21 @@ function AddToPath([string]$dir) {
     Say "added $dir to your PATH (new terminals see it)"
 }
 
+# A new process's PATH is the machine PATH, then the user PATH. Name any
+# other tend.exe that comes first, since that is the one a terminal runs.
+function WarnShadowed([string]$dir) {
+    $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+    foreach ($entry in (($machine + ';' + (UserPath).Raw) -split ';')) {
+        if (-not $entry) { continue }
+        $expanded = [Environment]::ExpandEnvironmentVariables($entry)
+        if (SamePath $expanded $dir) { return }
+        if (Test-Path -LiteralPath (Join-Path $expanded 'tend.exe')) {
+            Warn "another tend.exe comes first on PATH: $expanded. Remove it, or that folder from PATH, so terminals run this install."
+            return
+        }
+    }
+}
+
 function RemoveFromPath([string]$dir) {
     $current = UserPath
     $entries = @($current.Raw -split ';' | Where-Object { $_ })
@@ -131,12 +146,12 @@ function StopTend([string]$dir) {
         Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
     }
     $tend = Join-Path $dir 'tend.exe'
-    if ((RunningFrom 'tendd' $dir).Count -gt 0 -and (Test-Path $tend)) {
+    if (@(RunningFrom 'tendd' $dir).Count -gt 0 -and (Test-Path $tend)) {
         Say 'stopping tendd'
         & $tend daemon stop 2>&1 | Out-Null
     }
     $deadline = (Get-Date).AddSeconds(15)
-    while ((RunningFrom 'tendd' $dir).Count -gt 0 -and (Get-Date) -lt $deadline) {
+    while (@(RunningFrom 'tendd' $dir).Count -gt 0 -and (Get-Date) -lt $deadline) {
         Start-Sleep -Milliseconds 300
     }
     foreach ($p in (RunningFrom 'tendd' $dir)) {
@@ -167,10 +182,10 @@ function RegisterDaemonTask([string]$tend) {
 function StartDaemon([string]$dir) {
     try { Start-ScheduledTask -TaskName $TaskName } catch { }
     $deadline = (Get-Date).AddSeconds(15)
-    while ((RunningFrom 'tendd' $dir).Count -eq 0 -and (Get-Date) -lt $deadline) {
+    while (@(RunningFrom 'tendd' $dir).Count -eq 0 -and (Get-Date) -lt $deadline) {
         Start-Sleep -Milliseconds 300
     }
-    if ((RunningFrom 'tendd' $dir).Count -gt 0) {
+    if (@(RunningFrom 'tendd' $dir).Count -gt 0) {
         Say 'tendd is running'
         return
     }
@@ -273,6 +288,7 @@ function Install {
     }
 
     AddToPath $InstallDir
+    WarnShadowed $InstallDir
     $env:Path = "$InstallDir;$env:Path"
     $tend = Join-Path $InstallDir 'tend.exe'
     $app = Join-Path $InstallDir 'tend-app.exe'

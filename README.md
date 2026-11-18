@@ -163,6 +163,22 @@ tend status
 tend watch
 ```
 
+### Windows
+
+Windows 11 (x64) gets the CLI, the daemon and the tray app from each release,
+per user and without administrator rights:
+
+```powershell
+irm https://github.com/Open330/tend/releases/latest/download/install-tend.ps1 -OutFile install-tend.ps1
+powershell -ExecutionPolicy Bypass -File install-tend.ps1
+```
+
+It checks the SHA-256, puts Tend on your PATH, starts tendd at logon and
+tend-app with Windows. Run it again to upgrade, or with `-Uninstall` to
+remove it. The binaries are not code-signed yet. See
+[docs/WINDOWS.md](docs/WINDOWS.md#install-a-release) for what Windows shows
+about that, and for rmux, which tend needs to see panes.
+
 ### Build Tend for Mac
 
 The native macOS app embeds a libghostty terminal while keeping shells and
