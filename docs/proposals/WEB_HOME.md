@@ -307,9 +307,9 @@ The sheet has the Mac's three modes:
 - **Cards**: one result at a time, "1 of N".
 - **Inbox**: a list, J/K to move, and Mark All Reviewed… with an inline confirmation.
 
-Each mode shows Asked (the Mac's digest of the prompt) and the Agent's report, rendered as Markdown with DOM nodes, never markup. Each ends in Looks Good (E/L), Later (H), Send Back (R) or Open (O). Later moves a result to the end while the sheet is open. Send Back is the inspector's reply, sharing its draft and target check. The keys leave text fields, radios, buttons and links alone.
+Each mode shows Asked (the Mac's digest of the prompt) and the Agent's report, rendered as Markdown with DOM nodes, never markup. Each ends in Looks Good (E/L), Later (H), Send Back (R) or Open (O). Later moves a result to the end while the sheet is open. Send Back is the inspector's reply, sharing its draft and target check. The keys leave text fields and radios alone; a focused button or link keeps its arrows, Space and Return, while the letter keys still act.
 
-The board carries `review.asked` and `review.result` only for results still to review. `POST /api/home/instruction` records every answer and Send Back typed on the web as the Mac does: a `returned` review under `home-answer:` or `home-sendback:`. Before this, the web recorded none of them.
+The board carries `review.asked` and `review.result` only for results still to review. After a successful pane send, Home records the answer or Send Back, best effort, through `POST /api/home/instruction`, as the Mac does: a `returned` review under `home-answer:` or `home-sendback:`. A failed record never resends the words. Before this, the web recorded none of them.
 
 ![Digest](web-home/w7-web-review-digest-desktop-light.png)
 ![Cards with Send Back open, dark](web-home/w7-web-review-sendback-desktop-dark.png)
@@ -350,7 +350,9 @@ Nothing was retired in this wave. Every old link still opens where it did, or re
   - No Recorded commands, because turn evidence has no web route yet.
   - No swipe gestures.
   - Digests are cut by code point, where Swift cuts by grapheme.
-- **Explore**: needing attention comes from the status group. So `asked` is pinned, and uncovered rate limits are not, while the Mac uses `needsAttention`, which needs the limit policy's coverage. Collation is the browser's numeric `Intl.Collator`, not `localizedStandardCompare`.
+  - The board cuts `review.result` at 4,000 characters (`result_truncated`, "the rest is in the pane"), so the polled board stays bounded; the Mac shows the whole response.
+  - The report's Markdown is a small DOM-only subset (headings, lists, code blocks, inline code, bold): no links, emphasis or tables.
+- **Explore**: both clients pin agents that asked. The web takes needing attention from its status group, so `asked` sits in the attention group (the Mac groups it under idle), and uncovered rate limits are left out, where the Mac's `needsAttention` includes them; that needs the limit policy's coverage. Messages reads this daemon's history; a link naming another Fleet host points to that host's dashboard instead of being read here. Collation is the browser's numeric `Intl.Collator`, not `localizedStandardCompare`.
 - **Workbench**: the rows marked *Stays* above.
 
 ### Screenshots
