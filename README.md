@@ -242,7 +242,8 @@ The phone talks to the dashboard, so the dashboard has to be on and
 reachable from the phone over HTTPS: keep it on loopback and put a reverse
 proxy or tunnel that terminates TLS in front of it (see
 [docs/DASHBOARD.md](docs/DASHBOARD.md)). Plain
-`http://` works only for `127.0.0.1`, which on a phone means the simulator.
+`http://` works only for loopback addresses (`127.0.0.1`, `localhost` or
+`[::1]`), for local and simulator development.
 
 **Pairing.** Enter the dashboard's address in the app. It shows a code such
 as `BCDF-GHJK`. In the dashboard, open **Settings → Manage access… →

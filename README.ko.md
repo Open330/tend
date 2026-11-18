@@ -232,8 +232,8 @@ Tend for iPhone and iPad는 Tend 대시보드 하나의 Home을 보여 줍니다
 휴대폰은 대시보드와 통신하므로, 대시보드를 켜고 휴대폰에서 HTTPS로 접속할 수
 있게 해야 합니다. 대시보드는 loopback에 두고, 그 앞에 TLS를 처리하는 reverse
 proxy나 터널을 둡니다([docs/DASHBOARD.md](docs/DASHBOARD.md) 참고). 일반
-`http://` 주소는 `127.0.0.1`에만 허용되므로 실제 기기에서는 쓸 수 없고
-시뮬레이터에서만 쓸 수 있습니다.
+`http://` 주소는 loopback 주소(`127.0.0.1`, `localhost`, `[::1]`)에만 허용되므로
+로컬 개발과 시뮬레이터에서만 쓸 수 있습니다.
 
 **페어링.** 앱에 대시보드 주소를 입력하면 `BCDF-GHJK` 같은 코드가 표시됩니다.
 대시보드에서 **Settings → Manage access… → Devices**를 열고 그 코드를 입력합니다.

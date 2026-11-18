@@ -17,9 +17,10 @@ generic windows are listed separately as **Unlinked executions**. The
 timeline and raw agent/pane/terminal inventories are collapsed secondary
 panels there.
 
-Data is updated live over Server-Sent Events, and optional control actions
-are protected by a bearer token that can be pasted into the browser like a
-PAT.
+Home refreshes by polling while the page is visible. The classic workbench
+reads a live Server-Sent Events stream (and polls its other inventories).
+Optional control actions are protected by a bearer token that can be pasted
+into the browser like a PAT.
 
 The dashboard is **off by default** and **loopback-only when on by default**.
 Token authentication is the default auth mode, and an enabled dashboard must
@@ -31,7 +32,7 @@ bound to loopback and configure the public origin as described below.
 
 | Path                | What it returns                                                                |
 | ------------------- | ------------------------------------------------------------------------------ |
-| `GET /`, `/home`, `/explore`, `/settings` | The shell's pages: Home, Explore, Settings. A visitor who is not an operator is sent to `/workbench`. |
+| `GET /`, `/home`, `/explore`, `/settings` | The shell's pages: Home, Explore, Settings. At `/`, a visitor without operator access is sent to `/workbench`; the other shell addresses show the sign-in state. |
 | `GET /workbench`    | The classic workbench, with its landing page, sign-in and public read view.   |
 | `GET /static/*`     | Embedded JS/CSS/font assets.                                                   |
 | `GET /api/health`   | `{ ok, version, protocol }`                                                    |
