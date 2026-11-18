@@ -5284,12 +5284,16 @@ mod tests {
             .and_then(|value| value.to_str().ok())
     }
 
-    /// `GET /api/home` and `POST /api/home/reviewed`: operator only, under
+    /// `GET /api/home`, `POST /api/home/reviewed` and `POST
+    /// /api/home/instruction`: operator only, under
     /// both auth modes. A read needs no CSRF proof; a session-authorized
     /// write does. The board is `no-store` whatever the answer.
     #[tokio::test]
     async fn home_api_route_matrix() {
         let unknown = json!({"id": "agent:nope", "review_key": "home:00"});
+        let instruction = json!({
+            "id": "agent:nope", "session_id": "s", "kind": "send_back", "text": "more",
+        });
         for auth in [DashboardAuthMode::Token, DashboardAuthMode::PublicRead] {
             let matrix = home_matrix(auth).await;
             for (principal, headers) in &matrix.credentials {
@@ -5325,6 +5329,20 @@ mod tests {
                 )
                 .await;
                 assert_eq!(response.status(), reviewed, "{auth:?} {principal:?} POST");
+                // The instruction record has the same gate as Looks Good.
+                let response = matrix_call(
+                    &matrix.app,
+                    "POST",
+                    "/api/home/instruction",
+                    headers,
+                    Some(instruction.clone()),
+                )
+                .await;
+                assert_eq!(
+                    response.status(),
+                    reviewed,
+                    "{auth:?} {principal:?} POST instruction"
+                );
             }
         }
     }
@@ -5399,11 +5417,14 @@ mod tests {
         for (method, uri, expected) in [
             ("GET", "/api/home", StatusCode::FORBIDDEN),
             ("POST", "/api/home/reviewed", StatusCode::FORBIDDEN),
+            ("POST", "/api/home/instruction", StatusCode::FORBIDDEN),
             ("GET", "/api/device/home", StatusCode::UNAUTHORIZED),
             ("GET", "/home", StatusCode::OK),
             ("GET", "/workbench", StatusCode::OK),
         ] {
-            let body = (method == "POST").then(|| json!({"id": "x", "review_key": "home:00"}));
+            let body = (method == "POST").then(|| {
+                json!({"id": "x", "review_key": "home:00", "session_id": "s", "kind": "answer", "text": "t"})
+            });
             let response = matrix_call(&app, method, uri, &[], body).await;
             assert_eq!(response.status(), expected, "{method} {uri}");
         }
