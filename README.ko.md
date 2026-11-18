@@ -44,7 +44,8 @@
 
 ## 시작하기
 
-필요 조건: tmux 3.x(또는 herdr), Unix-like OS.
+macOS와 Linux에서는 tmux 3.x(또는 herdr)가, Windows 11에서는 rmux가 필요합니다.
+플랫폼마다 무엇을 쓸 수 있는지는 [플랫폼](#플랫폼)에 정리했습니다.
 
 ```bash
 brew install open330/tap/tend
@@ -118,26 +119,75 @@ Tend는 두 층으로 되어 있습니다. **Attention** 층은 이미 돌리는
 | `tend timeline` | agent 작업/대기/error, human interaction, tmux foreground를 full-screen TUI timeline으로 표시. |
 | `tend stats activity` | stats/report에 들어간 raw duration ledger 조회. |
 | Tend for Mac | Home(Work 단위를 Your turn·In progress·Finished lane으로 표시)에서 시작해 Explore·Inbox·Ask·Shells·Files를 제공하는 네이티브 앱, libghostty 터미널과 알림. 네이티브 PTY는 `tendd`가 소유. |
-| Dashboard | 선택적 loopback HTTP UI. 실시간 업데이트·timeline·협업 graph와 [OIDC 로그인 기반 pane/window 공유](docs/DASHBOARD.md#invite-someone-to-a-pane)(조회/프롬프트 권한)를 지원. |
+| Dashboard | `tendd`가 제공하는 선택적 loopback 웹 UI. Home(Mac과 같은 lane), Explore(모든 host의 pane), Settings(접근 권한, 페어링한 기기, 공유)와 기존 workbench(`/workbench`: Work board, timeline, 협업 graph)를 제공하고, [OIDC 로그인 기반 pane/window 공유](docs/DASHBOARD.md#invite-someone-to-a-pane)(조회/프롬프트 권한)를 지원. |
+| Tend for iPhone and iPad | 휴대폰에서 보는 Home. 질문에 답하고 결과를 결정하며, 허용하면 host와 agent를 보고 새 작업도 시작. 대시보드 하나와 페어링. [휴대폰에서 쓰기](#휴대폰에서-쓰기) 참고. |
+| Tend for Windows | Home 창(WebView2)과 알림 토스트를 제공하는 트레이 앱. [docs/WINDOWS.md](docs/WINDOWS.md#tend-for-windows-the-app) 참고. |
 | BarShelf widget (macOS) | active/working/waiting/error agent를 host별(로컬 또는 SSH)로 메뉴바 popover에서 요약. |
 | Notifications | agent가 attention을 필요로 할 때 desktop alert. |
 
+## 플랫폼
+
+| | macOS | Linux | Windows 11 (x64) | iPhone, iPad |
+| --- | --- | --- | --- | --- |
+| `tend`와 `tendd` | Homebrew, 릴리스 아카이브, 소스 | Homebrew, 릴리스 아카이브, 소스 | `install-tend.ps1`(v0.10.23 다음 릴리스부터), 소스 | 없음 |
+| 관측하는 pane | tmux, herdr, rmux | tmux, herdr, rmux | rmux, 또는 WSL2 안의 tmux | 없음 |
+| 앱 | Tend for Mac(Homebrew cask, 공증된 DMG) | 없음. 대시보드를 사용 | Tend for Windows 트레이 앱(릴리스 zip에 포함) | Tend for iPhone and iPad(TestFlight, 소유자 기기 전용. 그 밖에는 직접 빌드) |
+| 웹 대시보드 | 지원 | 지원 | 지원 | Safari 또는 앱으로 사용 |
+
+릴리스 아카이브는 `aarch64-apple-darwin`, `x86_64-apple-darwin`,
+`aarch64-unknown-linux-gnu`, `x86_64-unknown-linux-gnu`용으로 나오고,
+`x86_64-pc-windows-msvc`용은 v0.10.23 다음 릴리스부터 나옵니다. 어느 앱도
+App Store, Mac App Store, winget에 올라가 있지 않습니다. Mac 앱은 서명과 공증을
+거쳤지만 Windows 바이너리는 코드 서명이 되어 있지 않습니다.
+
 ## 다른 설치 방법
 
-주 설치 경로는 위의 Homebrew입니다. Mac 앱은 cask로 설치합니다(공증됨, 앱 자체
-업데이트 기능이 없어 Homebrew로 업데이트합니다).
+### macOS
+
+위의 Homebrew 명령이 `tend`와 `tendd`를 설치합니다. Mac 앱은 cask로 설치합니다.
+공증된 앱이고, 앱 안에 업데이트 기능이 없으므로 Homebrew로 업데이트합니다.
 
 ```bash
 brew install --cask open330/tap/tend-app
 ```
 
-또는 원샷 설치 스크립트(소스 빌드, Rust 1.89+ 필요):
+앱 안에 `tend`와 `tendd`가 들어 있으므로 formula 없이도 동작합니다.
+[docs/INSTALL.ko.md](docs/INSTALL.ko.md#tend-for-mac)를 참고하세요.
+
+### Linux
+
+같은 Homebrew formula를 Linux용 Homebrew(arm64, x86_64)에서도 쓸 수 있습니다.
+Homebrew 없이 설치하려면 [Releases 페이지](https://github.com/Open330/tend/releases)에서
+릴리스 아카이브를 받아 `tend`와 `tendd`를 `PATH`에 두고 `tend init`을 실행합니다.
+`tend init`은 `tendd`용 systemd user unit도 설치할 수 있습니다.
+
+### Windows
+
+v0.10.23 다음 릴리스부터 Windows 11(x64)용 CLI, 데몬, 트레이 앱이 함께
+배포됩니다. 관리자 권한 없이 현재 사용자에게만 설치합니다.
+
+```powershell
+irm https://github.com/Open330/tend/releases/latest/download/install-tend.ps1 -OutFile install-tend.ps1
+powershell -ExecutionPolicy Bypass -File install-tend.ps1
+```
+
+스크립트는 SHA-256을 확인하고, Tend를 PATH에 추가하며, 로그온할 때 tendd를,
+Windows가 시작할 때 tend-app을 실행하도록 등록합니다. 다시 실행하면
+업그레이드하고, `-Uninstall`을 붙이면 제거합니다. 바이너리는 아직 코드 서명이
+되어 있지 않고 winget 패키지도 없습니다. 이 때문에 Windows가 무엇을 표시하는지,
+그리고 Tend가 pane을 보려면 필요한 rmux는
+[docs/WINDOWS.md](docs/WINDOWS.md#install-a-release)에 정리했습니다. 그 릴리스가
+나오기 전에는 같은 문서에 따라 Windows에서 소스로 빌드합니다.
+
+### 소스에서 설치
+
+원샷 설치 스크립트는 소스에서 빌드합니다(Rust 1.89 이상 필요).
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Open330/tend/main/scripts/install.sh | sh
 ```
 
-source에서 설치:
+직접 설치하려면 다음과 같이 합니다.
 
 ```bash
 git clone https://github.com/Open330/tend.git
@@ -155,6 +205,58 @@ tend daemon status
 tend status
 tend watch
 ```
+
+### Tend for Mac 빌드
+
+네이티브 macOS 앱은 libghostty 터미널을 내장하고, 셸과 에이전트는 `tendd`에 둡니다.
+그래서 앱을 닫아도 셸과 에이전트는 멈추지 않습니다. Ghostty, 그 Swift surface,
+필요한 Zig 컴파일러는 버전을 고정하고 검증하며, Tend는 미리 빌드된 터미널
+바이너리를 쓰지 않고 자체 XCFramework를 로컬에서 빌드합니다.
+
+```bash
+brew install xcodegen
+apps/tend-macos/Scripts/build-app.sh --open
+```
+
+빌드한 뒤 `apps/tend-macos/Scripts/smoke-test.sh`로 비대화형 스모크 테스트를
+실행할 수 있습니다. 구조, 빌드 입력, IPC 계약은 [Tend for Mac](docs/MACOS.md)에
+있습니다.
+
+## 휴대폰에서 쓰기
+
+Tend for iPhone and iPad는 Tend 대시보드 하나의 Home을 보여 줍니다. 나를 기다리는
+일, 진행 중인 일, 끝난 일이 표시됩니다. 지금은 소유자 기기에서만 TestFlight로
+쓰고 있고 App Store에는 없습니다. 다른 사람은
+[apps/tend-ios](apps/tend-ios/README.md)에서 직접 빌드합니다.
+
+휴대폰은 대시보드와 통신하므로, 대시보드를 켜고 휴대폰에서 HTTPS로 접속할 수
+있게 해야 합니다. 대시보드는 loopback에 두고, 그 앞에 TLS를 처리하는 reverse
+proxy나 터널을 둡니다([docs/DASHBOARD.md](docs/DASHBOARD.md) 참고). 일반
+`http://` 주소는 `127.0.0.1`에만 허용되므로 실제 기기에서는 쓸 수 없고
+시뮬레이터에서만 쓸 수 있습니다.
+
+**페어링.** 앱에 대시보드 주소를 입력하면 `BCDF-GHJK` 같은 코드가 표시됩니다.
+대시보드에서 **Settings → Manage access… → Devices**를 열고 그 코드를 입력합니다.
+휴대폰은 대시보드 토큰을 받지 않고 pane에 입력하지도 않으며, 자기 전용 키를 받습니다.
+
+**권한 범위.** 승인하는 operator가 둘 중 하나를 고릅니다.
+
+- **decide**(기본값): 대시보드가 다루는 모든 host에서 질문을 읽고 답하며,
+  결과를 승인하거나 거절합니다.
+- **operate**(따로 표시되는 체크 상자이며 기본으로 꺼져 있음): 위 권한에 더해
+  각 host의 상태, 에이전트, 에이전트의 최근 출력을 보고, host의 pipeline으로
+  에이전트가 이미 쓰는 프로젝트 폴더에서 **새** 작업을 시작합니다. 기존 Work를
+  지정하거나 멈출 수는 없고, 작업을 시작하려면 `[dashboard] allow_work_start`가
+  켜져 있어야 합니다.
+
+**위험.** 결정은 실제 권한입니다. 답 하나로 에이전트가 작업을 진행할 수 있습니다.
+휴대폰에서 시작한 작업은 다른 `tend work up`과 마찬가지로 권한 확인을 건너뛰고
+에이전트를 실행합니다. 지금 손에 든 기기에 표시된 코드만 승인하세요. 누군가 보내
+준 코드를 승인하면 *그 사람의* 기기가 페어링됩니다. 페어링은 최대 90일 유지되고,
+30일 동안 쓰지 않으면 끝납니다. 기기를 잃어버리면 같은 Devices 목록에서 바로
+**Limit to deciding**이나 **Remove**를 누르세요. 승인한 operator를 제거하거나
+대시보드 토큰을 바꿔도 페어링은 풀리지 않습니다. 자세한 내용은
+[docs/DASHBOARD.md](docs/DASHBOARD.md#paired-devices)에 있습니다.
 
 ## tmux에서 작업 단위로 정리하기
 
@@ -456,6 +558,10 @@ tend는 여러 터미널 멀티플렉서 백엔드에서 에이전트를 관측�
 | 온보딩과 work/agent 운영 정책 | [docs/ONBOARDING.ko.md](docs/ONBOARDING.ko.md) |
 | MCP control plane (`tend mcp`) | [docs/MCP.md](docs/MCP.md) |
 | Physical SSH fleet | [docs/FLEET.ko.md](docs/FLEET.ko.md) |
+| Windows(설치, rmux, 트레이 앱) | [docs/WINDOWS.md](docs/WINDOWS.md) |
+| Tend for Mac | [docs/MACOS.md](docs/MACOS.md) |
+| Tend for iPhone and iPad(빌드와 테스트) | [apps/tend-ios/README.md](apps/tend-ios/README.md) |
+| 페어링한 기기(휴대폰 페어링과 권한 범위) | [docs/DASHBOARD.md#paired-devices](docs/DASHBOARD.md#paired-devices) |
 | Live TUI와 prompt composer | [docs/WATCH.ko.md](docs/WATCH.ko.md) |
 | CLI dashboard | [docs/DASHBOARD_CLI.ko.md](docs/DASHBOARD_CLI.ko.md) |
 | Stats, report, activity ledger | [docs/ACTIVITY.ko.md](docs/ACTIVITY.ko.md) |

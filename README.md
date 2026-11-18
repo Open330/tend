@@ -44,7 +44,8 @@ For practice in real tmux, install Tend and use `tend onboard` below.
 
 ## Get started
 
-Requires tmux 3.x (or herdr) and a Unix-like OS.
+Needs tmux 3.x (or herdr) on macOS or Linux, or rmux on Windows 11; see
+[Platforms](#platforms) for what each one gets.
 
 ```bash
 brew install open330/tap/tend
@@ -125,26 +126,75 @@ See [Direction](docs/DIRECTION.md).
 | `tend automation` | Rules that act on agent state — the built-in one resumes a session after its usage cap resets. |
 | `tend swap` | Restart agents on their own accounts with `--all --to same --when-idle`, or move agents onto another account (configured accounts, or the optional `aas` provider) and resume them in place — the rate-limited ones, named panes, or all. Part of the optional account module (`[modules] accounts`, on when your config already uses accounts). See [docs/ACCOUNT_SWAP.md](docs/ACCOUNT_SWAP.md). |
 | Tend for Mac | Native app that opens on Home (Work units in Your turn / In progress / Finished lanes), plus Explore, Inbox, Ask, Shells, and Files, with a libghostty terminal and notifications; native PTYs remain owned by `tendd`. |
-| Dashboard | Optional loopback HTTP UI with live updates, timeline, collaboration graphs, and [OIDC pane/window sharing](docs/DASHBOARD.md#invite-someone-to-a-pane) with view or prompt permissions. |
+| Dashboard | Optional loopback web UI served by `tendd`: Home (the Mac's lanes), Explore (every host's panes), Settings (access, paired devices, sharing), and the classic workbench (`/workbench`) with the Work board, timeline and collaboration graphs; plus [OIDC pane/window sharing](docs/DASHBOARD.md#invite-someone-to-a-pane) with view or prompt permissions. See [docs/DASHBOARD.md](docs/DASHBOARD.md). |
+| Tend for iPhone and iPad | Home on your phone: answer questions and decide results, and, if you allow it, see hosts and agents and start new work. Pairs with one dashboard. See [Tend on your phone](#tend-on-your-phone). |
+| Tend for Windows | Tray app with a Home window (WebView2) and toasts for what needs you. See [docs/WINDOWS.md](docs/WINDOWS.md#tend-for-windows-the-app). |
 | BarShelf widget (macOS) | Menu-bar popover summary of active, working, waiting, and error agents, per host (local or SSH). See [docs/WATCH.md](docs/WATCH.md#macos-menu-bar-with-barshelf). |
 | Notifications | Optional desktop alerts when agents need attention. |
 
+## Platforms
+
+| | macOS | Linux | Windows 11 (x64) | iPhone and iPad |
+| --- | --- | --- | --- | --- |
+| `tend` and `tendd` | Homebrew, release archive, source | Homebrew, release archive, source | `install-tend.ps1` (releases after v0.10.23), source | no |
+| Panes it watches | tmux, herdr, rmux | tmux, herdr, rmux | rmux, or tmux inside WSL2 | no |
+| App | Tend for Mac (Homebrew cask, notarized DMG) | none; use the dashboard | Tend for Windows tray app (in the release zip) | Tend for iPhone and iPad (TestFlight, owner's devices only; build it yourself otherwise) |
+| Web dashboard | yes | yes | yes | in Safari, or through the app |
+
+Release archives exist for `aarch64-apple-darwin`, `x86_64-apple-darwin`,
+`aarch64-unknown-linux-gnu`, `x86_64-unknown-linux-gnu`, and, from the
+first release after v0.10.23, `x86_64-pc-windows-msvc`. None of the apps are
+in the App Store, the Mac App Store or winget. The Mac app is signed and
+notarized; the Windows binaries are not code-signed.
+
 ## More install options
 
-Homebrew (above) is the main path. For the Mac app (notarized, updates
-through Homebrew since it has no built-in updater):
+### macOS
+
+Homebrew (above) installs `tend` and `tendd`. For the Mac app (notarized,
+updates through Homebrew since it has no built-in updater):
 
 ```bash
 brew install --cask open330/tap/tend-app
 ```
 
-Or the one-shot installer (builds from source, requires Rust 1.89+):
+The app carries its own `tend` and `tendd`, so it works without the formula.
+See [docs/INSTALL.md](docs/INSTALL.md#tend-for-mac).
+
+### Linux
+
+The same Homebrew formula works with Homebrew on Linux (arm64 and x86_64).
+Without Homebrew, unpack a release archive from the
+[Releases page](https://github.com/Open330/tend/releases), put `tend` and
+`tendd` on your `PATH`, and run `tend init`, which can also install a systemd
+user unit for `tendd`.
+
+### Windows
+
+Windows 11 (x64) gets the CLI, the daemon and the tray app from each release
+after v0.10.23, per user and without administrator rights:
+
+```powershell
+irm https://github.com/Open330/tend/releases/latest/download/install-tend.ps1 -OutFile install-tend.ps1
+powershell -ExecutionPolicy Bypass -File install-tend.ps1
+```
+
+It checks the SHA-256, puts Tend on your PATH, starts tendd at logon and
+tend-app with Windows. Run it again to upgrade, or with `-Uninstall` to
+remove it. The binaries are not code-signed yet, and there is no winget
+package. See [docs/WINDOWS.md](docs/WINDOWS.md#install-a-release) for what
+Windows shows about that, and for rmux, which tend needs to see panes.
+Until that release, build from source on Windows as that page describes.
+
+### From source
+
+The one-shot installer builds from source (requires Rust 1.89+):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Open330/tend/main/scripts/install.sh | sh
 ```
 
-Or from source:
+Or by hand:
 
 ```bash
 git clone https://github.com/Open330/tend.git
@@ -163,22 +213,6 @@ tend status
 tend watch
 ```
 
-### Windows
-
-Windows 11 (x64) gets the CLI, the daemon and the tray app from each release,
-per user and without administrator rights:
-
-```powershell
-irm https://github.com/Open330/tend/releases/latest/download/install-tend.ps1 -OutFile install-tend.ps1
-powershell -ExecutionPolicy Bypass -File install-tend.ps1
-```
-
-It checks the SHA-256, puts Tend on your PATH, starts tendd at logon and
-tend-app with Windows. Run it again to upgrade, or with `-Uninstall` to
-remove it. The binaries are not code-signed yet. See
-[docs/WINDOWS.md](docs/WINDOWS.md#install-a-release) for what Windows shows
-about that, and for rmux, which tend needs to see panes.
-
 ### Build Tend for Mac
 
 The native macOS app embeds a libghostty terminal while keeping shells and
@@ -196,6 +230,43 @@ non-interactive product smoke test.
 
 See [Tend for Mac](docs/MACOS.md) for the architecture, build inputs, and IPC
 contract.
+
+## Tend on your phone
+
+Tend for iPhone and iPad shows Home from one Tend dashboard: what needs you,
+what is in progress, and what finished. It is on TestFlight for the owner's
+own devices only, not in the App Store; anyone else builds it from
+[apps/tend-ios](apps/tend-ios/README.md).
+
+The phone talks to the dashboard, so the dashboard has to be on and
+reachable from the phone over HTTPS: keep it on loopback and put a reverse
+proxy or tunnel that terminates TLS in front of it (see
+[docs/DASHBOARD.md](docs/DASHBOARD.md)). Plain
+`http://` works only for `127.0.0.1`, which on a phone means the simulator.
+
+**Pairing.** Enter the dashboard's address in the app. It shows a code such
+as `BCDF-GHJK`. In the dashboard, open **Settings → Manage access… →
+Devices** and type that code. The phone never receives the dashboard token
+and never types into panes; it gets its own key.
+
+**Scopes.** The approving operator picks one:
+
+- **decide** (the default): read and answer questions, and accept or reject
+  results, on every host that dashboard covers.
+- **operate** (a separate, unticked box): also see each host's state, its
+  agents and their latest output, and start **new** work from a host's
+  pipelines in a project folder its agents already use. It cannot name or
+  stop an existing Work, and starting work needs `[dashboard]
+  allow_work_start` on.
+
+**The risk.** Deciding is real authority: an answer can tell an agent to go
+ahead. Work started from the phone runs agents with permissions bypassed, as
+any `tend work up` does. Approve only a code shown on a device you are
+holding right now; a code someone sends you pairs *their* device. A paired
+device lasts at most 90 days (30 days unused). **Limit to deciding** or
+**Remove** it in the same Devices list the moment you lose it; removing the
+approving operator or rotating the dashboard token does not unpair it. The
+details are in [docs/DASHBOARD.md](docs/DASHBOARD.md#paired-devices).
 
 ## Organize work in tmux
 
@@ -546,7 +617,10 @@ simultaneously.
 | MCP control plane (`tend mcp`) | [docs/MCP.md](docs/MCP.md) |
 | herdr host support | [docs/HERDR.md](docs/HERDR.md) |
 | rmux host support | [docs/RMUX.md](docs/RMUX.md) |
-| Native Windows (PowerShell + rmux) | [docs/WINDOWS.md](docs/WINDOWS.md) |
+| Native Windows (install, rmux, the tray app) | [docs/WINDOWS.md](docs/WINDOWS.md) |
+| Tend for Mac | [docs/MACOS.md](docs/MACOS.md) |
+| Tend for iPhone and iPad (build and test) | [apps/tend-ios/README.md](apps/tend-ios/README.md) |
+| Paired devices (phone pairing and scopes) | [docs/DASHBOARD.md#paired-devices](docs/DASHBOARD.md#paired-devices) |
 | Multi-host observation | [docs/MULTI_HOST.md](docs/MULTI_HOST.md) |
 | Physical SSH fleet | [docs/FLEET.md](docs/FLEET.md) |
 | Antigravity CLI (`agy`) support | [docs/ANTIGRAVITY.md](docs/ANTIGRAVITY.md) |
