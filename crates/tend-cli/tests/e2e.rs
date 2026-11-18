@@ -13,8 +13,14 @@ use std::time::{Duration, Instant};
 fn bin(name: &str) -> PathBuf {
     // Cargo only supplies paths for this package's binaries. Use the CLI as
     // the anchor so custom CARGO_TARGET_DIR and non-debug profiles also work.
-    Path::new(env!("CARGO_BIN_EXE_tend"))
-        .with_file_name(format!("{name}{}", std::env::consts::EXE_SUFFIX))
+    let path = Path::new(env!("CARGO_BIN_EXE_tend"))
+        .with_file_name(format!("{name}{}", std::env::consts::EXE_SUFFIX));
+    assert!(
+        path.exists(),
+        "{} is not built: run `cargo build -p {name}` with this profile and target dir first",
+        path.display()
+    );
+    path
 }
 
 /// Whether the daemon serves `path`. A Windows named pipe leaves no file;

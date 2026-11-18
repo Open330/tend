@@ -326,13 +326,16 @@ pub fn socket_path_or_default(socket: &str) -> PathBuf {
     if socket.contains('/') {
         return PathBuf::from(socket);
     }
-    resolve_socket_path(socket).unwrap_or_else(|| {
-        scanner::default_socket_dirs()
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| PathBuf::from("/tmp"))
-            .join(socket)
-    })
+    resolve_socket_path(socket)
+        .unwrap_or_else(|| default_socket_path(socket, &scanner::default_socket_dirs()))
+}
+
+/// Where tmux creates the socket for `-L <socket>`: the first of `dirs`.
+fn default_socket_path(socket: &str, dirs: &[PathBuf]) -> PathBuf {
+    dirs.first()
+        .cloned()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join(socket)
 }
 
 /// Build a tmux `Command` pinned to the specific server named by `socket` (a
@@ -1597,7 +1600,13 @@ mod tests {
     fn a_stopped_server_still_has_a_socket_path() {
         // Right after `kill-server` the socket file is gone; the name must
         // still point where tmux will recreate it, not at `/dev/null`.
-        let path = socket_path_or_default("__tend_stopped_server__");
+        // A test process never reads the user's socket directories
+        // (`scanner::own_tmux_dir_only`), so the user's own daemon's
+        // directories are named here.
+        let path = default_socket_path(
+            "__tend_stopped_server__",
+            &scanner::socket_dirs(None, false, scanner::current_uid()),
+        );
         assert_eq!(
             path.file_name().and_then(|name| name.to_str()),
             Some("__tend_stopped_server__")
