@@ -113,9 +113,32 @@ final class DecideFlowUITests: XCTestCase {
         let text = String(data: try JSONSerialization.data(withJSONObject: history ?? [:]), encoding: .utf8) ?? ""
         XCTAssertTrue(text.contains("app:\(deviceName)#"), "the decision was not recorded as the device")
 
-        // A decide-only device does not see agents, and says how to.
+        // A decide-only device does not see agents, says why, and asks for
+        // more from where it says so, keeping its key until approved.
         if app.buttons["lane-inProgress"].exists { app.buttons["lane-inProgress"].tap() }
-        XCTAssertTrue(app.staticTexts["Agents are not shown on this device"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["This device decides only"].firstMatch.waitForExistence(timeout: 5))
+        attach(app, "decide-only")
+        let repair = app.buttons["repair"].firstMatch
+        XCTAssertTrue(repair.exists)
+        repair.tap()
+        let ask = app.buttons["Ask the dashboard"].firstMatch
+        XCTAssertTrue(ask.waitForExistence(timeout: 5))
+        ask.tap()
+        let upgradeCode = app.staticTexts["upgradeCode"].firstMatch
+        XCTAssertTrue(upgradeCode.waitForExistence(timeout: 10), "no code for hosts and new work")
+        attach(app, "asking-for-hosts")
+        let (lookupStatus, looked) = try operatorCall("POST", "/api/devices/lookup", body: ["user_code": upgradeCode.label])
+        XCTAssertEqual(lookupStatus, 200)
+        XCTAssertEqual(((looked as? [String: Any])?["request"] as? [String: Any])?["scope"] as? String, "operate")
+        let (upgradeStatus, _) = try operatorCall("POST", "/api/devices/approve", body: ["user_code": upgradeCode.label, "scope": "operate"])
+        XCTAssertEqual(upgradeStatus, 200)
+        // The new key replaced the old one, here and on the dashboard.
+        XCTAssertTrue(app.staticTexts["This device decides only"].firstMatch.waitForNonExistence(timeout: 20), "still decide-only")
+        let (_, listed) = try operatorCall("GET", "/api/devices")
+        let mine = ((listed as? [String: Any])?["devices"] as? [[String: Any]])?.filter { $0["name"] as? String == deviceName } ?? []
+        XCTAssertEqual(mine.count, 1, "the old decide key was not removed")
+        XCTAssertEqual(mine.first?["scope"] as? String, "operate")
+        attach(app, "after-hosts-approved")
 
         // Sign out: the dashboard forgets this device.
         if isPad {

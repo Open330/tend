@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- iOS: a device paired to decide only now says why on In progress,
+  Finished, Hosts and every agent or Work it cannot open, with one button,
+  **Pair again with hosts and new work…**. That button asks the dashboard
+  for a new key while the device keeps deciding with its current one; once
+  an operator approves, the new key replaces the old one, and the old one
+  is removed on the dashboard. If nobody approves the code, nothing
+  changes. The app says when an operator allowed less than was asked for,
+  or limited the device later. Hosts lists the hosts the queue covers,
+  each with how many items need you, and the In progress count shows a
+  lock instead of a 0.
+- iOS: when `[dashboard] allow_work_start` is off, Start Work says so at
+  the top: who can turn it on, and that deciding and watching keep
+  working.
+
 ## [0.10.24] - 2026-11-19
 
 ### Added

@@ -98,10 +98,18 @@ struct LaneStrip: View {
                     withAnimation(.snappy) { selection = lane }
                 } label: {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(verbatim: "\(count)")
-                            .font(.title2.weight(.bold))
-                            .monospacedDigit()
-                            .foregroundStyle(lane == .yourTurn && count > 0 ? lane.tint : Color.primary)
+                        // A decide key cannot see agents: no count, not a 0.
+                        if lane == .inProgress, !model.operates {
+                            Image(systemName: "lock")
+                                .font(.title2.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .accessibilityLabel(String(localized: "Not shown on this device"))
+                        } else {
+                            Text(verbatim: "\(count)")
+                                .font(.title2.weight(.bold))
+                                .monospacedDigit()
+                                .foregroundStyle(lane == .yourTurn && count > 0 ? lane.tint : Color.primary)
+                        }
                         HStack(spacing: 5) {
                             // Four lanes leave no room for the dot.
                             if model.lanes.count <= 3 {
@@ -148,10 +156,14 @@ struct LaneColumn: View {
                     Text(lane.title)
                         .font(TendType.laneTitle)
                         .foregroundStyle(lane == .yourTurn && count > 0 ? lane.tint : Color.primary)
-                    Text(verbatim: "\(count)")
-                        .font(TendType.meta.weight(.semibold))
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
+                    if lane == .inProgress, !model.operates {
+                        Image(systemName: "lock").font(TendType.meta).foregroundStyle(.secondary)
+                    } else {
+                        Text(verbatim: "\(count)")
+                            .font(TendType.meta.weight(.semibold))
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
                     Spacer(minLength: 4)
                     Text(lane.subtitle).font(TendType.meta).foregroundStyle(.tertiary).lineLimit(1)
                 }
@@ -445,23 +457,109 @@ struct Empty: View {
     }
 }
 
-/// What a decide-only device cannot show, and how to get it.
+/// What a decide-only device cannot show, why, and the one button that
+/// asks the dashboard for more.
 struct DecideOnlyNotice: View {
     var compact = false
+    @Environment(AppModel.self) private var model
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label(String(localized: "Agents are not shown on this device"), systemImage: "lock")
+        VStack(alignment: .leading, spacing: 10) {
+            Label(String(localized: "This device decides only"), systemImage: "lock")
                 .font(TendType.body.weight(.semibold))
-            if !compact {
-                Text("This device was paired to decide only. To see hosts and agents here, and to start work, pair it again in Settings and choose hosts and new work.")
+            if !compact || model.upgrade != nil {
+                Text(explanation)
                     .font(TendType.meta)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            HostsAndWorkRequest(prominent: !compact)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .tendCard()
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("decideOnly")
+    }
+
+    private var explanation: String {
+        switch model.scopeNote {
+        case .grantedLess:
+            String(localized: "You asked for hosts and new work, and the operator allowed deciding only. Your turn works as before. To ask again, an operator has to approve it on the dashboard.")
+        case .limited:
+            String(localized: "An operator limited this device to deciding. Your turn works as before. To see hosts and agents again, ask again; an operator approves it on the dashboard.")
+        case nil:
+            String(localized: "Your turn works here. To also see what is in progress and finished, every host and its agents, and to start new work, ask the dashboard for hosts and new work. An operator approves it there.")
+        }
+    }
+}
+
+/// "Pair again with hosts and new work…": asks the dashboard while this
+/// device keeps its decide key, then shows the code an operator approves.
+struct HostsAndWorkRequest: View {
+    var prominent = true
+    @Environment(AppModel.self) private var model
+    @State private var confirming = false
+
+    var body: some View {
+        if let upgrade = model.upgrade {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("On a computer signed in to \(upgrade.origin.display), open **access ▸ Devices**, enter this code, and tick **Also let this device see every host and agent…**:")
+                    .font(TendType.meta)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(verbatim: upgrade.userCode)
+                    .font(.system(.title, design: .monospaced).weight(.bold))
+                    .kerning(2)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(TendColor.waiting.opacity(0.14), in: RoundedRectangle(cornerRadius: 10))
+                    .accessibilityIdentifier("upgradeCode")
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("Waiting for approval · expires \(upgrade.expires, style: .relative)")
+                        .font(TendType.meta)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 4)
+                    Button(String(localized: "Cancel"), role: .cancel) { model.cancelUpgrade() }
+                        .font(TendType.meta.weight(.medium))
+                        .accessibilityIdentifier("cancelUpgrade")
+                }
+                Text("Until then this device keeps deciding with its current key.")
+                    .font(TendType.meta)
+                    .foregroundStyle(.tertiary)
+            }
+        } else if model.pairing != nil {
+            VStack(alignment: .leading, spacing: 6) {
+                button
+                if let problem = model.upgradeProblem {
+                    Label(problem, systemImage: "exclamationmark.circle")
+                        .font(TendType.meta)
+                        .foregroundStyle(TendPalette.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("upgradeProblem")
+                }
+            }
+            .confirmationDialog(String(localized: "Ask for hosts and new work?"), isPresented: $confirming, titleVisibility: .visible) {
+                Button(String(localized: "Ask the dashboard")) { model.requestHostsAndWork() }
+            } message: {
+                Text("This device shows a code for an operator to approve on the dashboard. It keeps deciding meanwhile; once approved, the new key replaces this one. The operator may still allow deciding only.")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var button: some View {
+        let label = String(localized: "Pair again with hosts and new work…")
+        if prominent {
+            Button(label) { confirming = true }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("repair")
+        } else {
+            Button(label) { confirming = true }
+                .font(TendType.meta.weight(.medium))
+                .buttonStyle(.borderless)
+                .accessibilityIdentifier("repair")
+        }
     }
 }
 

@@ -66,6 +66,27 @@ struct HostsView: View {
             LazyVStack(alignment: .leading, spacing: 12) {
                 if !model.operates {
                     DecideOnlyNotice()
+                    // What a decide key may know: the hosts the queue covers.
+                    if !model.hosts.isEmpty {
+                        SectionTitle(text: String(localized: "Hosts this dashboard covers"), count: model.hosts.count)
+                            .padding(.top, 6)
+                        ForEach(model.hosts) { section in
+                            let waiting = PendingDecision.from(section).count
+                            HStack(spacing: 10) {
+                                HostBadge(alias: section.alias, local: section.local, state: section.unavailable.isEmpty ? "online" : "degraded", size: 28)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(verbatim: section.alias).font(TendType.body.weight(.semibold))
+                                    Text(waiting > 0 ? String(localized: "\(waiting) need you") : String(localized: "Nothing needs you"))
+                                        .font(TendType.meta)
+                                        .foregroundStyle(TendSurface.metaText)
+                                }
+                                Spacer(minLength: 4)
+                            }
+                            .tendCard()
+                            .accessibilityElement(children: .combine)
+                            .accessibilityIdentifier("decideHost")
+                        }
+                    }
                 } else if let fleet = model.visibleFleet {
                     ForEach(fleet.ordered) { host in
                         NavigationLink(value: host) {
