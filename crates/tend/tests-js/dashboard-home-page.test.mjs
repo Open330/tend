@@ -40,7 +40,7 @@ class Node {
   scrollIntoView() {}
   click() { for (const fn of this.listeners.click || []) fn({ stopPropagation() {}, preventDefault() {} }); }
   fire(type, event = {}) { for (const fn of this.listeners[type] || []) fn({ preventDefault() {}, stopPropagation() {}, ...event }); }
-  get text() { return [this.textContent, ...this.children.map((c) => c.text)].join(" "); }
+  get text() { return [this.textContent, ...this.children.map((c) => (typeof c === "string" ? c : c.text))].join(" "); }
 }
 
 function find(node, pred) {
@@ -53,6 +53,11 @@ function find(node, pred) {
 }
 
 const nodes = new Map();
+const modeButtons = ["digest", "cards", "inbox"].map((mode) => {
+  const node = new Node("button");
+  node.dataset.mode = mode;
+  return node;
+});
 const dummy = new Node("div");
 globalThis.document = {
   hidden: false,
@@ -65,7 +70,8 @@ globalThis.document = {
   },
   createElement: (tag) => new Node(tag),
   querySelector: (selector) => (selector === ".statusbar" ? dummy : null),
-  querySelectorAll: () => [],
+  // Review's mode switch, so a test can pick a mode the way a click does.
+  querySelectorAll: (selector) => (selector === "#review-mode button" ? modeButtons : []),
   addEventListener() {},
 };
 let replaced = null;
@@ -295,6 +301,95 @@ test("a reply goes only to the agent and question it was written for", async () 
   release();
   postGate = null;
   await settle();
+  // The words went; tendd records them as the Mac's decision.
+  const record = posts.find((p) => p.path === "/api/home/instruction");
+  assert.ok(record, "the answer is recorded");
+  assert.deepEqual(JSON.parse(record.init.body), {
+    id: "work:ws/job", session_id: "first", state_entered_at: "t1", kind: "answer", text: "ANSWER FOR FIRST", question: "Which way?",
+  });
+  status.home = 404;
+  serverBoard = null;
+  await home.refresh();
+});
+
+test("Review goes through results three ways, with Later and Send Back", async () => {
+  const older = new Date(Date.now() - 120_000).toISOString();
+  const result = (id, title, at, extra = {}) => ({
+    type: "unit", id, lane: "finished", title, repo: "tend", headline: `${title} done.`,
+    stages: [{ name: "claude", state: "done" }], shown_time: at, agents: [], helpers: [], host_aliases: ["mba"], agent_kinds: ["claude_code"],
+    recent: true, reviewed: false, requested_by_person: true, review_key: `home:${id}`,
+    focus: { host: "mba", local: true, pane: id === "agent:mba:a" ? "%7" : "%8", socket: "s", state: "idle", session_id: id.slice(-1), state_entered_at: at, owner: "claude · mba" },
+    review: { asked: `Please ${title}`, result: `# Report\n${title} is done. All tests pass.`, result_truncated: false },
+    ...extra,
+  });
+  serverBoard = {
+    hosts: [{ alias: "mba", local: true, state: "online" }], decision_hosts: [], backlog: [],
+    lanes: { needs_you: { groups: [] }, running: { groups: [] }, finished: { groups: [
+      { project: "tend", items: [result("agent:mba:a", "fix toast", recent), result("agent:mba:b", "write docs", older)] },
+    ] } },
+  };
+  status.home = 200;
+  await home.refresh();
+  const list = document.getElementById("review-list");
+  const dialog = document.getElementById("review-dialog");
+  dialog.open = true;
+  document.getElementById("review-button").click();
+  // The digest, the Mac's default: by project, each result in a line.
+  assert.match(list.text, /tend 2/);
+  assert.match(list.text, /fix toast Report fix toast is done\. All tests pass\./, "the result's digest, Markdown marks dropped");
+  assert.match(list.text, /Mark Project Reviewed/);
+  // Cards: one at a time, what was asked and what came back.
+  modeButtons[1].click();
+  assert.equal(stored.get("tend.home.review.mode"), "cards");
+  assert.match(list.text, /1 of 2/);
+  assert.match(list.text, /fix toast/);
+  assert.match(list.text, /Asked Please fix toast/);
+  assert.match(list.text, /Agent's report +Report +fix toast is done\. All tests pass\./, "the report as Markdown");
+  assert.ok(find(list, (n) => n.tag === "h2" && n.text.includes("Report")), "a heading, not a literal #");
+  // H puts it off: the next result comes up, the first goes last.
+  dialog.fire("keydown", { key: "h" });
+  assert.match(list.text, /write docs/);
+  assert.doesNotMatch(list.text, /fix toast/);
+  // R opens Send Back: the reply goes to that agent's pane, then is
+  // recorded as sent back. Home's filters do not narrow Review, nor whom
+  // its replies reach.
+  document.getElementById("filter-project").fire("change", { target: { value: "elsewhere" } });
+  dialog.fire("keydown", { key: "r" });
+  const area = find(list, (n) => n.tag === "textarea");
+  assert.ok(area, "Send Back's reply field");
+  area.value = "also the README";
+  area.fire("input");
+  find(list, (n) => n.tag === "button" && n.text.includes("Send Back") && n.className.includes("primary")).click();
+  await settle();
+  const sent = posts.findLast((p) => p.path.startsWith("/api/panes/"));
+  assert.equal(sent.path, "/api/panes/%258/prompt");
+  const record = JSON.parse(posts.findLast((p) => p.path === "/api/home/instruction").init.body);
+  assert.equal(record.kind, "send_back");
+  assert.equal(record.id, "agent:mba:b");
+  assert.equal(record.text, "also the README");
+  // Inbox: the list and the selected result; J moves, E marks it.
+  modeButtons[2].click();
+  assert.match(list.text, /Mark All Reviewed…/);
+  assert.match(list.text, /J\/K Move/);
+  dialog.fire("keydown", { key: "j" });
+  dialog.fire("keydown", { key: "e" });
+  await settle();
+  const mark = JSON.parse(posts.findLast((p) => p.path === "/api/home/reviewed").init.body);
+  assert.equal(mark.id, "agent:mba:a", "J moved to the result put off last");
+  // A radio owns its arrows, and a focused button its Return: neither marks.
+  const marks = posts.filter((p) => p.path === "/api/home/reviewed").length;
+  dialog.fire("keydown", { key: "ArrowRight", target: { tagName: "BUTTON", getAttribute: (name) => (name === "role" ? "radio" : null) } });
+  dialog.fire("keydown", { key: "ArrowRight", target: { tagName: "BUTTON", getAttribute: () => null } });
+  await settle();
+  assert.equal(posts.filter((p) => p.path === "/api/home/reviewed").length, marks, "no mark from a control's own keys");
+  document.getElementById("filter-project").fire("change", { target: { value: "" } });
+  // Typing in a field is left alone.
+  const before = posts.length;
+  dialog.fire("keydown", { key: "e", target: { tagName: "TEXTAREA" } });
+  await settle();
+  assert.equal(posts.length, before);
+  dialog.fire("close");
+  modeButtons[0].click();
   status.home = 404;
   serverBoard = null;
   await home.refresh();
@@ -311,4 +406,32 @@ test("the workbench's old links still open the workbench; Home's own do not", ()
 test("sign-in returns to Home, and to the linked card", () => {
   assert.equal(home.homeReturnPath(""), "/home");
   assert.equal(home.homeReturnPath("#item=a b"), "/home#item=a%20b");
+});
+
+test("the report's Markdown becomes nodes, never markup", () => {
+  const blocks = home.markdown("# Done\n\nRan **all** tests with `cargo test`.\n- one\n- two <b>x</b>\n```\nlet a = 1;\n```");
+  assert.deepEqual(blocks.map((b) => b.tag), ["h2", "p", "ul", "pre"]);
+  assert.ok(find(blocks[1], (n) => n.tag === "strong" && n.textContent === "all"));
+  assert.ok(find(blocks[1], (n) => n.tag === "code" && n.textContent === "cargo test"));
+  assert.equal(blocks[2].children.length, 2);
+  assert.ok(blocks[2].children[1].children.includes("two <b>x</b>"), "angle brackets stay text");
+  assert.equal(blocks[3].children[0].textContent, "let a = 1;");
+});
+
+test("consecutive list items share one list, as a browser's elements see it", () => {
+  // Browser elements have tagName, not this fake's `tag`: hide it.
+  const make = document.createElement;
+  document.createElement = (tag) => {
+    const node = make(tag);
+    Object.defineProperty(node, "tag", { get: () => undefined, configurable: true });
+    node.tagName = tag.toUpperCase();
+    return node;
+  };
+  try {
+    const blocks = home.markdown("1. First\n2. Second\n\n- a\n- b");
+    assert.equal(blocks.length, 2);
+    assert.deepEqual(blocks.map((b) => [b.tagName, b.children.length]), [["OL", 2], ["UL", 2]]);
+  } finally {
+    document.createElement = make;
+  }
 });

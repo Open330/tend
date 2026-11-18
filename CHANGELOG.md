@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Web dashboard Explore: the Mac's four orders (Topology, Latest activity, My latest prompt, Agent latest update; kept per browser under `tend.explore.sort`) and its filter, matching host, session, window name, pane id, command, path, agent alias, agent title and session id in any case, with "No matching panes" and "No panes detected" states and a shown/all count.
+- The web Review sheet has the Mac's three modes: Digest (by project, the
+  default), Cards (one result at a time) and Inbox (a list and the selected
+  result). Each shows what was asked and the agent's report. Each ends in
+  Looks Good, Later (to the end of the queue while the sheet is open) or
+  Send Back, with the Mac's keys (E/L, H, R, O, J/K). The board carries
+  `review.asked` and `review.result` for the results still to review.
+- `POST /api/home/instruction` records an answer or a Send Back typed on
+  the web as the decision Tend for Mac records (a `returned` review under
+  the Mac's `home-answer:`/`home-sendback:` key), so it shows in `tend
+  review history` and the Mac's history.
 
 ### Changed
 

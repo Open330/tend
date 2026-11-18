@@ -514,3 +514,26 @@ fn a_long_helper_chain_resolves_to_its_root() {
     assert_eq!(finished.len(), 1);
     assert_eq!(finished[0]["helpers"].as_array().unwrap().len(), 199);
 }
+
+#[test]
+fn a_long_result_is_cut_on_a_character_with_an_ellipsis() {
+    assert_eq!(cap_chars("short", 10), ("short".to_owned(), false));
+    let (cut, was_cut) = cap_chars("가나다라마바", 3);
+    assert!(was_cut);
+    assert_eq!(cut, "가나다\u{2026}");
+}
+
+#[test]
+fn the_asked_digest_reads_markdown_as_the_mac_does() {
+    assert_eq!(
+        digest("# Fix it\n\n- one\n---\n`two`", 600).as_deref(),
+        Some("Fix it one two`")
+    );
+    assert_eq!(digest("  \n---\n", 600), None);
+    let long = format!("{}. {}", "a".repeat(40), "b ".repeat(40));
+    assert_eq!(
+        digest(&long, 50).as_deref(),
+        Some(format!("{}.", "a".repeat(40)).as_str())
+    );
+    assert_eq!(digest("word word word", 9).as_deref(), Some("word\u{2026}"));
+}

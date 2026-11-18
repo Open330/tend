@@ -1699,3 +1699,23 @@ fn a_device_sees_the_backlog_without_its_ticket_and_with_bounded_text() {
         json!([])
     );
 }
+
+#[test]
+fn what_review_shows_never_reaches_a_device() {
+    // `review` (what was asked, what came back) is operator-only: the
+    // device projection whitelists unit fields and leaves it out.
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/shared/Fixtures");
+    let mut board: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("home-board.json")).unwrap())
+            .unwrap();
+    let mut planted = 0;
+    for group in board["lanes"]["finished"]["groups"].as_array_mut().unwrap() {
+        for item in group["items"].as_array_mut().unwrap() {
+            item["review"] = serde_json::json!({"asked": "SENTINEL-ASKED", "result": "SENTINEL-RESULT", "result_truncated": false});
+            planted += 1;
+        }
+    }
+    assert!(planted > 0);
+    let projected = super::operate::device_board(&board, None).to_string();
+    assert!(!projected.contains("SENTINEL"), "{projected}");
+}

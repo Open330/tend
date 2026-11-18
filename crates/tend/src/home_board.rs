@@ -1487,6 +1487,13 @@ fn unit_json(
             kinds.push(kind.to_owned());
         }
     }
+    let is_reviewed = unit.lane == Lane::Finished && reviewed.is_some_and(|set| set.contains(&key));
+    let requested = requested_by_person(unit, agents);
+    let review = if unit.lane == Lane::Finished && requested && !is_reviewed {
+        review_detail(unit, agents)
+    } else {
+        Value::Null
+    };
     json!({
         "type": "unit",
         "id": unit.id,
@@ -1511,9 +1518,85 @@ fn unit_json(
         "recent": unit.lane != Lane::Finished || shown.is_none_or(|t| now - t <= RECENT_FINISH),
         "revision": unit.revision,
         "review_key": key,
-        "reviewed": unit.lane == Lane::Finished && reviewed.is_some_and(|set| set.contains(&key)),
-        "requested_by_person": requested_by_person(unit, agents),
+        "reviewed": is_reviewed,
+        "requested_by_person": requested,
+        "review": review,
     })
+}
+
+/// The "asked" digest's length (`FleetBoard.reviewAsked`).
+const REVIEW_ASKED_CHARS: usize = 600;
+/// Longest result the board carries per result to review; the pane has the
+/// rest.
+const REVIEW_RESULT_CHARS: usize = 4000;
+
+/// What Review shows for a result still to review (`FleetReviewDetail`):
+/// what the person asked and what came back, the agent's last response,
+/// else its recap. Only on finished units the person asked for and has not
+/// reviewed, so the board stays small.
+fn review_detail(unit: &Unit, agents: &[Hosted]) -> Value {
+    let Some(agent) = unit.focus.map(|i| agents[i].agent) else {
+        return Value::Null;
+    };
+    let asked = non_empty(agent, "last_prompt").and_then(|text| digest(text, REVIEW_ASKED_CHARS));
+    let (result, result_cut) = non_empty(agent, "last_response")
+        .or_else(|| non_empty(agent, "recap"))
+        .map_or((None, false), |text| {
+            let (text, cut) = cap_chars(text, REVIEW_RESULT_CHARS);
+            (Some(text), cut)
+        });
+    json!({
+        "asked": asked,
+        "result": result,
+        "result_truncated": result_cut,
+    })
+}
+
+/// A few plain lines of Markdown (`FleetQuickLookText.digest`): each line
+/// trimmed of heading, quote, list and code marks, rules dropped, joined by
+/// spaces, and cut to `limit` characters at a sentence end past the middle,
+/// else at a space, with an ellipsis.
+pub fn digest(text: &str, limit: usize) -> Option<String> {
+    let lines: Vec<&str> = text
+        .lines()
+        .map(|line| {
+            let mut line = line.trim();
+            while let Some(rest) = line.strip_prefix(|c| "#>*-`".contains(c)) {
+                line = rest.trim();
+            }
+            line
+        })
+        .filter(|line| !line.is_empty() && !line.chars().all(|c| "-=*_`|".contains(c)))
+        .collect();
+    let joined = lines.join(" ");
+    if joined.is_empty() {
+        return None;
+    }
+    if joined.chars().count() <= limit {
+        return Some(joined);
+    }
+    let head: String = joined.chars().take(limit).collect();
+    let chars: Vec<char> = head.chars().collect();
+    if let Some(stop) = chars.iter().rposition(|c| ".!?\u{3002}".contains(*c)) {
+        if stop > limit / 2 {
+            return Some(chars[..=stop].iter().collect());
+        }
+    }
+    if let Some(space) = chars.iter().rposition(|c| *c == ' ') {
+        return Some(format!(
+            "{}\u{2026}",
+            chars[..space].iter().collect::<String>()
+        ));
+    }
+    Some(format!("{head}\u{2026}"))
+}
+
+/// `text` cut to `max` characters, with an ellipsis when it was cut.
+fn cap_chars(text: &str, max: usize) -> (String, bool) {
+    match text.char_indices().nth(max) {
+        None => (text.to_owned(), false),
+        Some((end, _)) => (format!("{}\u{2026}", text[..end].trim_end()), true),
+    }
 }
 
 fn decision_json(decision: &Decision) -> Value {

@@ -418,7 +418,7 @@ pub fn router(state: AppState) -> Router {
             "/api/terminal-sessions/{id}/terminate",
             post(terminal_terminate_handler),
         )
-        .route("/api/home/reviewed", post(super::home::reviewed_handler))
+        .merge(super::home::write_routes())
         .layer(DefaultBodyLimit::max(CONTROL_BODY_LIMIT_BYTES))
         .layer(write_auth_layer);
     // Operator-only reads. Pane output can hold secrets the redacted read
@@ -5284,12 +5284,16 @@ mod tests {
             .and_then(|value| value.to_str().ok())
     }
 
-    /// `GET /api/home` and `POST /api/home/reviewed`: operator only, under
+    /// `GET /api/home`, `POST /api/home/reviewed` and `POST
+    /// /api/home/instruction`: operator only, under
     /// both auth modes. A read needs no CSRF proof; a session-authorized
     /// write does. The board is `no-store` whatever the answer.
     #[tokio::test]
     async fn home_api_route_matrix() {
         let unknown = json!({"id": "agent:nope", "review_key": "home:00"});
+        let instruction = json!({
+            "id": "agent:nope", "session_id": "s", "kind": "send_back", "text": "more",
+        });
         for auth in [DashboardAuthMode::Token, DashboardAuthMode::PublicRead] {
             let matrix = home_matrix(auth).await;
             for (principal, headers) in &matrix.credentials {
@@ -5325,6 +5329,20 @@ mod tests {
                 )
                 .await;
                 assert_eq!(response.status(), reviewed, "{auth:?} {principal:?} POST");
+                // The instruction record has the same gate as Looks Good.
+                let response = matrix_call(
+                    &matrix.app,
+                    "POST",
+                    "/api/home/instruction",
+                    headers,
+                    Some(instruction.clone()),
+                )
+                .await;
+                assert_eq!(
+                    response.status(),
+                    reviewed,
+                    "{auth:?} {principal:?} POST instruction"
+                );
             }
         }
     }
@@ -5399,14 +5417,163 @@ mod tests {
         for (method, uri, expected) in [
             ("GET", "/api/home", StatusCode::FORBIDDEN),
             ("POST", "/api/home/reviewed", StatusCode::FORBIDDEN),
+            ("POST", "/api/home/instruction", StatusCode::FORBIDDEN),
             ("GET", "/api/device/home", StatusCode::UNAUTHORIZED),
             ("GET", "/home", StatusCode::OK),
             ("GET", "/workbench", StatusCode::OK),
         ] {
-            let body = (method == "POST").then(|| json!({"id": "x", "review_key": "home:00"}));
+            let body = (method == "POST").then(|| {
+                json!({"id": "x", "review_key": "home:00", "session_id": "s", "kind": "answer", "text": "t"})
+            });
             let response = matrix_call(&app, method, uri, &[], body).await;
             assert_eq!(response.status(), expected, "{method} {uri}");
         }
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)] // one board, then each record outcome in turn
+    async fn home_records_what_was_typed_to_an_agent_as_the_macs_decision() {
+        let state =
+            state_with_token("s3cret").with_reviews(crate::review::ReviewStore::in_memory());
+        let id = AgentId {
+            tmux_socket: None,
+            kind: AgentKind::Codex,
+            session_id: "done-2".into(),
+            surface: None,
+            pane: Some("%4".into()),
+            cwd: Some("/w/tend".into()),
+        };
+        let at = OffsetDateTime::now_utc() - time::Duration::minutes(3);
+        for event in [
+            AgentEvent::Started { id: id.clone(), at },
+            AgentEvent::PromptSubmitted {
+                id: id.clone(),
+                prompt: "fix the toast".into(),
+                at,
+            },
+            AgentEvent::TurnStopped {
+                id: id.clone(),
+                response: Some("Toast fixed.".into()),
+                recap: None,
+                ai_title: None,
+                idle_confirmed: true,
+                at,
+            },
+        ] {
+            state.store.apply(&event).await;
+        }
+        let app = router(state.clone());
+        let post = |bearer: Option<&'static str>, body: serde_json::Value| {
+            let app = app.clone();
+            async move {
+                let mut request = Request::builder()
+                    .method("POST")
+                    .uri("/api/home/instruction")
+                    .header(header::CONTENT_TYPE, "application/json");
+                if let Some(token) = bearer {
+                    request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
+                }
+                app.oneshot(request.body(Body::from(body.to_string())).unwrap())
+                    .await
+                    .unwrap()
+            }
+        };
+        let board = body_json(
+            app.clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/home")
+                        .header(header::AUTHORIZATION, "Bearer s3cret")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
+        let unit = &board["lanes"]["finished"]["groups"][0]["items"][0];
+        // Review reads what was asked and what came back from the board.
+        assert_eq!(unit["review"]["asked"], "fix the toast", "{unit}");
+        assert_eq!(unit["review"]["result"], "Toast fixed.");
+        assert_eq!(unit["review"]["result_truncated"], false);
+        let since = unit["focus"]["state_entered_at"].clone();
+        let body = json!({
+            "id": unit["id"], "session_id": "done-2", "state_entered_at": since,
+            "kind": "send_back", "text": "also cover the dark theme",
+            "question": "Toast fixed.",
+        });
+        assert_eq!(
+            post(None, body.clone()).await.status(),
+            StatusCode::UNAUTHORIZED
+        );
+        let recorded = post(Some("s3cret"), body.clone()).await;
+        assert_eq!(recorded.status(), StatusCode::OK);
+        let recorded = body_json(recorded).await;
+        let key = recorded["key"].as_str().unwrap().to_owned();
+        // The Mac's key: prefix + SHA-256("session\nwait\ntext").
+        let expected = {
+            use sha2::{Digest, Sha256};
+            let digest = Sha256::digest(
+                format!(
+                    "done-2\n{}\nalso cover the dark theme",
+                    since.as_str().unwrap_or("")
+                )
+                .as_bytes(),
+            );
+            format!("home-sendback:{}", hex_lower(&digest))
+        };
+        assert_eq!(key, expected);
+        let review = &recorded["review"];
+        assert_eq!(review["disposition"]["kind"], "returned", "{review}");
+        assert_eq!(review["disposition"]["note"], "also cover the dark theme");
+        assert_eq!(review["summary"], "Toast fixed.");
+        assert_eq!(review["target"]["kind"], "session");
+        assert_eq!(review["target"]["session_id"], "done-2");
+        // A retry of the same send records once.
+        let again = body_json(post(Some("s3cret"), body.clone()).await).await;
+        assert_eq!(again["review"]["id"], review["id"]);
+        // Only the unit's own agents, and only words.
+        let mut stranger = body.clone();
+        stranger["session_id"] = json!("someone-else");
+        assert_eq!(
+            post(Some("s3cret"), stranger).await.status(),
+            StatusCode::NOT_FOUND
+        );
+        let mut gone = body.clone();
+        gone["id"] = json!("agent:nope");
+        assert_eq!(
+            post(Some("s3cret"), gone).await.status(),
+            StatusCode::NOT_FOUND
+        );
+        let mut blank = body.clone();
+        blank["text"] = json!(" \u{1b} ");
+        assert_eq!(
+            post(Some("s3cret"), blank).await.status(),
+            StatusCode::BAD_REQUEST
+        );
+        // The words set the agent to work: its unit moves to In progress
+        // before the record lands, and is still found there.
+        state
+            .store
+            .apply(&AgentEvent::PromptSubmitted {
+                id: id.clone(),
+                prompt: "also cover the dark theme".into(),
+                at: OffsetDateTime::now_utc(),
+            })
+            .await;
+        let mut moved = body;
+        moved["text"] = json!("and the phone layout");
+        let moved = post(Some("s3cret"), moved).await;
+        assert_eq!(moved.status(), StatusCode::OK);
+        assert_ne!(body_json(moved).await["review"]["id"], review["id"]);
+    }
+
+    fn hex_lower(bytes: &[u8]) -> String {
+        use std::fmt::Write as _;
+        bytes.iter().fold(String::new(), |mut out, byte| {
+            let _ = write!(out, "{byte:02x}");
+            out
+        })
     }
 
     #[tokio::test]
