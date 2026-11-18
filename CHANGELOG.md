@@ -62,6 +62,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   open there; links that also name a pane or workspace, and read-only
   visitors, keep the workbench's reader.
 
+### Fixed
+
+- `install-tend.ps1`: the default install from a release asked for
+  `tend-vX.Y.Z-.zip` and stopped (404) before changing anything, because a
+  variable for the Start menu entry hid the target name. With v0.10.24,
+  install with `-NoShortcut`; an install with the Start menu entry cannot
+  upgrade itself until it is replaced by this release's script. CI now
+  checks the script for that kind of scoping mistake
+  (`scripts/check-ps-scope.ps1`).
+
 ## [0.10.24] - 2026-11-19
 
 ### Added
