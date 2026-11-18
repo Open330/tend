@@ -65,14 +65,27 @@ enum TendSurface {
     static let border = Color(token: TendDesignTokens.border)
     static let inputBackground = Color(token: TendDesignTokens.inputBackground)
     static let inputBorder = Color(token: TendDesignTokens.inputBorder)
-    /// Meta rows (agent, project, host, time): readable on a card in both
-    /// schemes, quieter than body text. The Mac's tertiary washes out at
-    /// phone sizes; this is its secondary text token (`tokens.json`).
-    static let metaText = Color(token: TendDesignTokens.textSecondary)
+    /// Meta rows (agent, project, host, time).
+    static let metaText = TendInk.secondary
 
     static let cardRadius: CGFloat = 10
     static let laneRadius: CGFloat = 12
     static let controlRadius: CGFloat = 8
+}
+
+/// Quieter text, readable on a phone. The Mac's text-secondary and
+/// text-tertiary tokens measure about 4:1 and 1.9:1 on a white card (iOS's
+/// own secondary and tertiary label styles 3.4:1 and 1.7:1), under the
+/// 4.5:1 that small text needs; on a phone outdoors they wash out. These
+/// keep the same order at 4.5:1 or better on a card and on the lane, in
+/// both schemes.
+enum TendInk {
+    /// Explanations, meta rows, subtitles: #5C5C5C, 6.7:1 on white and
+    /// 6.3:1 on the lane; #B0B0B0, 7.6:1 on #1F1F1F and 7.1:1 on #252526.
+    static let secondary = Color.tend(light: 0x5C5C5C, dark: 0xB0B0B0)
+    /// Times, counts, hints: #6E6E6E, 5.1:1 on white and 4.8:1 on the
+    /// lane; #8E8E8E, 5.0:1 on #1F1F1F and 4.7:1 on #252526.
+    static let tertiary = Color.tend(light: 0x6E6E6E, dark: 0x8E8E8E)
 }
 
 /// Type roles (`TendType` plus the weights the Mac views use).
@@ -145,7 +158,7 @@ enum Lane: String, CaseIterable, Identifiable, Hashable, Sendable {
 
     var tint: Color {
         switch self {
-        case .backlog: Color.secondary
+        case .backlog: TendInk.secondary
         case .yourTurn: TendPalette.orange
         case .inProgress: TendPalette.blue
         case .finished: TendPalette.green
@@ -178,7 +191,7 @@ enum AgentStatus: Hashable, Sendable {
         case .working: TendPalette.blue
         case .idle: TendPalette.mint
         case .done: TendPalette.green
-        case .other: .secondary
+        case .other: TendInk.secondary
         }
     }
 
@@ -220,7 +233,7 @@ struct AgentStatusTag: View {
         HStack(spacing: 5) {
             Circle().fill(status.color).frame(width: 8, height: 8)
             if showsLabel {
-                Text(status.label).font(TendType.meta.weight(.medium)).foregroundStyle(.secondary)
+                Text(status.label).font(TendType.meta.weight(.medium)).foregroundStyle(TendInk.secondary)
             }
         }
         .accessibilityElement(children: .combine)
@@ -235,7 +248,7 @@ enum HostState {
         case "connecting": TendPalette.blue
         case "degraded", "version_skew": TendPalette.orange
         case "auth_failed": TendPalette.red
-        default: .secondary
+        default: TendInk.secondary
         }
     }
 
@@ -331,9 +344,9 @@ struct SectionTitle: View {
             Text(verbatim: text.uppercased())
                 .font(TendType.section)
                 .tracking(0.4)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(TendInk.secondary)
             if let count {
-                Text(verbatim: "\(count)").font(TendType.section).monospacedDigit().foregroundStyle(.tertiary)
+                Text(verbatim: "\(count)").font(TendType.section).monospacedDigit().foregroundStyle(TendInk.tertiary)
             }
         }
         .accessibilityElement(children: .combine)
@@ -344,7 +357,7 @@ struct SectionTitle: View {
 /// A small capsule label (Question, Review, Helper, an evidence chip).
 struct Chip: View {
     let text: String
-    var color: Color = .secondary
+    var color: Color = TendInk.secondary
     var symbol: String?
 
     var body: some View {

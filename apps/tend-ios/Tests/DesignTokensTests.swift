@@ -88,4 +88,28 @@ final class DesignTokensTests: XCTestCase {
         }
         XCTAssertGreaterThan(seen.count, 3)
     }
+
+    /// Quieter text stays readable: 4.5:1 or better (WCAG AA for small
+    /// text) on a card and on the lane, in both schemes.
+    func testQuietTextIsReadable() {
+        func luminance(_ color: Color, dark: Bool) -> Double {
+            let resolved = UIColor(color).resolvedColor(with: UITraitCollection(userInterfaceStyle: dark ? .dark : .light))
+            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            resolved.getRed(&r, green: &g, blue: &b, alpha: &a)
+            func channel(_ c: CGFloat) -> Double {
+                let c = Double(c)
+                return c <= 0.03928 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+            }
+            return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+        }
+        for dark in [false, true] {
+            for (inkName, ink) in [("secondary", TendInk.secondary), ("tertiary", TendInk.tertiary)] {
+                for (groundName, ground) in [("card", TendSurface.workspace), ("lane", TendSurface.panel)] {
+                    let (a, b) = (luminance(ink, dark: dark), luminance(ground, dark: dark))
+                    let ratio = (max(a, b) + 0.05) / (min(a, b) + 0.05)
+                    XCTAssertGreaterThanOrEqual(ratio, 4.5, "\(inkName) on \(groundName), \(dark ? "dark" : "light"): \(ratio)")
+                }
+            }
+        }
+    }
 }

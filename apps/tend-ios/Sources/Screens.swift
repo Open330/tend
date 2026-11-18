@@ -15,12 +15,12 @@ struct HostSectionView: View {
             ForEach(section.unavailable, id: \.self) { reason in
                 Label(String(localized: "\(section.alias): not everything could be read: \(reason)"), systemImage: "exclamationmark.triangle")
                     .font(TendType.meta)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(TendInk.secondary)
             }
             if section.queue.truncated {
                 Text("\(section.alias): showing the first \(decisions.count); more are waiting.")
                     .font(TendType.meta)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(TendInk.secondary)
             }
             if section.queue.undecoded > 0 {
                 Label(String(localized: "\(section.queue.undecoded) more need you in a form this app cannot show yet. Open the dashboard in a browser, or update the app."), systemImage: "exclamationmark.triangle")
@@ -53,7 +53,7 @@ struct DeviceSettingsView: View {
                 Section {
                     Text(model.operates ? Self.operateText : Self.decideText)
                         .font(TendType.meta)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(TendInk.secondary)
                     if !model.operates {
                         HostsAndWorkRequest()
                     }

@@ -15,7 +15,7 @@ Pairing on the server: [DASHBOARD.md](../../docs/DASHBOARD.md#paired-devices).
 | `../shared/Sources/` | Decision models shared with Tend for Mac. |
 | `../shared/Fixtures/` | Responses recorded from a real tendd, decoded by the unit tests. |
 | `Tests/` | Unit tests: origin rules, fixture decoding, lifecycle, Fleet lanes. |
-| `UITests/` | `DecideFlowUITests`: pair (decide only) → answer → decide → Finished → sign out. `HomeUITests`: pair with hosts, then the three lanes, an agent and a host, with screenshots. Both run against a scratch tendd. |
+| `UITests/` | `DecideFlowUITests`: pair (decide only) → answer → decide → Finished → sign out. `HomeUITests`: pair with hosts, then the three lanes, an agent and a host, with screenshots. Both run against a scratch tendd. `ReadabilityTour` opens every screen and keeps a screenshot of each, for a language and text size set in `TEST_RUNNER_TEND_TOUR_LANG` and `TEST_RUNNER_TEND_TOUR_SIZE` (skipped unless `TEST_RUNNER_TEND_TOUR` is set). |
 | `Scripts/scratch-tendd.sh` | A sandboxed scratch tendd with the dashboard on `127.0.0.1:7979`, seeded with a question and a result; `seed-home` adds agents at work and finished. |
 
 ## Build and test

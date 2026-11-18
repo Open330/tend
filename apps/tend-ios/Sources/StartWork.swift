@@ -59,7 +59,7 @@ struct StartWorkView: View {
                             if task.isEmpty {
                                 Text("What needs to get done? For example: fix the login timeout on slow networks and add a test.")
                                     .font(TendType.body)
-                                    .foregroundStyle(.tertiary)
+                                    .foregroundStyle(TendInk.tertiary)
                                     .padding(.top, 8)
                                     .padding(.leading, 4)
                                     .allowsHitTesting(false)
@@ -87,7 +87,7 @@ struct StartWorkView: View {
                             if projects.isEmpty {
                                 Text("No agent has worked on \(host) yet, so there is no project to start in. Start one there first.")
                                     .font(TendType.meta)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(TendInk.secondary)
                             } else {
                                 Picker(String(localized: "Project"), selection: $folder) {
                                     ForEach(projects, id: \.self) { path in
@@ -95,7 +95,7 @@ struct StartWorkView: View {
                                     }
                                 }
                                 .accessibilityIdentifier("workProject")
-                                Text(verbatim: folder).font(TendType.mono).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                                Text(verbatim: folder).font(TendType.mono).foregroundStyle(TendInk.secondary).lineLimit(1).truncationMode(.middle)
                             }
                         }
                     }
@@ -103,7 +103,7 @@ struct StartWorkView: View {
                         if let options, !options.allowed {
                             Label(String(localized: "Turned off on this dashboard"), systemImage: "lock")
                                 .font(TendType.meta)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(TendInk.secondary)
                         } else if let options {
                             if options.pipelines.isEmpty {
                                 Label(String(localized: "\(host) has no pipeline configured. Add one to its tend config to start work there."), systemImage: "exclamationmark.triangle")
@@ -117,11 +117,11 @@ struct StartWorkView: View {
                                 }
                                 .accessibilityIdentifier("workPipeline")
                                 if let description = options.pipelines.first(where: { $0.name == pipeline })?.description {
-                                    Text(verbatim: description).font(TendType.meta).foregroundStyle(.secondary)
+                                    Text(verbatim: description).font(TendType.meta).foregroundStyle(TendInk.secondary)
                                 }
                             }
                         } else if let optionsProblem {
-                            Label(optionsProblem, systemImage: "exclamationmark.triangle").font(TendType.meta).foregroundStyle(.secondary)
+                            Label(optionsProblem, systemImage: "exclamationmark.triangle").font(TendType.meta).foregroundStyle(TendInk.secondary)
                         } else {
                             ProgressView()
                         }
@@ -244,11 +244,11 @@ struct WorkStartOffNotice: View {
                 .font(TendType.body.weight(.semibold))
             Text("The dashboard at \(dashboard) does not start work for anyone, from the web or from this device. Whoever runs that host can turn it on: set `allow_work_start = true` under `[dashboard]` in its tend config, then restart tendd.")
                 .font(TendType.meta)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(TendInk.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Text("Deciding, and watching hosts and agents, keep working.")
                 .font(TendType.meta)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(TendInk.tertiary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .tendCard()
