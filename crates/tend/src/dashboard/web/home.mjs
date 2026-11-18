@@ -779,11 +779,88 @@ function reviewDetail(unit) {
   box.append(meta);
   const asked = unit.review?.asked;
   if (asked) box.append(reviewBlock(S.rvAsked, el("p", "rv-asked", asked)));
-  const report = el("div", "rv-report", unit.review?.result || headlineText(unit));
+  const report = el("div", "rv-report");
+  report.append(...markdown(unit.review?.result || headlineText(unit)));
   const reportBox = [report];
   if (unit.review?.resultCut) reportBox.push(el("p", "rv-cut", S.rvReportCut));
   box.append(reviewBlock(S.rvReport, ...reportBox));
   return box;
+}
+
+/// The agent's report as the Mac draws it (MarkdownContent): headings,
+/// lists, code blocks, paragraphs, inline code and bold. Built as nodes, so
+/// nothing in the text is ever read as markup.
+export function markdown(source) {
+  const blocks = [];
+  const lines = String(source || "").split(/\r?\n/);
+  let paragraph = [];
+  let list = null;
+  const flush = () => {
+    if (paragraph.length) blocks.push(inline(el("p"), paragraph.join(" ")));
+    paragraph = [];
+    list = null;
+  };
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    if (trimmed.startsWith("```")) {
+      flush();
+      const code = [];
+      for (i += 1; i < lines.length && !lines[i].trim().startsWith("```"); i += 1) code.push(lines[i]);
+      const pre = el("pre");
+      pre.append(el("code", null, code.join("\n")));
+      blocks.push(pre);
+      continue;
+    }
+    if (!trimmed) {
+      flush();
+      continue;
+    }
+    const heading = /^(#{1,6})\s+(.*)$/.exec(trimmed);
+    if (heading) {
+      flush();
+      blocks.push(inline(el(`h${Math.min(heading[1].length + 1, 4)}`), heading[2]));
+      continue;
+    }
+    const item = /^([-*+]|\d+[.)])\s+(.*)$/.exec(trimmed);
+    if (item) {
+      if (paragraph.length) flush();
+      const tag = /\d/.test(item[1]) ? "ol" : "ul";
+      if (!list || list.tag !== tag) {
+        list = el(tag);
+        blocks.push(list);
+      }
+      list.append(inline(el("li"), item[2]));
+      continue;
+    }
+    if (list && /^\s+/.test(line) && list.lastChild) {
+      list.lastChild.append(" ", ...inlineNodes(trimmed));
+      continue;
+    }
+    list = null;
+    paragraph.push(trimmed);
+  }
+  flush();
+  return blocks;
+}
+
+function inline(node, text) {
+  node.append(...inlineNodes(text));
+  return node;
+}
+
+/// `code` and **bold**; everything else is text.
+function inlineNodes(text) {
+  const nodes = [];
+  const pattern = /`([^`]+)`|\*\*([^*]+)\*\*/g;
+  let at = 0;
+  for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
+    if (match.index > at) nodes.push(text.slice(at, match.index));
+    nodes.push(match[1] != null ? el("code", null, match[1]) : el("strong", null, match[2]));
+    at = match.index + match[0].length;
+  }
+  if (at < text.length) nodes.push(text.slice(at));
+  return nodes;
 }
 
 function reviewBlock(title, ...content) {
@@ -992,7 +1069,7 @@ function digestRow(unit) {
     state.review.expanded = expanded ? null : unit.id;
     state.review.sendingBack = false;
     renderReviewSheet();
-  }, "btn ghost icon-only rv-expand", "chevron-down");
+  }, "btn ghost icon-only rv-expand", "chevron");
   more.title = S.rvExpand;
   more.setAttribute("aria-label", S.rvExpand);
   more.setAttribute("aria-expanded", String(expanded));

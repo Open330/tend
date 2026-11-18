@@ -40,7 +40,7 @@ class Node {
   scrollIntoView() {}
   click() { for (const fn of this.listeners.click || []) fn({ stopPropagation() {}, preventDefault() {} }); }
   fire(type, event = {}) { for (const fn of this.listeners[type] || []) fn({ preventDefault() {}, stopPropagation() {}, ...event }); }
-  get text() { return [this.textContent, ...this.children.map((c) => c.text)].join(" "); }
+  get text() { return [this.textContent, ...this.children.map((c) => (typeof c === "string" ? c : c.text))].join(" "); }
 }
 
 function find(node, pred) {
@@ -344,7 +344,8 @@ test("Review goes through results three ways, with Later and Send Back", async (
   assert.match(list.text, /1 of 2/);
   assert.match(list.text, /fix toast/);
   assert.match(list.text, /Asked Please fix toast/);
-  assert.match(list.text, /Agent's report # Report/);
+  assert.match(list.text, /Agent's report +Report +fix toast is done\. All tests pass\./, "the report as Markdown");
+  assert.ok(find(list, (n) => n.tag === "h2" && n.text.includes("Report")), "a heading, not a literal #");
   // H puts it off: the next result comes up, the first goes last.
   dialog.fire("keydown", { key: "h" });
   assert.match(list.text, /write docs/);
@@ -396,4 +397,14 @@ test("the workbench's old links still open the workbench; Home's own do not", ()
 test("sign-in returns to Home, and to the linked card", () => {
   assert.equal(home.homeReturnPath(""), "/home");
   assert.equal(home.homeReturnPath("#item=a b"), "/home#item=a%20b");
+});
+
+test("the report's Markdown becomes nodes, never markup", () => {
+  const blocks = home.markdown("# Done\n\nRan **all** tests with `cargo test`.\n- one\n- two <b>x</b>\n```\nlet a = 1;\n```");
+  assert.deepEqual(blocks.map((b) => b.tag), ["h2", "p", "ul", "pre"]);
+  assert.ok(find(blocks[1], (n) => n.tag === "strong" && n.textContent === "all"));
+  assert.ok(find(blocks[1], (n) => n.tag === "code" && n.textContent === "cargo test"));
+  assert.equal(blocks[2].children.length, 2);
+  assert.ok(blocks[2].children[1].children.includes("two <b>x</b>"), "angle brackets stay text");
+  assert.equal(blocks[3].children[0].textContent, "let a = 1;");
 });
