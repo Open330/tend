@@ -16,11 +16,11 @@ the simulator and against a scratch daemon.
 | 2 | Bundle identifier. It cannot be changed once registered in App Store Connect. | `dev.tend.ios`, next to the Mac app's `dev.tend.mac`. | `dev.tend.ios` in `project.yml`, not registered anywhere. |
 | 3 | Distribution route. | TestFlight internal testing only (owner's devices), no public App Store listing until push (phase 2) has been used for a few weeks. | None. |
 | 4 | Who holds the APNs key (phase 2). | The owner's `.p8` key lives on the host that serves the dashboard (jiun-mini), mode 0600, named by path in config; no relay service. See [Push](#push-phase-2-wave-7). | Push not built. |
-| 5 | What a notification shows on the lock screen (phase 2). | Nothing from the agent: "Tend: mini needs you", the number of new items and the badge. The question is read from the host after unlock. | `allow_content = false`; content stays off unless decision 9 says otherwise. |
+| 5 | What a notification shows on the lock screen (phase 2). | Nothing from the agent: "Tend: mini needs you", the number of new items and the badge. The question is read from the host after unlock. | `allow_content = false`; content stays off unless decision 10 says otherwise. |
 | 6 | Keep the iOS CI job phase 1 adds (build + unit tests on a GitHub macOS runner, only when `apps/**` changes; free on a public repository, a few minutes per run). | Keep it: the shared models are edited from the Mac side, and only a full iOS build catches what that breaks. | Added with the iOS app PR; removing it is deleting one job. |
 | 7 | Let a paired phone see hosts and agents, read agents' recent output and start new agents (the `operate` scope). The token is an ordinary bearer credential: whoever holds it (a phished approval, a stolen phone) can start agents with bypassed permissions on every covered control-mode host until it is removed or expires. | Yes, accepting that risk, opt-in per device: chosen on the phone, looked up then ticked separately by the operator, create-only starts in projects agents already use, audit before dispatch, **Limit to deciding** and Remove. | Built and tested against a scratch daemon only; existing phones stay decide-only until paired again. |
 | 8 | Turn on `[dashboard] allow_work_start = true` on jiun-mini. It is off today, so neither the web nor the phone can start work through the dashboard. | Turn it on only after the start-work slice (plan step 4) has passed its tests, and when the owner wants to start work from the phone. Tests on a scratch daemon are not a reason to turn it on. | Off. The app shows "Starting work is turned off on this dashboard" and keeps the rest. |
-| 9 | Let a notification carry the item's text (`[dashboard.push] allow_content`, plus a switch on each phone). The text passes through Apple and can show on the lock screen; with it, a review can be approved and a question answered from the notification. | Off at first. Turn it on after a few weeks of content-free notifications if opening the app for every item is too slow, with iOS's Show Previews set to When Unlocked. | Off: notifications say only the host and a count, and tapping opens the item. |
+| 10 | Let a notification carry the item's text (`[dashboard.push] allow_content`, plus a switch on each phone). The text passes through Apple and can show on the lock screen; with it, a review can be approved and a question answered from the notification. | Off at first. Turn it on after a few weeks of content-free notifications if opening the app for every item is too slow, with iOS's Show Previews set to When Unlocked. | Off: notifications say only the host and a count, and tapping opens the item. |
 | 9 | Expiry for `operate` devices. A token in daily use lasts the full lifetime whoever uses it. | The same as `decide` (30 days unused, 90 days in all); shorter would mean pairing the phone again every few weeks. Removal is the real defence. | 30 / 90 days. |
 
 ## What the owner uses today
@@ -224,10 +224,11 @@ Rejected:
 ## Push (phase 2, wave 7)
 
 A paired phone is told when something new needs the person, without
-opening the app. The notification says as little as possible (the host
-and a count), so the lock screen shows nothing an agent wrote, unless
-both the host and the phone opt in to the text. This section is the design
-Codex reviews before any code; the wave 7 PRs implement it as written.
+opening the app. By default a notification says as little as possible
+(the host and a count), so the lock screen shows nothing an agent wrote.
+The text is shown only when both the host and the phone opt in. This
+section is the design Codex reviews before any code; the wave 7 PRs
+implement it as written.
 
 ### Who can push, and the key
 
@@ -239,12 +240,13 @@ secret of whoever publishes the build. tend ships none.
 - **Chosen:** the host that serves the dashboard sends directly to Apple
   with the publishing team's key. For the owner that is jiun-mini holding
   the owner's key. There is no relay service.
-- The key is a `.p8` file named by path in `[dashboard.push]`. tendd
-  refuses it unless it is a regular file (not a symlink) owned by the
-  daemon's user with no group or other permission bits (0600 or 0400), and
-  opens it without following symlinks. It is read once at start; the
-  private key stays in memory and is never logged or sent anywhere but
-  into the JWT signature.
+- The key is a `.p8` file named by path in `[dashboard.push]`. tendd opens
+  it with `O_NOFOLLOW`, then checks the opened descriptor (`fstat`): a
+  regular file, owned by the daemon's user, no group or other permission
+  bits (0600 or 0400), at most 4 KiB. It reads from that same descriptor
+  and parses the key as P-256. The private key stays in memory, is used
+  only to sign the provider token, and never appears in a log or an error
+  (an error names the path and the failed check, never the contents).
 - Use a key restricted to this app's topic, and to the environment in use,
   where Apple's developer site offers that, never a team-wide key shared
   with other apps. Rotate by adding a new key, switching the config,
@@ -266,98 +268,185 @@ key_path = "~/.config/tend/apns/AuthKey_ABC123DEFG.p8"
 key_id = "ABC123DEFG"           # 10 characters, from the key's page
 team_id = "728FW73BS8"          # 10 characters
 topic = "dev.tend.ios"          # the default; a self-built app sets its own
+environments = ["production"]   # the default; add "development" for Debug builds
 allow_content = false           # default false; see "What a notification shows"
 ```
 
-- The Apple endpoints are fixed: `api.push.apple.com` for a registration
-  made by a production build (TestFlight, store) and
-  `api.sandbox.push.apple.com` for a development build. There is no
-  endpoint setting, so config cannot send device tokens anywhere else.
-  Tests construct the sender with a fake endpoint in code.
+- The Apple endpoints are fixed: `api.push.apple.com` for `production`
+  (TestFlight and store builds) and `api.sandbox.push.apple.com` for
+  `development` (Debug builds on a device). There is no endpoint setting,
+  so config cannot send device tokens anywhere else; tests construct the
+  sender with a fake endpoint in code. The HTTP client follows no
+  redirects.
+- `environments` lists what the key is allowed for. A registration for
+  another environment is refused before anything is sent (below), so a
+  Debug build cannot make a production-only key fail.
 - A bad push config (missing or unsafe key file, a key that does not
-  parse as P-256, a malformed id) does not stop tendd or the dashboard:
-  push stays off, the reason is logged once at start and shown in **access ▸
-  Devices**, and `GET /api/device` says push is off. Deciding from the phone keeps working without push.
+  parse, a malformed id, an unknown environment) does not stop tendd or
+  the dashboard: push stays off, the reason is logged once at start and
+  shown in **access ▸ Devices**, and `GET /api/device` says push is off.
+  Deciding from the phone keeps working without push.
 
 ### Registration
 
 - `POST /api/device/push` (device token, either scope), body
   `{"token": "<hex>", "environment": "production" | "development",
-  "content": false}`. `token` is the APNs device token as hex, 16 to 100
-  bytes (Apple does not fix the length). Unknown fields are refused. The
-  phone calls it on every launch and whenever iOS hands it a new token, so
-  a host that turns push on later picks the phone up at its next launch.
-- When push is off on the host, the route answers `200 {"enabled":
-  false}` and stores nothing. Otherwise `200 {"enabled": true, "content":
-  <effective>}`, where the effective content flag is the device's request
-  AND the host's `allow_content`.
-- `POST /api/device/push/remove` drops the device's registration (the app
+  "content": false}`, at most 1 KiB (larger answers 413). Unknown fields
+  are refused. `token` is the APNs device token as hex, 16 to 100 bytes
+  (Apple does not fix the length); it is lower-cased before it is stored
+  or compared. The phone calls the route on every launch and whenever iOS
+  hands it a new token, so a host that turns push on later picks the
+  phone up at its next launch.
+- When push is off, or the environment is not in `environments`, the route
+  answers `200 {"enabled": false, "reason": "off" | "environment"}` and
+  stores nothing.
+- Otherwise it answers `200 {"enabled": true, "content": <effective>,
+  "channel": "<id>", "ref_key": "<base64>"}`. The effective content flag
+  is the device's request AND the host's `allow_content`. `channel`
+  (128 random bits) and `ref_key` (256 random bits) are minted for this
+  registration (see "Binding a notification to this pairing").
+  Re-registering the same token with the same environment keeps both;
+  anything else mints new ones.
+- `POST /api/device/push/remove` drops the device's registration. The app
   calls it when notifications are turned off in its settings, and before
-  Sign out).
-- One registration per device, one device per APNs token: registering a
-  token that another device row holds moves it (a phone that paired again
-  must not be notified twice). At most 16 rows, like devices.
-- Stored in the device store (`devices.sqlite3`, 0600) as a new table
-  `device_push (device_id TEXT PRIMARY KEY, token TEXT NOT NULL UNIQUE,
-  environment TEXT NOT NULL, content INTEGER NOT NULL, updated_at INTEGER
-  NOT NULL)`, created with `CREATE TABLE IF NOT EXISTS`. The schema version
-  stays 2: an older tendd opens the store and ignores the table. Removing
-  a device (Remove, Remove all, Sign out, Limit does not) deletes its row
-  in the same transaction. Because an older tendd could remove a device
-  without that, the sender only reads rows joined to a live, unexpired
-  device, and deletes orphans it finds.
+  Sign out.
+- **Storage.** A new table in the device store (`devices.sqlite3`, 0600),
+  created with `CREATE TABLE IF NOT EXISTS`: `device_push (device_id TEXT
+  PRIMARY KEY, token TEXT NOT NULL UNIQUE, environment TEXT NOT NULL,
+  content INTEGER NOT NULL, channel TEXT NOT NULL, ref_key BLOB NOT NULL,
+  generation INTEGER NOT NULL, updated_at INTEGER NOT NULL)`. There are no
+  foreign keys or triggers, so an older tendd deleting a device can never
+  fail because of this table.
+- The schema version stays 2. The existing check accepts extra tables at
+  version 2, so an older tendd opens the store and ignores the table.
+- **One writer, one order.** Register, move, remove and device removal
+  take the device store's lock and change rows in one transaction, so they
+  happen in one order. Every change sets `generation` from a counter in
+  the same transaction, which only grows.
+  - Registering a token that another device's row holds moves it, so a
+    phone that paired again is not notified twice.
+  - Removing a device (Remove, Remove all, Sign out; Limit does not)
+    deletes its row in the same transaction.
+- **Live rows only.** The sender reads only rows joined to a live,
+  unexpired device. Rows whose device is gone, for example removed by an
+  older tendd, are deleted before the 16-row cap is checked. The cap
+  matches the 16 devices.
 - An APNs device token is not a credential to tend, but it lets the key
-  holder reach that phone. It is never logged or audited; the audit line
-  for a registration says the device id, the environment and the content
-  flag (`"action": "push_register"` / `"push_remove"` / `"push_dropped"`
-  with Apple's reason).
+  holder reach that phone. It never appears in a log, an audit line or an
+  error. The audit line for a registration records the device id, the
+  environment and the content flag: `"action": "push_register"`,
+  `"push_remove"`, or `"push_dropped"` with Apple's reason.
 - `GET /api/device` gains `"push": {"enabled": bool, "content_allowed":
-  bool}` (additive). An older daemon has no field and no route; the app
-  then hides the notification setting and says the host needs a newer
-  tend.
+  bool, "environments": [...]}` (additive). An older daemon has neither
+  that field nor the route; the app then hides the notification setting
+  and says the host needs a newer tend.
 - Sending does not count as use: a phone that is not opened for 30 days
   expires as before and stops getting notifications.
 
+### Binding a notification to this pairing
+
+The app trusts nothing in a payload beyond "something on this host may
+need you". It still has to know which pairing a notification belongs to
+and which item it means. The payload must not name the item in a way
+Apple, or anyone who sees the payload, could read.
+
+- **Channel.** Each notification carries its registration's `channel`.
+  The phone keeps `channel` and `ref_key` in the Keychain with its
+  pairing (the same item, so the same origin and device id). The app acts
+  on a notification only if its channel is the current one.
+  - A notification from an earlier registration or pairing, or from
+    another dashboard, opens the app at Home and does nothing else.
+  - The dashboard the app talks to is always its pairing's origin, never
+    anything taken from a payload.
+- **Opaque item reference.** Each notification names the newest item as
+  `ref` = the first 16 bytes of HMAC-SHA256(`ref_key`, `host` NUL `kind`
+  NUL `id`), as hex. `id` is the request id, the review id or the waiting
+  agent's session id; server state keeps the raw key.
+  - The app finds the item by computing the same `ref` over the entries
+    of a fresh read of the queue.
+  - A session id such as `ios-cache-…`, or a path-like one, never leaves
+    the host in a payload.
+  - The host alias is in the payload, because the title shows it.
+
 ### When a notification is sent
 
-The sender watches exactly what Your turn shows: `queue_sections`, every
-host this dashboard covers, the same function `GET /api/decisions` and
-`/api/device/home` use. It runs only while push is on and at least one
-registration exists.
+The sender watches exactly what Your turn shows: `queue_sections`, for
+every host this dashboard covers. It is the same function behind `GET
+/api/decisions` and `/api/device/home`, read with a limit of 500. It runs
+only while push is on and at least one registration exists.
 
-- Every 15 s it reads the queue and keys each entry: `request:<id>` for a
-  question, `review:<id>` for a review, `waiting:<session id>` for a
-  waiting agent, each with its host alias.
-- **Start.** The first successful read after tendd starts records what is
-  there without notifying, so a restart never repeats old alerts. Items
-  that arrived while tendd was down are not announced; the badge is set
-  from the first read.
-- **New.** A key not seen before (or gone for more than 5 minutes, so a
-  waiting agent that flaps between working and waiting is announced once)
-  is new. Each tick sends at most one alert per host per device, naming
-  that host, the number of new items there, and the newest one's id.
-- **Rate.** At most one alert per device every 30 s; anything newer waits
-  for the next allowed tick and is counted into it. Waiting agents use the
-  same 5 minute rule as above.
-- **Unreadable host.** When a host's section is unavailable, truncated or
-  missing, its keys are kept as they were, so when it comes back nothing
-  is announced twice and nothing is counted as decided.
-- **Fewer.** When the total goes down (decided anywhere, on the Mac, the
-  web or the phone), a badge-only update (no alert, no sound, priority 5)
-  is sent, at most once a minute per device; the last one sets 0.
-- **Apple's answers.** `410 Unregistered`, `400 BadDeviceToken` or
-  `DeviceTokenNotForTopic` delete that registration (audited as
-  `push_dropped`). `403` for the provider token (bad key, wrong team)
-  turns the sender off until tendd restarts, logged once. `429` and `5xx`
-  back off for that device (doubling from 30 s to 10 min) and drop that
-  notification; nothing is queued on disk.
-- Requests go over HTTP/2 with rustls, 10 s timeout, with `apns-topic`,
-  `apns-push-type: alert`, `apns-priority` 10 for alerts and 5 for badge
-  updates, `apns-expiration` 6 h, and `apns-collapse-id` set to the host
-  alias so a newer alert for a host replaces the older one on the phone.
-- The provider token is an ES256 JWT (`kid` = key id, `iss` = team id,
-  `iat`), renewed every 40 minutes, as Apple requires (older than 20
-  minutes, younger than 60).
+- Every 15 s it reads the queue and keys each entry by host, kind and id:
+  a question by its request id, a review by its id, a waiting agent by its
+  session id.
+- **Readable and complete.** A host's section is *readable* when it
+  returned a queue, and *complete* when it was also not truncated and no
+  source was unavailable.
+- **Baseline, per host.** The first readable read of each host records
+  what is there without notifying.
+  - Items that arrived while tendd was down, or while that host could not
+    be read, are therefore not announced. This is a deliberate trade so
+    that a restart or a reconnect never repeats old alerts.
+  - The badge is still set from the totals.
+- **New.** After the baseline, a key in any readable read that is not
+  known is new, including one in a truncated or partly unavailable read.
+  - A key is forgotten only after it has been absent from complete reads
+    for 5 minutes. Time during which the host is incomplete or unreadable
+    does not count.
+  - So a waiting agent that flaps between working and waiting is announced
+    once, and an item cut off by truncation is never taken as decided.
+  - An item beyond the first 500 is not seen until earlier ones are
+    decided.
+- **Pending, per device.** New keys go into an in-memory pending set for
+  each device and host, at most 64 keys per host; past that, the oldest
+  are dropped and only counted. The set is not written to disk.
+  - A device gets at most one alert every 30 s, and one alert per host per
+    send.
+  - At send time the set is rebuilt from the current state: keys a
+    complete read shows gone are dropped, the count is recomputed, and
+    consent (the host's `allow_content` and the row's `content`) is read
+    again.
+  - The alert names that host, the number of pending keys there, and the
+    newest one's `ref`. Only a `200` from Apple clears what it announced.
+- **Fewer.** When the total goes down (decided anywhere: on the Mac, on
+  the web or on the phone), the device's desired badge changes.
+  - It is sent as a badge-only update (no alert, no sound, priority 5), at
+    most once a minute, computed from the current total at send time.
+  - It is not sent while an alert is pending for that device, because the
+    alert carries the badge.
+  - A failed update is retried at the next allowed tick until the desired
+    and the delivered badge agree. The last update sets 0.
+- **Collapse ids.** An alert's `apns-collapse-id` is `a:` plus the host
+  alias, so a newer alert for a host replaces the older one. Badge updates
+  carry no collapse id, so they never replace an alert.
+- **Apple's answers**, per device and environment:
+  - **`410 Unregistered`, `400 BadDeviceToken`, `DeviceTokenNotForTopic`**:
+    the registration is deleted, but only if the row still has the
+    device, token, environment and generation the request was sent with.
+    For a 410, it is also kept when the row was updated after Apple's
+    timestamp. So a late answer to an old send never deletes a newer
+    registration. Audited as `push_dropped`.
+  - **`403 ExpiredProviderToken`**: a new provider token is signed and the
+    request retried once.
+  - **`TooManyProviderTokenUpdates`**: tendd backs off.
+  - **`InvalidProviderToken`, `BadEnvironmentKeyIdInToken`,
+    `MissingProviderToken`**: that environment is turned off until tendd
+    restarts, and the reason is logged once. The other environment keeps
+    sending.
+  - **`429` and `5xx`**: tendd backs off for that device, doubling from
+    30 s to 10 minutes. The pending set is kept and rebuilt when the
+    back-off ends.
+- **Requests.**
+  - HTTP/2 over rustls, with a 10 s timeout.
+  - Headers: `apns-topic`, `apns-push-type: alert`, and `apns-priority` 10
+    for alerts and 5 for badge updates.
+  - `apns-expiration` is the absolute time 6 h after sending.
+  - An error or log line never contains the request path (which holds the
+    device token) or the `authorization` header.
+- **Provider token.** An ES256 JWT (`kid` = key id, `iss` = team id,
+  `iat`), renewed every 40 minutes. Apple accepts tokens older than 20
+  minutes and younger than 60.
+- APNs may still drop, delay or reorder deliveries. The app therefore also
+  sets the badge from its own count whenever it reads the queue.
 
 ### What a notification shows
 
@@ -369,95 +458,149 @@ By default, nothing anyone wrote:
                    "title": "Tend: mini needs you", "body": "2 new"},
          "badge": 3, "sound": "default", "thread-id": "mini",
          "category": "TEND_OPEN"},
- "tend": {"v": 1, "host": "mini", "kind": "review", "id": "rev_01H…"}}
+ "tend": {"v": 1, "channel": "ch_…", "host": "mini", "ref": "9f2c…"}}
 ```
 
-- The title is "Tend: <host> needs you", worded on the phone in its
+- The title is "Tend: <host> needs you". The phone words it in its own
   language from the localization keys (English and Korean); the plain
-  `title`/`body` are the fallback. The body is the number of new items;
-  the badge is the total waiting across hosts.
-- `tend` carries the host alias, the kind and the newest item's opaque
-  id, so tapping opens that item. No question text, agent name, project or
-  Work title.
-- **Content, opt-in on both sides.** Only when the host sets
-  `allow_content = true` AND the phone registered with `content: true`
-  (a switch in the app's settings, off by default, with a sentence saying
-  the text passes through Apple and shows on the lock screen as iOS's
-  previews setting allows) does the body carry the newest item's text:
-  its first line, Markdown removed, at most 120 characters, with the asking
-  agent's label as the subtitle. The category then becomes the item's
-  kind (below), so its actions are offered.
-- Nothing in the payload is trusted by the app beyond "something on this
-  host may need you": the app reads the item from the host before showing
-  or deciding it.
+  `title` and `body` are the fallback. The body is the number of new items
+  on that host; the badge is the total waiting across hosts.
+- No question text, agent or session name, project, Work title or kind
+  name is sent: only the alias, the counts and the opaque `ref`.
+- **Content, opt-in on both sides.** The body carries the newest item's
+  text only when two conditions hold at send time:
+  - the host sets `allow_content = true`, and
+  - the phone registered with `content: true`.
+
+  The phone's switch is in its settings, off by default, with a sentence
+  saying that the text passes through Apple, shows on the lock screen as
+  far as iOS's Show Previews setting allows, and cannot be taken back
+  once delivered (turning the switch off stops later ones only).
+- **What content is shown.** The *canonical line*: the item's text (the
+  question, the review's title, or the waiting agent's message), first
+  non-empty line, with Markdown marks removed and whitespace collapsed, at
+  most 120 characters. The asking agent's label is the subtitle. Rust and
+  Swift share test vectors for it in `apps/shared/Fixtures/`. The category
+  becomes the item's kind (below), so its buttons are offered.
 
 ### On the phone
 
 - **Entitlement.** `aps-environment` (`development` for Debug,
   `production` for Release) in `Tend.entitlements`, wired in
-  `project.yml`. The App ID needs the Push Notifications capability and
+  `project.yml`. The App ID needs the Push Notifications capability, and
   the App Store profile has to be made again after that (see "What the
   owner creates").
-- **Asking.** Never at first launch. Your turn shows a one-time card,
-  "Get notified when something needs you", once the host says push is on;
+- **Asking.** Never at first launch. Your turn shows a one-time card, "Get
+  notified when something needs you", once the host says push is on;
   Settings has the same switch. Only then does the app ask iOS for alert,
   badge and sound permission and register.
-- **Opening.** Tapping a notification opens Your turn on that host and
-  opens the item once a fresh read finds it there; if it has been decided
-  meanwhile, Your turn says so. The badge is also set from the app's own
-  count whenever it reads the queue.
-- **Actions.** All actions use `.authenticationRequired`, so they run only
-  on an unlocked phone (the Keychain item stays
-  `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, unchanged).
-  - `TEND_OPEN` (the default, no content): no buttons; tap opens the item.
-  - With content: `TEND_REVIEW` offers **Looks good** and **Send back**
-    (text input for the note); `TEND_QUESTION` offers **Answer** (text
-    input) and, when the question has options, opens the app instead;
-    `TEND_WAITING` only opens the item (answering a pane is not a device
-    route).
-  - An action first reads the item from the host and decides only if it
-    is still pending there with the same id and host; otherwise it posts a
-    local notification saying it was already decided. It then posts to the
-    same decision routes as the app, so the audit line is the device's,
-    with an `X-Tend-Via: notification` header recorded in it.
-  - Without content there are no decision buttons on purpose: approving
-    from a lock screen that showed only a count would approve something
-    the person has not read.
-- No Notification Service Extension: nothing is decrypted or rewritten on
-  the phone, so the content rules above stay on the host.
+- **Opening.** Tapping a notification whose channel is current opens Your
+  turn on that host, reads the queue, and opens the entry whose `ref`
+  matches. If none matches (it was decided meanwhile, or the read was
+  incomplete), Your turn says so and opens nothing.
+- **Buttons.** Every action is `.authenticationRequired`, so it runs only
+  on an unlocked phone. The Keychain item stays
+  `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, unchanged. Apple's
+  option provides only that unlock; the binding below is the app's job.
+  - `TEND_OPEN` is the default, sent without content. It has no buttons;
+    tapping opens the item.
+  - `TEND_REVIEW` (with content) offers **Looks good** and **Send back**,
+    the latter with a text field for the note.
+  - `TEND_QUESTION` (with content) offers **Answer**, with a text field.
+  - `TEND_WAITING` only opens the item, because answering a pane is not a
+    device route.
+- **Before a button decides anything**, every one of these must hold;
+  otherwise nothing is decided, and the app posts a local notification
+  "Open Tend to decide this" that opens the item:
+  - the channel is current;
+  - this phone's content switch is on, and the host's latest `GET
+    /api/device` still allows content;
+  - a fresh read of that host is complete, and exactly one entry matches
+    `ref`, of the category's kind, decidable from this device;
+  - the canonical line of that entry and its agent's label equal the body
+    and subtitle the notification showed;
+  - for an answer, the question has no options; a question with options
+    always opens the app.
+
+  Then the app posts to the same decision routes as it does from inside
+  the app, so the audit line is the device's. An `X-Tend-Via:
+  notification` header is recorded in the audit line. Header rather than a
+  body field, because the decision bodies refuse unknown fields.
+- Without content there are no decision buttons, on purpose: approving
+  from a lock screen that showed only a count would approve something the
+  person has not read.
+- There is no Notification Service Extension. Nothing is decrypted or
+  rewritten on the phone, so the content rules above stay on the host.
 
 ### Tests
 
-- Rust, against a fake APNs endpoint (an HTTP/2 server in the test that
-  records each request and answers what the test says): payloads with
-  and without content (content only when both flags are on), the JWT's
-  header and claims verified with the key's public half, renewal after 40
-  minutes, start without alerts, new items, the 5 minute flap rule, one
-  alert per host per tick, the 30 s rate, an unreadable host kept, badge
-  going down to 0, `410` deleting the registration, `403` turning the
-  sender off, `429` back-off, a removed or expired device never sent to,
-  an orphan row deleted, a token moving between devices, the 16-row cap,
-  push off storing nothing, unknown fields refused, a 0644 or symlinked
-  key refused with the dashboard still serving.
-- iOS: payload parsing and routing unit tests; a UI test that opens an
-  item from a notification payload handed to the same handler at launch;
-  `xcrun simctl push` with the same payloads on the test simulators for
-  screenshots (iOS shows them without APNs). Real delivery needs the
-  owner's key and a device.
+- **Rust, against a fake APNs endpoint.** The fake is an HTTP/2 server in
+  the test that records each request and answers what the test says.
+  - **Payloads.** With and without content: content only when both flags
+    are on, read again at flush. No raw id, session name or path in any
+    payload while content is off; this is tested with human-readable and
+    path-like session ids. `ref` is computed as specified. The canonical
+    line passes the shared vectors.
+  - **Provider token.** The JWT's header and claims are verified with the
+    key's public half, and the token is renewed after 40 minutes.
+    `ExpiredProviderToken` re-signs and retries once.
+    `BadEnvironmentKeyIdInToken` turns off only that environment.
+  - **Registration.** A registration for an environment not in
+    `environments` is refused, and nothing is sent. Bodies: over 1 KiB
+    answers 413; unknown fields are refused; mixed-case hex is treated as
+    one token. Push off stores nothing. The 16-row cap holds, with orphans
+    deleted first.
+  - **Sending rules.**
+    - The baseline is per host, including a host unavailable at start.
+    - New items alert, including in a truncated read. A queue that stays
+      truncated still alerts on new items.
+    - The 5-minute absence rule holds, with absence paused while a read is
+      incomplete. A flapping waiting agent is announced once.
+    - One alert per host per send, and the 30 s rate.
+    - The pending set survives a rate limit and a `429`, is rebuilt after
+      the back-off, and drops what was decided meanwhile.
+    - The badge goes down to 0, is not sent while an alert is pending,
+      and is retried until delivered.
+  - **Races.** A late `410` or `BadDeviceToken` arrives after the token
+    was rotated, moved to another device, removed or registered again; the
+    newer row survives. A `410` timestamp older than the row's update keeps
+    the row.
+  - **Devices.** A removed or expired device is never sent to. A row left
+    by an older tendd's removal is deleted. A token moves between devices.
+  - **Key files.** A 0644 key, a symlink, a key owned by someone else, a
+    FIFO and an oversized file are all refused, with the dashboard still
+    serving.
+  - **Secrets.** No error or log line contains the device-token path or
+    the authorization header.
+- **iOS.**
+  - Payload parsing, channel checks and `ref` matching, as unit tests
+    against the shared vectors.
+  - Every refusal before an action decides: a stale channel, content
+    turned off on either side, an incomplete or failed read, no match,
+    two matches, another kind, not decidable, changed text, a question
+    with options, and a locked phone. Each one opens the item and decides
+    nothing.
+  - A UI test that opens an item from a notification payload handed to the
+    same handler at launch.
+  - `xcrun simctl push` with the same payloads on the test simulators, for
+    screenshots (iOS shows them without APNs).
+  - Real delivery needs the owner's key and a device.
 
 ### What the owner creates
 
 1. In the Apple developer site (team `728FW73BS8`), **Keys ▸ +**: enable
-   Apple Push Notifications service; environment Sandbox & Production;
-   restrict it to the topic `dev.tend.ios` if the page offers that.
-   Download the `.p8` (Apple offers it once) and note its Key ID.
-2. Put the `.p8` and the Key ID in the vault, as "APNs Auth Key - Tend
+   Apple Push Notifications service, with environment Production (or
+   Sandbox & Production to also push to Debug builds), and restrict it to
+   the topic `dev.tend.ios` if the page offers that. Download the `.p8`
+   (Apple offers it only once) and note its Key ID.
+2. Put the `.p8` and the Key ID in the vault as "APNs Auth Key - Tend
    iOS".
-3. On jiun-mini: `~/.config/tend/apns/` (0700) with the `.p8` (0600),
-   then the `[dashboard.push]` table above, then restart tendd.
+3. On jiun-mini, create `~/.config/tend/apns/` (0700) and put the `.p8`
+   in it (0600). Then add the `[dashboard.push]` table above, with
+   `environments` matching the key, and restart tendd.
 4. Enable Push Notifications on the identifier `dev.tend.ios` and make the
-   App Store profile again (the App Store Connect API key can do both, so
-   whoever uploads can), then upload a build with the entitlement.
+   App Store profile again. The App Store Connect API key can do both, so
+   whoever uploads builds can. Then upload a build with the entitlement.
 
 Not in this design: Web Push for `/needs`, Live Activities, widgets,
 critical alerts, and notifying about anything other than Your turn.
