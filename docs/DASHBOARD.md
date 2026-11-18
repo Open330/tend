@@ -581,7 +581,10 @@ claimed and `returned` in one step, the words as its note, the question as
 its summary, under the Mac's key (`home-answer:` or `home-sendback:` plus
 the SHA-256 of the session, the wait and the words), so a retry of the same
 send records once. It only records; it never sends. Same gate and audit as
-Looks Good.
+Looks Good. The unit is looked up in every lane, so one that the words just
+set to work is still found; one that left the board (its agent gone, or
+regrouped into another unit) answers 404, and the words stay sent without a
+record. A page never sends again because a record failed.
 
 ## Paired devices
 

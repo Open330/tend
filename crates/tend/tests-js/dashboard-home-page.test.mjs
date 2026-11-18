@@ -351,7 +351,9 @@ test("Review goes through results three ways, with Later and Send Back", async (
   assert.match(list.text, /write docs/);
   assert.doesNotMatch(list.text, /fix toast/);
   // R opens Send Back: the reply goes to that agent's pane, then is
-  // recorded as sent back.
+  // recorded as sent back. Home's filters do not narrow Review, nor whom
+  // its replies reach.
+  document.getElementById("filter-project").fire("change", { target: { value: "elsewhere" } });
   dialog.fire("keydown", { key: "r" });
   const area = find(list, (n) => n.tag === "textarea");
   assert.ok(area, "Send Back's reply field");
@@ -374,6 +376,13 @@ test("Review goes through results three ways, with Later and Send Back", async (
   await settle();
   const mark = JSON.parse(posts.findLast((p) => p.path === "/api/home/reviewed").init.body);
   assert.equal(mark.id, "agent:mba:a", "J moved to the result put off last");
+  // A radio owns its arrows, and a focused button its Return: neither marks.
+  const marks = posts.filter((p) => p.path === "/api/home/reviewed").length;
+  dialog.fire("keydown", { key: "ArrowRight", target: { tagName: "BUTTON", getAttribute: (name) => (name === "role" ? "radio" : null) } });
+  dialog.fire("keydown", { key: "ArrowRight", target: { tagName: "BUTTON", getAttribute: () => null } });
+  await settle();
+  assert.equal(posts.filter((p) => p.path === "/api/home/reviewed").length, marks, "no mark from a control's own keys");
+  document.getElementById("filter-project").fire("change", { target: { value: "" } });
   // Typing in a field is left alone.
   const before = posts.length;
   dialog.fire("keydown", { key: "e", target: { tagName: "TEXTAREA" } });

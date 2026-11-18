@@ -742,9 +742,11 @@ function renderReviewSheet() {
   $("review-total").textContent = String(queue.length);
   for (const option of document.querySelectorAll("#review-scope button")) {
     option.setAttribute("aria-checked", String(option.dataset.scope === state.reviewScope));
+    option.tabIndex = option.dataset.scope === state.reviewScope ? 0 : -1;
   }
   for (const option of document.querySelectorAll("#review-mode button")) {
     option.setAttribute("aria-checked", String(option.dataset.mode === mode));
+    option.tabIndex = option.dataset.mode === mode ? 0 : -1;
   }
   list.className = `review-list mode-${mode}`;
   state.review.checked = new Set([...state.review.checked].filter((id) => queue.some((u) => u.id === id)));
@@ -1091,14 +1093,19 @@ function digestRow(unit) {
 /// same. Typing in a field and modified keys are left alone.
 function reviewKey(event) {
   if (event.metaKey || event.ctrlKey || event.altKey) return null;
-  const tag = event.target?.tagName;
-  if (tag === "TEXTAREA" || tag === "SELECT" || (tag === "INPUT" && event.target.type !== "checkbox") || event.target?.isContentEditable) return null;
+  const target = event.target;
+  const tag = target?.tagName;
+  if (tag === "TEXTAREA" || tag === "SELECT" || (tag === "INPUT" && target.type !== "checkbox") || target?.isContentEditable) return null;
+  // A radio (the mode and range switches) owns its keys.
+  if (target?.getAttribute?.("role") === "radio") return null;
+  // A button or link owns the arrows, Space and Return.
+  const control = tag === "BUTTON" || tag === "A" || tag === "INPUT";
   switch (event.key) {
-    case "ArrowRight": return "looksGood";
-    case "ArrowLeft": return "later";
-    case "ArrowDown": return "next";
-    case "ArrowUp": return "previous";
-    case " ": case "Enter": return tag === "BUTTON" || tag === "A" ? null : "open";
+    case "ArrowRight": return control ? null : "looksGood";
+    case "ArrowLeft": return control ? null : "later";
+    case "ArrowDown": return control ? null : "next";
+    case "ArrowUp": return control ? null : "previous";
+    case " ": case "Enter": return control ? null : "open";
     default: break;
   }
   return { e: "looksGood", l: "looksGood", h: "later", r: "sendBack", o: "open", j: "next", k: "previous" }[String(event.key || "").toLowerCase()] || null;
@@ -1129,8 +1136,26 @@ function onReviewKey(event) {
   if (used) event.preventDefault();
 }
 
+/// A segmented switch is a radio group: the arrows move the choice and the
+/// focus, as the platform's do.
+function wireRadios(selector) {
+  const options = [...document.querySelectorAll(selector)];
+  options.forEach((option, index) => {
+    option.addEventListener("keydown", (event) => {
+      const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
+      if (!step) return;
+      event.preventDefault();
+      const next = options[(index + step + options.length) % options.length];
+      next.click();
+      next.focus?.();
+    });
+  });
+}
+
 function wireReview() {
   const dialog = $("review-dialog");
+  wireRadios("#review-mode button");
+  wireRadios("#review-scope button");
   $("review-button")?.addEventListener("click", () => {
     renderReviewSheet();
     dialog.showModal?.();
@@ -1208,7 +1233,9 @@ function recordInstruction(unit, target, text) {
 /// `target.matches(current.agent)` the same way), so a replacement session
 /// in the same pane, or the same agent's next question, never receives it.
 async function sendToPane(target, text, key, unitId) {
-  const latest = findIn(currentBoard(), unitId);
+  // Every unit, whatever Home's filters show: Review lists results from
+  // every host and project.
+  const latest = findIn(currentBoard({ filtered: false }), unitId);
   if (!sameTarget(target, latest ? replyTarget(latest) : null)) {
     state.results.set(key, { ok: false, text: S.staleDraft(target.owner || "") });
     render();
@@ -1903,12 +1930,13 @@ async function poll() {
 }
 
 /// The board to draw: the daemon's when it served one, else built here.
-function currentBoard() {
+function currentBoard({ filtered = true } = {}) {
   const now = Date.now();
+  const filter = filtered ? state.filter : {};
   if (state.data.server) {
-    return fromServerBoard(state.data.server, { history: state.data.history, filter: state.filter, now, showReviewed: state.folds.reviewed });
+    return fromServerBoard(state.data.server, { history: state.data.history, filter, now, showReviewed: filtered ? state.folds.reviewed : true });
   }
-  return buildBoard({ ...state.data, now, filter: state.filter });
+  return buildBoard({ ...state.data, now, filter });
 }
 
 // ---- Start Work ----------------------------------------------------------

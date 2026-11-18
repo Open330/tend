@@ -5452,7 +5452,7 @@ mod tests {
                 at,
             },
             AgentEvent::TurnStopped {
-                id,
+                id: id.clone(),
                 response: Some("Toast fixed.".into()),
                 recap: None,
                 ai_title: None,
@@ -5462,7 +5462,7 @@ mod tests {
         ] {
             state.store.apply(&event).await;
         }
-        let app = router(state);
+        let app = router(state.clone());
         let post = |bearer: Option<&'static str>, body: serde_json::Value| {
             let app = app.clone();
             async move {
@@ -5545,12 +5545,27 @@ mod tests {
             post(Some("s3cret"), gone).await.status(),
             StatusCode::NOT_FOUND
         );
-        let mut blank = body;
+        let mut blank = body.clone();
         blank["text"] = json!(" \u{1b} ");
         assert_eq!(
             post(Some("s3cret"), blank).await.status(),
             StatusCode::BAD_REQUEST
         );
+        // The words set the agent to work: its unit moves to In progress
+        // before the record lands, and is still found there.
+        state
+            .store
+            .apply(&AgentEvent::PromptSubmitted {
+                id: id.clone(),
+                prompt: "also cover the dark theme".into(),
+                at: OffsetDateTime::now_utc(),
+            })
+            .await;
+        let mut moved = body;
+        moved["text"] = json!("and the phone layout");
+        let moved = post(Some("s3cret"), moved).await;
+        assert_eq!(moved.status(), StatusCode::OK);
+        assert_ne!(body_json(moved).await["review"]["id"], review["id"]);
     }
 
     fn hex_lower(bytes: &[u8]) -> String {
