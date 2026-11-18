@@ -1,19 +1,25 @@
 # tend dashboard
 
-A work-oriented HTTP UI bolted onto the daemon. Its primary view reads the
-canonical tend hierarchy: **Workspace → Work → Run → Agent session**, with tmux
-session/window/pane retained only as the current execution binding. An optional
+A web UI served by the daemon. Its address (`/`) opens **Home**, the same
+lanes Tend for Mac opens on (Your turn, In progress, Finished, and the
+backlog), with **Explore** (every host's panes) and **Settings** (access,
+paired devices, sharing) beside it; see
+[The shell](#the-shell-home-explore-settings). The phone app and the Windows
+tray app read the same Home through this server.
+
+The classic workbench at `/workbench` reads the canonical tend hierarchy:
+**Workspace → Work → Run → Agent session**, with tmux session/window/pane
+retained only as the current execution binding. An optional
 Linear/GitHub/Jira issue is a reference attached to Work; it is not the Work
-identity itself.
+identity itself. Its board never promotes every visible tmux window into a
+Work card: managed or persisted Work appears on the four-stage board, while
+generic windows are listed separately as **Unlinked executions**. The
+timeline and raw agent/pane/terminal inventories are collapsed secondary
+panels there.
 
-The board never promotes every visible tmux window into a Work card. Managed or
-persisted Work appears on the four-stage board, while generic windows are listed
-separately as **Unlinked executions**. Runs and panes remain expandable when
-execution detail or controls are needed.
-
-The timeline and raw agent/pane/terminal inventories remain available as
-collapsed secondary panels. Data is updated live over Server-Sent Events, and
-optional control actions are protected by a bearer token that can be pasted
+Home refreshes by polling while the page is visible. The classic workbench
+reads a live Server-Sent Events stream (and polls its other inventories).
+Optional control actions are protected by a bearer token that can be pasted
 into the browser like a PAT.
 
 The dashboard is **off by default** and **loopback-only when on by default**.
@@ -26,7 +32,8 @@ bound to loopback and configure the public origin as described below.
 
 | Path                | What it returns                                                                |
 | ------------------- | ------------------------------------------------------------------------------ |
-| `GET /`             | The dashboard HTML (loads the JS bundle).                                      |
+| `GET /`, `/home`, `/explore`, `/settings` | The shell's pages: Home, Explore, Settings. At `/`, a visitor without operator access is sent to `/workbench`; the other shell addresses show the sign-in state. |
+| `GET /workbench`    | The classic workbench, with its landing page, sign-in and public read view.   |
 | `GET /static/*`     | Embedded JS/CSS/font assets.                                                   |
 | `GET /api/health`   | `{ ok, version, protocol }`                                                    |
 | `GET /api/proof?nonce=N` | No credential: `{ version: 1, proof }`, `proof` = hex HMAC-SHA256(token, `tend-dashboard-proof/v1\n` + node + `\n` + bind + `\n` + N), where node is this host's Fleet node id (`host-id`) and bind the dashboard's address, for a 32-128 hex-digit nonce. A client checks it before sending the token, since anyone can bind a loopback port while tendd is down; node and bind stop an impostor from relaying the nonce to another tend that shares the token. 404 without a token or with `auth = "none"`. |

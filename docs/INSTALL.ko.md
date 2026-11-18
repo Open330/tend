@@ -5,9 +5,11 @@ README를 짧게 유지하기 위해 자세한 설치와 wiring 절차는 이 �
 ## 필요 조건
 
 - Rust 1.89+ (소스 빌드에만 필요)
-- tmux 3.x
-- Unix-like OS
-- Claude Code, OpenAI Codex, Google Antigravity CLI(`agy`), opencode 중 하나
+- tmux 3.x 또는 [rmux](https://rmux.io) 0.10 이상
+- Linux 또는 macOS. Windows 11에서는 rmux로 직접 실행하거나 WSL2 안에서
+  실행합니다([WINDOWS.md](WINDOWS.md) 참고).
+- Claude Code, OpenAI Codex, Google Antigravity CLI(`agy`), opencode, GitHub
+  Copilot CLI 중 하나
 
 ## 설치 전 체험
 
@@ -107,6 +109,27 @@ tend init
 - `aarch64-unknown-linux-gnu`
 - `x86_64-apple-darwin`
 - `aarch64-apple-darwin`
+- `x86_64-pc-windows-msvc`(v0.10.23 다음 릴리스부터): `tend.exe`, `tendd.exe`,
+  `tend-app.exe`가 든 zip이며 `install-tend.ps1`로 설치합니다.
+  [WINDOWS.md](WINDOWS.md#install-a-release)를 참고하세요.
+
+## Windows
+
+v0.10.23 다음 릴리스부터 `install-tend.ps1`이 CLI, 데몬, Tend for Windows
+트레이 앱을 관리자 권한 없이 현재 사용자에게 설치합니다. 바이너리는 코드 서명이
+되어 있지 않고 winget 패키지도 없습니다. 설치 명령, 스크립트가 바꾸는 내용,
+업그레이드와 제거, 서명되지 않은 바이너리에 Windows가 표시하는 내용은
+[WINDOWS.md](WINDOWS.md#install-a-release)에 있습니다. 그 릴리스가 나오기 전에는
+같은 문서에 따라 소스에서 빌드합니다.
+
+## Tend for iPhone and iPad
+
+host에 따로 설치할 것은 없습니다. 휴대폰 앱은 `tendd`가 이미 제공하는 대시보드와
+페어링합니다. 앱은 소유자 기기에서만 TestFlight로 쓰고 있고 App Store에는 없으므로,
+다른 사람은 [apps/tend-ios](../apps/tend-ios/README.md)에서 직접 빌드합니다.
+대시보드를 켜고(`tend init --component dashboard`), HTTPS로 접속할 수 있게 한 뒤,
+README의 [휴대폰에서 쓰기](../README.ko.md#휴대폰에서-쓰기)와
+[DASHBOARD.md](DASHBOARD.md#paired-devices)에 따라 휴대폰을 페어링합니다.
 
 ## `tend init`
 

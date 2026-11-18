@@ -6,8 +6,8 @@ This page keeps the detailed install and wiring notes out of the README.
 
 - Rust 1.89+ (source builds only)
 - tmux 3.x, or [rmux](https://rmux.io) 0.10+
-- Linux or macOS; Windows natively through rmux (see [WINDOWS.md](WINDOWS.md))
-  or inside WSL2
+- Linux or macOS; Windows 11 natively through rmux (see
+  [WINDOWS.md](WINDOWS.md)) or inside WSL2
 - One supported agent CLI: Claude Code, OpenAI Codex, the Google Antigravity
   CLI (`agy`), opencode, or GitHub Copilot CLI
 
@@ -121,6 +121,29 @@ Current release targets:
 - `aarch64-unknown-linux-gnu`
 - `x86_64-apple-darwin`
 - `aarch64-apple-darwin`
+- `x86_64-pc-windows-msvc` (releases after v0.10.23): a zip with `tend.exe`,
+  `tendd.exe` and `tend-app.exe`, installed by `install-tend.ps1`; see
+  [WINDOWS.md](WINDOWS.md#install-a-release)
+
+## Windows
+
+From the first release after v0.10.23, `install-tend.ps1` installs the CLI,
+the daemon and the Tend for Windows tray app per user, with no administrator
+rights. The binaries are not code-signed and there is no winget package.
+[WINDOWS.md](WINDOWS.md#install-a-release) has the commands, what the script
+changes, upgrading, uninstalling, and what Windows shows for unsigned
+binaries. Until that release, build from source as that page describes.
+
+## Tend for iPhone and iPad
+
+There is nothing to install on the host: the phone app pairs with the
+dashboard `tendd` already serves. The app is on TestFlight for the owner's
+own devices only and not in the App Store; build it from
+[apps/tend-ios](../apps/tend-ios/README.md) otherwise. Turn the dashboard on
+(`tend init --component dashboard`), make it reachable over HTTPS, and pair
+the phone as described in the README's
+[Tend on your phone](../README.md#tend-on-your-phone) and in
+[DASHBOARD.md](DASHBOARD.md#paired-devices).
 
 ## `tend init`
 

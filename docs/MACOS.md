@@ -118,9 +118,9 @@ The detail area is deliberately task-oriented:
 - **Shell** is the interactive native Ghostty surface owned by a tendd PTY.
   It also has a read-only **Raw** mode for the bounded PTY output stream.
 
-The app now opens on a **Work Command Center**, not a terminal list. Its
-**Pipelines** section reads `tend work options --json` through the bundled
-CLI and draws every configured pipeline as a launchable card: the agents are
+The app opens on Home (above). **Work Templates**, opened from **Start
+Work**, reads `tend work options --json` through the bundled CLI and draws
+every configured pipeline as a launchable card: the agents are
 laid out in the stages tend will start them in (one column per `after`
 level), with the routes that select the pipeline underneath and a **Start…**
 button that opens the sheet with that pipeline preselected. The config file
@@ -168,7 +168,7 @@ cards edits `[[route]]` entries (match, pipeline, workspace, folder) through
 `tend work route set` and `route remove`, keeping order and untouched
 `worktree`/`prepare` tables as written.
 
-When the config has no pipeline yet, both the Command Center and the sheet
+When the config has no pipeline yet, both Work Templates and the sheet
 show tend's built-in presets (`solo`, `pair`, `triad`) with their stage
 diagrams. **Install** writes the preset through `tend work preset apply`
 (adding a catch-all route only when no route exists), and **Describe with an
@@ -221,7 +221,7 @@ opens the workspace command palette, and each sidebar context supports text and
 status filters (`All`, `Attention`, `Active`); in Ask, Active is a
 conversation still being answered and Attention one whose last turn failed.
 Every attention count reads one summary (`TendAttentionSummary`). The Inbox
-badge, the menu bar and Command Center's "Need attention" show what needs the
+badge and the menu bar show what needs the
 person — agents that need them, peers' requests for a decision, and unread
 replies — even when another context is selected; commands still waiting on an
 agent are listed but not counted. Explore's badge counts unread panes, the
@@ -520,7 +520,7 @@ The workbench's **Navigate** and **Editor** menus list the available shortcuts:
 | `⌘\` | Split the active editor to the right |
 | `⌘⌥Enter` | Keep the preview editor open (pin) |
 | `⌘W` | Close the editor, without terminating its session |
-| `⌘⇧1` / `⌘⇧2` / `⌘⇧3` | Open Work Command Center / Ask / Inbox |
+| `⌘⇧1` / `⌘⇧2` / `⌘⇧3` | Open Home / Ask / Inbox |
 | `⌘⇧F` | Focus the sidebar filter |
 | `⌘Enter` | Send from the focused pane/work prompt composer |
 
@@ -722,7 +722,7 @@ tabs. Live Watch uses **⌃⌘W** so it does not conflict with Close Window.
 ## Agent actions and account switching
 
 Wherever an agent is shown — pane header, agent detail, Explore's context
-menu, Command Center, the usage popover and the rate-limit badge — the same
+menu, the usage popover and the rate-limit badge — the same
 actions appear under the same names, the one its state calls for first:
 
 - a rate-limited Claude Code or Codex agent: **Switch Account and Resume…**;

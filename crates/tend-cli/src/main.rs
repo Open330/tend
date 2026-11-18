@@ -102,7 +102,11 @@ const MAX_STATUS_PROMPT_WIDTH: usize = 60;
 const STATUS_LINE_IPC_TIMEOUT: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Parser)]
-#[command(name = "tend", version, about = "tend CLI")]
+#[command(
+    name = "tend",
+    version,
+    about = "See which coding agent is waiting on you, jump to it, and run your agents as Work"
+)]
 struct Args {
     #[arg(long, env = "TEND_SOCKET", global = true)]
     socket: Option<PathBuf>,

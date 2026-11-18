@@ -36,6 +36,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - iOS: when `[dashboard] allow_work_start` is off, Start Work says so at
   the top: who can turn it on, and that deciding and watching keep
   working.
+- README, README.ko and docs/INSTALL now list what each platform gets
+  (macOS, Linux, Windows 11, iPhone and iPad), install Tend per platform,
+  and explain using a phone: pairing, the `decide` and `operate` scopes,
+  and the risk of `operate`. They say where things are not available
+  (no App Store, Mac App Store or winget; unsigned Windows binaries; the
+  Windows installer from the first release after v0.10.23). The landing page
+  adds the Windows install and the phone and Windows apps. DASHBOARD.md
+  opens with Home, Explore and Settings, and MACOS.md no longer says the
+  app opens on the Work Command Center. `tend --help` describes Tend
+  instead of saying "tend CLI".
 
 ## [0.10.24] - 2026-11-19
 
