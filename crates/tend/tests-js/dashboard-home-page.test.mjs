@@ -459,6 +459,8 @@ test("the workbench's old links still open the workbench; Home's own do not", ()
 test("sign-in returns to Home, and to the linked card", () => {
   assert.equal(home.homeReturnPath(""), "/home");
   assert.equal(home.homeReturnPath("#item=a b"), "/home#item=a%20b");
+  // A collaboration link comes back to the message, never with a token.
+  assert.equal(home.homeReturnPath("#message=req_1&host=mba&token=t", "/explore/messages"), "/explore/messages#message=req_1&host=mba");
 });
 
 test("the report's Markdown becomes nodes, never markup", () => {

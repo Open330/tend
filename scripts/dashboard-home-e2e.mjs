@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // Browser end-to-end test of the dashboard's Home (/home) against a scratch
 // tendd: answer a question, decide a result, and see both land in Finished;
-// then the same on a phone-sized viewport.
+// then the same on a phone-sized viewport. On the desktop it also types to a
+// pane in Explore and reads the answered question in Explore → Messages,
+// including the workbench's `#message=` link that now opens there.
 //
 //   apps/tend-ios/Scripts/scratch-tendd.sh up        # seeds a question + a result
 //   apps/tend-ios/Scripts/scratch-tendd.sh seed      # one more pair for the phone run
@@ -149,6 +151,29 @@ async function run(name, contextOptions) {
     } else {
       console.log("  explore: no shell pane running cat to type to; skipped");
     }
+    // Explore → Messages: the collaboration reader. The seeded question
+    // went to the console as a request, so it is listed, and an operator
+    // reads its body.
+    await page.goto(`${base}/explore/messages`);
+    const message = page.locator(".mx-row").first();
+    await message.waitFor({ timeout: 15000 });
+    const id = await message.getAttribute("data-id");
+    await message.click();
+    await page.locator(".mx-detail .mx-message pre").first().waitFor({ timeout: 5000 });
+    check(new URL(page.url()).hash.includes(`open=${encodeURIComponent(id)}`), "the open message is not in the address");
+    await page.getByRole("tab", { name: "Graph" }).click();
+    await page.locator(".mx-graph .mx-edge-group").first().waitFor({ timeout: 5000 });
+    await page.getByRole("tab", { name: "Sequence" }).click();
+    await page.locator(".mx-seq .mx-event").first().waitFor({ timeout: 5000 });
+    // The workbench's message link opens here; one that also names a pane
+    // stays on the workbench.
+    await page.goto(`${base}/workbench#message=${encodeURIComponent(id)}`);
+    await page.waitForURL((url) => url.pathname === "/explore/messages" && url.hash.includes("message="), { timeout: 15000 });
+    await page.locator(`.mx-row[data-id="${id}"]`).waitFor({ timeout: 15000 });
+    await page.goto(`${base}/workbench#message=${encodeURIComponent(id)}&pane=%25999`);
+    await page.waitForTimeout(2500);
+    check(new URL(page.url()).pathname === "/workbench", "a mixed link left the workbench");
+    console.log(`  messages: read ${id}, drew its graph and sequence; the workbench link opened it here`);
   }
   check(!problems.length, problems.join("\n"));
   await context.close();

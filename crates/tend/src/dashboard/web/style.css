@@ -280,6 +280,9 @@ button, select {
   cursor: pointer;
 }
 .scope-chip-clear:hover { text-decoration: underline; }
+/* Operators read collaboration in Explore → Messages now. */
+.collaboration-moved { color: var(--accent); font: 11px/1 var(--mono); white-space: nowrap; }
+.collaboration-moved[hidden] { display: none; }
 .scope-chip-clear:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;

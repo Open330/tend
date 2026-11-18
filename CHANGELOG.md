@@ -51,6 +51,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Home and Explore, and the collaboration history, instead of the Muxa-era
   dashboard. `scripts/landing-shots/live.sh` captures the screenshots from a
   sandboxed tend. The Tend for Mac screenshots are unchanged.
+- The dashboard's collaboration reader moved from the classic workbench into
+  Explore → Messages (`/explore/messages`): messages, graph and sequence,
+  the retained-history search, the range, room, Work, thread, kind and
+  status filters, updates, replies and artifacts, and older pages. A pane or
+  session in Explore opens it scoped to that pane or session, threads stay
+  reachable after their panes close, and a link carries its host and scope,
+  so the same message id on another Fleet host is never opened in its
+  place. For operators, the workbench's `#message=` and `#thread=` links
+  open there; links that also name a pane or workspace, and read-only
+  visitors, keep the workbench's reader.
 
 ## [0.10.24] - 2026-11-19
 

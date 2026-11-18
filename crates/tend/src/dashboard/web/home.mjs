@@ -9,6 +9,7 @@ import { buildBoard, byProject, digest, fromServerBoard, hostHue, LANES, product
 import { languageOf, relativeTime, stringsFor, textOf } from "./home-strings.mjs";
 import { linkedItemOf } from "./needs-model.mjs";
 import { mountExplore } from "./explore.mjs";
+import { MESSAGES_PATH, messagesReturnPath } from "./messages-model.mjs";
 import { openAccessManager } from "./operators-admin.mjs";
 import { openShareManager } from "./sharing-admin.mjs";
 
@@ -37,6 +38,9 @@ const state = {
   /// Which page of the shell is showing: home, explore or settings.
   route: "home",
   explore: null,
+  /// Whether the last poll asked for the Fleet (Explore's): until then a
+  /// link naming a host cannot be told apart from this host.
+  fleetSettled: false,
   filter: { host: "", project: "" },
   showOlder: false,
   /// Per lane, which of the Mac's folds are open (helpers, empty,
@@ -1660,6 +1664,7 @@ const ROUTES = {
   "/home": "home",
   "/needs": "home",
   "/explore": "explore",
+  [MESSAGES_PATH]: "explore",
   "/settings": "settings",
 };
 
@@ -1697,6 +1702,8 @@ function renderRoute() {
   if (route === "explore") {
     state.explore ||= mountExplore($("view-explore"), {
       S, el, icon, button, logo, hostBadge, when, read, write, authHeaders, canWrite,
+      access: () => state.data.access,
+      fleetSettled: () => state.fleetSettled,
     });
     state.explore.update(state.data.fleet);
   }
@@ -1783,8 +1790,10 @@ function revealLinkedItem() {
   node?.scrollIntoView?.({ block: "center" });
 }
 
-/// Where sign-in comes back to: Home, and the linked card.
-export function homeReturnPath(hash) {
+/// Where sign-in comes back to: Home and the linked card, or the
+/// collaboration message a link opened.
+export function homeReturnPath(hash, pathname = "/home") {
+  if (pathname === MESSAGES_PATH) return messagesReturnPath(hash);
   const item = linkedItemOf(hash);
   return item ? `/home#item=${encodeURIComponent(item)}` : "/home";
 }
@@ -1799,6 +1808,8 @@ function lostAccess(error) {
     window.location.replace(`/workbench${window.location.hash}`);
     return;
   }
+  // Before the shell pages go (and the address with them).
+  const back = homeReturnPath(window.location.hash, window.location.pathname);
   state.generation += 1;
   state.lost = true;
   state.drafts.clear();
@@ -1839,7 +1850,7 @@ function lostAccess(error) {
   $("view-settings").hidden = true;
   $("status").textContent = error.message;
   const login = $("login");
-  login.href = `/auth/login?return_to=${encodeURIComponent(homeReturnPath(window.location.hash))}`;
+  login.href = `/auth/login?return_to=${encodeURIComponent(back)}`;
   login.hidden = false;
   state.connection = "connected";
   renderStatus(null);
@@ -1918,6 +1929,7 @@ async function poll() {
   if (home.status === "rejected") state.data.server = null;
   take("decisions", decisions);
   take("fleet", fleet);
+  state.fleetSettled = state.route === "explore" || home.status === "rejected";
   take("history", history);
   const accessNow = access.status === "fulfilled" ? access.value : null;
   narrowed ||= Boolean(state.data.access && (!accessNow || (state.data.access.write_authorized !== false && accessNow.write_authorized === false)));
@@ -2058,6 +2070,8 @@ export function start() {
   window.addEventListener?.("hashchange", () => {
     state.revealed = null;
     revealLinkedItem();
+    // A pasted pane or message link in Explore opens what it names.
+    if (state.route === "explore") state.explore?.update(state.data.fleet);
   });
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) refresh();

@@ -1,4 +1,4 @@
-import { collaborationSummary, messagePreview, responseLatency, graphFitScale, initResizeHandle, setStableHTML, clearStableHTML, participantLocation, messageLink } from "./collaboration-view.mjs";
+import { collaborationSummary, messagePreview, responseLatency, graphFitScale, initResizeHandle, setStableHTML, clearStableHTML, participantLocation, messageLink, formatDuration } from "./collaboration-view.mjs";
 import { baseSessionName, canonicalDashboardPanes, intervalPlacement } from "./session-model.mjs";
 import { openShareManager } from "./sharing-admin.mjs";
 import { openAccessManager } from "./operators-admin.mjs";
@@ -36,10 +36,12 @@ import {
 } from "./workspace-rail.mjs";
 import {
   collaborationSequence,
+  collaborationStatusClass,
+  conversationText,
   needsHumanResponse,
   dominantCount,
+  graphLayout,
   normalizeCollaborationPayload,
-  participantIdentity,
   participantLabel,
   projectCollaboration,
   requestRoomKey,
@@ -48,8 +50,16 @@ import {
   requestWorkId,
   roomLabel,
   scopeCollaborationRequests,
-  sequenceParticipants,
+  sequenceLayout,
 } from "./collaboration-model.mjs";
+import {
+  collaborationLinkTarget,
+  collaborationParams,
+  localHostAlias,
+  mergeCollaborationRequests,
+  messagesLink,
+  safeExternalHref,
+} from "./messages-model.mjs";
 
 // tend dashboard frontend.
 //
@@ -101,7 +111,6 @@ const TIMELINE_REFETCH_INTERVAL_MS = 30000;
 const TIMELINE_MIN_REFRESH_INTERVAL_MS = 10000;
 const TIMELINE_EVENT_DEBOUNCE_MS = 2000;
 const COLLABORATION_REFETCH_INTERVAL_MS = 5000;
-const COLLABORATION_PAGE_SIZE = 500;
 const SESSION_PAGE_SIZE = 40;
 
 const AGENT_STATES = ["working", "waiting_input", "waiting_choice", "idle", "starting", "error", "stopped"];
@@ -2455,11 +2464,27 @@ function initPaneDrawer() {
   });
   window.addEventListener("hashchange", () => {
     const message = new URLSearchParams(window.location.hash.slice(1)).get("message");
-    if (message) { openCollaborationHistory({ message }).catch(() => {}); return; }
+    if (message) {
+      if (!redirectCollaborationLink()) openCollaborationHistory({ message }).catch(() => {});
+      return;
+    }
     applyScopeHash();
     applyTopologyHash();
     openPaneFromHash();
   });
+}
+
+// Operators read collaboration in Explore → Messages: a link that names
+// only a message or thread (`#message=…`) opens there. A read-only visitor
+// keeps this page's reader, and a link that also names a pane or workspace
+// stays here too (messages-model.mjs collaborationLinkTarget), so the two
+// pages never send a link back and forth.
+function redirectCollaborationLink() {
+  if (!store.access.writeAuthorized) return false;
+  const target = collaborationLinkTarget(window.location.pathname, window.location.hash);
+  if (!target) return false;
+  window.location.replace(target);
+  return true;
 }
 
 function openPaneFrom(node) {
@@ -3438,12 +3463,18 @@ function initDynamicEventDelegation() {
     }
     const selected = store.collaboration.requests.find(request => request.id === store.ui.selectedCollaborationRequest);
     if (event.target.closest("[data-copy-collaboration-link]") && selected) {
-      try { await navigator.clipboard.writeText(messageLink(window.location.href, selected)); showToast("message link copied"); }
+      // An operator's link opens Explore → Messages, naming this host so
+      // the same id on another daemon is never shown in its place; a
+      // visitor's stays on this page.
+      const link = store.access.writeAuthorized
+        ? new URL(messagesLink({ message: selected.id, host: localHostAlias({ hosts: fleetState.hosts }) || "" }), window.location.origin).toString()
+        : messageLink(window.location.href, selected);
+      try { await navigator.clipboard.writeText(link); showToast("message link copied"); }
       catch { showToast("clipboard unavailable"); }
       return;
     }
     if (event.target.closest("[data-copy-collaboration-message]") && selected && store.collaboration.details_included) {
-      const conversation = [selected.body, ...(selected.updates || []).map(update => update.body), selected.reply?.body].filter(Boolean).join("\n\n");
+      const conversation = conversationText(selected);
       try { await navigator.clipboard.writeText(conversation); showToast("conversation copied"); }
       catch { showToast("clipboard unavailable"); }
       return;
@@ -3828,16 +3859,6 @@ function esc(v) {
   );
 }
 
-function safeExternalHref(value) {
-  if (!value) return "";
-  try {
-    const url = new URL(value, window.location.origin);
-    return url.protocol === "http:" || url.protocol === "https:" ? url.href : "";
-  } catch (_) {
-    return "";
-  }
-}
-
 function relTime(iso) {
   if (!iso) return "—";
   const then = Date.parse(iso);
@@ -3862,26 +3883,11 @@ function dateTimeLabel(date) {
   });
 }
 
-function formatDuration(totalSecs) {
-  const secs = Math.max(0, Math.floor(totalSecs || 0));
-  if (secs === 0) return "—";
-  if (secs < 60) return `${secs}s`;
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  const remMins = mins % 60;
-  if (hours < 24) return `${hours}h${String(remMins).padStart(2, "0")}m`;
-  const days = Math.floor(hours / 24);
-  return `${days}d${String(hours % 24).padStart(2, "0")}h`;
-}
-
 // ── Collaboration graph + sequence ───────────────────────────────
-
-function collaborationStatusClass(status) {
-  if (["failed", "blocked", "declined", "cancelled", "expired"].includes(status)) return "danger";
-  if (["queued", "claimed"].includes(status)) return "pending";
-  return status === "completed" ? "success" : "neutral";
-}
+// Operators read collaboration in Explore → Messages (explore-messages.mjs);
+// this panel stays for read-only visitors and links that mix it with a
+// pane or workspace. Layout and filters live in collaboration-model.mjs
+// and messages-model.mjs, shared with Explore.
 
 function renderCollaboration() {
   if (!dom.collaborationGraph) return;
@@ -3949,6 +3955,15 @@ function renderCollaborationScope() {
   if (!dom.collaborationScope) return;
   const entry = selectedRailEntry();
   const scope = collaborationScope();
+  // Operators have the reader in Explore now; point there, same scope.
+  const moved = document.getElementById("collaboration-moved");
+  if (moved) {
+    moved.hidden = !store.access.writeAuthorized;
+    moved.href = messagesLink({
+      scope: scope?.session ? { session: scope.session, socket: scope.socket || "" }
+        : scope?.workspace ? { workspace: scope.workspace } : null,
+    });
+  }
   dom.collaborationScope.hidden = !scope;
   if (!scope) return;
   dom.collaborationScopeName.textContent = entry?.label || scope.session;
@@ -3996,76 +4011,27 @@ function renderCollaborationRooms(rooms) {
     </section>`).join("");
 }
 
-// Nodes sit on an ellipse whose perimeter leaves roughly one node box of
-// room per participant; the canvas is sized around it so every node is on
-// screen and the SVG can be scaled to the pane.
-const GRAPH_NODE_SPACING = 125;
-const GRAPH_MARGIN_X = 90;
-const GRAPH_MARGIN_Y = 60;
-
-function graphRadii(count) {
-  const radiusX = Math.max(150, (count * GRAPH_NODE_SPACING) / (2 * Math.PI) * 1.15);
-  return { radiusX, radiusY: Math.max(90, radiusX * .62) };
-}
-
-function graphNodePositions(nodes, width, height) {
-  if (nodes.length === 1) return new Map([[nodes[0].id, { x: width / 2, y: height / 2 }]]);
-  const { radiusX, radiusY } = graphRadii(nodes.length);
-  const positions = new Map();
-  nodes.forEach((node, index) => {
-    const angle = -Math.PI / 2 + (index * Math.PI * 2 / nodes.length);
-    positions.set(node.id, {
-      x: width / 2 + Math.cos(angle) * radiusX,
-      y: height / 2 + Math.sin(angle) * radiusY,
-    });
-  });
-  return positions;
-}
-
-function graphPath(from, to, bend = 0) {
-  const dx = to.x - from.x;
-  const dy = to.y - from.y;
-  const distance = Math.max(1, Math.hypot(dx, dy));
-  if (distance < 2) {
-    return `M ${from.x - 22} ${from.y - 5} C ${from.x - 78} ${from.y - 76}, ${from.x + 78} ${from.y - 76}, ${from.x + 22} ${from.y - 5}`;
-  }
-  const start = { x: from.x + dx / distance * 48, y: from.y + dy / distance * 30 };
-  const end = { x: to.x - dx / distance * 52, y: to.y - dy / distance * 32 };
-  const mx = (start.x + end.x) / 2 - dy / distance * bend;
-  const my = (start.y + end.y) / 2 + dx / distance * bend;
-  return `M ${start.x.toFixed(1)} ${start.y.toFixed(1)} Q ${mx.toFixed(1)} ${my.toFixed(1)} ${end.x.toFixed(1)} ${end.y.toFixed(1)}`;
-}
-
 function renderCollaborationGraph(projection) {
   if (!projection.nodes.length) {
     dom.collaborationGraph.innerHTML = `<div class="empty-block">no collaboration messages match these filters</div>`;
     return;
   }
-  const { radiusX, radiusY } = graphRadii(projection.nodes.length);
-  const width = Math.max(560, Math.ceil(radiusX * 2 + GRAPH_MARGIN_X * 2));
-  const height = Math.max(320, Math.ceil(radiusY * 2 + GRAPH_MARGIN_Y * 2));
+  const { width, height, positions, edges: laidOut } = graphLayout(projection);
   const minWidth = 0;
-  const positions = graphNodePositions(projection.nodes, width, height);
   const nodeById = new Map(projection.nodes.map((node) => [node.id, node]));
-  const edges = projection.edges.map((edge, index) => {
-    const from = positions.get(edge.from);
-    const to = positions.get(edge.to);
-    const reverse = projection.edges.find((candidate) => candidate.from === edge.to && candidate.to === edge.from);
-    const bend = reverse ? (edge.from.localeCompare(edge.to) < 0 ? 34 : -34) : 0;
+  const edges = laidOut.map(({ edge, index, path, replyPath: back, midpoint, status: dominant, replyStatus }) => {
     const selected = edge.key === store.ui.selectedCollaborationEdge ? " selected" : "";
-    const dominant = dominantCount(edge.statuses);
-    const midpoint = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 + bend * .45 };
-    const replyPath = edge.replyCount ? `
-      <path class="collaboration-edge-reply ${collaborationStatusClass(dominantCount(edge.replyStatuses))}${selected}"
-        data-collaboration-edge-index="${index}" d="${graphPath(to, from, bend ? -bend - 10 : 16)}" marker-end="url(#collab-reply-arrow)">
+    const replyPath = back ? `
+      <path class="collaboration-edge-reply ${collaborationStatusClass(replyStatus)}${selected}"
+        data-collaboration-edge-index="${index}" d="${back}" marker-end="url(#collab-reply-arrow)">
         <title>${edge.replyCount} replies return to sender</title>
       </path>` : "";
     const fromLabel = nodeById.get(edge.from)?.label || edge.from;
     const toLabel = nodeById.get(edge.to)?.label || edge.to;
     return `<g class="collaboration-edge-group" role="button" tabindex="0" aria-label="${esc(`${fromLabel} to ${toLabel}: ${edge.count} requests, ${edge.replyCount} replies`)}" data-collaboration-edge-index="${index}">
-      <path class="collaboration-edge-hit" d="${graphPath(from, to, bend)}"></path>
+      <path class="collaboration-edge-hit" d="${path}"></path>
       <path class="collaboration-edge ${collaborationStatusClass(dominant)}${selected}"
-        d="${graphPath(from, to, bend)}" marker-end="url(#collab-request-arrow)">
+        d="${path}" marker-end="url(#collab-request-arrow)">
         <title>${edge.count} requests · ${edge.replyCount} replies · ${dominant}</title>
       </path>
       ${replyPath}
@@ -4120,64 +4086,24 @@ function renderCollaborationSequence() {
     return;
   }
 
-  const visibleRequests = requests.slice(-200);
-  const participants = sequenceParticipants(visibleRequests);
-  const participantIndex = new Map(participants.map((participant, index) => [participant.id, index]));
-  const events = [];
-  for (const request of visibleRequests) {
-    events.push({
-      request,
-      at: request.created_at,
-      from: participantIdentity(request.from),
-      to: participantIdentity(request.to),
-      reply: false,
-      status: "request",
-      label: `${request.kind || "request"} · sent`,
-    });
-    if (request.reply) {
-      events.push({
-        request,
-        at: request.reply.at || request.created_at,
-        from: participantIdentity(request.to),
-        to: participantIdentity(request.from),
-        reply: true,
-        status: request.reply.status || request.status,
-        label: `reply · ${request.reply.status || request.status || "completed"}`,
-      });
-    }
-  }
-  events.sort((left, right) =>
-    String(left.at || "").localeCompare(String(right.at || "")) ||
-    String(left.request.id || "").localeCompare(String(right.request.id || "")) ||
-    Number(left.reply) - Number(right.reply)
-  );
-  const laneWidth = 170;
-  const left = 65;
-  const width = Math.max(420, left * 2 + Math.max(1, participants.length - 1) * laneWidth);
-  // Lane names live in their own SVG that sticks to the top of the scroll
-  // box, so long histories keep saying who each lifeline belongs to.
-  const headerHeight = 44;
-  const rowHeight = 58;
-  const height = 8 + events.length * rowHeight + 20;
-  const laneX = (id) => left + (participantIndex.get(id) || 0) * laneWidth;
-  const laneLabels = participants.map((participant, index) => {
-    const x = left + index * laneWidth;
+  const layout = sequenceLayout(requests);
+  const visibleRequests = layout.visible;
+  const { width, height, headerHeight, rowHeight } = layout;
+  const laneLabels = layout.lanes.map((participant) => {
+    const x = participant.x;
     return `<text class="sequence-lane-label" text-anchor="middle" x="${x}" y="18">${esc(participant.label).slice(0, 18)}</text>
       <text class="sequence-lane-subtitle" text-anchor="middle" x="${x}" y="34">${esc(participantLocation(participant.participant))}</text>`;
   }).join("");
-  const lanes = participants.map((participant, index) => {
-    const x = left + index * laneWidth;
-    return `<g class="collaboration-sequence-lane"><line x1="${x}" x2="${x}" y1="0" y2="${height - 8}"></line></g>`;
-  }).join("");
-  const rows = events.map((event, index) => {
-    const y = 8 + index * rowHeight + 25;
-    const sx = laneX(event.from);
-    const tx = laneX(event.to);
-    const labelX = sx === tx ? sx + 44 : (sx + tx) / 2;
+  const lanes = layout.lanes.map(({ x }) =>
+    `<g class="collaboration-sequence-lane"><line x1="${x}" x2="${x}" y1="0" y2="${height - 8}"></line></g>`
+  ).join("");
+  const rows = layout.rows.map((row) => {
+    const { y, sx, labelX, path } = row;
+    const event = {
+      ...row,
+      label: row.reply ? `reply · ${row.status || "completed"}` : `${row.kind} · sent`,
+    };
     const time = event.at ? dateTimeLabel(new Date(event.at)) : "—";
-    const path = sx === tx
-      ? `M ${sx} ${y} C ${sx + 80} ${y - 28}, ${sx + 80} ${y + 28}, ${sx + 4} ${y + 8}`
-      : `M ${sx} ${y} L ${tx} ${y}`;
     return `<g class="sequence-event ${event.reply ? "reply" : "request"} ${collaborationStatusClass(event.status)}"
       role="button" tabindex="0" aria-label="${esc(`${event.label}, ${time}`)}" data-collaboration-request="${esc(event.request.id)}">
       <rect class="sequence-event-hit" x="0" y="${y - 25}" width="${width}" height="${rowHeight - 2}" fill="transparent"></rect>
@@ -4504,46 +4430,30 @@ let collaborationRequestController = null;
 let collaborationRequestKey = "";
 async function fetchCollaboration({ append = false } = {}) {
   if (!dom.collaborationGraph) return;
-  const params = new URLSearchParams({ limit: String(COLLABORATION_PAGE_SIZE) });
   const filters = store.filters;
+  const { params, error } = collaborationParams({
+    range: filters.collaborationRange,
+    since: document.getElementById("collaboration-since").value,
+    until: document.getElementById("collaboration-until").value,
+    q: collaborationSearch,
+    message: collaborationMessageFilter,
+    work: filters.collaborationWork,
+    thread: filters.collaborationThread,
+    kind: filters.collaborationKind,
+    status: filters.collaborationStatus,
+    room: filters.collaborationRoomObject,
+    scope: collaborationScope(),
+  }, { append, pagination: store.collaboration.pagination });
   if (filters.collaborationRange === "custom") {
-    const start = document.getElementById("collaboration-since").value;
-    const end = document.getElementById("collaboration-until").value;
-    const error = !start || !end ? "Choose start and end times." : new Date(start) > new Date(end) ? "Start time must be before end time." : "";
-    document.getElementById("collaboration-period-error").textContent = error;
-    if (error) {
-      collaborationRequestController?.abort();
-      collaborationRequestController = null;
-      collaborationRequest = null;
-      dom.collaborationRefresh.disabled = false;
-      return;
-    }
-    params.set("since", new Date(start).toISOString());
-    params.set("until", new Date(end).toISOString());
-  } else if (filters.collaborationRange) params.set("since", filters.collaborationRange);
-  if (collaborationSearch) params.set("q", collaborationSearch);
-  if (collaborationMessageFilter) params.set("id", collaborationMessageFilter);
-  if (filters.collaborationWork) {
-    const slash = filters.collaborationWork.indexOf("/");
-    if (slash > 0) {
-      params.set("workspace", filters.collaborationWork.slice(0, slash));
-      params.set("work", filters.collaborationWork.slice(slash + 1));
-    } else {
-      params.set("work", filters.collaborationWork);
-    }
+    document.getElementById("collaboration-period-error").textContent =
+      error === "missing" ? "Choose start and end times." : error === "order" ? "Start time must be before end time." : "";
   }
-  if (filters.collaborationThread) params.set("thread", filters.collaborationThread);
-  if (filters.collaborationKind) params.set("kind", filters.collaborationKind);
-  if (filters.collaborationStatus) params.set("status", filters.collaborationStatus);
-  if (filters.collaborationRoomObject) params.set("room", JSON.stringify(filters.collaborationRoomObject));
-  const scope = collaborationScope();
-  if (scope?.session) params.set("session", scope.session);
-  if (scope?.socket) params.set("socket", scope.socket);
-  if (scope?.workspace && !scope.session) params.set("workspace", scope.workspace);
-  if (append) {
-    const page = store.collaboration.pagination;
-    if (page.next_cursor) params.set("cursor", page.next_cursor);
-    else if (page.next_offset != null) params.set("offset", String(page.next_offset));
+  if (error) {
+    collaborationRequestController?.abort();
+    collaborationRequestController = null;
+    collaborationRequest = null;
+    dom.collaborationRefresh.disabled = false;
+    return;
   }
 
   const key = params.toString();
@@ -4605,14 +4515,6 @@ async function fetchCollaboration({ append = false } = {}) {
     }
   })();
   return collaborationRequest;
-}
-
-function mergeCollaborationRequests(current, incoming) {
-  const byId = new Map();
-  for (const request of [...current, ...incoming]) byId.set(request.id, request);
-  return [...byId.values()].sort((left, right) =>
-    String(left.created_at || "").localeCompare(String(right.created_at || ""))
-  );
 }
 
 async function fetchAgentsSnapshot() {
@@ -4830,6 +4732,7 @@ async function main() {
     if (document.body.dataset.view === "boot") document.body.dataset.view = "dashboard";
     return;
   }
+  if (redirectCollaborationLink()) return;
   document.body.dataset.view = "dashboard";
 
   await Promise.all([
