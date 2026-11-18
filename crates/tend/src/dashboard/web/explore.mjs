@@ -6,15 +6,33 @@
 // host). The page wires DOM helpers in (`deps`) so this module stays
 // testable.
 
-import { exploreSections, paneFromHash, paneHash } from "./explore-model.mjs";
+import { EXPLORE_SORTS, PINNED_ATTENTION_LIMIT, exploreSections, exploreSortOf, paneFromHash, paneHash } from "./explore-model.mjs";
 import { openPaneStream } from "./pane-stream.mjs";
 
 const LINES = 400;
 const POLL_MS = 1500;
+/// The chosen order, per browser, under the Mac's `@AppStorage` key.
+const SORT_KEY = "tend.explore.sort";
+
+function storedSort() {
+  try {
+    return exploreSortOf(globalThis.localStorage?.getItem(SORT_KEY));
+  } catch {
+    return exploreSortOf(null);
+  }
+}
+
+function storeSort(sort) {
+  try {
+    globalThis.localStorage?.setItem(SORT_KEY, sort);
+  } catch {
+    // A preference only.
+  }
+}
 
 export function mountExplore(root, deps) {
   const { S, el, icon, button, logo, hostBadge, when, read, write, authHeaders, canWrite } = deps;
-  const view = { show: "all", query: "", grouping: "host", fleet: null, open: null, stream: null, poll: null, sending: new Set(), drafts: new Map(), collapsed: new Set(), closed: false, syncComposer: null, hash: null };
+  const view = { show: "all", query: "", grouping: "host", sort: storedSort(), fleet: null, open: null, stream: null, poll: null, sending: new Set(), drafts: new Map(), collapsed: new Set(), closed: false, syncComposer: null, hash: null };
 
   const sidebar = el("aside", "ex-side");
   const viewer = el("section", "ex-view");
@@ -61,7 +79,24 @@ export function mountExplore(root, deps) {
     view.grouping = grouping.value;
     drawList();
   });
-  pop.append(shows, grouping);
+  // The order, as the Mac's Order picker in the same menu.
+  const sort = el("select", "ex-sort");
+  for (const value of EXPLORE_SORTS) {
+    const option = el("option", null, S.exploreSorts[value]);
+    option.value = value;
+    sort.append(option);
+  }
+  sort.value = view.sort;
+  sort.addEventListener("change", () => {
+    view.sort = exploreSortOf(sort.value);
+    storeSort(view.sort);
+    drawList();
+  });
+  const groupLabel = el("label", null, S.exploreGroup);
+  groupLabel.append(grouping);
+  const sortLabel = el("label", null, S.exploreOrder);
+  sortLabel.append(sort);
+  pop.append(shows, groupLabel, sortLabel);
   menu.append(summary, pop);
   const controls = el("div", "ex-controls");
   const field = el("div", "ex-field");
@@ -93,14 +128,35 @@ export function mountExplore(root, deps) {
       list.replaceChildren(el("div", "ex-empty", S.loading));
       return;
     }
-    const model = exploreSections(view.fleet, { show: view.show, query: view.query, grouping: view.grouping });
-    count.textContent = String(model.total);
+    grouping.value = view.grouping;
+    summary.title = S.exploreMenuHelp(grouping.value === "status" ? S.groupStatus : S.groupHost, S.exploreSorts[view.sort]);
+    const model = exploreSections(view.fleet, { show: view.show, query: view.query, grouping: view.grouping, sort: view.sort });
+    // "shown/all" while a filter is on, as the Mac's count.
+    count.textContent = model.filtering ? `${model.total}/${model.all}` : String(model.all);
+    if (model.empty) {
+      const empty = el("div", "ex-empty");
+      if (model.empty === "none") {
+        empty.append(el("div", "ex-empty-title", S.noPanesDetected), el("div", "ex-empty-detail", S.noPanesDetectedDetail));
+      } else {
+        empty.textContent = S.noMatchingPanes;
+      }
+      list.replaceChildren(el("div", "ex-section", S.topology), empty);
+      return;
+    }
     const nodes = [];
-    if (view.grouping === "host") nodes.push(el("div", "ex-section", S.topology));
     if (model.attention.length && view.grouping === "host") {
       nodes.push(el("div", "ex-group attention", `${S.needsAttention} · ${model.attention.length}`));
-      nodes.push(...model.attention.map(row));
+      nodes.push(...model.attention.slice(0, PINNED_ATTENTION_LIMIT).map(row));
+      if (model.attention.length > PINNED_ATTENTION_LIMIT) {
+        nodes.push(
+          button(S.showAllCount(model.attention.length), () => {
+            view.grouping = "status";
+            drawList();
+          }, "ex-more"),
+        );
+      }
     }
+    if (view.grouping === "host") nodes.push(el("div", "ex-section", S.topology));
     for (const section of model.sections) {
       if (section.kind === "host") {
         const header = el("div", "ex-host");
@@ -115,7 +171,9 @@ export function mountExplore(root, deps) {
           nodes.push(sessionRow);
           for (const window of session.windows) {
             const key = `${section.title}\u0000${window.key}`;
-            const closed = view.collapsed.has(key);
+            // A filter opens every window it matched in (the Mac's
+            // `forceExpanded`).
+            const closed = !model.filtering && view.collapsed.has(key);
             const windowRow = el("button", `ex-window${closed ? " closed" : ""}`);
             windowRow.type = "button";
             windowRow.setAttribute("aria-expanded", String(!closed));
