@@ -37,12 +37,16 @@ or separate worktrees.
    Tend reuses or creates a worker with configured permissions.
    Use the exact `pane` the guide returned (including an `rmux:` prefix); if a
    peer moved or vanished, refresh the guide once rather than retrying old ids.
-2. It returns at once with a `request_id`. Keep working; the reply arrives as
-   a wake. Read it with `tend_inbox(view=report, request_id=ID)` or `tend_wait(id=ID)`
-   (30-60 s foreground waits, never repeated 1-second probes). If your host
-   yields a running wait to the background, resume that cell instead of
-   starting another wait. Never send the same work twice; a timeout is not
-   failure.
+2. It returns at once with a `request_id`. Keep pending ids and continue
+   independent work until the reply wake. Read the exact id with
+   `tend_inbox(view=report, request_id=ID)`. If the current turn needs the
+   answer, wait on that id with `tend_wait(id=ID)` for 30–60 seconds. If your
+   host yields a running wait, resume that cell. Avoid sleep-and-list loops
+   and repeated short probes. A timeout keeps the id pending: check for
+   interruption or a real blocker before resuming the same id. Remove the id
+   from your pending set after handling its final reply. When several ids
+   are pending, prefer reply wakes so one wait does not delay other replies
+   or a request for human attention.
 3. Verify the reply against the files and checks. A reply is not proof.
 
 Exact mailbox delivery (`exact=true`, or `intent=notice` for one-way
