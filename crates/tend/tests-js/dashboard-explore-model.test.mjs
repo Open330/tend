@@ -60,7 +60,7 @@ test("the host tree: this host first, sessions inside, what needs you on top", (
 
 test("filters and status groups", () => {
   assert.equal(exploreSections(fleet, { show: "attention" }).total, 1);
-  assert.equal(exploreSections(fleet, { show: "active" }).total, 2, "active includes what needs you");
+  assert.equal(exploreSections(fleet, { show: "active" }).total, 1, "active is the working panes, as on the Mac");
   assert.equal(exploreSections(fleet, { query: "OPS" }).total, 1);
   const status = exploreSections(fleet, { grouping: "status" });
   assert.deepEqual(status.sections.map((s) => s.key), ["attention", "active", "shell"]);

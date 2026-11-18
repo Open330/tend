@@ -213,7 +213,8 @@ export function exploreSections(fleet, { show = "all", query = "", grouping = "h
   const every = paneRows(fleet);
   const rows = every
     .filter((row) => paneMatches(row, query))
-    .filter((row) => show === "all" || (show === "attention" ? row.attention : row.group === "active" || row.attention))
+    // Active is the working panes only (SidebarViews `.active`).
+    .filter((row) => show === "all" || (show === "attention" ? row.attention : row.group === "active"))
     .sort((a, b) => comparePanes(a, b, sort));
   const filtering = Boolean(query) || show !== "all";
   const empty = every.length === 0 ? "none" : rows.length === 0 ? "noMatch" : null;
