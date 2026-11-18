@@ -5086,6 +5086,329 @@ mod tests {
         );
     }
 
+    /// Who asks, in the Home route matrix below.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Principal {
+        /// No credential at all.
+        Anonymous,
+        /// A bearer that is neither the dashboard token nor a device's.
+        WrongBearer,
+        /// A signed-in viewer (read-only) session, with the CSRF proof.
+        ViewerSession,
+        /// The dashboard token.
+        OperatorBearer,
+        /// An operator session with the CSRF proof (Origin + header).
+        OperatorSession,
+        /// An operator session cookie and no CSRF proof at all.
+        SessionNoProof,
+        /// An operator session cookie, the header, and a foreign Origin.
+        SessionForeignOrigin,
+        /// A paired device granted only `decide`.
+        DecideDevice,
+        /// A paired device granted `operate`.
+        OperateDevice,
+    }
+    use Principal::{
+        Anonymous, DecideDevice, OperateDevice, OperatorBearer, OperatorSession,
+        SessionForeignOrigin, SessionNoProof, ViewerSession, WrongBearer,
+    };
+
+    const MATRIX_TOKEN: &str = "s3cret";
+    const MATRIX_PUBLIC: &str = "https://dash.example.com";
+
+    /// One dashboard, and how each principal it can tell apart signs a
+    /// request. Sessions need `[dashboard.login]`, which needs `auth =
+    /// "token"`; `public_read` gets the credentials it can carry.
+    struct HomeMatrix {
+        app: Router,
+        credentials: Vec<(Principal, Vec<(header::HeaderName, String)>)>,
+    }
+
+    fn matrix_login() -> super::super::operator::LoginConfig {
+        super::super::operator::LoginConfig {
+            public_url: MATRIX_PUBLIC.into(),
+            issuer_url: "https://issuer.example.com".into(),
+            client_id: "tend".into(),
+            client_secret_env: None,
+            required_group: Some("operator".into()),
+            groups_claim: None,
+            scopes: vec!["groups".into()],
+            enrollment: None,
+            viewer_group: Some("viewers".into()),
+            viewer_rules: Vec::new(),
+        }
+    }
+
+    async fn matrix_call(
+        app: &Router,
+        method: &str,
+        uri: &str,
+        headers: &[(header::HeaderName, String)],
+        body: Option<Value>,
+    ) -> Response {
+        let mut request = Request::builder().method(method).uri(uri);
+        for (name, value) in headers {
+            request = request.header(name, value);
+        }
+        let body = match body {
+            Some(json) => {
+                request = request.header(header::CONTENT_TYPE, "application/json");
+                Body::from(json.to_string())
+            }
+            None => Body::empty(),
+        };
+        app.clone()
+            .oneshot(request.body(body).unwrap())
+            .await
+            .unwrap()
+    }
+
+    /// Pair a device through the real routes; `scope` is asked and granted
+    /// (absent: neither is sent, which grants `decide`).
+    async fn matrix_device(app: &Router, scope: Option<&str>) -> String {
+        let mut ask = json!({"name": "route-matrix", "platform": "ios"});
+        if let Some(scope) = scope {
+            ask["scope"] = json!(scope);
+        }
+        let asked = matrix_call(app, "POST", "/auth/devices/request", &[], Some(ask)).await;
+        assert_eq!(asked.status(), StatusCode::CREATED);
+        let asked = body_json(asked).await;
+        let mut approval = json!({"user_code": asked["user_code"]});
+        if let Some(scope) = scope {
+            approval["scope"] = json!(scope);
+        }
+        let operator = [(header::AUTHORIZATION, format!("Bearer {MATRIX_TOKEN}"))];
+        let approved = matrix_call(
+            app,
+            "POST",
+            "/api/devices/approve",
+            &operator,
+            Some(approval),
+        )
+        .await;
+        assert_eq!(approved.status(), StatusCode::OK);
+        let issued = matrix_call(
+            app,
+            "POST",
+            "/auth/devices/token",
+            &[],
+            Some(json!({"device_code": asked["device_code"]})),
+        )
+        .await;
+        assert_eq!(issued.status(), StatusCode::CREATED);
+        let token = body_json(issued).await["token"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        // The scope really is what the matrix row says.
+        let bearer = [(header::AUTHORIZATION, format!("Bearer {token}"))];
+        let me = body_json(matrix_call(app, "GET", "/api/device", &bearer, None).await).await;
+        let operate = me["scope"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s == "operate");
+        assert_eq!(operate, scope == Some("operate"), "{me}");
+        token
+    }
+
+    async fn home_matrix(auth: DashboardAuthMode) -> HomeMatrix {
+        let mut cfg = DashboardConfig::loopback_default();
+        cfg.auth = auth;
+        cfg.token = Some(MATRIX_TOKEN.into());
+        if matches!(auth, DashboardAuthMode::Token) {
+            cfg.login = Some(matrix_login());
+        }
+        let state = state_from(cfg).with_reviews(crate::review::ReviewStore::in_memory());
+        let app = router(state.clone());
+        let bearer = |token: &str| vec![(header::AUTHORIZATION, format!("Bearer {token}"))];
+        let proof = |cookie: String, origin: &str| {
+            vec![
+                (header::COOKIE, cookie),
+                (header::ORIGIN, origin.to_owned()),
+                (
+                    header::HeaderName::from_static("x-tend-operator"),
+                    "1".into(),
+                ),
+            ]
+        };
+        let decide = matrix_device(&app, None).await;
+        let operate = matrix_device(&app, Some("operate")).await;
+        let mut credentials = vec![
+            (Anonymous, Vec::new()),
+            (WrongBearer, bearer("not-the-token")),
+            (OperatorBearer, bearer(MATRIX_TOKEN)),
+            (DecideDevice, bearer(&decide)),
+            (OperateDevice, bearer(&operate)),
+        ];
+        if matches!(auth, DashboardAuthMode::Token) {
+            let sessions = &state.operator;
+            credentials.extend([
+                (
+                    ViewerSession,
+                    proof(
+                        sessions.test_session_cookie(super::super::operator::Via::ViewerGroup),
+                        MATRIX_PUBLIC,
+                    ),
+                ),
+                (
+                    OperatorSession,
+                    proof(
+                        sessions.test_session_cookie(super::super::operator::Via::Group),
+                        MATRIX_PUBLIC,
+                    ),
+                ),
+                (
+                    SessionNoProof,
+                    vec![(
+                        header::COOKIE,
+                        sessions.test_session_cookie(super::super::operator::Via::Group),
+                    )],
+                ),
+                (
+                    SessionForeignOrigin,
+                    proof(
+                        sessions.test_session_cookie(super::super::operator::Via::Group),
+                        "https://evil.example.com",
+                    ),
+                ),
+            ]);
+        }
+        HomeMatrix { app, credentials }
+    }
+
+    fn cache_control(response: &Response) -> Option<&str> {
+        response
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok())
+    }
+
+    /// `GET /api/home` and `POST /api/home/reviewed`: operator only, under
+    /// both auth modes. A read needs no CSRF proof; a session-authorized
+    /// write does. The board is `no-store` whatever the answer.
+    #[tokio::test]
+    async fn home_api_route_matrix() {
+        let unknown = json!({"id": "agent:nope", "review_key": "home:00"});
+        for auth in [DashboardAuthMode::Token, DashboardAuthMode::PublicRead] {
+            let matrix = home_matrix(auth).await;
+            for (principal, headers) in &matrix.credentials {
+                let (board, reviewed) = match principal {
+                    Anonymous | WrongBearer | DecideDevice | OperateDevice => {
+                        (StatusCode::UNAUTHORIZED, StatusCode::UNAUTHORIZED)
+                    }
+                    // Authenticated, not allowed.
+                    ViewerSession => (StatusCode::FORBIDDEN, StatusCode::FORBIDDEN),
+                    // Past the gate: the unit does not exist.
+                    OperatorBearer | OperatorSession => (StatusCode::OK, StatusCode::NOT_FOUND),
+                    // GET is exempt from the proof; the write is refused.
+                    SessionNoProof | SessionForeignOrigin => {
+                        (StatusCode::OK, StatusCode::FORBIDDEN)
+                    }
+                };
+                let response = matrix_call(&matrix.app, "GET", "/api/home", headers, None).await;
+                assert_eq!(response.status(), board, "{auth:?} {principal:?} GET");
+                assert_eq!(
+                    cache_control(&response),
+                    Some("no-store"),
+                    "{auth:?} {principal:?} GET"
+                );
+                if board == StatusCode::OK {
+                    assert!(body_json(response).await["lanes"].is_object());
+                }
+                let response = matrix_call(
+                    &matrix.app,
+                    "POST",
+                    "/api/home/reviewed",
+                    headers,
+                    Some(unknown.clone()),
+                )
+                .await;
+                assert_eq!(response.status(), reviewed, "{auth:?} {principal:?} POST");
+            }
+        }
+    }
+
+    /// `GET /api/device/home`: a device token with `operate`, nothing else
+    /// (the dashboard token and operator sessions included). `decide` is
+    /// 403, never 401, which the app reads as "removed". Always `no-store`.
+    #[tokio::test]
+    async fn device_home_route_matrix() {
+        for auth in [DashboardAuthMode::Token, DashboardAuthMode::PublicRead] {
+            let matrix = home_matrix(auth).await;
+            for (principal, headers) in &matrix.credentials {
+                let expected = match principal {
+                    OperateDevice => StatusCode::OK,
+                    DecideDevice => StatusCode::FORBIDDEN,
+                    _ => StatusCode::UNAUTHORIZED,
+                };
+                let response =
+                    matrix_call(&matrix.app, "GET", "/api/device/home", headers, None).await;
+                assert_eq!(response.status(), expected, "{auth:?} {principal:?}");
+                assert_eq!(
+                    cache_control(&response),
+                    Some("no-store"),
+                    "{auth:?} {principal:?}"
+                );
+                if expected == StatusCode::OK {
+                    assert!(body_json(response).await["lanes"].is_object());
+                }
+            }
+        }
+    }
+
+    /// The pages hold no data: everyone gets them, under the same headers.
+    /// Home's names serve `home.html` under the strict policy; the
+    /// workbench keeps the framing-only one. Both revalidate (`no-cache`).
+    #[tokio::test]
+    async fn home_pages_route_matrix() {
+        let pages = [
+            ("/", assets::HOME_POLICY),
+            ("/home", assets::HOME_POLICY),
+            ("/needs", assets::HOME_POLICY),
+            ("/explore", assets::HOME_POLICY),
+            ("/settings", assets::HOME_POLICY),
+            ("/workbench", assets::FRAME_POLICY),
+        ];
+        for auth in [DashboardAuthMode::Token, DashboardAuthMode::PublicRead] {
+            let matrix = home_matrix(auth).await;
+            for (principal, headers) in &matrix.credentials {
+                for (uri, policy) in pages {
+                    let response = matrix_call(&matrix.app, "GET", uri, headers, None).await;
+                    let at = format!("{auth:?} {principal:?} {uri}");
+                    assert_eq!(response.status(), StatusCode::OK, "{at}");
+                    let headers = response.headers();
+                    assert_eq!(headers[header::CONTENT_SECURITY_POLICY], policy, "{at}");
+                    assert_eq!(headers[header::X_FRAME_OPTIONS], "DENY", "{at}");
+                    assert_eq!(headers[header::CACHE_CONTROL], "no-cache", "{at}");
+                    assert_eq!(
+                        headers[header::CONTENT_TYPE],
+                        "text/html; charset=utf-8",
+                        "{at}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// `auth = "none"`: no token means control is off, so the operator
+    /// routes are 403 (not anonymously open) and no device can exist.
+    #[tokio::test]
+    async fn home_routes_without_a_token() {
+        let app = router(fresh_state());
+        for (method, uri, expected) in [
+            ("GET", "/api/home", StatusCode::FORBIDDEN),
+            ("POST", "/api/home/reviewed", StatusCode::FORBIDDEN),
+            ("GET", "/api/device/home", StatusCode::UNAUTHORIZED),
+            ("GET", "/home", StatusCode::OK),
+            ("GET", "/workbench", StatusCode::OK),
+        ] {
+            let body = (method == "POST").then(|| json!({"id": "x", "review_key": "home:00"}));
+            let response = matrix_call(&app, method, uri, &[], body).await;
+            assert_eq!(response.status(), expected, "{method} {uri}");
+        }
+    }
+
     #[tokio::test]
     async fn home_runs_under_a_strict_content_security_policy() {
         let app = router(state_with_token("s3cret"));
