@@ -5,7 +5,7 @@
 // Windows app, in which case the page never sees it) or the OIDC operator
 // session cookie. Everything an agent wrote is set with textContent only.
 
-import { buildBoard, fromServerBoard, hostHue, LANES, productOf, replyTarget, reviewQueue, sameTarget, TEND_PROJECT } from "./home-board.mjs";
+import { buildBoard, byProject, digest, fromServerBoard, hostHue, LANES, productOf, replyTarget, reviewQueue, sameTarget, TEND_PROJECT, withLater } from "./home-board.mjs";
 import { languageOf, relativeTime, stringsFor, textOf } from "./home-strings.mjs";
 import { linkedItemOf } from "./needs-model.mjs";
 import { mountExplore } from "./explore.mjs";
@@ -43,6 +43,9 @@ const state = {
   /// reviewed); `showOlder` is the older fold.
   folds: { needsYou: {}, running: {}, finished: {}, reviewed: false },
   reviewScope: "day",
+  /// The review sheet's own state: the mode, what was put off with Later
+  /// while it is open, the selection, and whether Send Back is open.
+  review: { mode: "digest", later: [], selectedId: null, inboxId: null, cardId: null, sendingBack: false, expanded: null, checked: new Set(), confirmAll: false },
   /// The one open composer, as on the Mac: {key, mode, option}.
   composer: null,
   drafts: new Map(),
@@ -192,8 +195,8 @@ function canWrite() {
 // answers, it takes write authority; where it is not forwarded (the Windows
 // app's proxy forwards the board and this mark, nothing else of the
 // operator's), the board read itself is the proof: tendd serves it only to
-// an operator credential (a paired device gets 401). Nothing else is
-// unlocked by it.
+// an operator credential (a paired device gets 401). Send back, Start Work
+// and everything else keep canWrite().
 function canMarkReviewed() {
   return state.data.access ? canWrite() : Boolean(state.data.server);
 }
@@ -690,9 +693,13 @@ function renderBacklog(records) {
   return section;
 }
 
-// ---- Review (FleetReviewView.swift, the list) ---------------------------
+// ---- Review (FleetReviewView.swift) -------------------------------------
 
 const SCOPES = [["today", "scopeToday"], ["day", "scopeDay"], ["week", "scopeWeek"], ["all", "scopeAll"]];
+/// Three ways through the same results (FleetReviewMode); the Mac's
+/// default is the digest.
+const REVIEW_MODES = [["digest", "rvModeDigest", "list"], ["cards", "rvModeCards", "stack"], ["inbox", "rvModeInbox", "tray"]];
+const REVIEW_MODE_KEY = "tend.home.review.mode";
 
 /// Review counts every finished result, whatever Home's host and project
 /// filters show (FleetHomeView passes the unfiltered units).
@@ -701,11 +708,16 @@ function reviewBoard() {
   return fromServerBoard(state.data.server, { history: null, filter: {}, now: Date.now(), showReviewed: false });
 }
 
+/// What is left to review, the results put off with Later last.
+function reviewList() {
+  const all = reviewBoard();
+  return all ? withLater(reviewQueue(all, state.reviewScope), state.review.later) : [];
+}
+
 function renderReviewButton(board) {
   const buttonNode = $("review-button");
   if (!buttonNode) return;
-  const all = reviewBoard();
-  const queue = all ? reviewQueue(all, state.reviewScope) : [];
+  const queue = reviewList();
   buttonNode.hidden = !board.server;
   const badge = $("review-count");
   badge.hidden = !queue.length;
@@ -713,52 +725,461 @@ function renderReviewButton(board) {
   if ($("review-dialog")?.open) renderReviewSheet();
 }
 
+/// The review's actions, shared by every mode (FleetReviewActions).
+const reviewActions = {
+  looksGood(unit) {
+    state.review.later = state.review.later.filter((id) => id !== unit.id);
+    state.review.sendingBack = false;
+    markReviewed(unit, `reviewed:${unit.id}`);
+  },
+  later(unit) {
+    state.review.later = [...state.review.later.filter((id) => id !== unit.id), unit.id];
+    state.review.sendingBack = false;
+    renderReviewSheet();
+  },
+  open(unit) {
+    if (!unit.pane || unit.remote || !state.data.access) return false;
+    $("review-dialog").close?.();
+    window.location.assign(paneLink(unit));
+    return true;
+  },
+};
+
 function renderReviewSheet() {
   const list = $("review-list");
-  const all = reviewBoard();
-  const queue = all ? reviewQueue(all, state.reviewScope) : [];
+  const queue = reviewList();
+  const mode = state.review.mode;
   $("review-total").textContent = String(queue.length);
   for (const option of document.querySelectorAll("#review-scope button")) {
     option.setAttribute("aria-checked", String(option.dataset.scope === state.reviewScope));
+    option.tabIndex = option.dataset.scope === state.reviewScope ? 0 : -1;
   }
+  for (const option of document.querySelectorAll("#review-mode button")) {
+    option.setAttribute("aria-checked", String(option.dataset.mode === mode));
+    option.tabIndex = option.dataset.mode === mode ? 0 : -1;
+  }
+  list.className = `review-list mode-${mode}`;
+  state.review.checked = new Set([...state.review.checked].filter((id) => queue.some((u) => u.id === id)));
   if (!queue.length) {
     const empty = el("div", "review-empty");
-    empty.append(icon("test-pass", "big"), el("p", null, S.reviewEmpty));
+    empty.append(icon("test-pass", "big"), el("h3", null, S.reviewEmpty), el("p", null, state.reviewScope === "all" ? S.rvEmptyAll : S.rvEmptyRange));
     list.replaceChildren(empty);
     return;
   }
-  list.replaceChildren(...queue.map((unit) => {
-    const key = `reviewed:${unit.id}`;
-    const row = el("article", "card review-row emphasis finished");
-    row.append(el("div", "e-title", tx(unit.title)));
-    const text = headlineText(unit);
-    if (text) {
-      const inset = el("div", "inset");
-      inset.append(el("div", "headline", text));
-      row.append(inset);
+  if (mode === "cards") list.replaceChildren(...reviewCards(queue));
+  else if (mode === "inbox") list.replaceChildren(...reviewInbox(queue));
+  else list.replaceChildren(...reviewDigest(queue));
+}
+
+/// One result: where it ran, what was asked, what came back
+/// (FleetReviewDetail).
+function reviewDetail(unit) {
+  const box = el("div", "rv-detail");
+  box.append(el("h3", "rv-title", tx(unit.title)));
+  const owner = unit.focus?.owner || unit.focus?.name || "";
+  const meta = el("div", "rv-meta");
+  const marks = (unit.products?.length ? unit.products : [unit.product]).slice(0, 3).map(logo).filter(Boolean);
+  meta.append(...marks, hostBadge(unit.host, !unit.remote));
+  if (unit.project) meta.append(el("span", null, `· ${unit.project}`));
+  if (owner) meta.append(el("span", null, `· ${owner}`));
+  if (unit.helpers?.length) {
+    const helpers = el("span", "helpers");
+    helpers.append(icon("people"), el("span", null, String(unit.helpers.length)));
+    meta.append(helpers);
+  }
+  if (unit.since) meta.append(el("span", "when", `· ${when(unit.since)}`));
+  box.append(meta);
+  const asked = unit.review?.asked;
+  if (asked) box.append(reviewBlock(S.rvAsked, el("p", "rv-asked", asked)));
+  const report = el("div", "rv-report");
+  report.append(...markdown(unit.review?.result || headlineText(unit)));
+  const reportBox = [report];
+  if (unit.review?.resultCut) reportBox.push(el("p", "rv-cut", S.rvReportCut));
+  box.append(reviewBlock(S.rvReport, ...reportBox));
+  return box;
+}
+
+/// The agent's report as the Mac draws it (MarkdownContent): headings,
+/// lists, code blocks, paragraphs, inline code and bold. Built as nodes, so
+/// nothing in the text is ever read as markup.
+export function markdown(source) {
+  const blocks = [];
+  const lines = String(source || "").split(/\r?\n/);
+  let paragraph = [];
+  let list = null;
+  let listTag = null;
+  const flush = () => {
+    if (paragraph.length) blocks.push(inline(el("p"), paragraph.join(" ")));
+    paragraph = [];
+    list = null;
+  };
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    if (trimmed.startsWith("```")) {
+      flush();
+      const code = [];
+      for (i += 1; i < lines.length && !lines[i].trim().startsWith("```"); i += 1) code.push(lines[i]);
+      const pre = el("pre");
+      pre.append(el("code", null, code.join("\n")));
+      blocks.push(pre);
+      continue;
     }
-    const actions = el("div", "row");
-    const marks = (unit.products?.length ? unit.products : [unit.product]).slice(0, 3).map(logo).filter(Boolean);
-    actions.append(metaLine("finished", [...marks, hostBadge(unit.host, !unit.remote), unit.project ? el("span", "repo", `· ${unit.project}`) : null, el("span", "when", when(unit.since))]));
-    if (canMarkReviewed()) {
-      const good = button(S.looksGood, () => markReviewed(unit, key), "btn small primary", "check");
-      good.disabled = state.busy.has(key);
-      actions.append(good);
+    if (!trimmed) {
+      flush();
+      continue;
     }
-    row.append(actions);
-    const line = resultLine(key);
-    if (line) row.append(line);
-    return row;
-  }));
+    const heading = /^(#{1,6})\s+(.*)$/.exec(trimmed);
+    if (heading) {
+      flush();
+      blocks.push(inline(el(`h${Math.min(heading[1].length + 1, 4)}`), heading[2]));
+      continue;
+    }
+    const item = /^([-*+]|\d+[.)])\s+(.*)$/.exec(trimmed);
+    if (item) {
+      if (paragraph.length) flush();
+      const tag = /\d/.test(item[1]) ? "ol" : "ul";
+      if (!list || listTag !== tag) {
+        list = el(tag);
+        listTag = tag;
+        blocks.push(list);
+      }
+      list.append(inline(el("li"), item[2]));
+      continue;
+    }
+    if (list && /^\s+/.test(line) && list.lastChild) {
+      list.lastChild.append(" ", ...inlineNodes(trimmed));
+      continue;
+    }
+    list = null;
+    paragraph.push(trimmed);
+  }
+  flush();
+  return blocks;
+}
+
+function inline(node, text) {
+  node.append(...inlineNodes(text));
+  return node;
+}
+
+/// `code` and **bold**; everything else is text.
+function inlineNodes(text) {
+  const nodes = [];
+  const pattern = /`([^`]+)`|\*\*([^*]+)\*\*/g;
+  let at = 0;
+  for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
+    if (match.index > at) nodes.push(text.slice(at, match.index));
+    nodes.push(match[1] != null ? el("code", null, match[1]) : el("strong", null, match[2]));
+    at = match.index + match[0].length;
+  }
+  if (at < text.length) nodes.push(text.slice(at));
+  return nodes;
+}
+
+function reviewBlock(title, ...content) {
+  const block = el("section", "rv-block");
+  block.append(el("h4", null, title), ...content);
+  return block;
+}
+
+/// Looks Good, Later, Send Back and Open, with their keys
+/// (FleetReviewButtons), and the reply when Send Back is open.
+function reviewButtons(unit) {
+  const key = `reviewed:${unit.id}`;
+  const nodes = [];
+  const row = el("div", "rv-buttons");
+  const hint = (node, letter) => {
+    node.append(el("kbd", null, letter));
+    return node;
+  };
+  row.append(hint(button(S.rvLater, () => reviewActions.later(unit), "btn", "clock"), "H"));
+  if (canWrite()) {
+    const back = hint(button(S.sendBack, () => {
+      state.review.sendingBack = !state.review.sendingBack;
+      renderReviewSheet();
+    }, "btn", "uturn"), "R");
+    back.setAttribute("aria-expanded", String(state.review.sendingBack));
+    row.append(back);
+  }
+  if (unit.pane && !unit.remote && state.data.access) {
+    const open = el("a", "btn");
+    open.href = paneLink(unit);
+    open.append(icon("arrow-up-right"), el("span", null, S.open), el("kbd", null, "O"));
+    row.append(open);
+  }
+  row.append(el("span", "spacer"));
+  if (canMarkReviewed()) {
+    const good = hint(button(S.looksGood, () => reviewActions.looksGood(unit), "btn primary", "check"), "E");
+    good.disabled = state.busy.has(key);
+    row.append(good);
+  }
+  nodes.push(row);
+  if (state.review.sendingBack && canWrite()) {
+    const replyKey = `reply:${unit.id}`;
+    const reply = replyComposer(unit, replyKey, replyTarget(unit));
+    nodes.push(reply || el("p", "rv-note", S.rvNotAtPrompt));
+    const result = resultLine(replyKey);
+    if (result) nodes.push(result);
+  }
+  const line = resultLine(key);
+  if (line) nodes.push(line);
+  return nodes;
+}
+
+// Cards: one at a time (FleetReviewCards).
+function reviewCards(queue) {
+  const unit = queue[0];
+  if (state.review.cardId !== unit.id) {
+    state.review.cardId = unit.id;
+    state.review.sendingBack = false;
+  }
+  const top = el("div", "rv-cards-top");
+  top.append(el("span", "rv-count", S.rvOneOf(queue.length)), el("span", "rv-keys", S.rvKeysCards));
+  const stack = el("div", `rv-stack${queue.length > 1 ? " more" : ""}`);
+  const card = el("article", "rv-card");
+  card.append(reviewDetail(unit));
+  stack.append(card);
+  const wrap = el("div", "rv-cards");
+  wrap.append(top, stack, ...reviewButtons(unit));
+  return [wrap];
+}
+
+// Inbox: a list and the selected result (FleetReviewInbox).
+function inboxSelected(queue) {
+  return queue.find((u) => u.id === state.review.selectedId) || queue[0];
+}
+
+function reviewInbox(queue) {
+  const selected = inboxSelected(queue);
+  if (state.review.inboxId !== selected.id) {
+    state.review.inboxId = selected.id;
+    state.review.sendingBack = false;
+  }
+  const side = el("div", "rv-inbox-list");
+  const rows = el("div", "rv-rows");
+  rows.setAttribute("role", "listbox");
+  rows.setAttribute("aria-label", S.reviewTitle);
+  for (const unit of queue) {
+    const row = el("button", "rv-row");
+    row.type = "button";
+    row.setAttribute("role", "option");
+    row.setAttribute("aria-selected", String(unit.id === selected.id));
+    const head = el("div", "rv-row-head");
+    head.append(el("span", "rv-row-title", tx(unit.title)), el("span", "when", when(unit.since)));
+    row.append(head, el("span", "rv-row-text", digest(unit.review?.result, 120) || headlineText(unit)));
+    if (unit.project) row.append(el("span", "rv-row-repo", unit.project));
+    row.addEventListener("click", () => {
+      state.review.selectedId = unit.id;
+      renderReviewSheet();
+    });
+    rows.append(row);
+  }
+  const foot = el("div", "rv-inbox-foot");
+  if (canMarkReviewed()) {
+    if (state.review.confirmAll) {
+      foot.append(
+        el("span", null, S.rvMarkAllConfirm(queue.length)),
+        button(S.rvMarkAll, () => {
+          state.review.confirmAll = false;
+          for (const unit of queue) reviewActions.looksGood(unit);
+        }, "btn small"),
+        button(S.cancel, () => {
+          state.review.confirmAll = false;
+          renderReviewSheet();
+        }, "btn small"),
+      );
+    } else {
+      foot.append(button(S.rvMarkAllAsk, () => {
+        state.review.confirmAll = true;
+        renderReviewSheet();
+      }, "btn ghost small"));
+    }
+  }
+  foot.append(el("span", "spacer"), el("span", "rv-keys", S.rvKeysInbox));
+  side.append(rows, foot);
+  const main = el("div", "rv-inbox-detail");
+  const scroll = el("div", "rv-scroll");
+  scroll.append(reviewDetail(selected));
+  main.append(scroll, ...reviewButtons(selected));
+  const wrap = el("div", "rv-inbox");
+  wrap.append(side, main);
+  return [wrap];
+}
+
+function inboxMove(queue, step) {
+  if (state.review.sendingBack) return;
+  const current = inboxSelected(queue);
+  const index = queue.findIndex((u) => u.id === current.id);
+  const next = queue[Math.min(Math.max(index + step, 0), queue.length - 1)];
+  state.review.selectedId = next.id;
+  renderReviewSheet();
+  document.querySelector(".rv-row[aria-selected='true']")?.scrollIntoView({ block: "nearest" });
+}
+
+// Digest: everything at a glance, by project (FleetReviewDigest).
+function reviewDigest(queue) {
+  const nodes = [];
+  for (const group of byProject(queue)) {
+    const section = el("section", "rv-group");
+    const head = el("div", "rv-group-head");
+    const name = el("span", "rv-group-name");
+    name.append(icon("folder"), el("span", null, group.project || S.noProject));
+    head.append(name, el("span", "count", String(group.units.length)), el("span", "spacer"));
+    if (canMarkReviewed()) head.append(button(S.rvMarkProject, () => group.units.forEach(reviewActions.looksGood), "btn ghost small"));
+    section.append(head);
+    for (const unit of group.units) section.append(digestRow(unit));
+    nodes.push(section);
+  }
+  const checked = queue.filter((u) => state.review.checked.has(u.id));
+  if (checked.length && canMarkReviewed()) {
+    const bar = el("div", "rv-selection");
+    bar.append(
+      el("span", null, S.rvSelected(checked.length)),
+      button(S.rvClear, () => {
+        state.review.checked = new Set();
+        renderReviewSheet();
+      }, "btn ghost small"),
+      el("span", "spacer"),
+      button(S.rvMarkSelected, () => {
+        state.review.checked = new Set();
+        checked.forEach(reviewActions.looksGood);
+      }, "btn primary small"),
+    );
+    nodes.push(bar);
+  }
+  return nodes;
+}
+
+function digestRow(unit) {
+  const key = `reviewed:${unit.id}`;
+  const expanded = state.review.expanded === unit.id;
+  const row = el("article", "rv-digest-row");
+  const line = el("div", "rv-digest-line");
+  if (canMarkReviewed()) {
+    const box = el("input", "rv-check");
+    box.type = "checkbox";
+    box.checked = state.review.checked.has(unit.id);
+    box.title = S.rvSelect;
+    box.setAttribute("aria-label", `${S.rvSelect}: ${tx(unit.title)}`);
+    box.addEventListener("change", () => {
+      if (box.checked) state.review.checked.add(unit.id);
+      else state.review.checked.delete(unit.id);
+      renderReviewSheet();
+    });
+    line.append(box);
+  }
+  const text = el("div", "rv-digest-text");
+  text.append(el("span", "rv-row-title", tx(unit.title)), el("span", `rv-row-text${expanded ? " open" : ""}`, digest(unit.review?.result, 160) || headlineText(unit)));
+  line.append(text, el("span", "when", when(unit.since)));
+  if (canMarkReviewed()) {
+    const good = button("", () => reviewActions.looksGood(unit), "btn ghost icon-only", "check");
+    good.title = S.looksGood;
+    good.setAttribute("aria-label", `${S.looksGood}: ${tx(unit.title)}`);
+    good.disabled = state.busy.has(key);
+    line.append(good);
+  }
+  const more = button("", () => {
+    state.review.expanded = expanded ? null : unit.id;
+    state.review.sendingBack = false;
+    renderReviewSheet();
+  }, "btn ghost icon-only rv-expand", "chevron");
+  more.title = S.rvExpand;
+  more.setAttribute("aria-label", S.rvExpand);
+  more.setAttribute("aria-expanded", String(expanded));
+  line.append(more);
+  row.append(line);
+  if (expanded) {
+    const detail = el("div", "rv-digest-detail");
+    detail.append(reviewDetail(unit), ...reviewButtons(unit));
+    row.append(detail);
+  } else {
+    const result = resultLine(key);
+    if (result) row.append(result);
+  }
+  return row;
+}
+
+/// The review keys (FleetReviewKey): E or L Looks Good, H Later, J/K next
+/// and previous, R Send Back, O or Return Open; the arrows and Space do the
+/// same. Typing in a field and modified keys are left alone.
+function reviewKey(event) {
+  if (event.metaKey || event.ctrlKey || event.altKey) return null;
+  const target = event.target;
+  const tag = target?.tagName;
+  if (tag === "TEXTAREA" || tag === "SELECT" || (tag === "INPUT" && target.type !== "checkbox") || target?.isContentEditable) return null;
+  // A radio (the mode and range switches) owns its keys.
+  if (target?.getAttribute?.("role") === "radio") return null;
+  // A button or link owns the arrows, Space and Return.
+  const control = tag === "BUTTON" || tag === "A" || tag === "INPUT";
+  switch (event.key) {
+    case "ArrowRight": return control ? null : "looksGood";
+    case "ArrowLeft": return control ? null : "later";
+    case "ArrowDown": return control ? null : "next";
+    case "ArrowUp": return control ? null : "previous";
+    case " ": case "Enter": return control ? null : "open";
+    default: break;
+  }
+  return { e: "looksGood", l: "looksGood", h: "later", r: "sendBack", o: "open", j: "next", k: "previous" }[String(event.key || "").toLowerCase()] || null;
+}
+
+function onReviewKey(event) {
+  const action = reviewKey(event);
+  if (!action) return;
+  const queue = reviewList();
+  const mode = state.review.mode;
+  if (!queue.length || mode === "digest") return;
+  const unit = mode === "inbox" ? inboxSelected(queue) : queue[0];
+  let used = true;
+  switch (action) {
+    case "looksGood": if (canMarkReviewed()) reviewActions.looksGood(unit); else used = false; break;
+    case "later": reviewActions.later(unit); break;
+    case "next": if (mode === "inbox") inboxMove(queue, 1); else reviewActions.later(unit); break;
+    case "previous": if (mode === "inbox") inboxMove(queue, -1); else used = false; break;
+    case "sendBack":
+      if (!canWrite()) { used = false; break; }
+      state.review.sendingBack = !state.review.sendingBack;
+      renderReviewSheet();
+      if (state.review.sendingBack) document.querySelector("#review-list textarea")?.focus();
+      break;
+    case "open": used = reviewActions.open(unit); break;
+    default: used = false;
+  }
+  if (used) event.preventDefault();
+}
+
+/// A segmented switch is a radio group: the arrows move the choice and the
+/// focus, as the platform's do.
+function wireRadios(selector) {
+  const options = [...document.querySelectorAll(selector)];
+  options.forEach((option, index) => {
+    option.addEventListener("keydown", (event) => {
+      const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
+      if (!step) return;
+      event.preventDefault();
+      const next = options[(index + step + options.length) % options.length];
+      next.click();
+      next.focus?.();
+    });
+  });
 }
 
 function wireReview() {
   const dialog = $("review-dialog");
+  wireRadios("#review-mode button");
+  wireRadios("#review-scope button");
   $("review-button")?.addEventListener("click", () => {
     renderReviewSheet();
     dialog.showModal?.();
   });
   $("review-done")?.addEventListener("click", () => dialog.close?.());
+  dialog?.addEventListener("keydown", onReviewKey);
+  // Later lasts while the sheet is open, as on the Mac.
+  dialog?.addEventListener("close", () => {
+    state.review.later = [];
+    state.review.sendingBack = false;
+    state.review.confirmAll = false;
+  });
   for (const option of document.querySelectorAll("#review-scope button")) {
     option.addEventListener("click", () => {
       state.reviewScope = option.dataset.scope;
@@ -768,6 +1189,18 @@ function wireReview() {
         // A preference only.
       }
       render();
+      renderReviewSheet();
+    });
+  }
+  for (const option of document.querySelectorAll("#review-mode button")) {
+    option.addEventListener("click", () => {
+      state.review.mode = option.dataset.mode;
+      state.review.sendingBack = false;
+      try {
+        localStorage.setItem(REVIEW_MODE_KEY, state.review.mode);
+      } catch {
+        // A preference only.
+      }
       renderReviewSheet();
     });
   }
@@ -790,12 +1223,31 @@ function findIn(board, id) {
   return null;
 }
 
+/// The words went to the agent; tendd records them as the decision the Mac
+/// records (FleetDecisionRecord.recordInstruction): an answer, or a result
+/// sent back. Best effort: the message already went.
+function recordInstruction(unit, target, text) {
+  if (!state.data.server || !target.session) return;
+  write("/api/home/instruction", {
+    id: unit.id,
+    session_id: target.session,
+    state_entered_at: target.since,
+    kind: target.kind === "answer" ? "answer" : "send_back",
+    text,
+    question: headlineText(unit) || null,
+  }).catch(() => {
+    // The send stands; only its record is missing.
+  });
+}
+
 /// Send a draft to the agent it was written for, and only to that one:
 /// checked against the latest board just before sending (the Mac checks
 /// `target.matches(current.agent)` the same way), so a replacement session
 /// in the same pane, or the same agent's next question, never receives it.
 async function sendToPane(target, text, key, unitId) {
-  const latest = findIn(currentBoard(), unitId);
+  // Every unit, whatever Home's filters show: Review lists results from
+  // every host and project.
+  const latest = findIn(currentBoard({ filtered: false }), unitId);
   if (!sameTarget(target, latest ? replyTarget(latest) : null)) {
     state.results.set(key, { ok: false, text: S.staleDraft(target.owner || "") });
     render();
@@ -808,6 +1260,7 @@ async function sendToPane(target, text, key, unitId) {
     const body = { text, submit: true };
     if (target.socket) body.socket = target.socket;
     await write(`/api/panes/${encodeURIComponent(target.pane)}/prompt`, body);
+    recordInstruction(latest, target, text);
     // Clear only what was sent: the draft is frozen while sending, but a
     // retarget or a newer text must survive a late answer.
     const now = state.replyDrafts.get(key);
@@ -821,6 +1274,64 @@ async function sendToPane(target, text, key, unitId) {
     state.busy.delete(key);
     render();
   }
+}
+
+/// The reply to a unit's agent, shared by the inspector and Review (both
+/// edit the same draft, as the Mac's `draft(work.id)` does): a composer when
+/// its agent is at the prompt, a stale-draft notice when the draft was
+/// written for another question, else nothing.
+function replyComposer(unit, key, target) {
+  // A draft keeps the agent and the question it was written for
+  // (FleetReplyDraft): text for one question never goes to another agent,
+  // a replacement session or the same agent's next question unasked.
+  const draft = state.replyDrafts.get(key);
+  if (draft?.text && !sameTarget(draft.target, target)) {
+    const stale = el("div", "stale");
+    stale.append(icon("exclaim"), el("span", null, S.staleDraft(draft.target?.owner || "")));
+    const row = el("div", "row");
+    if (target) {
+      row.append(button(S.useFor(target.owner), () => {
+        state.replyDrafts.set(key, { text: draft.text, target });
+        render();
+      }, "btn small"));
+    }
+    row.append(button(S.discard, () => {
+      state.replyDrafts.delete(key);
+      render();
+    }, "btn ghost small danger"));
+    stale.append(row);
+    return stale;
+  }
+  if (target) {
+    const area = el("textarea", "field");
+    area.rows = 2;
+    area.dataset.key = key;
+    area.maxLength = 16384;
+    area.placeholder = target.kind === "answer" ? S.yourAnswer : S.nextInstruction;
+    area.value = draft?.text || "";
+    const send = button(target.kind === "answer" ? S.answerVerb : S.sendBack, () => sendToPane(target, area.value, key, unit.id), "btn primary");
+    // A draft being sent is frozen (FleetReplyDraft.pending).
+    area.disabled = state.busy.has(key);
+    const sync = () => (send.disabled = !area.value.trim() || state.busy.has(key));
+    area.addEventListener("input", () => {
+      if (area.value) state.replyDrafts.set(key, { text: area.value, target });
+      else state.replyDrafts.delete(key);
+      sync();
+    });
+    area.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !send.disabled) {
+        event.preventDefault();
+        send.click();
+      }
+    });
+    sync();
+    const composerBox = el("div", "composer reply");
+    const row = el("div", "row end");
+    row.append(send);
+    composerBox.append(area, row);
+    return composerBox;
+  }
+  return null;
 }
 
 function renderInspector() {
@@ -851,55 +1362,8 @@ function renderInspector() {
   const target = canWrite() ? replyTarget(unit) : null;
   const replyable = Boolean(target);
   const paneLinks = Boolean(state.data.access);
-  // A draft keeps the agent and the question it was written for
-  // (FleetReplyDraft): text for one question never goes to another agent,
-  // a replacement session or the same agent's next question unasked.
-  const draft = state.replyDrafts.get(key);
-  if (draft?.text && !sameTarget(draft.target, target)) {
-    const stale = el("div", "stale");
-    stale.append(icon("exclaim"), el("span", null, S.staleDraft(draft.target?.owner || "")));
-    const row = el("div", "row");
-    if (target) {
-      row.append(button(S.useFor(target.owner), () => {
-        state.replyDrafts.set(key, { text: draft.text, target });
-        render();
-      }, "btn small"));
-    }
-    row.append(button(S.discard, () => {
-      state.replyDrafts.delete(key);
-      render();
-    }, "btn ghost small danger"));
-    stale.append(row);
-    now.append(stale);
-  } else if (replyable) {
-    const area = el("textarea", "field");
-    area.rows = 2;
-    area.dataset.key = key;
-    area.maxLength = 16384;
-    area.placeholder = target.kind === "answer" ? S.yourAnswer : S.nextInstruction;
-    area.value = draft?.text || "";
-    const send = button(target.kind === "answer" ? S.answerVerb : S.sendBack, () => sendToPane(target, area.value, key, unit.id), "btn primary");
-    // A draft being sent is frozen (FleetReplyDraft.pending).
-    area.disabled = state.busy.has(key);
-    const sync = () => (send.disabled = !area.value.trim() || state.busy.has(key));
-    area.addEventListener("input", () => {
-      if (area.value) state.replyDrafts.set(key, { text: area.value, target });
-      else state.replyDrafts.delete(key);
-      sync();
-    });
-    area.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !send.disabled) {
-        event.preventDefault();
-        send.click();
-      }
-    });
-    sync();
-    const composerBox = el("div", "composer reply");
-    const row = el("div", "row end");
-    row.append(send);
-    composerBox.append(area, row);
-    now.append(composerBox);
-  }
+  const reply = replyComposer(unit, key, target);
+  if (reply) now.append(reply);
   const result = resultLine(key);
   if (result) now.append(result);
   if (unit.pane && !unit.remote && paneLinks) {
@@ -1478,12 +1942,13 @@ async function poll() {
 }
 
 /// The board to draw: the daemon's when it served one, else built here.
-function currentBoard() {
+function currentBoard({ filtered = true } = {}) {
   const now = Date.now();
+  const filter = filtered ? state.filter : {};
   if (state.data.server) {
-    return fromServerBoard(state.data.server, { history: state.data.history, filter: state.filter, now, showReviewed: state.folds.reviewed });
+    return fromServerBoard(state.data.server, { history: state.data.history, filter, now, showReviewed: filtered ? state.folds.reviewed : true });
   }
-  return buildBoard({ ...state.data, now, filter: state.filter });
+  return buildBoard({ ...state.data, now, filter });
 }
 
 // ---- Start Work ----------------------------------------------------------
@@ -1555,6 +2020,8 @@ export function start() {
   try {
     const scope = localStorage.getItem("tend.home.reviewScope");
     if (SCOPES.some(([value]) => value === scope)) state.reviewScope = scope;
+    const mode = localStorage.getItem(REVIEW_MODE_KEY);
+    if (REVIEW_MODES.some(([value]) => value === mode)) state.review.mode = mode;
   } catch {
     // ignore
   }

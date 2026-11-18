@@ -100,12 +100,12 @@ fn unversioned(path: &str) -> &str {
 /// path. Relative module imports inside those scripts resolve under the
 /// same prefix, so one new build id changes every asset URL the page uses.
 /// No dashboard page may be framed by another site.
-const FRAME_POLICY: &str = "frame-ancestors 'none'";
+pub(super) const FRAME_POLICY: &str = "frame-ancestors 'none'";
 
 /// Home (`/home`, `/needs`) is written for a strict policy: its own scripts
 /// and styles only, no inline code, no other origin. The older pages still
 /// carry inline handlers and only get [`FRAME_POLICY`].
-const HOME_POLICY: &str = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'";
+pub(super) const HOME_POLICY: &str = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'";
 
 fn policy_for(path: &str) -> &'static str {
     if path == "home.html" {

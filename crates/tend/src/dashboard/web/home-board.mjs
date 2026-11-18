@@ -455,6 +455,8 @@ function serverUnit(item) {
     reviewed: item.reviewed === true,
     reviewKey: item.review_key || null,
     requestedByPerson: item.requested_by_person === true,
+    // What Review shows: what was asked and what came back (FleetReviewDetail).
+    review: item.review ? { asked: item.review.asked || null, result: item.review.result || null, resultCut: item.review.result_truncated === true } : null,
   };
 }
 
@@ -588,4 +590,46 @@ export function sameTarget(a, b) {
   return Boolean(
     a && b && a.kind === b.kind && a.session === b.session && a.state === b.state && a.since === b.since && a.pane === b.pane && a.socket === b.socket,
   );
+}
+
+/// Review's queue with the results put off with Later at the end, in the
+/// order they were put off (FleetReviewView.queue).
+export function withLater(queue, later = []) {
+  const deferred = new Set(later);
+  return [...queue.filter((u) => !deferred.has(u.id)), ...later.map((id) => queue.find((u) => u.id === id)).filter(Boolean)];
+}
+
+/// Units by project, in the order each project first appears
+/// (FleetBoard.byProject).
+export function byProject(units) {
+  const groups = new Map();
+  for (const unit of units) {
+    const key = unit.project || "";
+    if (!groups.has(key)) groups.set(key, { project: unit.project || null, units: [] });
+    groups.get(key).units.push(unit);
+  }
+  return [...groups.values()];
+}
+
+/// A few plain lines of Markdown (FleetQuickLookText.digest): marks
+/// trimmed, rules dropped, joined by spaces and cut at a sentence end past
+/// the middle, else at a space, with an ellipsis.
+export function digest(text, limit = 320) {
+  if (!text) return null;
+  const lines = String(text).split(/\r?\n/).map((raw) => {
+    let line = raw.trim();
+    while (line && "#>*-`".includes(line[0])) line = line.slice(1).trim();
+    return line;
+  }).filter((line) => line && ![...line].every((c) => "-=*_`|".includes(c)));
+  const joined = lines.join(" ");
+  if (!joined) return null;
+  const chars = [...joined];
+  if (chars.length <= limit) return joined;
+  const head = chars.slice(0, limit);
+  let stop = -1;
+  for (let i = head.length - 1; i >= 0; i--) if (".!?。".includes(head[i])) { stop = i; break; }
+  if (stop > limit / 2) return head.slice(0, stop + 1).join("");
+  const space = head.lastIndexOf(" ");
+  if (space >= 0) return `${head.slice(0, space).join("")}…`;
+  return `${head.join("")}…`;
 }

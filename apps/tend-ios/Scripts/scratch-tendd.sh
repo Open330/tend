@@ -133,8 +133,9 @@ bind = "127.0.0.1:$PORT"
 token = "$tok"
 # Lets the app's Start Work run here. The pipeline's only agent is not a
 # known agent kind, so tend registers the Run and launches nothing: the
-# whole start path runs, no agent does.
-allow_work_start = true
+# whole start path runs, no agent does. SCRATCH_WORK_START=false checks
+# how the app explains it being off.
+allow_work_start = ${SCRATCH_WORK_START:-true}
 
 [fleet]
 # SCRATCH_CAPTURE_POLICY=never checks that recent output is refused.

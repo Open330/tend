@@ -34,7 +34,16 @@ const posts = [];
 let gate = null;
 const el = (tag, cls, text) => { const n = new Node(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 const deps = {
-  S: new Proxy({ stateLabels: {}, statusGroups: {} }, { get: (t, k) => (k in t ? t[k] : String(k)) }),
+  S: new Proxy(
+    {
+      stateLabels: {},
+      statusGroups: {},
+      exploreSorts: { topology: "Topology", recent: "Latest activity", myPrompt: "My latest prompt", agentActivity: "Agent latest update" },
+      exploreMenuHelp: (group, order) => `by ${group}, ordered by ${order}`,
+      showAllCount: (n) => `Show all ${n}`,
+    },
+    { get: (t, k) => (k in t ? t[k] : String(k)) },
+  ),
   el,
   icon: () => el("span"),
   button: (label, onClick, cls) => { const b = el("button", cls, label); b.addEventListener("click", onClick); return b; },
@@ -157,4 +166,66 @@ test("destroy leaves nothing private behind", () => {
   assert.equal(root.children.length, 0);
   view.update(fleet);
   assert.equal(root.children.length, 0, "no later update draws it back");
+});
+
+test("the order is kept per browser under tend.explore.sort, and redraws the list", () => {
+  const stored = new Map([["tend.explore.sort", "myPrompt"]]);
+  globalThis.localStorage = { getItem: (k) => stored.get(k) ?? null, setItem: (k, v) => stored.set(k, String(v)) };
+  const at = (prompt, update) => ({ last_prompt_at: prompt, last_activity_at: update });
+  const timed = { hosts: [{ alias: "mba", local: true, state: "online", remote: {
+    agents: [
+      { agent_session_id: "a", kind: "codex", pane: "%1", state: "idle", ...at("2026-11-19T10:00:00Z", "2026-11-19T10:09:00Z") },
+      { agent_session_id: "b", kind: "codex", pane: "%2", state: "idle", ...at("2026-11-19T10:05:00Z", "2026-11-19T10:01:00Z") },
+    ],
+    panes: [
+      { pane_id: "%1", session: "a", window_index: "0", window_name: "one" },
+      { pane_id: "%2", session: "a", window_index: "1", window_name: "two" },
+    ],
+  } }] };
+  const box = new Node("div");
+  const explore = mountExplore(box, deps);
+  explore.update(timed);
+  const sort = find(box, (n) => n.tag === "select" && n.className === "ex-sort");
+  assert.equal(sort.value, "myPrompt", "the stored order comes back");
+  const panes = () => {
+    const out = [];
+    const walk = (n) => { if (n.dataset?.id) out.push(n.dataset.id.split(":").pop()); for (const c of n.children || []) walk(c); };
+    walk(find(box, (n) => n.className === "ex-list"));
+    return out;
+  };
+  assert.deepEqual(panes(), ["%2", "%1"], "my latest prompt: pane two's window first");
+  sort.value = "agentActivity";
+  sort.fire("change");
+  assert.equal(stored.get("tend.explore.sort"), "agentActivity");
+  assert.deepEqual(panes(), ["%1", "%2"]);
+  stored.set("tend.explore.sort", "bogus");
+  const again = new Node("div");
+  mountExplore(again, deps).update(timed);
+  assert.equal(find(again, (n) => n.className === "ex-sort").value, "topology", "an unknown order is the default");
+  globalThis.localStorage = { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); } };
+  const blocked = new Node("div");
+  const view3 = mountExplore(blocked, deps);
+  view3.update(timed);
+  const select = find(blocked, (n) => n.className === "ex-sort");
+  select.value = "recent";
+  assert.doesNotThrow(() => select.fire("change"), "storage refused: still sorts");
+  delete globalThis.localStorage;
+});
+
+test("the empty states: nothing detected, nothing matching, and the count", () => {
+  const box = new Node("div");
+  const explore = mountExplore(box, deps);
+  explore.update({ hosts: [{ alias: "mba", local: true, state: "online", remote: { agents: [], panes: [] } }] });
+  assert.match(find(box, (n) => n.className === "ex-list").text, /noPanesDetected/);
+  explore.update(fleet);
+  const search = find(box, (n) => n.tag === "input");
+  search.value = "no such pane";
+  search.fire("input");
+  const list = find(box, (n) => n.className === "ex-list");
+  assert.match(list.text, /noMatchingPanes/);
+  assert.equal(find(list, (n) => n.dataset?.id), null, "no rows");
+  assert.equal(find(box, (n) => n.className === "ex-count").textContent, "0/3", "shown/all while filtering");
+  search.value = "";
+  search.fire("input");
+  assert.equal(find(box, (n) => n.className === "ex-count").textContent, "3");
 });

@@ -200,3 +200,15 @@ test("a waiting choice or an error is answered in the pane, not by text", async 
   assert.equal(replyTarget({ lane: "needsYou", focus: focus("waiting_input") }).kind, "answer");
   assert.equal(replyTarget({ lane: "running", focus: focus("working") }), null);
 });
+
+test("Review's Later, project groups and digest follow the Mac", async () => {
+  const { withLater, byProject, digest } = await import("../src/dashboard/web/home-board.mjs");
+  const units = [{ id: "a", project: "tend" }, { id: "b", project: "" }, { id: "c", project: "tend" }];
+  assert.deepEqual(withLater(units, ["a"]).map((u) => u.id), ["b", "c", "a"]);
+  assert.deepEqual(withLater(units, ["c", "a", "gone"]).map((u) => u.id), ["b", "c", "a"], "put off in order; gone ones drop");
+  assert.deepEqual(byProject(units).map((g) => [g.project, g.units.map((u) => u.id)]), [["tend", ["a", "c"]], [null, ["b"]]]);
+  assert.equal(digest("# Fix it\n\n- one\n---\n`two`", 600), "Fix it one two`");
+  assert.equal(digest("  \n---\n"), null);
+  assert.equal(digest(`${"a".repeat(40)}. ${"b ".repeat(40)}`, 50), `${"a".repeat(40)}.`);
+  assert.equal(digest("word word word", 9), "word…");
+});

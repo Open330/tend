@@ -81,6 +81,14 @@ final class StartWorkUITests: XCTestCase {
         task.typeText("Write a haiku about caches")
         let go = app.buttons["workStart"]
         XCTAssertTrue(go.waitForExistence(timeout: 5))
+        // A scratch tendd with SCRATCH_WORK_START=false: Start can never be
+        // tapped, and the sheet says why and who can change it.
+        if ProcessInfo.processInfo.environment["TEND_WORK_START_OFF"] != nil {
+            XCTAssertTrue(app.descendants(matching: .any)["workStartOff"].firstMatch.waitForExistence(timeout: 15))
+            XCTAssertFalse(go.isEnabled)
+            attach(app, "work-start-off")
+            return
+        }
         // The options load from the host first; Start enables when they have.
         let end = Date().addingTimeInterval(15)
         while !go.isEnabled, Date() < end { Thread.sleep(forTimeInterval: 0.3) }

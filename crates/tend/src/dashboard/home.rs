@@ -1,15 +1,16 @@
-//! Home's board on the web (`GET /api/home`) and its "Looks Good" mark
-//! (`POST /api/home/reviewed`): the board tendd computes once for every
+//! Home's board on the web (`GET /api/home`), its "Looks Good" mark
+//! (`POST /api/home/reviewed`) and the record of what the person typed to an
+//! agent from Home (`POST /api/home/instruction`): the board tendd computes once for every
 //! client ([`crate::home_board`]), from the Fleet snapshot, this daemon's
 //! pipeline runs, automation rules and review records, and the decision
 //! queue `/api/decisions` serves.
 //!
 //! # Authorization
 //!
-//! Both are operator-only, like pane output and the decision queue: the
+//! All three are operator-only, like pane output and the decision queue: the
 //! board carries what agents are working on and what they asked. The read
 //! is a GET behind the operator gate (a viewer gets 403, an anonymous
-//! visitor 401); the mark is a control write, so a cookie session also
+//! visitor 401); the mark and the record are control writes, so a cookie session also
 //! sends the CSRF proof. A paired device (which may only decide) reaches
 //! neither.
 
@@ -103,6 +104,16 @@ pub(in crate::dashboard) async fn shared_board(state: &AppState, limit: usize) -
 }
 
 /// `GET /api/home`: the board.
+/// Home's control writes: Looks Good and the record of an instruction.
+pub(super) fn write_routes() -> axum::Router<AppState> {
+    axum::Router::new()
+        .route("/api/home/reviewed", axum::routing::post(reviewed_handler))
+        .route(
+            "/api/home/instruction",
+            axum::routing::post(instruction_handler),
+        )
+}
+
 pub(super) async fn board_handler(
     State(state): State<AppState>,
     Query(query): Query<HomeQuery>,
@@ -199,6 +210,193 @@ pub(super) async fn reviewed_handler(
     *state.home_sources.last_board.lock().await = None;
     match result {
         Some((item, key)) => Json(json!({"review": item, "review_key": key})).into_response(),
+        None => refusal(status, &outcome),
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum InstructionKind {
+    /// An answer to an agent waiting on the person (Your turn).
+    Answer,
+    /// A finished result sent back with more to do (Review's Send Back).
+    SendBack,
+}
+
+impl InstructionKind {
+    /// The Mac's idempotency-key prefixes (`FleetDecisionRecord`), which the
+    /// history tells the kinds apart by.
+    fn prefix(self) -> &'static str {
+        match self {
+            Self::Answer => "home-answer:",
+            Self::SendBack => "home-sendback:",
+        }
+    }
+
+    fn fallback_summary(self) -> &'static str {
+        match self {
+            Self::Answer => "Answered in Home",
+            Self::SendBack => "Sent back from Home",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Instruction {
+    /// The unit's id as the board names it.
+    id: String,
+    /// The session the words were typed to: one of the unit's agents.
+    session_id: String,
+    /// When that agent entered the state the words answered, as the board
+    /// showed it; part of the key, so the same words to a later wait are
+    /// another decision.
+    #[serde(default)]
+    state_entered_at: Option<String>,
+    kind: InstructionKind,
+    /// What was typed.
+    text: String,
+    /// The question the words answered, as the person saw it: the record's
+    /// summary.
+    #[serde(default)]
+    question: Option<String>,
+}
+
+/// Every unit on the board, whatever its lane.
+fn any_unit(board: &Value, id: &str) -> Option<Value> {
+    let lanes = board.get("lanes")?.as_object()?;
+    lanes
+        .values()
+        .filter_map(|lane| lane.get("groups").and_then(Value::as_array))
+        .flatten()
+        .filter_map(|group| group.get("items").and_then(Value::as_array))
+        .flatten()
+        .find(|item| item.get("id").and_then(Value::as_str) == Some(id))
+        .cloned()
+}
+
+/// The unit's agent (or helper) running `session`, if it has one.
+fn unit_agent<'a>(unit: &'a Value, session: &str) -> Option<&'a Value> {
+    ["agents", "helpers"]
+        .iter()
+        .filter_map(|field| unit.get(*field).and_then(Value::as_array))
+        .flatten()
+        .chain(unit.get("focus").filter(|focus| focus.is_object()))
+        .find(|agent| agent.get("session_id").and_then(Value::as_str) == Some(session))
+}
+
+/// Text the review store accepts (`TendRecordText.bounded` on the Mac): no
+/// control characters but newline and tab, trimmed, at most `max` bytes,
+/// cut on a character boundary with an ellipsis.
+fn record_text(text: &str, max: usize) -> String {
+    let cleaned: String = text
+        .chars()
+        .filter(|c| *c == '\n' || *c == '\t' || !c.is_control())
+        .collect();
+    let cleaned = cleaned.trim();
+    if cleaned.len() <= max {
+        return cleaned.to_owned();
+    }
+    let ellipsis = "\u{2026}";
+    let mut out = truncate(cleaned, max - ellipsis.len());
+    out.push_str(ellipsis);
+    out
+}
+
+/// The Mac's key for one instruction (`FleetDecisionRecord.instructionKey`):
+/// the kind's prefix and SHA-256 of the session, the wait it answered and
+/// the words, so a retry of the same send records once.
+fn instruction_key(kind: InstructionKind, session: &str, since: &str, text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    use std::fmt::Write as _;
+    let digest = Sha256::digest(format!("{session}\n{since}\n{text}").as_bytes());
+    digest
+        .iter()
+        .fold(String::from(kind.prefix()), |mut key, byte| {
+            let _ = write!(key, "{byte:02x}");
+            key
+        })
+}
+
+/// `POST /api/home/instruction`: records what the person typed to a unit's
+/// agent from Home (an answer, or Send Back on a finished result) as the
+/// decision Tend for Mac records: a review claimed and `returned` in one
+/// step, the words as its note. The words themselves go to the pane first
+/// (`POST /api/panes/{pane}/prompt`); this only records them, so a failed
+/// record never unsends anything. The unit and the agent must be on the
+/// board tendd builds now; the record's target is the unit's Work, else
+/// that agent's session.
+pub(super) async fn instruction_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<Instruction>,
+) -> Response {
+    let (by, account) = super::decisions::operator_identity(&state, &headers, None);
+    let note = record_text(&body.text, MAX_SUMMARY_BYTES);
+    let board = board(&state, DEFAULT_LIMIT).await;
+    let unit = any_unit(&board, &body.id);
+    let agent = unit
+        .as_ref()
+        .and_then(|unit| unit_agent(unit, &body.session_id).cloned());
+    let (status, outcome, result) = match (&unit, &agent) {
+        _ if note.is_empty() => (
+            StatusCode::BAD_REQUEST,
+            "nothing was typed".to_owned(),
+            None,
+        ),
+        (None, _) => (
+            StatusCode::NOT_FOUND,
+            "no unit with that id".to_owned(),
+            None,
+        ),
+        (Some(_), None) => (
+            StatusCode::NOT_FOUND,
+            "that session is not one of this unit's agents".to_owned(),
+            None,
+        ),
+        (Some(unit), Some(agent)) => {
+            let since = body.state_entered_at.as_deref().unwrap_or("");
+            let key = instruction_key(body.kind, &body.session_id, since, &body.text);
+            let question = body
+                .question
+                .as_deref()
+                .map(|q| record_text(q, MAX_SUMMARY_BYTES))
+                .filter(|q| !q.is_empty())
+                .unwrap_or_else(|| body.kind.fallback_summary().to_owned());
+            let mut review = new_review(unit, &key, &by);
+            review.summary = question;
+            if !matches!(review.target, crate::review::ReviewTarget::Work { .. }) {
+                review.target = crate::review::ReviewTarget::Session {
+                    provider: agent.get("kind").and_then(Value::as_str).map(str::to_owned),
+                    session_id: body.session_id.clone(),
+                };
+            }
+            match state
+                .reviews
+                .record(
+                    review,
+                    crate::review::DispositionKind::Returned,
+                    Some(note.clone()),
+                )
+                .await
+            {
+                Ok(item) => (StatusCode::OK, "recorded".to_owned(), Some((item, key))),
+                Err(error) => (StatusCode::CONFLICT, error.to_string(), None),
+            }
+        }
+    };
+    super::decisions::audit(
+        state.decision_audit.as_ref(),
+        json!({
+            "at": time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).ok(),
+            "by": by, "account": account, "action": "home_instruction", "id": body.id,
+            "session_id": body.session_id, "kind": body.kind.prefix(),
+            "outcome": outcome, "status": status.as_u16(),
+        }),
+    )
+    .await;
+    match result {
+        Some((item, key)) => Json(json!({"review": item, "key": key})).into_response(),
         None => refusal(status, &outcome),
     }
 }

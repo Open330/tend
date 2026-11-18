@@ -47,6 +47,13 @@ struct StartWorkView: View {
                         .listRowInsets(EdgeInsets())
                         .listRowBackground(Color.clear)
                 } else {
+                    if let options, !options.allowed {
+                        Section {
+                            WorkStartOffNotice(dashboard: model.pairing?.origin.display ?? "")
+                        }
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                    }
                     Section {
                         ZStack(alignment: .topLeading) {
                             if task.isEmpty {
@@ -94,10 +101,9 @@ struct StartWorkView: View {
                     }
                     Section(String(localized: "Team")) {
                         if let options, !options.allowed {
-                            Label(DashboardError.workStartOff.localizedDescription, systemImage: "lock")
+                            Label(String(localized: "Turned off on this dashboard"), systemImage: "lock")
                                 .font(TendType.meta)
                                 .foregroundStyle(.secondary)
-                                .accessibilityIdentifier("workStartOff")
                         } else if let options {
                             if options.pipelines.isEmpty {
                                 Label(String(localized: "\(host) has no pipeline configured. Add one to its tend config to start work there."), systemImage: "exclamationmark.triangle")
@@ -224,5 +230,29 @@ struct StartWorkView: View {
         var error: NSError?
         guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else { return false }
         return (try? await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason)) ?? false
+    }
+}
+
+/// Why Start can never be tapped here, who can change it, and what still
+/// works.
+struct WorkStartOffNotice: View {
+    let dashboard: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(String(localized: "Starting work is turned off"), systemImage: "lock")
+                .font(TendType.body.weight(.semibold))
+            Text("The dashboard at \(dashboard) does not start work for anyone, from the web or from this device. Whoever runs that host can turn it on: set `allow_work_start = true` under `[dashboard]` in its tend config, then restart tendd.")
+                .font(TendType.meta)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Deciding, and watching hosts and agents, keep working.")
+                .font(TendType.meta)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .tendCard()
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("workStartOff")
     }
 }

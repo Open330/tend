@@ -502,6 +502,27 @@ impl OperatorLogin {
         None
     }
 
+    /// A live session of `via`'s kind, as the `Cookie` header pair, without a
+    /// provider round trip: for route tests outside this module.
+    #[cfg(test)]
+    pub(in crate::dashboard) fn test_session_cookie(&self, via: Via) -> String {
+        let config = self.config.as_ref().expect("sign-in is configured");
+        let secret = oidc::random_secret();
+        self.registry().sessions.insert(
+            secret.clone(),
+            Session {
+                issuer: config.issuer_url.clone(),
+                subject: "route-matrix".into(),
+                email: Some("someone@example.com".into()),
+                email_verified: true,
+                via,
+                attempts: 0,
+                expires: Instant::now() + SESSION_TTL,
+            },
+        );
+        format!("{}={secret}", config.cookie_names().0)
+    }
+
     /// Does this request carry a live viewer (not operator) session?
     pub(in crate::dashboard) fn viewer(&self, headers: &HeaderMap) -> bool {
         self.session(headers)
