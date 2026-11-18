@@ -117,21 +117,34 @@ function ReadManifest([string]$dir) {
     return $manifest
 }
 
+# A manifest field, false when an older manifest lacks it.
+function Flag($manifest, [string]$name) {
+    [bool]($manifest.PSObject.Properties[$name] -and $manifest.$name)
+}
+
 function WriteManifest([string]$dir, $manifest) {
     $manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $dir $ManifestName) -Encoding UTF8
 }
 
 # --- environment ------------------------------------------------------------
-# tend honours TEND_SOCKET, TEND_CONFIG and the XDG directories. A shell
-# pointed at a scratch daemon must not make the installer configure, stop or
-# start that one: every tend call here sees what the logon task sees, the
-# user's and the machine's own values.
-$EndpointVariables = @('TEND_SOCKET', 'TEND_CONFIG', 'TEND_RMUX_SOCKET', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME')
-foreach ($name in $EndpointVariables) {
-    $value = [Environment]::GetEnvironmentVariable($name, 'User')
-    if (-not $value) { $value = [Environment]::GetEnvironmentVariable($name, 'Machine') }
-    [Environment]::SetEnvironmentVariable($name, $value, 'Process')
+# tend and tend-app read TEND_* (socket, config, dashboard, app identity) and
+# XDG_* (directories, the runtime dir that holds the socket). A shell pointed
+# at a scratch daemon must not make the installer configure, stop or start
+# that one, or start the app against it: every tend and tend-app this script
+# runs sees what the logon task and the Run entry see, the user's and the
+# machine's own values.
+function NormalizeEnvironment {
+    $names = @()
+    foreach ($scope in 'Process', 'User', 'Machine') {
+        $names += @([Environment]::GetEnvironmentVariables($scope).Keys | Where-Object { $_ -match '^(TEND|XDG)_' })
+    }
+    foreach ($name in ($names | Select-Object -Unique)) {
+        $value = [Environment]::GetEnvironmentVariable($name, 'User')
+        if (-not $value) { $value = [Environment]::GetEnvironmentVariable($name, 'Machine') }
+        [Environment]::SetEnvironmentVariable($name, $value, 'Process')
+    }
 }
+NormalizeEnvironment
 
 # --- PATH -------------------------------------------------------------------
 # Read and write the raw registry value so entries like %USERPROFILE%\bin
@@ -160,12 +173,14 @@ function OnPath([string]$entry, [string]$dir) {
     SamePath ([Environment]::ExpandEnvironmentVariables($entry)) $dir
 }
 
+# Whether this call added the entry (one already there is not ours).
 function AddToPath([string]$dir) {
     $current = UserPath
     $entries = @($current.Raw -split ';' | Where-Object { $_ })
-    if (@($entries | Where-Object { OnPath $_ $dir }).Count -gt 0) { return }
+    if (@($entries | Where-Object { OnPath $_ $dir }).Count -gt 0) { return $false }
     SetUserPath ((@($entries) + $dir) -join ';') $current.Kind
     Say "added $dir to your PATH (new terminals see it)"
+    return $true
 }
 
 function RemoveFromPath([string]$dir) {
@@ -209,8 +224,10 @@ function StopTend([string]$dir) {
     $tend = Join-Path $dir 'tend.exe'
     foreach ($p in (RunningFrom 'tendd' $dir)) {
         $socket = $null
-        if ($p.CommandLine -match '"--socket"\s+"([^"]+)"') { $socket = $Matches[1] }
-        elseif ($p.CommandLine -match '--socket\s+(\S+)') { $socket = $Matches[1] }
+        # "--socket" "C:\x y\tend.sock", --socket "C:\x y\tend.sock" or
+        # --socket C:\x\tend.sock; anything else is not guessed at.
+        if ($p.CommandLine -match '"?--socket"?\s+"([^"]+)"') { $socket = $Matches[1] }
+        elseif ($p.CommandLine -match '"?--socket"?\s+([^\s"]+)') { $socket = $Matches[1] }
         if ($socket -and (Test-Path -LiteralPath $tend)) {
             Say "stopping tendd (pid $($p.ProcessId))"
             & $tend daemon stop --socket $socket 2>&1 | Out-Null
@@ -407,22 +424,26 @@ function Install([string]$dir) {
         # uninstall removes it.
         $owned = @($wanted + @($ScriptName))
         if ($manifest) { $owned = @($owned + @($manifest.files) | Select-Object -Unique) }
-        WriteManifest $dir ([ordered]@{
-            version  = 1
-            sid      = $Sid
-            dir      = $dir
-            release  = $fetched.Tag
-            files    = $owned
-            task     = $TaskName
-            shortcut = $(if ($shortcutOwned) { $ShortcutPath } elseif ($manifest) { $manifest.shortcut } else { $null })
-            app      = $withApp
-        })
+        $record = [ordered]@{
+            version        = 1
+            sid            = $Sid
+            dir            = $dir
+            release        = $fetched.Tag
+            files          = $owned
+            task           = $TaskName
+            shortcut       = $(if ($shortcutOwned) { $ShortcutPath } elseif ($manifest) { $manifest.shortcut } else { $null })
+            app            = $withApp
+            # Set only once this install has done them (an upgrade keeps them).
+            path_added     = [bool]($manifest -and (Flag $manifest 'path_added'))
+            app_registered = [bool]($manifest -and (Flag $manifest 'app_registered'))
+        }
+        WriteManifest $dir $record
         Say "installed $($wanted -join ', ') into $dir"
     } finally {
         Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
     }
 
-    AddToPath $dir
+    if (AddToPath $dir) { $record.path_added = $true; WriteManifest $dir $record }
     WarnShadowed $dir
     $env:Path = "$dir;$env:Path"
     $tend = Join-Path $dir 'tend.exe'
@@ -456,6 +477,8 @@ function Install([string]$dir) {
         } else {
             # Registers toasts and the start-with-Windows entry, then runs it.
             Start-Process -FilePath $app -ArgumentList '--install' -WorkingDirectory $dir
+            $record.app_registered = $true
+            WriteManifest $dir $record
         }
         Say 'started tend-app; it is in the notification area (Windows may put it under the ^ arrow)'
     }
@@ -469,10 +492,18 @@ function Remove([string]$dir) {
         throw "no $ManifestName in $dir, so it is not an install by $ScriptName; nothing was removed. Pass -InstallDir for another folder."
     }
     $app = Join-Path $dir 'tend-app.exe'
-    if ((Test-Path -LiteralPath $app) -and (Mentions (RunEntry) $app)) {
-        # Removes the start-with-Windows entry and the toast registration.
-        $p = Start-Process -FilePath $app -ArgumentList '--uninstall' -PassThru -Wait
-        if ($p.ExitCode -ne 0) { Warn "tend-app --uninstall exited with $($p.ExitCode)" }
+    $run = RunEntry
+    if ((Flag $manifest 'app_registered') -and (Test-Path -LiteralPath $app)) {
+        if ($run -and -not (Mentions $run $app)) {
+            # Another install now owns start-with-Windows (and the toast
+            # registration it shares); leave both to it.
+            Warn "another tend-app starts with Windows ($run); leaving its start entry and notification registration"
+        } else {
+            # Removes the start-with-Windows entry (absent when it was turned
+            # off in the tray) and the toast registration.
+            $p = Start-Process -FilePath $app -ArgumentList '--uninstall' -PassThru -Wait
+            if ($p.ExitCode -ne 0) { Warn "tend-app --uninstall exited with $($p.ExitCode)" }
+        }
     }
     StopTend $dir
     $task = TaskFor $dir
@@ -484,7 +515,7 @@ function Remove([string]$dir) {
         Remove-Item -LiteralPath $manifest.shortcut -Force
         Say "removed the Start menu shortcut"
     }
-    RemoveFromPath $dir
+    if (Flag $manifest 'path_added') { RemoveFromPath $dir }
     foreach ($name in @($manifest.files) + @($ManifestName)) {
         foreach ($path in @((Join-Path $dir $name), (Join-Path $dir "$name.old"))) {
             Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
