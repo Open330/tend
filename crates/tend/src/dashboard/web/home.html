@@ -101,6 +101,12 @@
 <dialog id="review-dialog" class="review-dialog">
   <header class="review-head">
     <h2><span data-t="reviewTitle">Review</span> <span class="count" id="review-total"></span></h2>
+    <div class="seg labeled" id="review-mode" role="radiogroup" data-t-title="rvModeHelp">
+      <button type="button" role="radio" data-mode="digest"><span class="icon i-list" aria-hidden="true"></span><span data-t="rvModeDigest">Digest</span></button>
+      <button type="button" role="radio" data-mode="cards"><span class="icon i-stack" aria-hidden="true"></span><span data-t="rvModeCards">Cards</span></button>
+      <button type="button" role="radio" data-mode="inbox"><span class="icon i-tray" aria-hidden="true"></span><span data-t="rvModeInbox">Inbox</span></button>
+    </div>
+    <span class="spacer"></span>
     <div class="seg" id="review-scope" role="radiogroup">
       <button type="button" role="radio" data-scope="today" data-t="scopeToday">Today</button>
       <button type="button" role="radio" data-scope="day" data-t="scopeDay">24 hours</button>

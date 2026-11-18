@@ -53,6 +53,11 @@ function find(node, pred) {
 }
 
 const nodes = new Map();
+const modeButtons = ["digest", "cards", "inbox"].map((mode) => {
+  const node = new Node("button");
+  node.dataset.mode = mode;
+  return node;
+});
 const dummy = new Node("div");
 globalThis.document = {
   hidden: false,
@@ -65,7 +70,8 @@ globalThis.document = {
   },
   createElement: (tag) => new Node(tag),
   querySelector: (selector) => (selector === ".statusbar" ? dummy : null),
-  querySelectorAll: () => [],
+  // Review's mode switch, so a test can pick a mode the way a click does.
+  querySelectorAll: (selector) => (selector === "#review-mode button" ? modeButtons : []),
   addEventListener() {},
 };
 let replaced = null;
@@ -295,6 +301,85 @@ test("a reply goes only to the agent and question it was written for", async () 
   release();
   postGate = null;
   await settle();
+  // The words went; tendd records them as the Mac's decision.
+  const record = posts.find((p) => p.path === "/api/home/instruction");
+  assert.ok(record, "the answer is recorded");
+  assert.deepEqual(JSON.parse(record.init.body), {
+    id: "work:ws/job", session_id: "first", state_entered_at: "t1", kind: "answer", text: "ANSWER FOR FIRST", question: "Which way?",
+  });
+  status.home = 404;
+  serverBoard = null;
+  await home.refresh();
+});
+
+test("Review goes through results three ways, with Later and Send Back", async () => {
+  const older = new Date(Date.now() - 120_000).toISOString();
+  const result = (id, title, at, extra = {}) => ({
+    type: "unit", id, lane: "finished", title, repo: "tend", headline: `${title} done.`,
+    stages: [{ name: "claude", state: "done" }], shown_time: at, agents: [], helpers: [], host_aliases: ["mba"], agent_kinds: ["claude_code"],
+    recent: true, reviewed: false, requested_by_person: true, review_key: `home:${id}`,
+    focus: { host: "mba", local: true, pane: id === "agent:mba:a" ? "%7" : "%8", socket: "s", state: "idle", session_id: id.slice(-1), state_entered_at: at, owner: "claude · mba" },
+    review: { asked: `Please ${title}`, result: `# Report\n${title} is done. All tests pass.`, result_truncated: false },
+    ...extra,
+  });
+  serverBoard = {
+    hosts: [{ alias: "mba", local: true, state: "online" }], decision_hosts: [], backlog: [],
+    lanes: { needs_you: { groups: [] }, running: { groups: [] }, finished: { groups: [
+      { project: "tend", items: [result("agent:mba:a", "fix toast", recent), result("agent:mba:b", "write docs", older)] },
+    ] } },
+  };
+  status.home = 200;
+  await home.refresh();
+  const list = document.getElementById("review-list");
+  const dialog = document.getElementById("review-dialog");
+  dialog.open = true;
+  document.getElementById("review-button").click();
+  // The digest, the Mac's default: by project, each result in a line.
+  assert.match(list.text, /tend 2/);
+  assert.match(list.text, /fix toast Report fix toast is done\. All tests pass\./, "the result's digest, Markdown marks dropped");
+  assert.match(list.text, /Mark Project Reviewed/);
+  // Cards: one at a time, what was asked and what came back.
+  modeButtons[1].click();
+  assert.equal(stored.get("tend.home.review.mode"), "cards");
+  assert.match(list.text, /1 of 2/);
+  assert.match(list.text, /fix toast/);
+  assert.match(list.text, /Asked Please fix toast/);
+  assert.match(list.text, /Agent's report # Report/);
+  // H puts it off: the next result comes up, the first goes last.
+  dialog.fire("keydown", { key: "h" });
+  assert.match(list.text, /write docs/);
+  assert.doesNotMatch(list.text, /fix toast/);
+  // R opens Send Back: the reply goes to that agent's pane, then is
+  // recorded as sent back.
+  dialog.fire("keydown", { key: "r" });
+  const area = find(list, (n) => n.tag === "textarea");
+  assert.ok(area, "Send Back's reply field");
+  area.value = "also the README";
+  area.fire("input");
+  find(list, (n) => n.tag === "button" && n.text.includes("Send Back") && n.className.includes("primary")).click();
+  await settle();
+  const sent = posts.findLast((p) => p.path.startsWith("/api/panes/"));
+  assert.equal(sent.path, "/api/panes/%258/prompt");
+  const record = JSON.parse(posts.findLast((p) => p.path === "/api/home/instruction").init.body);
+  assert.equal(record.kind, "send_back");
+  assert.equal(record.id, "agent:mba:b");
+  assert.equal(record.text, "also the README");
+  // Inbox: the list and the selected result; J moves, E marks it.
+  modeButtons[2].click();
+  assert.match(list.text, /Mark All Reviewed…/);
+  assert.match(list.text, /J\/K Move/);
+  dialog.fire("keydown", { key: "j" });
+  dialog.fire("keydown", { key: "e" });
+  await settle();
+  const mark = JSON.parse(posts.findLast((p) => p.path === "/api/home/reviewed").init.body);
+  assert.equal(mark.id, "agent:mba:a", "J moved to the result put off last");
+  // Typing in a field is left alone.
+  const before = posts.length;
+  dialog.fire("keydown", { key: "e", target: { tagName: "TEXTAREA" } });
+  await settle();
+  assert.equal(posts.length, before);
+  dialog.fire("close");
+  modeButtons[0].click();
   status.home = 404;
   serverBoard = null;
   await home.refresh();

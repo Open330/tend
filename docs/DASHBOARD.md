@@ -546,7 +546,11 @@ Home's lanes are computed in tendd, once for every client
   first item is.
 - **Finished units** carry `recent` (changed in the last 24 hours),
   `reviewed`, `review_key` and `requested_by_person`. `requested_by_person`
-  is what counts toward Review.
+  is what counts toward Review. A finished unit still to review (asked for by
+  a person, not reviewed) also carries `review`: `asked`, a digest of the
+  prompt (600 characters, Markdown marks dropped, as the Mac's review shows
+  it), and `result`, the agent's last response or else its recap, cut to
+  4,000 characters with `result_truncated` set when it was cut.
 - **Backlog.** Queued Work that is not running is listed in `backlog`.
 
 Words a client owns (state labels, the fixed headlines such as "Waiting on
@@ -564,6 +568,20 @@ accepted review whose idempotency key is `home:` plus the SHA-256 of the
 unit's id and revision), so a unit marked on the web is marked on the Mac
 too, and shows again once it changes. It is a control write (the token, or
 an operator session with the CSRF proof), audited like the decisions.
+
+`POST /api/home/instruction` records what the person typed to a unit's
+agent from Home, after the words went to its pane (`POST
+/api/panes/{pane}/prompt`): `{"id": "<unit id>", "session_id": "<the
+agent's session>", "state_entered_at": "<when it entered the state the
+words answer>", "kind": "answer" | "send_back", "text": "…", "question":
+"<what it asked, optional>"}`. The session must be one of the unit's agents
+on the board tendd builds now (404 otherwise). It records the decision Tend
+for Mac records: a review on the unit's Work (else that agent's session),
+claimed and `returned` in one step, the words as its note, the question as
+its summary, under the Mac's key (`home-answer:` or `home-sendback:` plus
+the SHA-256 of the session, the wait and the words), so a retry of the same
+send records once. It only records; it never sends. Same gate and audit as
+Looks Good.
 
 ## Paired devices
 
