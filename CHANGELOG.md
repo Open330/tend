@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Web dashboard Explore: the Mac's four orders (Topology, Latest activity, My latest prompt, Agent latest update; kept per browser under `tend.explore.sort`) and its filter, matching host, session, window name, pane id, command, path, agent alias, agent title and session id in any case, with "No matching panes" and "No panes detected" states and a shown/all count.
+
 ### Changed
 
 - iOS: a device paired to decide only now says why on In progress,
