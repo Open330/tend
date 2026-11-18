@@ -66,9 +66,13 @@ Show
 # ── 1. The mailbox (0–7s) ────────────────────────────────────────────────
 # Agents leave each other durable requests: a kind, a work mode, a body,
 # and a reply that has to come back. `M` is that mailbox — three queued
-# from other agents, one this session sent out.
+# from other agents, one this session sent out. The mailbox opens on what
+# needs the operator's own response (nothing, here); Tab shows the agents'
+# traffic.
 Type "M"
-Sleep 2500ms
+Sleep 1500ms
+Tab
+Sleep 2000ms
 Down@800ms 2
 Sleep 2500ms
 Escape
@@ -81,10 +85,10 @@ Sleep 800ms
 # `gg` first: the cursor is wherever the mailbox left it, and the row this
 # scene wants is a specific one — `api`, whose codex reviewer sent the
 # queued request the viewer just read. Answering its author closes the loop
-# the mailbox scene opened.
+# the mailbox scene opened. The state sort puts it ten rows down.
 Type "gg"
 Sleep 800ms
-Down@500ms 4
+Down@300ms 9
 Sleep 800ms
 Type "m"
 Sleep 1500ms

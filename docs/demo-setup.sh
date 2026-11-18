@@ -21,7 +21,7 @@
 #   3. Seed the ask history, then start the daemon — in that order, because
 #      the ask store is read once at boot.
 #   4. Seed agents across every state tend can render, including two with
-#      live Task subagents so the swarm view has trees to expand.
+#      live Task subagents, which watch counts on the working rows.
 #   5. Seed the collaboration mailbox.
 #   6. Seed the activity ledger so durations read as real.
 #
@@ -37,7 +37,10 @@ SANDBOX="$REPO_DIR/scripts/tend-sandbox.sh"
 PAINT="$SCRIPT_DIR/demo-paint.sh"  # believable agent frames instead of bare `cat`
 CONFIG_SRC=/tmp/tend-demo-config.src.toml
 
-TENDD_BIN="${TEND_DEMO_TENDD:-$REPO_DIR/target/debug/tendd}"
+# Where `tend` and `tendd` come from. scripts/landing-shots/live.sh points
+# this at sandbox-exec wrappers on macOS.
+BIN_DIR="${TEND_DEMO_BIN_DIR:-$REPO_DIR/target/debug}"
+TENDD_BIN="${TEND_DEMO_TENDD:-$BIN_DIR/tendd}"
 if [ ! -x "$TENDD_BIN" ]; then
   TENDD_BIN=$(command -v tendd)
 fi
@@ -122,6 +125,19 @@ sort = ['state']
 default_content = 'prompt_response'
 TOML
 
+# The landing screenshots (scripts/landing-shots/live.sh) read the same
+# fleet through the dashboard: TEND_DEMO_DASHBOARD=<bind> with
+# TEND_DEMO_DASHBOARD_TOKEN turns it on. The recordings leave it off.
+if [ -n "${TEND_DEMO_DASHBOARD:-}" ]; then
+  cat >> "$CONFIG_SRC" <<TOML
+
+[dashboard]
+enabled = true
+bind = "$TEND_DEMO_DASHBOARD"
+token = "${TEND_DEMO_DASHBOARD_TOKEN:?TEND_DEMO_DASHBOARD needs TEND_DEMO_DASHBOARD_TOKEN}"
+TOML
+fi
+
 # `--allow-inside-tmux` because regenerating the GIFs from inside your own
 # tmux session is the normal case for a maintainer; the seeding below already
 # stamps every hook event with the sandbox server explicitly.
@@ -130,7 +146,7 @@ bash "$SANDBOX" up \
   --config "$CONFIG_SRC" \
   --tmux "$TM" \
   --tendd "$TENDD_BIN" \
-  --extra-path "$REPO_DIR/target/debug" \
+  --extra-path "$BIN_DIR" \
   --allow-inside-tmux
 
 # TEND_SOCKET, TEND_CONFIG, XDG_DATA_HOME, TEND_TMUX_SOCKET and the shimmed
@@ -175,7 +191,7 @@ JSON
 EOF
 chmod +x "$SHIM_DIR/codex"
 
-export PATH="$SHIM_DIR:$REPO_DIR/target/debug:$PATH"
+export PATH="$SHIM_DIR:$BIN_DIR:$PATH"
 
 # Ask history, written before tendd starts because the ask store is read
 # once at boot. Statuses and field names mirror ask.rs.
@@ -268,11 +284,32 @@ frame() { # <slug> <agent> <state> <prompt> [tool]... → echoes the pane comman
 # which reads as a bug. It is still seeded as an agent further down, because
 # the collaboration mailbox is scoped to its origin pane and `b`/`m` need
 # one.
-tm new-session -d -s ctl -x 220 -y 46 \
+# Panes start where the tmux server was started, and watch shows an idle
+# pane's directory. Start everything in a fixture directory so the
+# recording never shows the recording machine's checkout path.
+DEMO_HOME=/tmp/tend-demo-home
+mkdir -p "$DEMO_HOME"
+cd "$DEMO_HOME"
+# Each session works in one of four made-up projects, which the
+# dashboard's Home groups its cards by.
+project_dir() { # <session> → echoes its project directory, created
+  local p
+  case "$1" in
+    api|auth|billing|crm|search) p=acme-api ;;
+    web|mobile|sdk|edge) p=web-console ;;
+    infra|ops|etl|data) p=infra ;;
+    main|docs|ctl) p=tend ;;
+    *) p=scratch ;;
+  esac
+  mkdir -p "$DEMO_HOME/$p"
+  printf '%s' "$DEMO_HOME/$p"
+}
+
+tm new-session -d -s ctl -c "$(project_dir ctl)" -x 220 -y 46 \
   -n fleet \
   "bash --rcfile /tmp/tend-demo-bashrc"
 
-tm new-session -d -s main -x 220 -y 46 \
+tm new-session -d -s main -c "$(project_dir main)" -x 220 -y 46 \
   -n ipc \
   "$(frame main claude working 'continue with protocol compatibility tests and update the watch work summary docs' \
       'editing  crates/tend/src/ipc.rs' 'Task ×3  Explore, general-purpose, code-reviewer')"
@@ -281,22 +318,22 @@ tm new-session -d -s main -x 220 -y 46 \
 # the painted pane.
 # `review` hosts codex mid-approval — this is where `tend attend` lands, so it
 # paints a believable approval prompt instead of an empty shell.
-tm new-window -d -t main: -n review \
+tm new-window -d -t main: -c "$(project_dir main)" -n review \
   "$(frame review codex approval 'audit the legacy auth middleware for raw bearer tokens' \
       'ran  rg -n "bearer" src/            18 matches' \
       'ran  cat src/auth/middleware.rs')"
-tm new-window -d -t main: -n vim cat
+tm new-window -d -t main: -c "$(project_dir main)" -n vim cat
 
 mk() { # <session> [command] → echoes the pane id
-  tm new-session -d -s "$1" -n "$1" -x 220 -y 46 "${2:-cat}"
+  tm new-session -d -s "$1" -n "$1" -c "$(project_dir "$1")" -x 220 -y 46 "${2:-cat}"
   tm display-message -p -t "$1:0.0" '#{pane_id}'
 }
 mkwin() { # <session> <window> [command] → echoes the pane id
-  tm new-window -d -t "$1:" -n "$2" "${3:-cat}"
+  tm new-window -d -t "$1:" -c "$(project_dir "$1")" -n "$2" "${3:-cat}"
   tm display-message -p -t "$1:$2.0" '#{pane_id}'
 }
 mkpane() { # <session> <window> [command] → echoes the new pane id
-  tm split-window -h -d -P -F '#{pane_id}' \
+  tm split-window -h -d -P -F '#{pane_id}' -c "$(project_dir "$1")" \
     -t "$1:$2" "${3:-cat}"
 }
 
@@ -342,6 +379,12 @@ P_WEB_E2E=$(mkpane web 0 "$(frame web-e2e claude done 're-record the playwright 
 # The sandbox's placeholder kept the server alive until the demo had sessions
 # of its own; it would otherwise show up as an empty row in the recording.
 tm kill-session -t "$TEND_SANDBOX_HOLDER"
+# tmux titles a pane with the machine's hostname until something sets one,
+# and watch shows that title beside the pane's command. Name each pane after
+# its window so the recording never shows the recording machine's name.
+tm list-panes -a -F '#{pane_id} #{window_name}' | while read -r pane name; do
+  tm select-pane -t "$pane" -T "$name"
+done
 tm select-window -t ctl:0
 
 # The operator's pane: where the recording types, and the origin the
@@ -408,8 +451,7 @@ hook "$PA" claude stop \
 hook "$PA" claude user_prompt_submit \
   '{"session_id":"s-a","prompt":"continue with protocol compatibility tests and update the watch work summary docs"}'
 
-# In-flight Task subagents so `tend watch --view swarm` renders a populated
-# subagent tree (each is a pre_tool_use{Task} with no matching post, so they
+# In-flight Task subagents, counted beside the working rows in watch (each is a pre_tool_use{Task} with no matching post, so they
 # stay live for the recording).
 subagents() { # <pane> <session_id> <kind:description>...
   local pane="$1" sid="$2"; shift 2

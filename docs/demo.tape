@@ -12,9 +12,7 @@
 #                            agents that need you float to the top
 #   7–13s    the inspector — `|` cycles the split; the wide inspector
 #                            carries the selected agent's full detail
-#   13–20s   the swarm     — k9s-style clusters with live spinners and an
-#                            expandable subagent tree
-#   20–25s   teleport      — `tend attend` jumps to whoever's blocked longest
+#   13–18s   teleport      — `tend attend` jumps to whoever's blocked longest
 #
 # docs/demo-setup.sh builds the fleet; docs/demo-teardown.sh removes it.
 
@@ -91,23 +89,7 @@ Sleep 800ms
 Type "q"
 Sleep 500ms
 
-# ── 3. The swarm (13–20s) ────────────────────────────────────────────────
-# One cluster per work, animated spinners on the working agents, and an
-# expandable tree under the agents that spawned Task subagents.
-Type "tend watch --view swarm"
-Enter
-Sleep 3500ms
-Type "gg"
-Sleep 1s
-# Nine rows down from the top of the state sort lands on `main`, the agent
-# carrying three live Task children. Walking there rather than jumping is
-# the point: the clusters scrolling past *are* the fleet.
-Down@350ms 9
-Sleep 2500ms
-Type "q"
-Sleep 500ms
-
-# ── 4. Teleport (20–25s) ─────────────────────────────────────────────────
+# ── 3. Teleport (13–18s) ─────────────────────────────────────────────────
 # Don't hunt across sixteen sessions — jump the tmux client straight to
 # whichever agent has been blocked the longest.
 Type "tend attend"

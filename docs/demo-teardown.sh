@@ -21,5 +21,5 @@ bash "$REPO_DIR/scripts/tend-sandbox.sh" down \
 
 # Fixture-only paths. The sandbox never knew about these, so it cannot have
 # removed them.
-rm -rf /tmp/tend-demo-bashrc /tmp/tend-demo-transcripts /tmp/tend-demo-frames
+rm -rf /tmp/tend-demo-bashrc /tmp/tend-demo-transcripts /tmp/tend-demo-frames /tmp/tend-demo-home
 rm -f /tmp/tend-demo-config.src.toml
