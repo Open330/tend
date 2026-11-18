@@ -188,6 +188,16 @@ function canWrite() {
   return Boolean(access && access.write_authorized !== false && access.mode !== "read_only");
 }
 
+// Looks Good marks a finished unit of the daemon's board. Where /api/access
+// answers, it takes write authority; where it is not forwarded (the Windows
+// app's proxy forwards the board and this mark, nothing else of the
+// operator's), the board read itself is the proof: tendd serves it only to
+// an operator credential (a paired device gets 401). Nothing else is
+// unlocked by it.
+function canMarkReviewed() {
+  return state.data.access ? canWrite() : Boolean(state.data.server);
+}
+
 // ---- Cards -------------------------------------------------------------
 
 function cardKey(unit) {
@@ -730,7 +740,7 @@ function renderReviewSheet() {
     const actions = el("div", "row");
     const marks = (unit.products?.length ? unit.products : [unit.product]).slice(0, 3).map(logo).filter(Boolean);
     actions.append(metaLine("finished", [...marks, hostBadge(unit.host, !unit.remote), unit.project ? el("span", "repo", `· ${unit.project}`) : null, el("span", "when", when(unit.since))]));
-    if (canWrite()) {
+    if (canMarkReviewed()) {
       const good = button(S.looksGood, () => markReviewed(unit, key), "btn small primary", "check");
       good.disabled = state.busy.has(key);
       actions.append(good);
@@ -901,7 +911,7 @@ function renderInspector() {
   }
   // Looks Good: the review mark the Mac records, for a finished unit the
   // daemon's board knows.
-  if (state.board?.server && unit.lane === "finished" && !unit.reviewed && canWrite()) {
+  if (state.board?.server && unit.lane === "finished" && !unit.reviewed && canMarkReviewed()) {
     const row = el("div", "row end");
     const key = `reviewed:${unit.id}`;
     row.append(button(S.looksGood, () => markReviewed(unit, key), "btn ghost", "check"));

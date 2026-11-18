@@ -249,6 +249,49 @@ test("the daemon's board, when it has one, is what the page draws", async () => 
   await home.refresh();
 });
 
+test("without /api/access (the Windows app), the board alone offers Looks Good and nothing more", async () => {
+  serverBoard = {
+    hosts: [{ alias: "mba", local: true, state: "online" }],
+    agent_count: 1,
+    projects: ["tend"],
+    decision_hosts: [{ alias: "mba", local: true, control: true, decides_reviews: true }],
+    backlog: [],
+    lanes: {
+      needs_you: { count: 0, groups: [] },
+      running: { count: 0, groups: [] },
+      finished: { count: 1, groups: [{ project: "tend", system: false, items: [
+        { type: "unit", id: "agent:mba:e", lane: "finished", title: "write docs", repo: "tend", headline: "Docs written.",
+          review_key: "rk1", stages: [{ name: "claude", state: "done" }], shown_time: recent, agents: [], helpers: [],
+          focus: { host: "mba", local: true }, host_aliases: ["mba"], agent_kinds: ["claude_code"], recent: true,
+          reviewed: false, requested_by_person: true },
+      ] }] },
+    },
+  };
+  const dialog = document.getElementById("review-dialog");
+  dialog.open = true;
+  const looksGood = () => find(document.getElementById("review-list"), (n) => n.tag === "button" && /Looks Good/.test(n.text));
+  status.home = 200;
+  status.access = 403;
+  await home.refresh();
+  const good = looksGood();
+  assert.ok(good, "Looks Good is offered from the board read alone");
+  assert.equal(document.getElementById("start-work").hidden, true, "Start Work stays hidden");
+  assert.equal(document.getElementById("rail-explore").hidden, true, "Explore stays hidden");
+  posts.length = 0;
+  good.click();
+  await settle();
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].path, "/api/home/reviewed");
+  assert.deepEqual(JSON.parse(posts[0].init.body), { id: "agent:mba:e", review_key: "rk1" });
+  // No board (an older daemon, or a credential that may only decide): no mark.
+  status.home = 404;
+  serverBoard = null;
+  await home.refresh();
+  assert.equal(looksGood(), null, "no board, no Looks Good");
+  dialog.open = false;
+  status.access = 200;
+});
+
 test("a reply goes only to the agent and question it was written for", async () => {
   const unitAt = (session, since) => ({
     type: "unit", id: "work:ws/job", lane: "needs_you", title: "job", repo: "tend", headline: "Which way?",
