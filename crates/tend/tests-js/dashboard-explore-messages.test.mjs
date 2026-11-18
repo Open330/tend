@@ -247,6 +247,73 @@ test("a credential that narrows takes the bodies with it at once", async () => {
   view.destroy();
 });
 
+test("a downgrade while the privileged answer is still on its way never shows it", async () => {
+  let authorized = true;
+  const before = deps.access;
+  deps.access = () => ({ mode: "token", write_authorized: authorized, login: {} });
+  // The first answer (read with operator access) is held back.
+  let release;
+  gate = new Promise((r) => (release = r));
+  answer = () => payload([request("req_1")]);
+  const { root, view } = mount("/explore/messages#open=req_1");
+  view.update(fleet);
+  const issued = () => reads.filter((p) => p.startsWith("/api/collaboration")).length;
+  assert.equal(issued(), 1);
+  // Access narrows while it is pending; the same query is asked again.
+  authorized = false;
+  view.update(fleet);
+  assert.equal(issued(), 2, "the credential's own request, not a wait for the old one");
+  // Both answers land: the old one carries bodies, the new one does not.
+  let calls = 0;
+  answer = () => (calls++ === 0
+    ? payload([request("req_1")])
+    : payload([{ ...request("req_1"), body: undefined, reply: null, updates: [] }], false));
+  release();
+  gate = null;
+  await settle();
+  assert.ok(!root.text.includes("secret"), "the privileged answer was dropped");
+  assert.ok(root.text.includes(S.detailsLocked));
+  deps.access = before;
+  view.destroy();
+});
+
+for (const [name, pick] of [
+  ["search", (root) => find(root, (n) => n.tag === "input" && n.placeholder === S.searchMessages)],
+  ["Work", (root) => find(root, (n) => n.tag === "input" && n.attributes.list === "mx-work-options")],
+  ["thread", (root) => find(root, (n) => n.tag === "input" && n.attributes.list === "mx-thread-options")],
+]) {
+  test(`a pending ${name} edit does not bring the address back to Messages`, async () => {
+    answer = () => payload([request("req_1")]);
+    // Leaving for Panes through the switch.
+    let { root, view } = mount("/explore/messages");
+    view.update(fleet);
+    await settle();
+    let input = pick(root);
+    input.value = "typed";
+    input.fire("input");
+    find(root, (n) => n.dataset?.mode === "panes").click();
+    await new Promise((r) => setTimeout(r, 400));
+    assert.equal(location.pathname, "/explore");
+    assert.equal(location.hash, "");
+    view.update(fleet);
+    assert.equal(location.pathname, "/explore", "a later poll stays on Panes");
+    assert.ok(find(root, hasClass("ex-list")));
+    view.destroy();
+    // Leaving Explore for another page of the shell.
+    ({ root, view } = mount("/explore/messages"));
+    view.update(fleet);
+    await settle();
+    input = pick(root);
+    input.value = "typed";
+    input.fire("input");
+    setUrl("/settings");
+    view.suspend();
+    await new Promise((r) => setTimeout(r, 400));
+    assert.equal(location.pathname, "/settings");
+    view.destroy();
+  });
+}
+
 test("Panes | Messages switches views, and a pane opens Messages scoped to it", async () => {
   answer = () => payload([request("req_1")]);
   const { root, view } = mount("/explore#pane=%251&socket=%2Ftmp%2Ftmux-1%2Fdefault");

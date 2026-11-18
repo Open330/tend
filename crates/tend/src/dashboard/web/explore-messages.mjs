@@ -91,11 +91,22 @@ export function mountMessages(deps) {
   search.type = "search";
   search.placeholder = S.searchMessages;
   search.setAttribute("aria-label", S.searchMessages);
-  let searchTimer = null;
-  search.addEventListener("input", () => {
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => change({ q: search.value.trim(), message: "", open: "" }), SEARCH_DEBOUNCE_MS);
-  });
+  /// Typed filters wait a moment before they ask the server; leaving the
+  /// view drops what is still waiting (`cancelEdits`), so a late edit
+  /// never brings the address back to Messages.
+  const edits = new Map();
+  const debounce = (key, apply) => {
+    clearTimeout(edits.get(key));
+    edits.set(key, setTimeout(() => {
+      edits.delete(key);
+      apply();
+    }, SEARCH_DEBOUNCE_MS));
+  };
+  const cancelEdits = () => {
+    for (const timer of edits.values()) clearTimeout(timer);
+    edits.clear();
+  };
+  search.addEventListener("input", () => debounce("q", () => change({ q: search.value.trim(), message: "", open: "" })));
   const field = el("div", "ex-field");
   field.append(icon("search"), search);
 
@@ -138,11 +149,7 @@ export function mountMessages(deps) {
     input.autocomplete = "off";
     input.placeholder = S.anyValue;
     input.setAttribute("list", listId);
-    let timer = null;
-    input.addEventListener("input", () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => change({ [key]: input.value.trim(), message: "", open: "" }), SEARCH_DEBOUNCE_MS);
-    });
+    input.addEventListener("input", () => debounce(key, () => change({ [key]: input.value.trim(), message: "", open: "" })));
     return input;
   };
   const work = textFilter("work", "mx-work-options");
@@ -257,7 +264,8 @@ export function mountMessages(deps) {
   /// Change what the reader shows; a change to what it asks the server for
   /// fetches again.
   function change(patch, { fetch = true } = {}) {
-    if (view.closed) return;
+    // Off screen, the address belongs to another view: never write it.
+    if (view.closed || view.suspended) return;
     const before = view.state;
     view.state = { ...before, ...patch };
     if ("room" in patch || "scope" in patch || "thread" in patch || "message" in patch) view.edge = "";
@@ -925,6 +933,10 @@ export function mountMessages(deps) {
       // not at the next answer.
       const authorized = Boolean(access()?.write_authorized);
       if (view.authorized !== undefined && authorized !== view.authorized) {
+        // An answer read with the old credential must not land, even one
+        // for the same query (load would otherwise wait for it).
+        cancel();
+        view.lastKey = "";
         if (!authorized) {
           view.data = null;
           view.signatures.clear();
@@ -951,6 +963,7 @@ export function mountMessages(deps) {
     },
     suspend() {
       view.suspended = true;
+      cancelEdits();
       cancel();
     },
     /// Everything private gone: bodies, the open message, the fleet, and
@@ -961,7 +974,7 @@ export function mountMessages(deps) {
       view.data = null;
       view.fleet = null;
       view.projection = null;
-      clearTimeout(searchTimer);
+      cancelEdits();
       view.signatures.clear();
       for (const node of [side, main, list, canvas, sequence, rooms, summary, detail, notice]) node.replaceChildren();
     },
