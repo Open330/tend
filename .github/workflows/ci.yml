@@ -199,6 +199,17 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: 0
     steps:
       - uses: actions/checkout@v5
+      # install-tend.ps1 runs on people's machines and its download path has
+      # no other test: catch a function variable that hides a script-level
+      # one (PowerShell names ignore case), which broke the v0.10.24 install.
+      # Separate steps: in one pwsh step a later command's exit code would
+      # hide a failing fixture run.
+      - name: scope check fixtures
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/check-ps-scope.tests.ps1
+      - name: install-tend.ps1 scope check
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/check-ps-scope.ps1 scripts/install-windows.ps1
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable

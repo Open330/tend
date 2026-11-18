@@ -55,6 +55,10 @@ param(
 )
 
 Set-StrictMode -Version 2
+# PowerShell variable names ignore case and functions see their callers'
+# locals, so a function must not assign a name the script itself uses (a
+# local $target once hid $Target from the download). scripts/check-ps-scope.ps1
+# enforces that in CI; script-level settings are read as $script:Name.
 $ErrorActionPreference = 'Stop'
 $Bound = $PSBoundParameters
 $ProgressPreference = 'SilentlyContinue'
@@ -93,18 +97,18 @@ function IsElevated {
 # An installed copy (a manifest next to it) works on its own install unless
 # told otherwise; a downloaded copy uses the default folder.
 function ResolveInstallDir {
-    $dir = $InstallDir
-    if (-not $dir) {
+    $chosen = $InstallDir
+    if (-not $chosen) {
         if ($PSScriptRoot -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot $ManifestName))) {
-            $dir = $PSScriptRoot
+            $chosen = $PSScriptRoot
         } else {
-            $dir = Join-Path $env:LOCALAPPDATA 'Programs\tend'
+            $chosen = Join-Path $env:LOCALAPPDATA 'Programs\tend'
         }
     }
-    if ($dir -notmatch '^[A-Za-z]:\\' -and $dir -notmatch '^\\\\[^\\]+\\[^\\]+') {
-        throw "-InstallDir must be an absolute path such as D:\Apps\Tend (got '$dir')"
+    if ($chosen -notmatch '^[A-Za-z]:\\' -and $chosen -notmatch '^\\\\[^\\]+\\[^\\]+') {
+        throw "-InstallDir must be an absolute path such as D:\Apps\Tend (got '$chosen')"
     }
-    return [IO.Path]::GetFullPath($dir).TrimEnd('\')
+    return [IO.Path]::GetFullPath($chosen).TrimEnd('\')
 }
 
 function ReadManifest([string]$dir) {
@@ -302,7 +306,7 @@ function ResolveTag([string]$version) {
         if ($version.StartsWith('v')) { return $version }
         return "v$version"
     }
-    $release = Invoke-RestMethod -UseBasicParsing -Uri "https://api.github.com/repos/$Repo/releases/latest" `
+    $release = Invoke-RestMethod -UseBasicParsing -Uri "https://api.github.com/repos/$script:Repo/releases/latest" `
         -Headers @{ 'User-Agent' = 'tend-install' }
     return [string]$release.tag_name
 }
@@ -317,15 +321,15 @@ function Expected([string]$sidecar) {
 # The release publishes tend-<tag>-<target>.zip and, beside it,
 # tend-<tag>-<target>.sha256 (the archive name without its extension).
 function FetchArchive([string]$work) {
-    if ($Archive) {
-        $zip = (Resolve-Path -LiteralPath $Archive).Path
+    if ($script:Archive) {
+        $zip = (Resolve-Path -LiteralPath $script:Archive).Path
         $sidecar = [IO.Path]::ChangeExtension($zip, '.sha256')
         if (-not (Test-Path -LiteralPath $sidecar)) { throw "$sidecar is missing; it must sit next to the zip" }
         return @{ Zip = $zip; Sidecar = $sidecar; Tag = $null }
     }
-    $tag = ResolveTag $Version
-    $base = "tend-$tag-$Target"
-    $url = "https://github.com/$Repo/releases/download/$tag"
+    $tag = ResolveTag $script:Version
+    $base = "tend-$tag-$script:Target"
+    $url = "https://github.com/$script:Repo/releases/download/$tag"
     $zip = Join-Path $work "$base.zip"
     Say "downloading $base.zip"
     Invoke-WebRequest -UseBasicParsing -Uri "$url/$base.zip" -OutFile $zip
@@ -362,9 +366,9 @@ function Install([string]$dir) {
     $app = Join-Path $dir 'tend-app.exe'
     $shortcutOwned = $false
     if ($withShortcut) {
-        $target = ShortcutTarget
-        if ($target -and -not (SamePath $target $app)) {
-            Warn "the Start menu entry $ShortcutPath opens $target; leaving it as it is"
+        $linkTarget = ShortcutTarget
+        if ($linkTarget -and -not (SamePath $linkTarget $app)) {
+            Warn "the Start menu entry $ShortcutPath opens $linkTarget; leaving it as it is"
         } else {
             $shortcutOwned = $true
         }
