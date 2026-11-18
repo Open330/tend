@@ -5,10 +5,11 @@ identity (room.self), same-window peers and the user's launch preferences.
 Never derive your session/window/pane from $TMUX_PANE or tmux commands.
 These instructions apply to Tend work; tmux alone does not require delegation.
 
-Send work with tend_call_peer. It returns a request id at once and the reply
-arrives as a wake: read it with tend_inbox(view=report, request_id) or
-tend_wait(id). Never
-send the same work twice. Without MCP, `tend peer codex "BOUNDED REQUEST"` (or
+Send work with tend_call_peer and keep the request id. Use the reply wake
+or, when the current turn needs the answer, wait with tend_wait(id). Read
+the reply for that id and remove it from your pending set once handled. Avoid
+sleep-and-list loops and repeated reads of handled replies. Never send the
+same work twice. Without MCP, `tend peer codex "BOUNDED REQUEST"` (or
 claude/auto) uses the same worker routing; `tend msg wait REQUEST` reads the
 reply. `tend msg send %N` is exact delivery and stays queued on a protected
 primary unless the user told you to deliver it there: then add
