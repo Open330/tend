@@ -269,7 +269,7 @@ fn classify_socket_connect(result: std::io::Result<()>) -> bool {
 pub(crate) fn default_socket_dirs() -> Vec<PathBuf> {
     socket_dirs(
         std::env::var("TMUX_TMPDIR").ok().as_deref(),
-        OWN_TMUX_DIR_ONLY.load(Ordering::Relaxed),
+        own_tmux_dir_only(),
         current_uid(),
     )
 }
@@ -288,8 +288,12 @@ pub fn restrict_to_own_tmux_dir() {
     OWN_TMUX_DIR_ONLY.store(true, Ordering::Relaxed);
 }
 
+/// Always set in this crate's own unit tests: a test reads the tmux servers
+/// it starts itself (by `-S`, or under a `TMUX_TMPDIR` of its own), never the
+/// developer's, so a test that passes in CI (no tmux server) passes on a Mac
+/// with agents running too.
 pub(crate) fn own_tmux_dir_only() -> bool {
-    OWN_TMUX_DIR_ONLY.load(Ordering::Relaxed)
+    cfg!(test) || OWN_TMUX_DIR_ONLY.load(Ordering::Relaxed)
 }
 
 /// Whether this process may infer a multiplexer endpoint from its own
@@ -301,7 +305,7 @@ pub fn ambient_mux_allowed() -> bool {
     !own_tmux_dir_only()
 }
 
-fn socket_dirs(
+pub(crate) fn socket_dirs(
     tmux_tmpdir: Option<&str>,
     own_dir_only: bool,
     uid: impl std::fmt::Display,
@@ -367,7 +371,7 @@ fn enumerate_sockets_in(_dirs: &[PathBuf]) -> Vec<PathBuf> {
 /// out to `id -u` rather than reach for `libc::getuid()`. UID 0 (root)
 /// on failure is the least-surprising fallback: if we can't introspect
 /// our own UID, everything else is broken too.
-fn current_uid() -> u32 {
+pub(crate) fn current_uid() -> u32 {
     static CACHED: OnceLock<u32> = OnceLock::new();
     *CACHED.get_or_init(|| {
         std::process::Command::new("id")
