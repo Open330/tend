@@ -241,7 +241,8 @@ secret of whoever publishes the build. tend ships none.
   with the publishing team's key. For the owner that is jiun-mini holding
   the owner's key. There is no relay service.
 - The key is a `.p8` file named by path in `[dashboard.push]`. tendd opens
-  it with `O_NOFOLLOW`, then checks the opened descriptor (`fstat`): a
+  it with `O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC` (so a FIFO or a device
+  cannot block the open), then checks the opened descriptor (`fstat`): a
   regular file, owned by the daemon's user, no group or other permission
   bits (0600 or 0400), at most 4 KiB. It reads from that same descriptor
   and parses the key as P-256. The private key stays in memory, is used
@@ -305,8 +306,10 @@ allow_content = false           # default false; see "What a notification shows"
   is the device's request AND the host's `allow_content`. `channel`
   (128 random bits) and `ref_key` (256 random bits) are minted for this
   registration (see "Binding a notification to this pairing").
-  Re-registering the same token with the same environment keeps both;
-  anything else mints new ones.
+  Both are kept only when the same device row registers again with the
+  same token and environment. Anything else mints new ones, including a
+  token that moves to another device row (a phone that paired again).
+  A notification sent under the old pairing then fails the channel check.
 - `POST /api/device/push/remove` drops the device's registration. The app
   calls it when notifications are turned off in its settings, and before
   Sign out.
@@ -409,15 +412,24 @@ only while push is on and at least one registration exists.
     newest one's `ref`. Only a `200` from Apple clears what it announced.
 - **Fewer.** When the total goes down (decided anywhere: on the Mac, on
   the web or on the phone), the device's desired badge changes.
-  - It is sent as a badge-only update (no alert, no sound, priority 5), at
-    most once a minute, computed from the current total at send time.
+  - It is sent as a badge-only update (no alert, no sound, priority 5),
+    at most once a minute, computed from the current total at send time.
   - It is not sent while an alert is pending for that device, because the
     alert carries the badge.
-  - A failed update is retried at the next allowed tick until the desired
-    and the delivered badge agree. The last update sets 0.
-- **Collapse ids.** An alert's `apns-collapse-id` is `a:` plus the host
-  alias, so a newer alert for a host replaces the older one. Badge updates
-  carry no collapse id, so they never replace an alert.
+  - It is sent with `apns-expiration: 0`: Apple delivers it now or drops
+    it, and never stores it. APNs keeps only one stored notification per
+    app for an offline phone, so a stored badge update could otherwise
+    replace an unseen alert. The cost: a phone offline at that moment
+    keeps a stale badge until the next alert or until the app is opened
+    (it sets the badge from its own count).
+  - tendd tracks the last badge Apple *accepted* (a `200`), not one the
+    phone shows; Apple reports no delivery. A refused update is retried at
+    the next allowed tick until the desired and the last accepted badge
+    agree. The last update sets 0.
+- **Collapse ids.** An alert's `apns-collapse-id` is `a:` plus the first
+  16 bytes of SHA-256 of the host alias, as hex (34 bytes, under Apple's
+  64-byte limit for any alias), so a newer alert for a host replaces the
+  older one on the phone. Badge updates carry no collapse id.
 - **Apple's answers**, per device and environment:
   - **`410 Unregistered`, `400 BadDeviceToken`, `DeviceTokenNotForTopic`**:
     the registration is deleted, but only if the row still has the
@@ -443,8 +455,8 @@ only while push is on and at least one registration exists.
   - An error or log line never contains the request path (which holds the
     device token) or the `authorization` header.
 - **Provider token.** An ES256 JWT (`kid` = key id, `iss` = team id,
-  `iat`), renewed every 40 minutes. Apple accepts tokens older than 20
-  minutes and younger than 60.
+  `iat`), renewed every 40 minutes. Apple refuses a token older than 60
+  minutes, and refuses renewals more often than every 20 minutes.
 - APNs may still drop, delay or reorder deliveries. The app therefore also
   sets the badge from its own count whenever it reads the queue.
 
@@ -560,15 +572,20 @@ By default, nothing anyone wrote:
     - The pending set survives a rate limit and a `429`, is rebuilt after
       the back-off, and drops what was decided meanwhile.
     - The badge goes down to 0, is not sent while an alert is pending,
-      and is retried until delivered.
+      is sent with expiration 0, and is retried until accepted.
+    - A 63-byte host alias gets a collapse id within 64 bytes.
   - **Races.** A late `410` or `BadDeviceToken` arrives after the token
     was rotated, moved to another device, removed or registered again; the
     newer row survives. A `410` timestamp older than the row's update keeps
     the row.
   - **Devices.** A removed or expired device is never sent to. A row left
     by an older tendd's removal is deleted. A token moves between devices.
+    A re-pair registers the same token and environment as a new device:
+    the channel and `ref_key` are new, and a payload from the old pairing
+    fails the channel check.
   - **Key files.** A 0644 key, a symlink, a key owned by someone else, a
-    FIFO and an oversized file are all refused, with the dashboard still
+    FIFO with no writer (the open must not block; checked with a startup
+    deadline) and an oversized file are all refused, with the dashboard still
     serving.
   - **Secrets.** No error or log line contains the device-token path or
     the authorization header.
