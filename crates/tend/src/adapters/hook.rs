@@ -112,8 +112,14 @@ impl HookPlace {
             // from its `codex resume <id>` process or an unambiguous cwd.
             None
         } else {
-            host_pane_env()
-                .or_else(|| resolve_pane_via_ancestry(crate::backend::identity_backend().as_ref()))
+            host_pane_env().or_else(|| {
+                // A unit test never asks the developer's multiplexer which
+                // pane it runs in (see `tmux::scanner::own_tmux_dir_only`).
+                if cfg!(test) {
+                    return None;
+                }
+                resolve_pane_via_ancestry(crate::backend::identity_backend().as_ref())
+            })
         };
         Self {
             pane,
