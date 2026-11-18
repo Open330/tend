@@ -46,6 +46,8 @@ pub fn router<S: Clone + Send + Sync + 'static>() -> Router<S> {
         // every link the workbench made (`/#pane=…`).
         .route("/", get(home_handler))
         .route("/explore", get(home_handler))
+        // Explore → Messages, the collaboration reader (explore-messages.mjs).
+        .route("/explore/messages", get(home_handler))
         .route("/settings", get(home_handler))
         .route("/workbench", get(index_handler))
         .route("/static/{*path}", get(static_handler))

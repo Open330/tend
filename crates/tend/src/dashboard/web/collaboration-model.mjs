@@ -286,3 +286,169 @@ export function scopeCollaborationRequests(requests, scope, resolvePane = () => 
 export function dominantCount(counts) {
   return Object.entries(counts || {}).sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))[0]?.[0] || "unknown";
 }
+
+/// A narrower scope than a session: the requests one pane sent or received.
+/// `socket` (a path or its short name) tells apart two tmux servers whose
+/// panes share an id; a request recorded without a socket still matches.
+export function requestsTouchingPane(requests, pane, socket = null) {
+  if (!pane) return requests || [];
+  const short = socket ? shortSocket(socket) : null;
+  const touches = (participant) => {
+    if (!participant || participant.console || participant.pane !== pane) return false;
+    const own = participant.socket || participant.room?.socket || null;
+    return !short || !own || shortSocket(own) === short;
+  };
+  return (requests || []).filter((request) => touches(request?.from) || touches(request?.to));
+}
+
+/// What "copy conversation" puts on the clipboard: the request, its
+/// updates and the reply, in that order.
+export function conversationText(request) {
+  return [request?.body, ...(request?.updates || []).map((update) => update.body), request?.reply?.body].filter(Boolean).join("\n\n");
+}
+
+/// The status colour family a request or reply is drawn in.
+export function collaborationStatusClass(status) {
+  if (["failed", "blocked", "declined", "cancelled", "expired"].includes(status)) return "danger";
+  if (["queued", "claimed"].includes(status)) return "pending";
+  return status === "completed" ? "success" : "neutral";
+}
+
+// ---- Graph and sequence geometry -----------------------------------------
+// The layout both readers draw (the workbench as markup, Explore with DOM
+// nodes): positions, paths and labels, no elements.
+
+// Nodes sit on an ellipse whose perimeter leaves roughly one node box of
+// room per participant; the canvas is sized around it so every node is on
+// screen and the SVG can be scaled to the pane.
+const GRAPH_NODE_SPACING = 125;
+const GRAPH_MARGIN_X = 90;
+const GRAPH_MARGIN_Y = 60;
+
+export function graphRadii(count) {
+  const radiusX = Math.max(150, (count * GRAPH_NODE_SPACING) / (2 * Math.PI) * 1.15);
+  return { radiusX, radiusY: Math.max(90, radiusX * .62) };
+}
+
+export function graphNodePositions(nodes, width, height) {
+  if (nodes.length === 1) return new Map([[nodes[0].id, { x: width / 2, y: height / 2 }]]);
+  const { radiusX, radiusY } = graphRadii(nodes.length);
+  const positions = new Map();
+  nodes.forEach((node, index) => {
+    const angle = -Math.PI / 2 + (index * Math.PI * 2 / nodes.length);
+    positions.set(node.id, {
+      x: width / 2 + Math.cos(angle) * radiusX,
+      y: height / 2 + Math.sin(angle) * radiusY,
+    });
+  });
+  return positions;
+}
+
+export function graphPath(from, to, bend = 0) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const distance = Math.max(1, Math.hypot(dx, dy));
+  if (distance < 2) {
+    return `M ${from.x - 22} ${from.y - 5} C ${from.x - 78} ${from.y - 76}, ${from.x + 78} ${from.y - 76}, ${from.x + 22} ${from.y - 5}`;
+  }
+  const start = { x: from.x + dx / distance * 48, y: from.y + dy / distance * 30 };
+  const end = { x: to.x - dx / distance * 52, y: to.y - dy / distance * 32 };
+  const mx = (start.x + end.x) / 2 - dy / distance * bend;
+  const my = (start.y + end.y) / 2 + dx / distance * bend;
+  return `M ${start.x.toFixed(1)} ${start.y.toFixed(1)} Q ${mx.toFixed(1)} ${my.toFixed(1)} ${end.x.toFixed(1)} ${end.y.toFixed(1)}`;
+}
+
+/// The directional graph of a projection (projectCollaboration): canvas
+/// size, node positions, and per edge its request path, its reply path
+/// (back toward the sender, when any reply came) and its label point.
+export function graphLayout(projection) {
+  const { radiusX, radiusY } = graphRadii(projection.nodes.length);
+  const width = Math.max(560, Math.ceil(radiusX * 2 + GRAPH_MARGIN_X * 2));
+  const height = Math.max(320, Math.ceil(radiusY * 2 + GRAPH_MARGIN_Y * 2));
+  const positions = graphNodePositions(projection.nodes, width, height);
+  const edges = projection.edges.map((edge, index) => {
+    const from = positions.get(edge.from);
+    const to = positions.get(edge.to);
+    const reverse = projection.edges.find((candidate) => candidate.from === edge.to && candidate.to === edge.from);
+    const bend = reverse ? (edge.from.localeCompare(edge.to) < 0 ? 34 : -34) : 0;
+    return {
+      edge,
+      index,
+      path: graphPath(from, to, bend),
+      replyPath: edge.replyCount ? graphPath(to, from, bend ? -bend - 10 : 16) : null,
+      midpoint: { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 + bend * .45 },
+      status: dominantCount(edge.statuses),
+      replyStatus: dominantCount(edge.replyStatuses),
+    };
+  });
+  return { width, height, positions, edges };
+}
+
+/// One row per request and one per reply, chronological (a reply after its
+/// request at the same instant), for the sequence diagram.
+export function sequenceEvents(requests) {
+  const events = [];
+  for (const request of requests || []) {
+    events.push({
+      request,
+      at: request.created_at,
+      from: participantIdentity(request.from),
+      to: participantIdentity(request.to),
+      reply: false,
+      status: "request",
+      kind: request.kind || "request",
+    });
+    if (request.reply) {
+      events.push({
+        request,
+        at: request.reply.at || request.created_at,
+        from: participantIdentity(request.to),
+        to: participantIdentity(request.from),
+        reply: true,
+        status: request.reply.status || request.status,
+        kind: "reply",
+      });
+    }
+  }
+  return events.sort((left, right) =>
+    String(left.at || "").localeCompare(String(right.at || "")) ||
+    String(left.request.id || "").localeCompare(String(right.request.id || "")) ||
+    Number(left.reply) - Number(right.reply)
+  );
+}
+
+/// The sequence diagram of (at most the latest `cap` of) `requests`: its
+/// lifelines, rows and canvas.
+export function sequenceLayout(requests, { cap = 200 } = {}) {
+  const all = requests || [];
+  const visible = all.slice(-cap);
+  const participants = sequenceParticipants(visible);
+  const participantIndex = new Map(participants.map((participant, index) => [participant.id, index]));
+  const events = sequenceEvents(visible);
+  const laneWidth = 170;
+  const left = 65;
+  const width = Math.max(420, left * 2 + Math.max(1, participants.length - 1) * laneWidth);
+  // Lane names live in their own strip that sticks to the top of the
+  // scroll box, so long histories keep saying who each lifeline belongs to.
+  const headerHeight = 44;
+  const rowHeight = 58;
+  const height = 8 + events.length * rowHeight + 20;
+  const laneX = (id) => left + (participantIndex.get(id) || 0) * laneWidth;
+  const lanes = participants.map((participant, index) => ({ ...participant, x: left + index * laneWidth }));
+  const rows = events.map((event, index) => {
+    const y = 8 + index * rowHeight + 25;
+    const sx = laneX(event.from);
+    const tx = laneX(event.to);
+    return {
+      ...event,
+      y,
+      sx,
+      tx,
+      labelX: sx === tx ? sx + 44 : (sx + tx) / 2,
+      path: sx === tx
+        ? `M ${sx} ${y} C ${sx + 80} ${y - 28}, ${sx + 80} ${y + 28}, ${sx + 4} ${y + 8}`
+        : `M ${sx} ${y} L ${tx} ${y}`,
+    };
+  });
+  return { total: all.length, visible, lanes, rows, width, height, headerHeight, rowHeight };
+}

@@ -3,10 +3,15 @@
 // pane it opens: live output and a composer, as the Mac's terminal tab
 // shows a pane. Output and prompts are operator-only and local-only (a
 // pane on another Fleet host is listed with its state, and opens on that
-// host). The page wires DOM helpers in (`deps`) so this module stays
+// host). Its other view, Messages (`/explore/messages`), is the
+// collaboration reader (explore-messages.mjs): a switch in the header
+// moves between the two, and a pane or session opens Messages scoped to
+// it. The page wires DOM helpers in (`deps`) so this module stays
 // testable.
 
 import { EXPLORE_SORTS, PINNED_ATTENTION_LIMIT, exploreSections, exploreSortOf, paneFromHash, paneHash } from "./explore-model.mjs";
+import { mountMessages } from "./explore-messages.mjs";
+import { MESSAGES_PATH, messagesLink, paneMessagesState, sessionMessagesState } from "./messages-model.mjs";
 import { openPaneStream } from "./pane-stream.mjs";
 
 const LINES = 400;
@@ -32,16 +37,67 @@ function storeSort(sort) {
 
 export function mountExplore(root, deps) {
   const { S, el, icon, button, logo, hostBadge, when, read, write, authHeaders, canWrite } = deps;
-  const view = { show: "all", query: "", grouping: "host", sort: storedSort(), fleet: null, open: null, stream: null, poll: null, sending: new Set(), drafts: new Map(), collapsed: new Set(), closed: false, syncComposer: null, hash: null };
+  const view = { show: "all", query: "", grouping: "host", sort: storedSort(), fleet: null, open: null, stream: null, poll: null, sending: new Set(), drafts: new Map(), collapsed: new Set(), closed: false, syncComposer: null, hash: null, mode: null, messages: null };
 
   const sidebar = el("aside", "ex-side");
   const viewer = el("section", "ex-view");
-  root.replaceChildren(sidebar, viewer);
+
+  /// Panes | Messages, in both views' headers.
+  function modeSwitch(current) {
+    const box = el("div", "seg ex-mode");
+    box.setAttribute("role", "radiogroup");
+    box.setAttribute("aria-label", S.exploreMode);
+    for (const mode of ["panes", "messages"]) {
+      const option = el("button", null, S[mode]);
+      option.type = "button";
+      option.setAttribute("role", "radio");
+      option.dataset.mode = mode;
+      option.setAttribute("aria-checked", String(mode === current));
+      option.addEventListener("click", () => {
+        if (mode !== view.mode) go(mode === "messages" ? MESSAGES_PATH : "/explore");
+      });
+      box.append(option);
+    }
+    return box;
+  }
+
+  /// Move within Explore (a pane link, a scoped Messages link): a new
+  /// history entry, then the view it names.
+  function go(href) {
+    window.history?.pushState?.(null, "", href);
+    sync();
+  }
+
+  function modeOf() {
+    return window.location.pathname === MESSAGES_PATH ? "messages" : "panes";
+  }
+
+  /// Show the view the address names.
+  function sync() {
+    if (view.closed) return;
+    const mode = modeOf();
+    if (mode !== view.mode) {
+      view.mode = mode;
+      if (mode === "messages") {
+        closeStream();
+        view.suspended = Boolean(view.open);
+        view.messages ||= mountMessages({ ...deps, modeSwitch, go });
+        root.replaceChildren(...view.messages.nodes);
+      } else {
+        view.messages?.suspend();
+        root.replaceChildren(sidebar, viewer);
+        // An open pane comes back (stream and all) in showLinkedPane.
+        if (!view.open) drawViewer();
+      }
+    }
+    if (mode === "messages") view.messages.update(view.fleet);
+    else showLinkedPane();
+  }
 
   const head = el("header", "ex-head");
   const title = el("span", "ex-title", S.explore.toUpperCase());
   const count = el("span", "ex-count", "");
-  head.append(title, count);
+  head.append(title, count, modeSwitch("panes"));
   const search = el("input", "ex-search");
   search.type = "search";
   search.placeholder = S.filterExplore;
@@ -168,6 +224,14 @@ export function mountExplore(root, deps) {
         for (const session of section.sessions) {
           const sessionRow = el("div", "ex-session");
           sessionRow.append(icon("chevron"), icon("layers"), el("span", "ex-name", session.name || "—"), el("span", "ex-n", String(session.rows.length)));
+          // This host's sessions open Messages scoped to them (another
+          // host's messages are on that host's daemon).
+          if (section.local && session.name) {
+            const messages = button("", () => go(messagesLink(sessionMessagesState({ host: section.title, local: true, session: session.name, socket: session.socket }))), "btn ghost icon-only ex-session-messages", "people");
+            messages.setAttribute("aria-label", S.sessionMessages);
+            messages.title = S.sessionMessages;
+            sessionRow.append(messages);
+          }
           nodes.push(sessionRow);
           for (const window of session.windows) {
             const key = `${section.title}\u0000${window.key}`;
@@ -228,6 +292,7 @@ export function mountExplore(root, deps) {
     titles.append(meta);
     top.append(titles);
     if (item.agent) top.append(el("span", `ex-state ${item.group}`, S.stateLabels[item.agent.state] || item.agent.state));
+    if (item.local) top.append(button(S.paneMessages, () => go(messagesLink(paneMessagesState(item))), "btn small", "people"));
     const output = el("pre", "ex-output");
     output.setAttribute("aria-live", "off");
     const status = el("p", "ex-status");
@@ -361,44 +426,51 @@ export function mountExplore(root, deps) {
     return box;
   }
 
-  drawList();
-  drawViewer();
+  /// A pane link: on mount, and again whenever the link itself changes.
+  function showLinkedPane() {
+    const fleet = view.fleet;
+    // Do not redraw the list under someone typing in the filter.
+    if (document.activeElement !== search) drawList();
+    const hash = window.location.hash;
+    const wanted = paneFromHash(hash);
+    const changed = hash !== view.hash;
+    view.hash = hash;
+    if (view.suspended && view.open) {
+      view.suspended = false;
+      drawViewer();
+    }
+    if ((changed || !view.open) && wanted && fleet) {
+      const rows = exploreSections(fleet, { show: "all" }).sections.flatMap((s) => s.rows);
+      // A link without a host names this host's pane (paneHash).
+      const found = rows.find(
+        (r) => r.pane === wanted.pane && (!wanted.socket || r.socket === wanted.socket) && (wanted.host ? r.host === wanted.host : r.local),
+      );
+      if (found && found.id !== view.open?.id) openPane(found, { push: false });
+    }
+  }
+
+  sync();
 
   return {
     update(fleet) {
       if (view.closed) return;
       view.fleet = fleet;
-      // Do not redraw the list under someone typing in the filter.
-      if (document.activeElement !== search) drawList();
-      // A pane link: on mount, and again whenever the link itself changes.
-      const hash = window.location.hash;
-      const wanted = paneFromHash(hash);
-      const changed = hash !== view.hash;
-      view.hash = hash;
-      if (view.suspended && view.open) {
-        view.suspended = false;
-        drawViewer();
-      }
-      if ((changed || !view.open) && wanted && fleet) {
-        const rows = exploreSections(fleet, { show: "all" }).sections.flatMap((s) => s.rows);
-        // A link without a host names this host's pane (paneHash).
-        const found = rows.find(
-          (r) => r.pane === wanted.pane && (!wanted.socket || r.socket === wanted.socket) && (wanted.host ? r.host === wanted.host : r.local),
-        );
-        if (found && found.id !== view.open?.id) openPane(found, { push: false });
-      }
+      sync();
     },
     /// Off screen (another page of the shell): no live stream or poll for a
     /// view nobody sees; the next update reopens the pane.
     suspend() {
       closeStream();
       view.suspended = true;
+      view.messages?.suspend();
     },
     /// Everything private gone: the stream, the output, the drafts, and
     /// no later update draws it back.
     destroy() {
       view.closed = true;
       closeStream();
+      view.messages?.destroy();
+      view.messages = null;
       view.drafts.clear();
       view.open = null;
       view.fleet = null;

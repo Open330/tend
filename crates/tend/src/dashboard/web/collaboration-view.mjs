@@ -1,3 +1,17 @@
+/// "42s", "5m", "3h07m", "2d04h"; "—" for nothing.
+export function formatDuration(totalSecs) {
+  const secs = Math.max(0, Math.floor(totalSecs || 0));
+  if (secs === 0) return "—";
+  if (secs < 60) return `${secs}s`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  if (hours < 24) return `${hours}h${String(remMins).padStart(2, "0")}m`;
+  const days = Math.floor(hours / 24);
+  return `${days}d${String(hours % 24).padStart(2, "0")}h`;
+}
+
 export function responseLatency(request) {
   if (!request.reply?.at || !request.created_at) return null;
   const delta = Date.parse(request.reply.at) - Date.parse(request.created_at);

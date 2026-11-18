@@ -5588,6 +5588,7 @@ mod tests {
         for uri in [
             "/",
             "/explore",
+            "/explore/messages",
             "/settings",
             "/needs",
             "/home",
