@@ -553,11 +553,13 @@ struct HostsAndWorkRequest: View {
         if prominent {
             Button(label) { confirming = true }
                 .buttonStyle(.borderedProminent)
+                .disabled(model.signingOut)
                 .accessibilityIdentifier("repair")
         } else {
             Button(label) { confirming = true }
                 .font(TendType.meta.weight(.medium))
                 .buttonStyle(.borderless)
+                .disabled(model.signingOut)
                 .accessibilityIdentifier("repair")
         }
     }
