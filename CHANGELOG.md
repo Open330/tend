@@ -46,6 +46,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   opens with Home, Explore and Settings, and MACOS.md no longer says the
   app opens on the Work Command Center. `tend --help` describes Tend
   instead of saying "tend CLI".
+- The README's demo GIFs and the landing page's screenshots are recorded
+  again from the demo fixture. They show today's `tend watch`, the web
+  Home and Explore, and the collaboration history, instead of the Muxa-era
+  dashboard. `scripts/landing-shots/live.sh` captures the screenshots from a
+  sandboxed tend. The Tend for Mac screenshots are unchanged.
 
 ## [0.10.24] - 2026-11-19
 

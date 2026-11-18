@@ -25,11 +25,11 @@ new keybinds, layout shifts, a renamed subcommand, a new panel.
 The two fleet recordings are split because one GIF covering everything ran
 45 seconds, which nobody watches to the end of.
 
-**`demo.tape` — triage.** Twenty workspace/work rows on one screen with the state
-sort floating the ones that need you; `|` cycling the list/inspector
-split, with the inspector carrying the selected agent's live screen; the
-k9s-style swarm view with its subagent trees; `tend attend` teleporting
-the tmux client to the agent blocked longest.
+**`demo.tape` — triage.** Every session on one screen with the state sort
+floating the ones that need you; `|` cycling the list/inspector split,
+with the inspector carrying the selected session's attention, latest
+response and panes; `tend attend` teleporting the tmux client to the
+agent blocked longest.
 
 **`demo-collab.tape` — talking to the fleet.** `M` for the durable
 request/reply mailbox; `m` addressing whatever row the cursor is on; `a`
@@ -75,6 +75,26 @@ vhs docs/demo.tape
 vhs docs/demo-collab.tape
 docs/demo-optimize.sh docs/demo.gif docs/demo-collab.gif
 ```
+
+On macOS, record through sandbox-exec wrappers that deny the default tmux
+directory (`/private/tmp/tmux-<uid>`). The sandbox already points the pane
+scan at the fixture's socket and turns ambient discovery off; the wrappers
+are a second line of defence for anything else that would reach your tmux
+server: build into another directory, then
+`scripts/landing-shots/wrap-bins.sh <that dir> target/debug` puts wrapping
+`tend` and `tendd` where the tapes look.
+
+The fixture works in made-up project folders under `/tmp/tend-demo-home`
+and titles every pane after its window, because tmux would otherwise show
+the recording machine's hostname and checkout path. Check the frames
+before committing (`ffmpeg -i docs/demo.gif -vf fps=1/2 frame-%02d.png`)
+for real hostnames, paths or names.
+
+The landing page's dashboard screenshots come from the same fixture with
+the dashboard on: `scripts/landing-shots/live.sh` (Home, Explore and the
+workbench's collaboration panel, light and dark). It needs a release
+build, because a debug build reads the dashboard's files from the source
+tree it was built in.
 
 The optimize pass is not optional housekeeping — VHS emits a 256-colour
 GIF and these recordings use maybe forty of them, so rebuilding on a
