@@ -20,14 +20,29 @@ mod settings;
 #[cfg(windows)]
 mod shell;
 
-// The exe icon resource build.rs links in; tested here, where tests run on
-// every CI host.
-#[cfg(test)]
+// The exe icon resource build.rs links in, and the PNG the toast
+// registration points at; tested here, where tests run on every CI host.
+#[cfg(any(test, windows))]
+#[cfg_attr(not(test), allow(dead_code))]
 mod icon_res;
 
 #[cfg(test)]
 mod icon_res_tests {
-    use super::icon_res::res_from_ico;
+    use super::icon_res::{largest_png, res_from_ico};
+
+    #[test]
+    fn the_toast_icon_is_the_largest_png_in_the_checked_in_icon() {
+        let ico = include_bytes!("../assets/tend.ico");
+        let png = largest_png(ico).expect("tend.ico holds PNG images");
+        assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+        // IHDR width, big-endian, right after the signature and chunk header.
+        assert_eq!(
+            u32::from_be_bytes([png[16], png[17], png[18], png[19]]),
+            256
+        );
+        assert_eq!(largest_png(b"not an icon"), None);
+        assert_eq!(largest_png(&[0, 0, 1, 0, 1, 0]), None);
+    }
 
     fn u16_at(b: &[u8], at: usize) -> u16 {
         u16::from_le_bytes([b[at], b[at + 1]])
