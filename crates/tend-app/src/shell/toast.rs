@@ -32,12 +32,21 @@ fn escape(text: &str) -> String {
     out
 }
 
-/// Register the `AppUserModelID` with a display name, so toasts say "Tend"
-/// (an unpackaged app has no manifest to say it).
+/// Register the `AppUserModelID` with a display name and icon, so toasts
+/// say "Tend" with its mark (an unpackaged app has no manifest to say it).
+/// The icon is the largest PNG in the embedded `tend.ico`, written to the
+/// state directory, since `IconUri` takes a PNG file path.
 pub fn register(app_id: &str) -> std::io::Result<()> {
     let (key, _) = RegKey::predef(HKEY_CURRENT_USER)
         .create_subkey(format!(r"Software\Classes\AppUserModelId\{app_id}"))?;
     key.set_value("DisplayName", &identity::DISPLAY_NAME)?;
+    if let Some(png) = crate::icon_res::largest_png(include_bytes!("../../assets/tend.ico")) {
+        let dir = identity::state_dir();
+        std::fs::create_dir_all(&dir)?;
+        let icon = dir.join("toast-icon.png");
+        std::fs::write(&icon, png)?;
+        key.set_value("IconUri", &icon.to_string_lossy().into_owned())?;
+    }
     Ok(())
 }
 

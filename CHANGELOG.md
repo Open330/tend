@@ -64,6 +64,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   data with `-Uninstall` (docs/WINDOWS.md, *Install a release*). The
   binaries are not code-signed.
 
+### Changed
+
+- Tend for Windows shows the same Home board as the browser: Work units,
+  helpers and the backlog from `GET /api/home`, and *Looks good* on a
+  finished unit (`POST /api/home/reviewed`). Explore, Settings and Start
+  Work stay in the browser.
+- Tend for Windows' toasts carry the Tend mark instead of a blank icon (the
+  notification registration now names a PNG of the app icon).
+
 ## [0.10.23] - 2026-11-18
 
 ### Added

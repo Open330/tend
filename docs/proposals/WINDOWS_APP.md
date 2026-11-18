@@ -196,12 +196,14 @@ has proved it is tendd:
   (decisions are final, a different second decision is a 409) is the
   authority.
 - **Scoped forwarding.** The app forwards only what Home uses: `GET /home`,
-  `/needs`, `/static/*`, `/api/health`, `/api/fleet`, `/api/decisions`,
-  `/api/decisions/history`, and `POST /api/decisions/requests/{id}` and
-  `/api/decisions/reviews/{id}`. Pane prompts, Fleet commands, terminal
-  input, work control and operator administration are refused (403) even
-  though the token would allow them. So a bug in the page, or a page that
-  is not Home, can at worst read Home's data and answer or decide items,
+  `/needs`, `/static/*`, `/api/health`, `/api/home`, `/api/fleet`,
+  `/api/decisions`, `/api/decisions/history`, and `POST
+  /api/decisions/requests/{id}`, `/api/decisions/reviews/{id}` and
+  `/api/home/reviewed` (added 2026-11-19, so the window shows the daemon's
+  board). Pane prompts, Fleet commands, terminal input, work control,
+  operator administration and `/api/access` are refused (403) even though
+  the token would allow them. So a bug in the page, or a page that is not
+  Home, can at worst read Home's data and answer or decide items,
   each of which is audited (`web:token`). This is the app limiting what it
   forwards, not a daemon-enforced scoped token: a script bug in Home still
   has Home's decision authority. Paths are matched exactly (no `..`, no

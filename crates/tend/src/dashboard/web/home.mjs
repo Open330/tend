@@ -191,6 +191,16 @@ function canWrite() {
   return Boolean(access && access.write_authorized !== false && access.mode !== "read_only");
 }
 
+// Looks Good marks a finished unit of the daemon's board. Where /api/access
+// answers, it takes write authority; where it is not forwarded (the Windows
+// app's proxy forwards the board and this mark, nothing else of the
+// operator's), the board read itself is the proof: tendd serves it only to
+// an operator credential (a paired device gets 401). Send back, Start Work
+// and everything else keep canWrite().
+function canMarkReviewed() {
+  return state.data.access ? canWrite() : Boolean(state.data.server);
+}
+
 // ---- Cards -------------------------------------------------------------
 
 function cardKey(unit) {
@@ -899,7 +909,7 @@ function reviewButtons(unit) {
     row.append(open);
   }
   row.append(el("span", "spacer"));
-  if (canWrite()) {
+  if (canMarkReviewed()) {
     const good = hint(button(S.looksGood, () => reviewActions.looksGood(unit), "btn primary", "check"), "E");
     good.disabled = state.busy.has(key);
     row.append(good);
@@ -966,7 +976,7 @@ function reviewInbox(queue) {
     rows.append(row);
   }
   const foot = el("div", "rv-inbox-foot");
-  if (canWrite()) {
+  if (canMarkReviewed()) {
     if (state.review.confirmAll) {
       foot.append(
         el("span", null, S.rvMarkAllConfirm(queue.length)),
@@ -1016,13 +1026,13 @@ function reviewDigest(queue) {
     const name = el("span", "rv-group-name");
     name.append(icon("folder"), el("span", null, group.project || S.noProject));
     head.append(name, el("span", "count", String(group.units.length)), el("span", "spacer"));
-    if (canWrite()) head.append(button(S.rvMarkProject, () => group.units.forEach(reviewActions.looksGood), "btn ghost small"));
+    if (canMarkReviewed()) head.append(button(S.rvMarkProject, () => group.units.forEach(reviewActions.looksGood), "btn ghost small"));
     section.append(head);
     for (const unit of group.units) section.append(digestRow(unit));
     nodes.push(section);
   }
   const checked = queue.filter((u) => state.review.checked.has(u.id));
-  if (checked.length && canWrite()) {
+  if (checked.length && canMarkReviewed()) {
     const bar = el("div", "rv-selection");
     bar.append(
       el("span", null, S.rvSelected(checked.length)),
@@ -1046,7 +1056,7 @@ function digestRow(unit) {
   const expanded = state.review.expanded === unit.id;
   const row = el("article", "rv-digest-row");
   const line = el("div", "rv-digest-line");
-  if (canWrite()) {
+  if (canMarkReviewed()) {
     const box = el("input", "rv-check");
     box.type = "checkbox";
     box.checked = state.review.checked.has(unit.id);
@@ -1062,7 +1072,7 @@ function digestRow(unit) {
   const text = el("div", "rv-digest-text");
   text.append(el("span", "rv-row-title", tx(unit.title)), el("span", `rv-row-text${expanded ? " open" : ""}`, digest(unit.review?.result, 160) || headlineText(unit)));
   line.append(text, el("span", "when", when(unit.since)));
-  if (canWrite()) {
+  if (canMarkReviewed()) {
     const good = button("", () => reviewActions.looksGood(unit), "btn ghost icon-only", "check");
     good.title = S.looksGood;
     good.setAttribute("aria-label", `${S.looksGood}: ${tx(unit.title)}`);
@@ -1122,7 +1132,7 @@ function onReviewKey(event) {
   const unit = mode === "inbox" ? inboxSelected(queue) : queue[0];
   let used = true;
   switch (action) {
-    case "looksGood": if (canWrite()) reviewActions.looksGood(unit); else used = false; break;
+    case "looksGood": if (canMarkReviewed()) reviewActions.looksGood(unit); else used = false; break;
     case "later": reviewActions.later(unit); break;
     case "next": if (mode === "inbox") inboxMove(queue, 1); else reviewActions.later(unit); break;
     case "previous": if (mode === "inbox") inboxMove(queue, -1); else used = false; break;
@@ -1365,7 +1375,7 @@ function renderInspector() {
   }
   // Looks Good: the review mark the Mac records, for a finished unit the
   // daemon's board knows.
-  if (state.board?.server && unit.lane === "finished" && !unit.reviewed && canWrite()) {
+  if (state.board?.server && unit.lane === "finished" && !unit.reviewed && canMarkReviewed()) {
     const row = el("div", "row end");
     const key = `reviewed:${unit.id}`;
     row.append(button(S.looksGood, () => markReviewed(unit, key), "btn ghost", "check"));

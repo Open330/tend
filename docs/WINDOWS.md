@@ -289,7 +289,12 @@ token read from tendd's config (or `TEND_DASHBOARD_TOKEN`), and only after
 the server proved it knows the token (`GET /api/proof`, bound to this
 host's node id and the dashboard address). The page never sees the token:
 the window loads Home from the app's own origin and the app forwards only
-Home's reads and the two decision writes. It refuses a dashboard without
+Home's reads (the board from `GET /api/home`, so Work units, helpers and the
+backlog show as in the browser) and its audited writes: answering or
+deciding an item and marking a finished unit looked at. Explore, Settings,
+pane links and Start Work stay hidden in the window (it does not forward
+`/api/access`, and those need pane prompts, work control or operator
+administration); open the dashboard in a browser for them. It refuses a dashboard without
 token auth, a token under 32 characters, or a non-loopback `bind`, and the
 tray says which.
 

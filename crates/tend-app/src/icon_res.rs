@@ -75,3 +75,30 @@ pub fn res_from_ico(ico: &[u8]) -> Option<Vec<u8>> {
     entry(&mut out, RT_GROUP_ICON, 1, GROUP_FLAGS, &group);
     Some(out)
 }
+
+/// The largest PNG-encoded image in a `.ico`: what a toast's `IconUri` can
+/// point at (Windows reads PNG there, not `.ico`). `None` when the file has
+/// no PNG image or is malformed.
+#[allow(dead_code)] // build.rs includes this file too and uses only res_from_ico
+pub fn largest_png(ico: &[u8]) -> Option<&[u8]> {
+    const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
+    if u16_at(ico, 0)? != 0 || u16_at(ico, 2)? != 1 {
+        return None;
+    }
+    let count = usize::from(u16_at(ico, 4)?);
+    let mut best: Option<(u32, &[u8])> = None;
+    for index in 0..count {
+        let at = 6 + 16 * index;
+        let width = match *ico.get(at)? {
+            0 => 256,
+            w => u32::from(w),
+        };
+        let size = usize::try_from(u32_at(ico, at + 8)?).ok()?;
+        let offset = usize::try_from(u32_at(ico, at + 12)?).ok()?;
+        let image = ico.get(offset..offset.checked_add(size)?)?;
+        if image.starts_with(PNG) && best.is_none_or(|(w, _)| width > w) {
+            best = Some((width, image));
+        }
+    }
+    best.map(|(_, image)| image)
+}
