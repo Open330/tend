@@ -4,9 +4,10 @@
 #
 #   scripts/landing-shots/wrap-bins.sh <real-bin-dir> <wrapper-dir>
 #
-# tendd always scans the default tmux directory (/private/tmp/tmux-<uid>),
-# so a fixture daemon would otherwise see, and write its socket into, the
-# tmux server you actually use. The wrappers deny that directory, as
+# The sandbox points tendd's pane scan at the fixture's tmux socket and a
+# private-data daemon turns ambient discovery off, but on macOS other paths
+# can still reach the default tmux directory (/private/tmp/tmux-<uid>).
+# As a second line of defence the wrappers deny that directory, as
 # apps/tend-ios/Scripts/scratch-tendd.sh does. On Linux they just exec.
 #
 # Point TEND_DEMO_BIN_DIR (docs/demo-setup.sh) or the tapes' PATH at the
@@ -28,9 +29,11 @@ SB
 for bin in tend tendd; do
   [ -x "$real/$bin" ] || { echo "wrap-bins: $real/$bin is missing" >&2; exit 1; }
   if [ "$(uname)" = Darwin ]; then
-    printf '#!/bin/sh\nexec /usr/bin/sandbox-exec -f %s %s "$@"\n' "$out/profile.sb" "$real/$bin" > "$out/$bin"
+    # %q quotes for bash, so paths with spaces or shell characters stay
+    # one argument.
+    printf '#!/usr/bin/env bash\nexec /usr/bin/sandbox-exec -f %q %q "$@"\n' "$out/profile.sb" "$real/$bin" > "$out/$bin"
   else
-    printf '#!/bin/sh\nexec %s "$@"\n' "$real/$bin" > "$out/$bin"
+    printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$real/$bin" > "$out/$bin"
   fi
   chmod +x "$out/$bin"
 done

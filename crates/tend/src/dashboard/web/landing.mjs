@@ -52,7 +52,7 @@ const COPY = {
     shotsLede: "Real screens from a made-up fleet: seventeen sessions and nineteen agents on one host.",
     shots: [
       ["board", "Home", "Your turn, In progress and Finished, grouped by project: what needs you, what agents are on, and what is ready for the next instruction."],
-      ["collaboration", "Collaboration", "Who asked whom for what: requests and replies between agents, as a graph and a timeline."],
+      ["collaboration", "Collaboration", "Who asked whom for what: the durable requests between agents, each with its kind, room and reply state. Graph and Sequence show the same history as a graph and a timeline."],
       ["agents", "Explore", "Every pane on every host as a tree, with the ones that need you first. Open one to see its screen and type to it."],
     ],
     mac: {
@@ -156,7 +156,7 @@ const COPY = {
     shotsLede: "가상의 팀(host 하나에 session 열일곱, 에이전트 열아홉)으로 채운 실제 화면입니다.",
     shots: [
       ["board", "Home", "Your turn, In progress, Finished를 프로젝트별로 묶어 보여 줍니다. 내가 처리할 일, 에이전트가 진행 중인 일, 다음 지시를 기다리는 일이 한 화면에 있습니다."],
-      ["collaboration", "협업", "누가 누구에게 무엇을 요청했는지. 에이전트 사이의 요청과 답장을 그래프와 시간순으로 봅니다."],
+      ["collaboration", "협업", "누가 누구에게 무엇을 요청했는지 확인합니다. 에이전트 사이의 요청마다 종류, room, 답장 상태가 보이고, Graph와 Sequence에서는 같은 기록을 그래프와 시간순으로 봅니다."],
       ["agents", "Explore", "모든 host의 pane을 트리로 보여 주고, 나를 기다리는 pane을 맨 위에 둡니다. pane을 열면 화면을 보고 바로 입력할 수 있습니다."],
     ],
     mac: {

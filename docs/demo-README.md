@@ -76,9 +76,11 @@ vhs docs/demo-collab.tape
 docs/demo-optimize.sh docs/demo.gif docs/demo-collab.gif
 ```
 
-On macOS, tendd scans the default tmux directory (`/private/tmp/tmux-<uid>`)
-whatever the sandbox says, so record through sandbox-exec wrappers that
-deny it: build into another directory, then
+On macOS, record through sandbox-exec wrappers that deny the default tmux
+directory (`/private/tmp/tmux-<uid>`). The sandbox already points the pane
+scan at the fixture's socket and turns ambient discovery off; the wrappers
+are a second line of defence for anything else that would reach your tmux
+server: build into another directory, then
 `scripts/landing-shots/wrap-bins.sh <that dir> target/debug` puts wrapping
 `tend` and `tendd` where the tapes look.
 

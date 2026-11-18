@@ -20,7 +20,9 @@ REPO="$(cd "$HERE/../.." && pwd)"
 BIN_DIR="${TEND_SHOTS_BIN_DIR:-$REPO/target/debug}"
 PORT="${TEND_SHOTS_PORT:-7993}"
 
-if curl -fsS -o /dev/null "http://127.0.0.1:$PORT/" 2>/dev/null; then
+# Any listener counts, whatever it answers: a TCP connect to loopback
+# either succeeds or is refused at once.
+if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then
   echo "live.sh: something already listens on 127.0.0.1:$PORT; set TEND_SHOTS_PORT" >&2
   exit 1
 fi
