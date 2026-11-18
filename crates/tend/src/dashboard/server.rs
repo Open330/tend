@@ -5385,6 +5385,7 @@ mod tests {
             ("/home", assets::HOME_POLICY),
             ("/needs", assets::HOME_POLICY),
             ("/explore", assets::HOME_POLICY),
+            ("/explore/messages", assets::HOME_POLICY),
             ("/settings", assets::HOME_POLICY),
             ("/workbench", assets::FRAME_POLICY),
         ];
