@@ -66,6 +66,27 @@ struct HostsView: View {
             LazyVStack(alignment: .leading, spacing: 12) {
                 if !model.operates {
                     DecideOnlyNotice()
+                    // What a decide key may know: the hosts the queue covers.
+                    if !model.hosts.isEmpty {
+                        SectionTitle(text: String(localized: "Hosts this dashboard covers"), count: model.hosts.count)
+                            .padding(.top, 6)
+                        ForEach(model.hosts) { section in
+                            HStack(spacing: 10) {
+                                HostBadge(alias: section.alias, local: section.local, state: Self.complete(section) ? "online" : "degraded", size: 28)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(verbatim: section.alias).font(TendType.body.weight(.semibold))
+                                    Text(Self.waitingLine(section))
+                                        .font(TendType.meta)
+                                        .foregroundStyle(TendSurface.metaText)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                Spacer(minLength: 4)
+                            }
+                            .tendCard()
+                            .accessibilityElement(children: .combine)
+                            .accessibilityIdentifier("decideHost")
+                        }
+                    }
                 } else if let fleet = model.visibleFleet {
                     ForEach(fleet.ordered) { host in
                         NavigationLink(value: host) {
@@ -87,6 +108,30 @@ struct HostsView: View {
         .refreshable { await model.refresh() }
         .navigationTitle(String(localized: "Hosts"))
         .navigationDestination(for: FleetHost.self) { HostDetailView(alias: $0.alias) }
+    }
+}
+
+extension HostsView {
+    /// Every source of this host's queue was read, in full, and decoded.
+    static func complete(_ section: HostQueue) -> Bool {
+        section.unavailable.isEmpty && section.queue.isComplete
+    }
+
+    /// What a decide key can say about one host: never "nothing" unless
+    /// its whole queue was read.
+    static func waitingLine(_ section: HostQueue) -> String {
+        let waiting = PendingDecision.from(section).count
+        if complete(section) {
+            return waiting > 0 ? String(localized: "\(waiting) need you") : String(localized: "Nothing needs you")
+        }
+        if let reason = (section.unavailable + section.queue.unavailable).first {
+            return waiting > 0
+                ? String(localized: "\(waiting) need you, maybe more: \(reason)")
+                : String(localized: "Could not be read in full: \(reason)")
+        }
+        return waiting > 0
+            ? String(localized: "\(waiting) need you, maybe more")
+            : String(localized: "Could not be read in full")
     }
 }
 

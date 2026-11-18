@@ -269,6 +269,22 @@ final class AppModel {
     /// Why Sign out could not unpair this device on the dashboard; the key
     /// is kept so it can be retried.
     private(set) var signOutProblem: String?
+    /// Asking the dashboard again, for hosts and new work, while this
+    /// device keeps its decide key: the old key works until the new one is
+    /// issued, so a code nobody approves leaves the device as it was.
+    struct Upgrade: Equatable {
+        let origin: ServerOrigin
+        let userCode: String
+        let expires: Date
+    }
+    private(set) var upgrade: Upgrade?
+    private(set) var upgradeProblem: String?
+    /// Why this device decides only, when the app knows: the operator
+    /// approved less than it asked for, or limited it later.
+    enum ScopeNote: Equatable { case grantedLess, limited }
+    private(set) var scopeNote: ScopeNote?
+    /// Sign out is waiting for the dashboard; no upgrade may start.
+    private(set) var signingOut = false
 
     init() {
         if ProcessInfo.processInfo.arguments.contains("-TendResetState") {
@@ -384,6 +400,7 @@ final class AppModel {
                     guard let model = current() else { return }
                     if case .issued(let device, let token, let scope) = answer {
                         model.paired(Pairing(origin: origin, device: device, token: token, scope: scope))
+                        model.scopeNote = wanted == .operate && scope == .decide ? .grantedLess : nil
                         await model.refreshDevice()
                         await model.refresh()
                         return
@@ -399,15 +416,24 @@ final class AppModel {
     }
 
     private func paired(_ pairing: Pairing) {
-        guard CredentialStore.save(pairing) else {
+        guard install(pairing) else {
             fail(String(localized: "Could not keep the key in this device's Keychain."))
             return
         }
+    }
+
+    /// Keep a new key and use it from now on; false, changing nothing, when
+    /// the Keychain would not take it.
+    private func install(_ pairing: Pairing) -> Bool {
+        guard CredentialStore.save(pairing) else { return false }
         attempt = UUID()
         session = UUID()
         signOutProblem = nil
+        upgrade = nil
+        upgradeProblem = nil
         scope = pairing.scope
         phase = .paired(pairing)
+        return true
     }
 
     private func fail(_ message: String) {
@@ -423,11 +449,87 @@ final class AppModel {
         phase = .unpaired
     }
 
+    /// Ask the dashboard for hosts and new work as a new device, keeping
+    /// this decide key until the new one is issued. Then the new key
+    /// replaces it here, and the old one is removed on the dashboard.
+    func requestHostsAndWork() {
+        guard let old = pairing, !operates, upgrade == nil, !signingOut else { return }
+        upgradeProblem = nil
+        let platform = UIDevice.current.userInterfaceIdiom == .pad ? "ipados" : "ios"
+        pairingTask?.cancel()
+        let mine = UUID()
+        attempt = mine
+        pairingTask = Task { [weak self] in
+            let client = DashboardClient(origin: old.origin)
+            // Only the latest attempt, on the key it started from, counts.
+            @MainActor func current() -> AppModel? {
+                guard let self, self.attempt == mine, !Task.isCancelled,
+                      self.pairing?.token == old.token else { return nil }
+                return self
+            }
+            do {
+                let request = try await client.requestPairing(name: old.device.name, platform: platform, scope: .operate)
+                guard let model = current() else { return }
+                let expires = Date().addingTimeInterval(TimeInterval(request.expiresIn))
+                model.upgrade = Upgrade(origin: old.origin, userCode: request.userCode, expires: expires)
+                let interval = UInt64(max(request.interval, 1))
+                while Date() < expires {
+                    try await Task.sleep(nanoseconds: interval * 1_000_000_000)
+                    let answer = try await client.pollPairing(deviceCode: request.deviceCode)
+                    guard let model = current() else { return }
+                    if case .issued(let device, let token, let scope) = answer {
+                        guard model.install(Pairing(origin: old.origin, device: device, token: token, scope: scope)) else {
+                            // The old key stays, here and on the dashboard;
+                            // the new one, never kept, is given back.
+                            model.failUpgrade(String(localized: "Could not keep the new key in this device's Keychain. This device still decides with its current key; ask again."))
+                            try? await DashboardClient(origin: old.origin, token: token).forget()
+                            return
+                        }
+                        model.scopeNote = scope == .decide ? .grantedLess : nil
+                        // The old key is not needed any more; if the
+                        // dashboard cannot be told, it expires unused.
+                        do {
+                            try await DashboardClient(origin: old.origin, token: old.token).forget()
+                        } catch {
+                            model.outcome = String(localized: "The previous key could not be removed on the dashboard. Remove \"\(old.device.name)\" under access ▸ Devices, or let it expire.")
+                        }
+                        await model.refreshDevice()
+                        await model.refresh()
+                        return
+                    }
+                }
+                current()?.failUpgrade(String(localized: "The code expired before it was approved. This device still decides; ask again."))
+            } catch is CancellationError {
+                return
+            } catch {
+                current()?.failUpgrade(error.localizedDescription)
+            }
+        }
+    }
+
+    func cancelUpgrade() {
+        attempt = UUID()
+        pairingTask?.cancel()
+        pairingTask = nil
+        upgrade = nil
+    }
+
+    private func failUpgrade(_ message: String) {
+        attempt = UUID()
+        upgrade = nil
+        upgradeProblem = message
+    }
+
     /// Unpair on the dashboard, then forget the key here. When the
     /// dashboard cannot be reached the key is kept and the failure shown,
     /// so revoking can be retried; `forgetLocally` is the explicit way out.
     func signOut() async {
-        guard let client else { return }
+        guard let client, !signingOut else { return }
+        // An upgrade answered while the dashboard forgets this key must not
+        // install a new one: stop it before anything is awaited.
+        cancelUpgrade()
+        signingOut = true
+        defer { signingOut = false }
         let mine = session
         do {
             try await client.forget()
@@ -446,6 +548,9 @@ final class AppModel {
     /// device until it is removed under access ▸ Devices or expires.
     func forgetLocally() {
         CredentialStore.clear()
+        cancelUpgrade()
+        upgradeProblem = nil
+        scopeNote = nil
         session = UUID()
         signOutProblem = nil
         phase = .unpaired
@@ -573,6 +678,7 @@ final class AppModel {
         if readsBoard { leaveBoard() }
         capability = UUID()
         scope = .decide
+        scopeNote = .limited
         features = []
         fleet = nil
         board = nil

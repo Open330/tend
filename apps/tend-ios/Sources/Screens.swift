@@ -38,7 +38,6 @@ struct HostSectionView: View {
 struct DeviceSettingsView: View {
     @Environment(AppModel.self) private var model
     @State private var confirming = false
-    @State private var repairing = false
 
     var body: some View {
         Form {
@@ -56,22 +55,7 @@ struct DeviceSettingsView: View {
                         .font(TendType.meta)
                         .foregroundStyle(.secondary)
                     if !model.operates {
-                        Button(String(localized: "Pair again with hosts and new work…")) { repairing = true }
-                            .accessibilityIdentifier("repair")
-                            .confirmationDialog(String(localized: "Pair this device again?"), isPresented: $repairing) {
-                                Button(String(localized: "Pair again")) {
-                                    let address = pairing.origin.display
-                                    let name = pairing.device.name
-                                    Task {
-                                        await model.signOut()
-                                        if model.pairing == nil {
-                                            model.startPairing(address: address, name: name, scope: .operate)
-                                        }
-                                    }
-                                }
-                            } message: {
-                                Text("This device signs out, then asks the dashboard again, for hosts and new work. An operator approves the new code on the dashboard and may still allow deciding only.")
-                            }
+                        HostsAndWorkRequest()
                     }
                 }
                 if let problem = model.signOutProblem {

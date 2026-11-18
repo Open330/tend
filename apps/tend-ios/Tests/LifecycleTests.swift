@@ -279,3 +279,71 @@ extension LifecycleTests {
         XCTAssertEqual(model.count(.finished), 1)
     }
 }
+
+/// Asking for hosts and new work while the device keeps its decide key.
+extension LifecycleTests {
+    private static let upgradeRequest = #"{"device_code":"d2","user_code":"UPGR-ADE2","expires_in":600,"interval":1}"#
+    private static let issuedOperate = #"{"device":{"id":"dev_2","name":"phone"},"token":"tdv_new","scope":["operate"]}"#
+
+    func testSignOutDuringAnUpgradeNeverKeepsTheNewKey() async {
+        // The old key's forget is slow; the upgrade's code is approved
+        // meanwhile. Sign out must win: no key is left at all.
+        StubProtocol.on("/auth/devices/request", .init(status: 201, body: Self.upgradeRequest))
+        StubProtocol.on("/auth/devices/token", .init(status: 201, body: Self.issuedOperate, delay: 0.2))
+        StubProtocol.on("/api/device/forget", .init(status: 200, body: #"{"removed":"dev_1"}"#, delay: 1.5))
+        let model = pairedModel()
+        model.requestHostsAndWork()
+        await eventually { model.upgrade != nil }
+        XCTAssertNotNil(model.upgrade)
+        await model.signOut()
+        try? await Task.sleep(nanoseconds: 1_500_000_000)
+        XCTAssertNil(model.pairing, "signed out, yet a key is in use")
+        XCTAssertNil(CredentialStore.load(), "signed out, yet a key is kept")
+        XCTAssertNil(model.upgrade)
+    }
+
+    func testAnUpgradeThatCannotBeKeptLeavesTheOldKeyWorking() async {
+        StubProtocol.on("/auth/devices/request", .init(status: 201, body: Self.upgradeRequest))
+        StubProtocol.on("/auth/devices/token", .init(status: 201, body: Self.issuedOperate))
+        StubProtocol.on("/api/device/forget", .init(status: 200, body: #"{"removed":"dev_2"}"#))
+        let model = pairedModel()
+        CredentialStore.failSaves = true
+        defer { CredentialStore.failSaves = false }
+        model.requestHostsAndWork()
+        await eventually(4) { model.upgradeProblem != nil }
+        XCTAssertNotNil(model.upgradeProblem)
+        XCTAssertEqual(model.pairing?.token, "tdv_x", "the old key was dropped")
+        XCTAssertEqual(CredentialStore.load()?.token, "tdv_x")
+        XCTAssertFalse(model.operates)
+        // Only the new key, never kept, is given back: one forget.
+        XCTAssertEqual(StubProtocol.seen.filter { $0 == "/api/device/forget" }.count, 1)
+        XCTAssertNil(model.upgrade)
+    }
+
+    func testAnApprovedUpgradeReplacesTheOldKey() async {
+        StubProtocol.on("/auth/devices/request", .init(status: 201, body: Self.upgradeRequest))
+        StubProtocol.on("/auth/devices/token", .init(status: 201, body: Self.issuedOperate))
+        StubProtocol.on("/api/device/forget", .init(status: 200, body: #"{"removed":"dev_1"}"#))
+        let model = pairedModel()
+        model.requestHostsAndWork()
+        await eventually(4) { model.operates }
+        XCTAssertEqual(model.pairing?.token, "tdv_new")
+        XCTAssertEqual(CredentialStore.load()?.token, "tdv_new")
+        XCTAssertNil(model.scopeNote)
+    }
+
+    func testADecideHostLineNeverSaysNothingForAPartialRead() throws {
+        func host(_ json: String) throws -> HostQueue {
+            struct Hosts: Decodable { let hosts: [HostQueue] }
+            return try JSONDecoder().decode(Hosts.self, from: Data(json.utf8)).hosts[0]
+        }
+        XCTAssertEqual(HostsView.waitingLine(try host(Self.emptyQueue)), "Nothing needs you")
+        let offline = try host(#"{"hosts":[{"alias":"mini","local":false,"unavailable":["host is offline"],"queue":{"items":[]}}]}"#)
+        XCTAssertEqual(HostsView.waitingLine(offline), "Could not be read in full: host is offline")
+        XCTAssertFalse(HostsView.complete(offline))
+        let unknown = try host(#"{"hosts":[{"alias":"here","local":true,"unavailable":[],"queue":{"items":[{"kind":"future_item"}],"truncated":false,"unavailable":[]}}]}"#)
+        XCTAssertEqual(HostsView.waitingLine(unknown), "Could not be read in full")
+        let truncated = try host(#"{"hosts":[{"alias":"here","local":true,"unavailable":[],"queue":{"items":[{"kind":"human_request","request_id":"r1","body":"Ship?","from_session_id":"s","from_pane":"%1","created_at":"2026-11-16T10:00:00Z"}],"truncated":true,"unavailable":[]}}]}"#)
+        XCTAssertEqual(HostsView.waitingLine(truncated), "1 need you, maybe more")
+    }
+}

@@ -56,13 +56,28 @@ enum CredentialStore {
         return try? JSONDecoder().decode(Pairing.self, from: data)
     }
 
+    #if DEBUG
+    /// Tests: make the next saves fail, as a full or locked Keychain would.
+    nonisolated(unsafe) static var failSaves = false
+    #endif
+
+    /// Replace the stored pairing in one step: a failed write leaves the
+    /// one stored before in place, never nothing.
     @discardableResult
     static func save(_ pairing: Pairing) -> Bool {
+        #if DEBUG
+        if failSaves { return false }
+        #endif
         guard let data = try? JSONEncoder().encode(pairing) else { return false }
-        clear()
+        let update: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+        ]
+        let updated = SecItemUpdate(query as CFDictionary, update as CFDictionary)
+        if updated == errSecSuccess { return true }
+        guard updated == errSecItemNotFound else { return false }
         var item = query
-        item[kSecValueData as String] = data
-        item[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        item.merge(update) { $1 }
         return SecItemAdd(item as CFDictionary, nil) == errSecSuccess
     }
 
