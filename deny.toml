@@ -31,6 +31,19 @@ ignore = [
     # adding ECDSA signing: https://rustsec.org/advisories/RUSTSEC-2026-0387
     "RUSTSEC-2026-0387",
 
+    # openidconnect 4.0.1 / oauth2 5.0.0 -> chrono 0.4.45. Reviewed 2026-11-18:
+    # RUSTSEC-2026-0543 is an unmaintained notice (informational), not a
+    # vulnerability; no version of chrono is patched. Tend never uses chrono
+    # itself; it arrives only through the dashboard feature's OIDC client
+    # (tendd), where it carries ID-token timestamps. Neither upstream drops it:
+    # chrono is a required dependency of oauth2 5.0.0 (latest) and of
+    # openidconnect 4.0.1 and 4.1.0 (latest), and both expose chrono types in
+    # their public API, so no feature switch removes it. serde_with's chrono
+    # support is optional and not enabled in our tree. Drop this entry when
+    # openidconnect/oauth2 move to jiff or time, or replace the OIDC client:
+    # https://rustsec.org/advisories/RUSTSEC-2026-0543
+    "RUSTSEC-2026-0543",
+
     # notify-rust 4.17.0 -> zbus 5 -> these standalone crates. Reviewed
     # 2026-10-19: the 2026-10-17 advisories announce their merge into zbus 6,
     # not a vulnerability; there are no patched standalone versions. Keep
