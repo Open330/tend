@@ -797,6 +797,7 @@ export function markdown(source) {
   const lines = String(source || "").split(/\r?\n/);
   let paragraph = [];
   let list = null;
+  let listTag = null;
   const flush = () => {
     if (paragraph.length) blocks.push(inline(el("p"), paragraph.join(" ")));
     paragraph = [];
@@ -828,8 +829,9 @@ export function markdown(source) {
     if (item) {
       if (paragraph.length) flush();
       const tag = /\d/.test(item[1]) ? "ol" : "ul";
-      if (!list || list.tag !== tag) {
+      if (!list || listTag !== tag) {
         list = el(tag);
+        listTag = tag;
         blocks.push(list);
       }
       list.append(inline(el("li"), item[2]));

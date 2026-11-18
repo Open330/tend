@@ -417,3 +417,21 @@ test("the report's Markdown becomes nodes, never markup", () => {
   assert.ok(blocks[2].children[1].children.includes("two <b>x</b>"), "angle brackets stay text");
   assert.equal(blocks[3].children[0].textContent, "let a = 1;");
 });
+
+test("consecutive list items share one list, as a browser's elements see it", () => {
+  // Browser elements have tagName, not this fake's `tag`: hide it.
+  const make = document.createElement;
+  document.createElement = (tag) => {
+    const node = make(tag);
+    Object.defineProperty(node, "tag", { get: () => undefined, configurable: true });
+    node.tagName = tag.toUpperCase();
+    return node;
+  };
+  try {
+    const blocks = home.markdown("1. First\n2. Second\n\n- a\n- b");
+    assert.equal(blocks.length, 2);
+    assert.deepEqual(blocks.map((b) => [b.tagName, b.children.length]), [["OL", 2], ["UL", 2]]);
+  } finally {
+    document.createElement = make;
+  }
+});
