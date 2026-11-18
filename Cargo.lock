@@ -5351,7 +5351,7 @@ dependencies = [
 
 [[package]]
 name = "tend"
-version = "0.10.23"
+version = "0.10.24"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -5392,7 +5392,7 @@ dependencies = [
 
 [[package]]
 name = "tend-aas"
-version = "0.10.23"
+version = "0.10.24"
 dependencies = [
  "dirs 5.0.1",
  "rusqlite",
@@ -5413,7 +5413,7 @@ dependencies = [
 
 [[package]]
 name = "tend-app"
-version = "0.10.23"
+version = "0.10.24"
 dependencies = [
  "dirs 5.0.1",
  "hmac 0.12.1",
@@ -5434,7 +5434,7 @@ dependencies = [
 
 [[package]]
 name = "tend-cli"
-version = "0.10.23"
+version = "0.10.24"
 dependencies = [
  "ansi-to-tui",
  "anyhow",
@@ -5474,7 +5474,7 @@ dependencies = [
 
 [[package]]
 name = "tend-work"
-version = "0.10.23"
+version = "0.10.24"
 dependencies = [
  "anyhow",
  "clap",
@@ -5496,7 +5496,7 @@ dependencies = [
 
 [[package]]
 name = "tendd"
-version = "0.10.23"
+version = "0.10.24"
 dependencies = [
  "anyhow",
  "clap",
