@@ -162,7 +162,7 @@ jobs:
           name: tend-${{ steps.ref.outputs.name }}-${{ matrix.target }}
           path: |
             tend-${{ steps.ref.outputs.name }}-${{ matrix.target }}.${{ matrix.ext || 'tar.gz' }}
-            tend-${{ steps.ref.outputs.name }}-${{ matrix.target }}.${{ matrix.ext || 'tar.gz' }}.sha256
+            tend-${{ steps.ref.outputs.name }}-${{ matrix.target }}.sha256
           if-no-files-found: error
           retention-days: 14
 
