@@ -289,3 +289,72 @@ identity gradients, font stacks, type sizes and metrics.
 - `scripts/dashboard-home-e2e.mjs` against a scratch tendd
   (`apps/tend-ios/Scripts/scratch-tendd.sh`), desktop and phone.
 - Screenshots above, beside the Mac app on the same data.
+
+## Wave 7: closing the gaps to Tend for Mac
+
+| Item | Done in | State |
+|---|---|---|
+| Review sheet: Digest, Cards and Inbox; Later; Send Back; the Mac's keys | #629 | At parity, with the exceptions below |
+| Explore: the Mac's four orders and its search | #627 | At parity, with the exceptions below |
+| `/workbench` leftovers: what moves, what stays | #631, this section | Collaboration moved; the rest stays, with reasons |
+| Route matrix for every Home route | #626, #629, #631 | Covered |
+| Screenshots | `web-home/w7-*` | Web only; see *Screenshots* |
+
+### Review (FleetReviewView)
+
+The sheet has the Mac's three modes:
+- **Digest**, the default: grouped by project. Each result has a checkbox and can be expanded. Each project has Mark Project Reviewed, and the selection has Mark Reviewed.
+- **Cards**: one result at a time, "1 of N".
+- **Inbox**: a list, J/K to move, and Mark All Reviewed… with an inline confirmation.
+
+Each mode shows Asked (the Mac's digest of the prompt) and the Agent's report, rendered as Markdown with DOM nodes, never markup. Each ends in Looks Good (E/L), Later (H), Send Back (R) or Open (O). Later moves a result to the end while the sheet is open. Send Back is the inspector's reply, sharing its draft and target check. The keys leave text fields and radios alone; a focused button or link keeps its arrows, Space and Return, while the letter keys still act.
+
+The board carries `review.asked` and `review.result` only for results still to review. After a successful pane send, Home records the answer or Send Back, best effort, through `POST /api/home/instruction`, as the Mac does: a `returned` review under `home-answer:` or `home-sendback:`. A failed record never resends the words. Before this, the web recorded none of them.
+
+![Digest](web-home/w7-web-review-digest-desktop-light.png)
+![Cards with Send Back open, dark](web-home/w7-web-review-sendback-desktop-dark.png)
+![Inbox](web-home/w7-web-review-inbox-desktop-light.png)
+![Cards on a phone](web-home/w7-web-review-cards-phone-light.png) ![Inbox on a phone, dark](web-home/w7-web-review-inbox-phone-dark.png)
+
+### Explore (SidebarViews)
+
+- **Orders**: Topology (the default), Latest activity, My latest prompt and Agent latest update, with the Mac's tie-breaks. The choice is kept per browser.
+- **Search**: matches host, session, window, pane id, command, path, agent alias, title and session id. A session-name match keeps the session's panes.
+- **Active**: shows working panes only, as on the Mac.
+
+![Order](web-home/w7-web-explore-sort-desktop-light.png)
+![Search](web-home/w7-web-explore-search-desktop-dark.png)
+
+### `/workbench`, decided with the reviewer
+
+| Workbench part | Verdict | Why |
+|---|---|---|
+| Collaboration (Messages / Graph / Sequence, history, filters, links) | **Moved** to Explore → Messages (`/explore/messages`) | The broadest view of peer threads; the Mac has a narrower one (OperatorInbox's TendCollaborationView). `#message=` and `#thread=` links redirect for operators; mixed links stay. |
+| Timeline (activity heatmap and lanes) | **Stays** at `/workbench` as advanced Activity | A different dataset from Review → History; the Mac has none; the CLI has `tend timeline`. |
+| Terminals tab | **Stays** | Tend-owned terminal sessions are not multiplexer panes; Explore does not list them yet. |
+| Classic Work board, Work inspector, start form | **Stays** | Moving them first needs Start Work for any Work and a Work detail on Home. |
+| Session navigator, Agents and Panes tables, overview strip | **Stays** for now | Retiring them waits on Explore's session/window detail and the model/context columns. |
+| Visitor landing, read-only pane drawer, Share | **Stays** | Non-operators would lose their read-only view; no blanket redirect. |
+
+![Explore → Messages](web-home/w7-web-messages-messages-desktop-light.png)
+![The graph, dark](web-home/w7-web-messages-graph-desktop-dark.png)
+![The sequence](web-home/w7-web-messages-sequence-desktop-light.png)
+
+Nothing was retired in this wave. Every old link still opens where it did, or redirects to the moved reader.
+
+### Still different from the Mac, and why
+
+- **Review**:
+  - No Summarize and no Reply to All / Reply to N: they need tend's Ask provider, which has no web route yet.
+  - No Decisions section or History toggle in the sheet: Home's Your turn and Finished lanes carry them.
+  - No Recorded commands, because turn evidence has no web route yet.
+  - No swipe gestures.
+  - Digests are cut by code point, where Swift cuts by grapheme.
+  - The board cuts `review.result` at 4,000 characters (`result_truncated`, "the rest is in the pane"), so the polled board stays bounded; the Mac shows the whole response.
+  - The report's Markdown is a small DOM-only subset (headings, lists, code blocks, inline code, bold): no links, emphasis or tables.
+- **Explore**: both clients pin agents that asked. The web takes needing attention from its status group, so `asked` sits in the attention group (the Mac groups it under idle), and uncovered rate limits are left out, where the Mac's `needsAttention` includes them; that needs the limit policy's coverage. Messages reads this daemon's history; a link naming another Fleet host points to that host's dashboard instead of being read here. Collation is the browser's numeric `Intl.Collator`, not `localizedStandardCompare`.
+- **Workbench**: the rows marked *Stays* above.
+
+### Screenshots
+
+The web shots are taken against a scratch tendd: light and dark, desktop and phone. The Mac shots beside them could not be taken in this wave, because this Mac's screen was locked for the whole session, and a locked screen shows no app window. The earlier Mac references in this folder (`mac-*.png`) still show Home and Explore.
