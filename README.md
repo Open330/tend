@@ -53,9 +53,9 @@ tend           # view existing agents, start one here, or try the demo
 ```
 
 <div align="center">
-  <img src="docs/demo.gif" alt="tend watch: sixteen agent sessions on one screen, the inspector, the swarm view, and tend attend jumping to the agent that needs you" width="900" />
+  <img src="docs/demo.gif" alt="tend watch: seventeen agent sessions on one screen with the ones that need you first, the inspector, and tend attend jumping to the agent in error" width="900" />
   <br />
-  <sub><code>tend watch</code> — the fleet, the inspector, the swarm view, and <code>tend attend</code>.</sub>
+  <sub><code>tend watch</code> — the fleet, the inspector, and <code>tend attend</code>.</sub>
 </div>
 
 `tend` opens watch directly when agents are already tracked. Otherwise, choose
