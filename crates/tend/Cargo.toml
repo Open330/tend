@@ -56,7 +56,7 @@ sha2 = "0.10"
 # The dashboard's server proof (`/api/proof`): HMAC-SHA256 under the token.
 hmac = { version = "0.12", optional = true }
 # Operator sign-in and viewer accounts for a published dashboard.
-openidconnect = { version = "4.0.1", default-features = false, features = ["reqwest", "rustls-tls"], optional = true }
+openidconnect = { version = "4.1.0", default-features = false, features = ["reqwest", "rustls-tls"], optional = true }
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 # Windows has neither `/proc` nor `ps`; sysinfo reads the process table
