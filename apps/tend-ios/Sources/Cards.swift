@@ -408,13 +408,17 @@ struct WorkCard: View {
         .accessibilityIdentifier("workCard")
     }
 
-    /// The headline, unless it only repeats the state the meta row shows
-    /// ("Working" over "Working").
-    private var cardHeadline: String? {
+    /// The headline, unless it only repeats the state the meta row shows.
+    private var cardHeadline: String? { Self.shownHeadline(unit) }
+
+    /// Hidden only when it is exactly the lane's own state, as the meta row
+    /// shows it ("Working" over "Working" in progress). A status the row
+    /// does not show (an error, a question waiting) always stays.
+    static func shownHeadline(_ unit: BoardUnit) -> String? {
         guard let headline = unit.headlineText else { return nil }
-        let said = headline.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters)).lowercased()
-        let states = [unit.lane.statusLabel, unit.focus?.status?.words ?? ""].map { $0.lowercased() }
-        return states.contains(said) ? nil : headline
+        let said = headline.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+        if unit.lane == .inProgress, said.caseInsensitiveCompare(unit.lane.statusLabel) == .orderedSame { return nil }
+        return headline
     }
 
     /// In a narrow column the host names, then the project, give way

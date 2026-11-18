@@ -115,4 +115,23 @@ final class BoardTests: XCTestCase {
         XCTAssertFalse(unreadable.coverageKnown)
         XCTAssertFalse(unreadable.allClear)
     }
+
+    func testACardHidesOnlyAHeadlineThatRepeatsItsLanesState() throws {
+        func unit(_ lane: String, _ status: String) throws -> BoardUnit {
+            let b = try board(#"{"lanes": {"needs_you": {"groups": [\#(lane == "needs_you" ? item(lane, status) : "")]}, "running": {"groups": [\#(lane == "running" ? item(lane, status) : "")]}}}"#)
+            let mapped: Lane = lane == "running" ? .inProgress : .yourTurn
+            guard case .unit(let u)? = b.items(mapped).first else { throw XCTSkip("no unit") }
+            return u
+        }
+        func item(_ lane: String, _ status: String) -> String {
+            #"{"items": [{"kind": "unit", "id": "w", "lane": "\#(lane)", "title": "t", "headline": {"key": "status", "status": "\#(status)"}, "focus": {"session_id": "s", "host": "h", "status": {"key": "status", "status": "\#(status)"}}}]}"#
+        }
+        // "Working" over "Working": hidden.
+        XCTAssertNil(WorkCard.shownHeadline(try unit("running", "working")))
+        // An error or a waiting question on Your turn: the row says only
+        // "Your turn", so the headline stays.
+        XCTAssertNotNil(WorkCard.shownHeadline(try unit("needs_you", "error")))
+        XCTAssertNotNil(WorkCard.shownHeadline(try unit("needs_you", "waiting_input")))
+        XCTAssertNotNil(WorkCard.shownHeadline(try unit("running", "error")))
+    }
 }
