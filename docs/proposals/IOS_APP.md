@@ -15,11 +15,12 @@ the simulator and against a scratch daemon.
 | 1 | Apple Developer Program team to sign the app, run TestFlight and hold the push key (USD 99/year if the owner's team is not already enrolled). | Use the team that already signs Tend for Mac. | Simulator builds only, `CODE_SIGNING_ALLOWED=NO`; no device installs. |
 | 2 | Bundle identifier. It cannot be changed once registered in App Store Connect. | `dev.tend.ios`, next to the Mac app's `dev.tend.mac`. | `dev.tend.ios` in `project.yml`, not registered anywhere. |
 | 3 | Distribution route. | TestFlight internal testing only (owner's devices), no public App Store listing until push (phase 2) has been used for a few weeks. | None. |
-| 4 | Who holds the APNs key (phase 2). | The owner's `.p8` key lives on the host that serves the dashboard (jiun-mini), mode 0600, named by path in config; no relay service. See [Push](#push-phase-2). | Push not built. |
-| 5 | What a notification shows on the lock screen (phase 2). | Nothing from the agent: "Tend: 2 need you" and the host alias. The question is fetched after unlock. | Push not built. |
+| 4 | Who holds the APNs key (phase 2). | The owner's `.p8` key lives on the host that serves the dashboard (jiun-mini), mode 0600, named by path in config; no relay service. See [Push](#push-phase-2-wave-7). | Push not built. |
+| 5 | What a notification shows on the lock screen (phase 2). | Nothing from the agent: "Tend: mini needs you", the number of new items and the badge. The question is read from the host after unlock. | `allow_content = false`; content stays off unless decision 9 says otherwise. |
 | 6 | Keep the iOS CI job phase 1 adds (build + unit tests on a GitHub macOS runner, only when `apps/**` changes; free on a public repository, a few minutes per run). | Keep it: the shared models are edited from the Mac side, and only a full iOS build catches what that breaks. | Added with the iOS app PR; removing it is deleting one job. |
 | 7 | Let a paired phone see hosts and agents, read agents' recent output and start new agents (the `operate` scope). The token is an ordinary bearer credential: whoever holds it (a phished approval, a stolen phone) can start agents with bypassed permissions on every covered control-mode host until it is removed or expires. | Yes, accepting that risk, opt-in per device: chosen on the phone, looked up then ticked separately by the operator, create-only starts in projects agents already use, audit before dispatch, **Limit to deciding** and Remove. | Built and tested against a scratch daemon only; existing phones stay decide-only until paired again. |
 | 8 | Turn on `[dashboard] allow_work_start = true` on jiun-mini. It is off today, so neither the web nor the phone can start work through the dashboard. | Turn it on only after the start-work slice (plan step 4) has passed its tests, and when the owner wants to start work from the phone. Tests on a scratch daemon are not a reason to turn it on. | Off. The app shows "Starting work is turned off on this dashboard" and keeps the rest. |
+| 9 | Let a notification carry the item's text (`[dashboard.push] allow_content`, plus a switch on each phone). The text passes through Apple and can show on the lock screen; with it, a review can be approved and a question answered from the notification. | Off at first. Turn it on after a few weeks of content-free notifications if opening the app for every item is too slow, with iOS's Show Previews set to When Unlocked. | Off: notifications say only the host and a count, and tapping opens the item. |
 | 9 | Expiry for `operate` devices. A token in daily use lasts the full lifetime whoever uses it. | The same as `decide` (30 days unused, 90 days in all); shorter would mean pairing the phone again every few weeks. Removal is the real defence. | 30 / 90 days. |
 
 ## What the owner uses today
@@ -220,35 +221,246 @@ Rejected:
   *mint the same device credential* through a sign-in; it is a candidate for
   later, not needed to pair the owner's phone.
 
-## Push (phase 2)
+## Push (phase 2, wave 7)
+
+A paired phone is told when something new needs the person, without
+opening the app. The notification says as little as possible (the host
+and a count), so the lock screen shows nothing an agent wrote, unless
+both the host and the phone opt in to the text. This section is the design
+Codex reviews before any code; the wave 7 PRs implement it as written.
+
+### Who can push, and the key
 
 APNs accepts a provider token signed with a key from the Apple developer
-team that owns the app's bundle identifier. Whoever holds that key can push
-to the app's users, so it is a secret of whoever publishes the build; tend
-ships none.
+team that owns the app's bundle identifier (`dev.tend.ios`). Whoever holds
+that key can push to every installed copy of the app, so the key is a
+secret of whoever publishes the build. tend ships none.
 
-- **Chosen:** the host that serves the dashboard sends directly to
-  `api.push.apple.com` with the publishing team's key, named by path in
-  `[dashboard.push]` (`apns_key_path`, `key_id`, `team_id`, `topic`), file
-  mode checked like other secrets. For the owner that is jiun-mini holding
-  the owner's key. Use a key restricted to this app's topic and the
-  environment in use where App Store Connect offers that, never a team-wide
-  key shared with other apps; rotate by adding a new key, switching the
-  config, then revoking the old one. Someone who builds the app themselves
-  uses their own team's key the same way.
-- This does not serve other people's daemons with the owner's build: a
-  TestFlight or store build signed by the owner can only be pushed with the
-  owner's key, which no one else's host should hold.
+- **Chosen:** the host that serves the dashboard sends directly to Apple
+  with the publishing team's key. For the owner that is jiun-mini holding
+  the owner's key. There is no relay service.
+- The key is a `.p8` file named by path in `[dashboard.push]`. tendd
+  refuses it unless it is a regular file (not a symlink) owned by the
+  daemon's user with no group or other permission bits (0600 or 0400), and
+  opens it without following symlinks. It is read once at start; the
+  private key stays in memory and is never logged or sent anywhere but
+  into the JWT signature.
+- Use a key restricted to this app's topic, and to the environment in use,
+  where Apple's developer site offers that, never a team-wide key shared
+  with other apps. Rotate by adding a new key, switching the config,
+  restarting tendd, then revoking the old key.
+- An owner-signed TestFlight or store build can only be pushed with the
+  owner's key, which no one else's host should hold. Someone who builds
+  the app themselves uses their own team's key and bundle id the same way.
 - **Rejected for now:** a relay run by the app's publisher, so that people
   installing a store build need no key. It is a hosted service with an
-  operator, uptime and a privacy policy; reconsider only with a public App
+  operator, uptime and a privacy policy. Reconsider only with a public App
   Store build.
-- The device registers its APNs token with `POST /api/device/push` (device
-  credential). The payload carries no agent text: count, host alias, item id.
-  Notification actions (Looks good / Send back / Answer) use
-  `.authenticationRequired` and post to the same decision routes.
-- Simulator verification uses `xcrun simctl push` with the same payload, so
-  phase 2 is testable without APNs; delivery from the host needs decision 1.
+
+### Config
+
+```toml
+[dashboard.push]
+enabled = true                  # default false: no sender, no registrations
+key_path = "~/.config/tend/apns/AuthKey_ABC123DEFG.p8"
+key_id = "ABC123DEFG"           # 10 characters, from the key's page
+team_id = "728FW73BS8"          # 10 characters
+topic = "dev.tend.ios"          # the default; a self-built app sets its own
+allow_content = false           # default false; see "What a notification shows"
+```
+
+- The Apple endpoints are fixed: `api.push.apple.com` for a registration
+  made by a production build (TestFlight, store) and
+  `api.sandbox.push.apple.com` for a development build. There is no
+  endpoint setting, so config cannot send device tokens anywhere else.
+  Tests construct the sender with a fake endpoint in code.
+- A bad push config (missing or unsafe key file, a key that does not
+  parse as P-256, a malformed id) does not stop tendd or the dashboard:
+  push stays off, the reason is logged once at start and shown in **access ▸
+  Devices**, and `GET /api/device` says push is off. Deciding from the phone keeps working without push.
+
+### Registration
+
+- `POST /api/device/push` (device token, either scope), body
+  `{"token": "<hex>", "environment": "production" | "development",
+  "content": false}`. `token` is the APNs device token as hex, 16 to 100
+  bytes (Apple does not fix the length). Unknown fields are refused. The
+  phone calls it on every launch and whenever iOS hands it a new token, so
+  a host that turns push on later picks the phone up at its next launch.
+- When push is off on the host, the route answers `200 {"enabled":
+  false}` and stores nothing. Otherwise `200 {"enabled": true, "content":
+  <effective>}`, where the effective content flag is the device's request
+  AND the host's `allow_content`.
+- `POST /api/device/push/remove` drops the device's registration (the app
+  calls it when notifications are turned off in its settings, and before
+  Sign out).
+- One registration per device, one device per APNs token: registering a
+  token that another device row holds moves it (a phone that paired again
+  must not be notified twice). At most 16 rows, like devices.
+- Stored in the device store (`devices.sqlite3`, 0600) as a new table
+  `device_push (device_id TEXT PRIMARY KEY, token TEXT NOT NULL UNIQUE,
+  environment TEXT NOT NULL, content INTEGER NOT NULL, updated_at INTEGER
+  NOT NULL)`, created with `CREATE TABLE IF NOT EXISTS`. The schema version
+  stays 2: an older tendd opens the store and ignores the table. Removing
+  a device (Remove, Remove all, Sign out, Limit does not) deletes its row
+  in the same transaction. Because an older tendd could remove a device
+  without that, the sender only reads rows joined to a live, unexpired
+  device, and deletes orphans it finds.
+- An APNs device token is not a credential to tend, but it lets the key
+  holder reach that phone. It is never logged or audited; the audit line
+  for a registration says the device id, the environment and the content
+  flag (`"action": "push_register"` / `"push_remove"` / `"push_dropped"`
+  with Apple's reason).
+- `GET /api/device` gains `"push": {"enabled": bool, "content_allowed":
+  bool}` (additive). An older daemon has no field and no route; the app
+  then hides the notification setting and says the host needs a newer
+  tend.
+- Sending does not count as use: a phone that is not opened for 30 days
+  expires as before and stops getting notifications.
+
+### When a notification is sent
+
+The sender watches exactly what Your turn shows: `queue_sections`, every
+host this dashboard covers, the same function `GET /api/decisions` and
+`/api/device/home` use. It runs only while push is on and at least one
+registration exists.
+
+- Every 15 s it reads the queue and keys each entry: `request:<id>` for a
+  question, `review:<id>` for a review, `waiting:<session id>` for a
+  waiting agent, each with its host alias.
+- **Start.** The first successful read after tendd starts records what is
+  there without notifying, so a restart never repeats old alerts. Items
+  that arrived while tendd was down are not announced; the badge is set
+  from the first read.
+- **New.** A key not seen before (or gone for more than 5 minutes, so a
+  waiting agent that flaps between working and waiting is announced once)
+  is new. Each tick sends at most one alert per host per device, naming
+  that host, the number of new items there, and the newest one's id.
+- **Rate.** At most one alert per device every 30 s; anything newer waits
+  for the next allowed tick and is counted into it. Waiting agents use the
+  same 5 minute rule as above.
+- **Unreadable host.** When a host's section is unavailable, truncated or
+  missing, its keys are kept as they were, so when it comes back nothing
+  is announced twice and nothing is counted as decided.
+- **Fewer.** When the total goes down (decided anywhere, on the Mac, the
+  web or the phone), a badge-only update (no alert, no sound, priority 5)
+  is sent, at most once a minute per device; the last one sets 0.
+- **Apple's answers.** `410 Unregistered`, `400 BadDeviceToken` or
+  `DeviceTokenNotForTopic` delete that registration (audited as
+  `push_dropped`). `403` for the provider token (bad key, wrong team)
+  turns the sender off until tendd restarts, logged once. `429` and `5xx`
+  back off for that device (doubling from 30 s to 10 min) and drop that
+  notification; nothing is queued on disk.
+- Requests go over HTTP/2 with rustls, 10 s timeout, with `apns-topic`,
+  `apns-push-type: alert`, `apns-priority` 10 for alerts and 5 for badge
+  updates, `apns-expiration` 6 h, and `apns-collapse-id` set to the host
+  alias so a newer alert for a host replaces the older one on the phone.
+- The provider token is an ES256 JWT (`kid` = key id, `iss` = team id,
+  `iat`), renewed every 40 minutes, as Apple requires (older than 20
+  minutes, younger than 60).
+
+### What a notification shows
+
+By default, nothing anyone wrote:
+
+```json
+{"aps": {"alert": {"title-loc-key": "PUSH_TITLE", "title-loc-args": ["mini"],
+                   "loc-key": "PUSH_BODY", "loc-args": ["2"],
+                   "title": "Tend: mini needs you", "body": "2 new"},
+         "badge": 3, "sound": "default", "thread-id": "mini",
+         "category": "TEND_OPEN"},
+ "tend": {"v": 1, "host": "mini", "kind": "review", "id": "rev_01H…"}}
+```
+
+- The title is "Tend: <host> needs you", worded on the phone in its
+  language from the localization keys (English and Korean); the plain
+  `title`/`body` are the fallback. The body is the number of new items;
+  the badge is the total waiting across hosts.
+- `tend` carries the host alias, the kind and the newest item's opaque
+  id, so tapping opens that item. No question text, agent name, project or
+  Work title.
+- **Content, opt-in on both sides.** Only when the host sets
+  `allow_content = true` AND the phone registered with `content: true`
+  (a switch in the app's settings, off by default, with a sentence saying
+  the text passes through Apple and shows on the lock screen as iOS's
+  previews setting allows) does the body carry the newest item's text:
+  its first line, Markdown removed, at most 120 characters, with the asking
+  agent's label as the subtitle. The category then becomes the item's
+  kind (below), so its actions are offered.
+- Nothing in the payload is trusted by the app beyond "something on this
+  host may need you": the app reads the item from the host before showing
+  or deciding it.
+
+### On the phone
+
+- **Entitlement.** `aps-environment` (`development` for Debug,
+  `production` for Release) in `Tend.entitlements`, wired in
+  `project.yml`. The App ID needs the Push Notifications capability and
+  the App Store profile has to be made again after that (see "What the
+  owner creates").
+- **Asking.** Never at first launch. Your turn shows a one-time card,
+  "Get notified when something needs you", once the host says push is on;
+  Settings has the same switch. Only then does the app ask iOS for alert,
+  badge and sound permission and register.
+- **Opening.** Tapping a notification opens Your turn on that host and
+  opens the item once a fresh read finds it there; if it has been decided
+  meanwhile, Your turn says so. The badge is also set from the app's own
+  count whenever it reads the queue.
+- **Actions.** All actions use `.authenticationRequired`, so they run only
+  on an unlocked phone (the Keychain item stays
+  `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, unchanged).
+  - `TEND_OPEN` (the default, no content): no buttons; tap opens the item.
+  - With content: `TEND_REVIEW` offers **Looks good** and **Send back**
+    (text input for the note); `TEND_QUESTION` offers **Answer** (text
+    input) and, when the question has options, opens the app instead;
+    `TEND_WAITING` only opens the item (answering a pane is not a device
+    route).
+  - An action first reads the item from the host and decides only if it
+    is still pending there with the same id and host; otherwise it posts a
+    local notification saying it was already decided. It then posts to the
+    same decision routes as the app, so the audit line is the device's,
+    with an `X-Tend-Via: notification` header recorded in it.
+  - Without content there are no decision buttons on purpose: approving
+    from a lock screen that showed only a count would approve something
+    the person has not read.
+- No Notification Service Extension: nothing is decrypted or rewritten on
+  the phone, so the content rules above stay on the host.
+
+### Tests
+
+- Rust, against a fake APNs endpoint (an HTTP/2 server in the test that
+  records each request and answers what the test says): payloads with
+  and without content (content only when both flags are on), the JWT's
+  header and claims verified with the key's public half, renewal after 40
+  minutes, start without alerts, new items, the 5 minute flap rule, one
+  alert per host per tick, the 30 s rate, an unreadable host kept, badge
+  going down to 0, `410` deleting the registration, `403` turning the
+  sender off, `429` back-off, a removed or expired device never sent to,
+  an orphan row deleted, a token moving between devices, the 16-row cap,
+  push off storing nothing, unknown fields refused, a 0644 or symlinked
+  key refused with the dashboard still serving.
+- iOS: payload parsing and routing unit tests; a UI test that opens an
+  item from a notification payload handed to the same handler at launch;
+  `xcrun simctl push` with the same payloads on the test simulators for
+  screenshots (iOS shows them without APNs). Real delivery needs the
+  owner's key and a device.
+
+### What the owner creates
+
+1. In the Apple developer site (team `728FW73BS8`), **Keys ▸ +**: enable
+   Apple Push Notifications service; environment Sandbox & Production;
+   restrict it to the topic `dev.tend.ios` if the page offers that.
+   Download the `.p8` (Apple offers it once) and note its Key ID.
+2. Put the `.p8` and the Key ID in the vault, as "APNs Auth Key - Tend
+   iOS".
+3. On jiun-mini: `~/.config/tend/apns/` (0700) with the `.p8` (0600),
+   then the `[dashboard.push]` table above, then restart tendd.
+4. Enable Push Notifications on the identifier `dev.tend.ios` and make the
+   App Store profile again (the App Store Connect API key can do both, so
+   whoever uploads can), then upload a build with the entitlement.
+
+Not in this design: Web Push for `/needs`, Live Activities, widgets,
+critical alerts, and notifying about anything other than Your turn.
 
 ## Technology
 
@@ -582,7 +794,7 @@ build 1). In order, each its own PR with screenshots:
    starts work on a scratch daemon whose pipeline runs a harmless stand-in
    agent.
 
-**Phase 2: notifications.** First a real-device vertical slice (needs
+**Phase 2: notifications** (wave 7, designed in [Push](#push-phase-2-wave-7)). First a real-device vertical slice (needs
 decisions 1 and 4): a question on a host, a content-free push, unlock, the
 item opens, answer, Decided. Then actionable notifications with Face ID
 and the badge count; `simctl push` tests. In parallel, a short PWA + Web
