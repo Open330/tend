@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The dashboard's OIDC sign-in now uses openidconnect 4.1.0, which moves
+  ES256/ES384 ID-token verification to p256/p384 0.14 and a patched
+  crypto-bigint (RUSTSEC-2026-0387). The cargo-deny exception for that
+  advisory is gone.
 - The iOS app draws the state colours and the accent from the shared
   design tokens (the macOS/iOS 26 palette), so an iPhone on iOS 17 or 18
   shows the same colours as Tend for Mac. Its surfaces come from the
