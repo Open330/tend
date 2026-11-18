@@ -95,6 +95,15 @@ jobs:
             os: macos-latest
           - target: aarch64-apple-darwin
             os: macos-latest
+          # Windows ships as one zip: the CLI, the daemon and the tray app
+          # together, with the install script that unpacks it. One download
+          # and one checksum for install-tend.ps1, and the app is a few MB
+          # next to tendd; -NoApp installs the CLI and daemon only.
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            bin: tend,tendd,tend-app
+            files: LICENSE-MIT,LICENSE-APACHE,README.md,docs/WINDOWS.md,scripts/install-windows.ps1
+            ext: zip
     steps:
       - uses: actions/checkout@v5
 
@@ -116,8 +125,8 @@ jobs:
       - name: Build, package, and (on tag) upload to release
         uses: taiki-e/upload-rust-binary-action@v1
         with:
-          # Two binaries from the workspace.
-          bin: tend,tendd
+          # tend and tendd everywhere; Windows adds tend-app.
+          bin: ${{ matrix.bin || 'tend,tendd' }}
           target: ${{ matrix.target }}
           # Build from Cargo.lock as committed, like `cargo install --locked`
           # in the install docs and scripts/release-local.sh.
@@ -127,8 +136,10 @@ jobs:
           # Bundle license, README, and example wiring next to the binaries.
           # Note: the action also auto-includes top-level LICENSE* and
           # README.md, but listing them here keeps intent explicit.
-          include: >-
-            LICENSE-MIT,LICENSE-APACHE,README.md,examples/tendd.service,examples/tend.tmux.conf,examples/claude-settings.json
+          include: ${{ matrix.files || 'LICENSE-MIT,LICENSE-APACHE,README.md,examples/tendd.service,examples/tend.tmux.conf,examples/claude-settings.json' }}
+          # .tar.gz on Unix, .zip on Windows (the action's defaults, stated).
+          tar: unix
+          zip: windows
           # Files inside the archive sit under a directory named after
           # the archive (matches `tar tf` UX of common Rust releases).
           leading-dir: true
@@ -150,10 +161,22 @@ jobs:
         with:
           name: tend-${{ steps.ref.outputs.name }}-${{ matrix.target }}
           path: |
-            tend-${{ steps.ref.outputs.name }}-${{ matrix.target }}.tar.gz
-            tend-${{ steps.ref.outputs.name }}-${{ matrix.target }}.tar.gz.sha256
+            tend-${{ steps.ref.outputs.name }}-${{ matrix.target }}.${{ matrix.ext || 'tar.gz' }}
+            tend-${{ steps.ref.outputs.name }}-${{ matrix.target }}.sha256
           if-no-files-found: error
           retention-days: 14
+
+      # The installer as its own asset, so the documented one-liner can fetch
+      # it from releases/latest/download without unpacking anything first.
+      - name: Attach the Windows install script
+        if: github.event_name == 'push' && matrix.ext == 'zip'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          cp scripts/install-windows.ps1 install-tend.ps1
+          gh release upload "$GITHUB_REF_NAME" install-tend.ps1 --clobber
 
   # The Mac app ships as a notarized DMG rather than through the App Store:
   # Tend runs the operator's own binaries, talks to a daemon that outlives it
