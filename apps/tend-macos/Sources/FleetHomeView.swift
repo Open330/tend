@@ -670,6 +670,7 @@ struct FleetLaneColumn: View {
     @State private var showsOlder = false
     @State private var showsProbable = false
     @State private var showsEmpty = false
+    @Environment(\.colorScheme) private var colorScheme
 
     /// Where a card folds outside Your turn, each in exactly one row, so a
     /// row's count is what opening it shows: a possible helper first, then
@@ -719,20 +720,26 @@ struct FleetLaneColumn: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
+            // The lane's state dot, its name and count. The hint sentence is
+            // the header's help and accessibility hint, not a line that
+            // repeats on every view (docs/proposals/MAC_DESIGN.md).
+            HStack(alignment: .center, spacing: TendSpace.s) {
+                Circle()
+                    .fill(lane.tint)
+                    .frame(width: 7, height: 7)
+                    .accessibilityHidden(true)
                 Text(title)
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(lane == .needsYou && works.count + decisions.count > 0 ? Color.orange : Color.primary)
+                    .font(TendType.section)
+                    .foregroundStyle(TendInk.label(colorScheme))
                 Text("\(works.count + decisions.count)")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: 12, weight: .medium))
                     .monospacedDigit()
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(TendInk.secondary(colorScheme))
                 Spacer(minLength: 4)
-                Text(subtitle)
-                    .font(TendType.meta)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
             }
+            .help(subtitle)
+            .accessibilityElement(children: .combine)
+            .accessibilityHint(subtitle)
             .padding(.horizontal, 12)
             .padding(.top, 10)
             .padding(.bottom, 8)
@@ -741,7 +748,7 @@ struct FleetLaneColumn: View {
                     if let decisionProblem {
                         Label(decisionProblem, systemImage: "exclamationmark.circle")
                             .font(TendType.meta)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(TendInk.state(.orange, colorScheme))
                             .lineLimit(3)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 4)
@@ -749,7 +756,7 @@ struct FleetLaneColumn: View {
                     if works.isEmpty && decisions.isEmpty {
                         Text(empty)
                             .font(TendType.detail)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(TendInk.secondary(colorScheme))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 24)
                     }
@@ -832,7 +839,7 @@ struct FleetLaneColumn: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(TendTheme.panelFill, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .background(TendSurface.lane(colorScheme), in: RoundedRectangle(cornerRadius: TendRadius.lane, style: .continuous))
     }
 
     @ViewBuilder
@@ -882,24 +889,30 @@ struct FleetProjectHeader: View {
     }
 }
 
-/// One segment per stage, with the current stage named under it.
+/// One segment per stage, coloured by its state, with the current stage
+/// named under it. The current stage's segment is also taller, so colour is
+/// not the only cue, and VoiceOver reads name, state and count together.
 struct FleetStageBar: View {
     let work: FleetWork
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
+        let current = work.currentStageIndex
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 3) {
-                ForEach(Array(work.stages.enumerated()), id: \.offset) { _, stage in
+            HStack(alignment: .center, spacing: 3) {
+                ForEach(Array(work.stages.enumerated()), id: \.offset) { index, stage in
                     Capsule()
-                        .fill(stage.state.color)
-                        .frame(height: 4)
+                        .fill(stage.state == .waiting ? TendInk.track(colorScheme) : stage.state.color)
+                        .frame(height: index == current ? 6 : 4)
                 }
             }
-            if let index = work.currentStageIndex {
+            .frame(height: 6)
+            if let index = current {
                 HStack {
+                    // Inherits the row's secondary ink: a second .secondary
+                    // here would dim it to 2:1.
                     Text(work.stages[index].name)
                         .fontWeight(.medium)
-                        .foregroundStyle(.secondary)
                     Spacer()
                     if work.stages.count > 1 {
                         Text("\(work.doneStageCount)/\(work.stages.count)")
@@ -907,9 +920,21 @@ struct FleetStageBar: View {
                     }
                 }
                 .font(TendType.meta)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(TendInk.secondary(colorScheme))
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityText)
+    }
+
+    private var accessibilityText: String {
+        guard let index = work.currentStageIndex else {
+            return work.stages.map(\.state.label).joined(separator: ", ")
+        }
+        let stage = work.stages[index]
+        return work.stages.count > 1
+            ? "\(stage.name), \(stage.state.label), \(work.doneStageCount)/\(work.stages.count)"
+            : "\(stage.name), \(stage.state.label)"
     }
 }
 
