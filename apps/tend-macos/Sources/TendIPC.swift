@@ -1597,8 +1597,9 @@ actor TendIPCClient {
     /// host's review items on the dashboard, never over IPC.
     /// `limit` is the dashboard's own (`DEFAULT_LIMIT` in dashboard/home.rs
     /// and decisions.rs), so every item listed here is on the page the
-    /// person is sent to. Each host reads on its own transport: a slow host
-    /// holds up neither another host nor this Mac's decisions.
+    /// person is sent to. Reads go through the Fleet read pool, apart from
+    /// the transport this Mac's own decisions use, so a slow host never holds
+    /// those up (two hosts can share a lane of the pool).
     func remoteDecisionQueue(host: TendFleetHostIdentity) async throws -> TendPendingQueue? {
         try await fleetCommand(
             host: host,
