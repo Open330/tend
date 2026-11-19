@@ -262,6 +262,9 @@ test("only a cap takes the board's word, and only for the same cap", async () =>
   const capped = (until) => fleetWith({ state: "idle", rate_limit_scope: "five_hour", rate_limited_until: until });
   assert.equal(paneRows(capped(later), boardSays(false, "limited"))[0].attention, false);
   assert.equal(paneRows(capped(other), boardSays(false, "limited"))[0].attention, true);
+  // A reset known on one side only is not the same cap either.
+  assert.equal(paneRows(capped(later), boardSays(false, "limited", null))[0].attention, true);
+  assert.equal(paneRows(capped(undefined), boardSays(false, "limited"))[0].attention, true);
 });
 
 test("blocked waits on the person, after an error, as the Mac orders them", () => {

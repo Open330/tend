@@ -57,7 +57,7 @@ function needsAttention(status, attention, key, agent) {
   const word = attention?.get(key);
   if (!word) return true;
   const live = agent?.rate_limited_until || null;
-  return word.until && live && word.until !== live ? true : word.needs;
+  return (word.until || null) !== live ? true : word.needs;
 }
 
 /// One row per pane on every host, with the agent in it if any.
