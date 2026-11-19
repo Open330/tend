@@ -1,0 +1,212 @@
+{
+  "AdvancedSettingsView.swift": {
+    ".system(size: 12, design: .monospaced)": 1
+  },
+  "AgentLogo.swift": {
+    ".system(size: size * 0.8, weight: .medium)": 1
+  },
+  "ArtifactFileViews.swift": {
+    ".system(size: 11, weight: .semibold)": 1,
+    ".system(size: 12)": 2,
+    ".system(size: 9)": 1
+  },
+  "AutomationSettingsView.swift": {
+    ".system(size: 26)": 1
+  },
+  "ChangesViews.swift": {
+    ".system(size: 11)": 3,
+    ".system(size: 11, weight: .semibold)": 2,
+    ".system(size: 12)": 19,
+    ".system(size: 12, design: .monospaced)": 4,
+    ".system(size: 12, weight: .medium)": 3,
+    ".system(size: 12, weight: .semibold)": 2,
+    ".system(size: 12, weight: .semibold, design: .monospaced)": 1,
+    ".system(size: 15, weight: .semibold)": 1,
+    ".system(size: 28)": 1,
+    ".system(size: 9)": 1,
+    ".system(size: 9, weight: .semibold)": 1,
+    ".system(size: fontSize, design: .monospaced)": 1
+  },
+  "CommandCenterViews.swift": {
+    ".system(size: 14, weight: .semibold)": 4,
+    ".system(size: 17, weight: .semibold)": 1,
+    ".system(size: 22, weight: .semibold)": 1,
+    ".system(size: 9, weight: .semibold)": 1
+  },
+  "DetailViews.swift": {
+    ".system(size: 14, weight: .semibold)": 5,
+    ".system(size: 18, weight: .semibold)": 2,
+    ".system(size: 22, weight: .semibold)": 5,
+    ".system(size: 28)": 3,
+    ".system(size: 30)": 1,
+    ".system(size: 42)": 1
+  },
+  "FleetAskedContext.swift": {
+    ".system(size: 11, weight: .bold)": 1
+  },
+  "FleetBacklog.swift": {
+    ".system(size: 10, weight: .semibold)": 1,
+    ".system(size: 12, weight: .semibold)": 1,
+    ".system(size: 13, weight: .bold)": 1,
+    ".system(size: 13, weight: .semibold)": 1
+  },
+  "FleetChoiceView.swift": {
+    ".system(size: 11, weight: .bold)": 2,
+    ".system(size: 13, weight: .semibold)": 1
+  },
+  "FleetDecisionHistoryView.swift": {
+    ".system(size: 16)": 1,
+    ".system(size: 32)": 1
+  },
+  "FleetDecisionUnanswerable.swift": {
+    ".system(size: 11, weight: .semibold)": 1,
+    ".system(size: 12, weight: .semibold)": 1,
+    ".system(size: 9, weight: .semibold)": 1
+  },
+  "FleetDecisionViews.swift": {
+    ".system(size: 10, design: .monospaced)": 1,
+    ".system(size: 11, weight: .medium)": 1,
+    ".system(size: 11, weight: .semibold)": 1,
+    ".system(size: 13, weight: .semibold)": 1
+  },
+  "FleetHomeCards.swift": {
+    ".system(size: 10, weight: .semibold)": 3,
+    ".system(size: 11, weight: .bold)": 1,
+    ".system(size: 11, weight: .semibold)": 1,
+    ".system(size: 13, weight: .medium)": 1
+  },
+  "FleetHomeView.swift": {
+    ".system(size: 10)": 1,
+    ".system(size: 11)": 1,
+    ".system(size: 11, weight: .bold)": 3,
+    ".system(size: 11, weight: .semibold)": 2,
+    ".system(size: 12, weight: .medium)": 1,
+    ".system(size: 13.5, weight: work.lane == .needsYou ? .semibold : .regular)": 1,
+    ".system(size: 16, weight: .semibold)": 1,
+    ".system(size: 17, weight: .semibold)": 1,
+    ".system(size: 38)": 1
+  },
+  "FleetLeftovers.swift": {
+    ".system(size: 10, weight: .semibold)": 1,
+    ".system(size: 11, design: .monospaced)": 1,
+    ".system(size: 13, weight: .semibold)": 2,
+    ".system(size: 16, weight: .semibold)": 1
+  },
+  "FleetPoliciesView.swift": {
+    ".system(size: 11, design: .monospaced)": 2,
+    ".system(size: 12, design: .monospaced)": 1
+  },
+  "FleetQueueSection.swift": {
+    ".system(size: 10, weight: .semibold)": 1,
+    ".system(size: 12, weight: .semibold)": 1,
+    ".system(size: 13, weight: .bold)": 1,
+    ".system(size: 13, weight: .semibold)": 2
+  },
+  "FleetQuickLook.swift": {
+    ".system(size: 11, weight: .bold)": 2,
+    ".system(size: 11.5, design: .monospaced)": 1,
+    ".system(size: 13.5, weight: status.needsAttention ? .semibold : .regular)": 1,
+    ".system(size: 16, weight: .semibold)": 1
+  },
+  "FleetReviewView.swift": {
+    ".system(size: 10)": 1,
+    ".system(size: 10, design: .monospaced)": 1,
+    ".system(size: 10, weight: .semibold)": 2,
+    ".system(size: 11, design: .monospaced)": 2,
+    ".system(size: 11, weight: .bold)": 1,
+    ".system(size: 11, weight: .semibold, design: .monospaced)": 1,
+    ".system(size: 12, weight: .semibold)": 1,
+    ".system(size: 13, weight: .semibold)": 4,
+    ".system(size: 17, weight: .semibold)": 2,
+    ".system(size: 40)": 1
+  },
+  "FleetServers.swift": {
+    ".system(size: 10, weight: .semibold)": 1,
+    ".system(size: 13, weight: .semibold)": 1
+  },
+  "MenuBarAgentAppearance.swift": {
+    ".system(size: max(9, size * 0.34), weight: .bold)": 1
+  },
+  "MenuBarGlyph.swift": {
+    ".system(size: size * 0.9, weight: .bold)": 1,
+    ".system(size: size, weight: .semibold)": 2
+  },
+  "NewAgentView.swift": {
+    ".system(size: 14, weight: .semibold)": 1,
+    ".system(size: 28)": 1
+  },
+  "OnboardingView.swift": {
+    ".system(size: 12)": 3,
+    ".system(size: 12, weight: .medium)": 1,
+    ".system(size: 12, weight: .semibold)": 5,
+    ".system(size: 60)": 1
+  },
+  "OperatorInboxViews.swift": {
+    ".system(size: 14, weight: .semibold)": 1
+  },
+  "PipelineComposerView.swift": {
+    ".system(size: 26)": 1
+  },
+  "PipelineEditorView.swift": {
+    ".system(size: 26)": 1
+  },
+  "SessionSnapshotViews.swift": {
+    ".system(size: 11, weight: .medium)": 3,
+    ".system(size: 12)": 16,
+    ".system(size: 12, weight: .medium)": 1,
+    ".system(size: 12, weight: row.depth == 0 ? .semibold : .regular)": 1,
+    ".system(size: 13, weight: .semibold)": 2,
+    ".system(size: 14, weight: .semibold)": 2,
+    ".system(size: 28)": 2
+  },
+  "SidebarViews.swift": {
+    ".system(size: 11, weight: .medium)": 1,
+    ".system(size: 16, weight: .regular)": 1,
+    ".system(size: 9, weight: .semibold)": 1
+  },
+  "TendSwapViews.swift": {
+    ".system(size: 10)": 1,
+    ".system(size: 9)": 1
+  },
+  "TendTheme.swift": {
+    ".system(size: 11)": 1,
+    ".system(size: 11, weight: .medium)": 1,
+    ".system(size: 11, weight: .semibold)": 1,
+    ".system(size: 11, weight: active ? .semibold : .regular)": 1,
+    ".system(size: 12, weight: active ? .semibold : .medium)": 1,
+    ".system(size: 13)": 3,
+    ".system(size: compact ? 12 : 13, weight: kind == .primary ? .semibold : .medium)": 1
+  },
+  "TendUsageViews.swift": {
+    ".system(size: 11)": 1,
+    ".system(size: 12, weight: .semibold)": 2,
+    ".system(size: 9, weight: .semibold)": 1
+  },
+  "WatchViews.swift": {
+    ".system(size: 14, weight: .semibold)": 1,
+    ".system(size: 7, weight: .bold)": 1
+  },
+  "WhatsNewView.swift": {
+    ".system(size: 12)": 1,
+    ".system(size: 13, weight: .semibold)": 1
+  },
+  "WorkConsoleViews.swift": {
+    ".system(size: 12)": 1,
+    ".system(size: 14, weight: .semibold)": 1,
+    ".system(size: 15, weight: .semibold)": 1,
+    ".system(size: 32)": 1,
+    ".system(size: 8, weight: .semibold)": 1,
+    ".system(size: size * 0.46, weight: .medium)": 1
+  },
+  "WorkbenchChromeViews.swift": {
+    ".system(size: 11)": 1,
+    ".system(size: 12)": 2,
+    ".system(size: 9, weight: .bold)": 1
+  },
+  "WorkbenchShortcuts.swift": {
+    ".system(size: 12)": 2,
+    ".system(size: 12, weight: .medium)": 1,
+    ".system(size: 12, weight: .semibold)": 1,
+    ".system(size: 13, weight: .semibold)": 1
+  }
+}
