@@ -220,14 +220,14 @@ fn gates() -> &'static (Mutex<Gates>, std::sync::Condvar) {
 fn release(key: &HomeKey, token: u64, because: &str) {
     let (held, freed) = gates();
     let mut held = held.lock().unwrap_or_else(PoisonError::into_inner);
-    let taken = held.get_mut(key).and_then(|holders| {
+    let removed = held.get_mut(key).and_then(|holders| {
         let at = holders.iter().position(|holder| holder.token == token)?;
         Some(holders.remove(at))
     });
     if held.get(key).is_some_and(Vec::is_empty) {
         held.remove(key);
     }
-    if let Some(Holder { pane, since, .. }) = taken {
+    if let Some(Holder { pane, since, .. }) = removed {
         tracing::info!(
             home = key.as_str(),
             pane = %pane,
