@@ -336,9 +336,14 @@ exited and the relaunch has drawn its own prompt (or readiness has ended):
   and exits, while sixteen-way ones lost some of Claude's own counters. Four
   keeps a swap well inside that; it is a conservative limit, not a proven
   safe one.
-- a Codex home takes one at a time: Tend itself prepares hook trust there
-  (see below), and Codex's own behaviour on a shared home has not been
-  measured.
+- a Codex home also takes up to four. With real Codex 0.170.0 on a
+  disposable home, 8 and 16 simultaneous starts held for 8 s and stopped
+  by `SIGTERM` (30 trials, new and settled homes) always left
+  `config.toml` valid, every other entry in it kept, and every sqlite
+  store intact. Codex re-reads `config.toml` when it writes it (about 4 s
+  after a start); only its own start counter lost increments when all of
+  them wrote at the same instant. Tend's own write into the home, the hook
+  trust a relaunch needs (see below), still goes one target at a time.
 
 A home that cannot be told shares one gate per provider with every other
 unknown home. Moving twenty idle agents onto one Claude account took about
