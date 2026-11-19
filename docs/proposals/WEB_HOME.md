@@ -377,26 +377,49 @@ Tend for Mac has moves; what the Mac dropped is not ported.
 
 | `/workbench` part | Verdict | Where, or why |
 |---|---|---|
-| Landing page for visitors (product, docs, sign-in, token) | **Moves** | Its own page, `/welcome` (`welcome.html` + `landing.mjs`, without `main.js`). Anyone signed out who opens `/`, `/home` or `/explore` is sent there, and it returns them where they were after sign-in. |
+| Landing page for visitors (product, docs, sign-in, token) | **Moves** | Its own page, `/welcome` (`welcome.html` + `landing.mjs`, without `main.js`). It is only for a visitor the dashboard asks to authenticate, i.e. its reads answer 401. Such a visitor who opens `/`, `/home` or `/explore` is sent there, and returns where they were after sign-in. An anonymous visitor who *may* read (`auth = "public_read"`, or no auth) stays in the read-only shell. |
 | Read-only view for viewers (`public_read`, viewer accounts) | **Moves** | The shell itself, read-only. Explore with topology and status (no pane output, no composer, as the API already enforces) and Messages with details redacted. Home says it needs an operator and offers *Upgrade with token*, which also sits in Settings. |
 | Start Work | Already moved | Home's Start Work, the Mac's WorkStartView. |
 | Work detail and controls | **Moves, as on the Mac** | Home's inspector for a Work unit gains *Steer this Work*, the Mac's WorkPromptComposer (`POST /api/work-control/prompt`). Stages, agents and helpers are already there. |
-| Work metadata editor (title, stage, goal, next action), abort-all | **Retired** | The Mac has neither. The CLI keeps them (`tend work …`), and so does the HTTP API (`/api/work-metadata`, `/api/work-control/abort`). |
+| Work metadata editor (title, stage, goal, next action) | **Retired** | The Mac has none. Use `tend work plan WORK --title/--stage/--goal/--next`; `GET`/`PUT /api/work-metadata` stays. |
+| Abort all agents of a Work | **Retired from the browser** | The Mac has none, and there is no CLI Work abort (`tend work close` closes the window instead). `POST /api/work-control/abort` stays for clients, and Explore's per-pane abort is the browser's way to interrupt one agent. |
 | Session navigator, Agents and Panes tables, overview strip | **Retired** | Explore lists every host, session, window and pane. It gains the Mac's **session and window detail** (FleetSessionDetailView, FleetWindowDetailView): the panes of a session or window, with status and latest activity. |
 | Pane drawer (output, input, abort) | Already moved | Explore's pane view, with live output, input and abort. |
 | Collaboration reader | Already moved | Explore → Messages (wave 7). |
 | Timeline (activity heatmap and lanes) | **Retired** | The Mac has none. `tend timeline` and `tend stats --timeline` give the same intervals; `/api/timeline` stays. |
-| Terminals tab (Tend-owned PTY sessions) | **Retired** | The Mac has none, and its own terminals are local. The API stays (`/api/terminal-sessions`) for the CLI and the Windows app. |
+| Terminals tab (Tend-owned PTY sessions) | **Retired from the browser** | The Mac has none; its own terminals are local. Browser PTY management goes; `tend proc run`/`attach`/`detach` manage these sessions, and `/api/terminal-sessions` stays for other clients. The Windows app's scoped proxy has never allowed it (crates/tend-app/src/proxy.rs) and still won't. |
 | PAT unlock, access dialog | Already moved | Settings (sign-in, token, operators, sharing). |
 | Share links (`/share/…`) | Unchanged | `share.html` is its own page and never needed the workbench. |
 
-Old links keep working: `/workbench` and `/#…` go through the shell's
-link adapter. `#pane=` goes to `/explore#pane=`, `#message=`/`#thread=` go to
-`/explore/messages`, and `#workspace=`/`#session=`/`#window=` go to that detail
-in Explore. Anything else goes to Home. A signed-out visitor goes to
-`/welcome`, with the original address kept for after sign-in.
+Old links keep working through the shell's link adapter. `/workbench`
+serves the shell, so its fragment reaches the adapter, which first
+consumes any legacy `#token=`/`?token=` credential (stored, then scrubbed;
+never copied into a return address). It then maps the fragment's keys, as
+main.js, workspace-rail.mjs and pane-drawer.mjs wrote them:
+
+- `pane` (+ `socket`) opens that pane in Explore. A pane is the most
+  specific selection, so it wins over `session`/`window` in the same
+  fragment, which only expand the tree to it.
+- Else `window` (`@id` or `session:index`, + `session`, + `socket`) opens
+  that window's detail. If the window is gone, the session's detail opens
+  instead, as main.js fell back.
+- Else `session` (+ `socket`) opens that session's detail. A fragment with
+  only `session` (the pre-scope links that workspace-rail migrated) does
+  the same.
+- `workspace` (+ `wsocket`, its own socket, kept apart from `socket`)
+  filters Explore to that workspace's session. If no live session matches,
+  Explore says so with the filter set; it never silently shows everything.
+- `message`/`thread` (with any of the above) go to `/explore/messages`, as
+  in wave 7.
+- Anything else goes to Home.
+
+A signed-out visitor sent to `/welcome` keeps the *mapped* address,
+without credentials, for after sign-in. `/share/…` stays independent. Each
+of these is a case in the adapter's tests and in the route matrix, which also
+gains the anonymous public_read and no-auth rows for `/welcome`, `/explore`
+and `/workbench`.
 
 **Phases**, one reviewed PR each:
-1. `/welcome` as its own page, plus non-operators in the shell (read-only Explore and Messages, Home's operator notice).
+1. `/welcome` as its own page; non-operators in the shell (read-only Explore and Messages, Home's operator notice, the 401-only redirect to `/welcome`).
 2. Explore's session and window detail, and *Steer this Work* on Home.
 3. Remove `/workbench`: `index.html`, `main.js`, `style.css` and the modules only it uses, its routes, strings and tests. The redirects, route-matrix rows, Windows proxy allowlist, docs, README and landing go with it. Report the size removed.
