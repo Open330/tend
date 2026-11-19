@@ -481,6 +481,20 @@ impl CollaborationStore {
                     info.active = false;
                     info.healthy_since = None;
                 }
+            } else if !parent.status.is_terminal()
+                && parent
+                    .interruption
+                    .as_ref()
+                    .is_some_and(|i| i.active && flapping(&i.reason) && i.healthy_since.is_some())
+                && !agent.is_some_and(|a| matches!(a.state, AgentState::Working | AgentState::Idle))
+            {
+                // Not seen healthy in this pass (no exact recipient, or a
+                // state that is neither healthy nor a known reason): the
+                // stretch is broken, so the next healthy pass starts over.
+                // The episode and its item stay.
+                if let Some(info) = &mut parent.interruption {
+                    info.healthy_since = None;
+                }
             } else if parent.status.is_terminal()
                 || agent.is_some_and(|a| matches!(a.state, AgentState::Working | AgentState::Idle))
                 // The validated recipient of a still-pending address moved on.
@@ -647,6 +661,90 @@ mod tests {
         let (open, _) = mailbox.open_human_requests(10).await.unwrap();
         assert_eq!(items.len(), 1, "one item across five cycles: {items:?}");
         assert_eq!(open[0].id, *items.iter().next().unwrap());
+    }
+
+    /// A healthy stretch must be continuous: a pass without the recipient
+    /// (or in a state that is neither healthy nor a known reason) breaks it,
+    /// and the next healthy pass starts a new ten minutes.
+    #[tokio::test]
+    async fn an_unknown_pass_breaks_the_healthy_stretch() {
+        let mailbox = CollaborationStore::in_memory(CollaborationOptions::default());
+        let (sender, mut coordinator) = actor("%1", "sender").await;
+        let (recipient, mut peer) = actor("%2", "peer").await;
+        let request = mailbox
+            .create(
+                sender.clone(),
+                recipient.clone(),
+                NewRequest {
+                    body: "work".into(),
+                    ..NewRequest::default()
+                },
+            )
+            .await
+            .unwrap();
+        mailbox.claim_for(&recipient).await.unwrap();
+        coordinator.state = AgentState::Error;
+        peer.state = AgentState::Error;
+        peer.rate_limit_scope = Some(RateLimitScope::FiveHour);
+        mailbox
+            .reconcile_peer_interruptions(&[coordinator.clone(), peer.clone()])
+            .await
+            .unwrap();
+        peer.state = AgentState::Working;
+        peer.rate_limit_scope = None;
+        mailbox
+            .reconcile_peer_interruptions(&[coordinator.clone(), peer.clone()])
+            .await
+            .unwrap();
+        let age_stretch = || async {
+            let mut aged = mailbox
+                .requests
+                .read()
+                .await
+                .get(&request.id)
+                .cloned()
+                .unwrap();
+            if let Some(since) = aged.interruption.as_mut().unwrap().healthy_since.as_mut() {
+                *since -= RECOVERED_AFTER;
+            }
+            mailbox.commit_request_rows(&[aged]).await.unwrap();
+        };
+        age_stretch().await;
+        // The recipient is not seen in this pass.
+        mailbox
+            .reconcile_peer_interruptions(std::slice::from_ref(&coordinator))
+            .await
+            .unwrap();
+        assert!(mailbox
+            .get_for(&sender, &request.id)
+            .await
+            .unwrap()
+            .peer_interrupted());
+        // Back and healthy: a new stretch, not the old timer.
+        mailbox
+            .reconcile_peer_interruptions(&[coordinator.clone(), peer.clone()])
+            .await
+            .unwrap();
+        assert!(
+            mailbox
+                .get_for(&sender, &request.id)
+                .await
+                .unwrap()
+                .peer_interrupted(),
+            "the old timer does not end the episode"
+        );
+        let (open, _) = mailbox.open_human_requests(10).await.unwrap();
+        assert_eq!(open.len(), 1, "the item stays");
+        age_stretch().await;
+        mailbox
+            .reconcile_peer_interruptions(&[coordinator, peer])
+            .await
+            .unwrap();
+        assert!(!mailbox
+            .get_for(&sender, &request.id)
+            .await
+            .unwrap()
+            .peer_interrupted());
     }
 
     /// Other reasons end at once, as before: an answered approval prompt is
