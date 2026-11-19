@@ -274,7 +274,11 @@ The choice for the owner:
 - (b) commission the answer-revision design first, and ship folding and Keep
   without Close all until then.
 
-This proposal builds (a) and reports the choice.
+Folding and Keep do not depend on this choice and are built now. Close all
+is built but **off**: the route, the button and `tend review cleanup --apply
+--questions` stay disabled unless the owner explicitly accepts (a). Silence
+does not select (a). If the owner chooses (b), the answer-revision design
+comes first, and these stay off until it ships.
 
 ### Alternatives considered
 
@@ -341,8 +345,7 @@ run with --apply to close tend's items; add --questions to also close these 3
 
 ## Build plan
 
-Close all ships with option (a) above. If the owner chooses (b), the
-Close all route and button stay off, and folding and Keep ship alone.
+Close all stays disabled until the owner decides, as above.
 
 1. **Daemon and CLI** (one PR):
    - end and replacement facts recorded at ingestion;
