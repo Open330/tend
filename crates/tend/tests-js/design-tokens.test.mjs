@@ -68,12 +68,10 @@ const contrast = (a, b) => {
   return (hi + 0.05) / (lo + 0.05);
 };
 
-test("Tend for Mac's roles stay out of the dashboard's CSS", () => {
-  const css = renderCss(tokens);
-  for (const value of Object.values(tokens.mac["state-ink"])) {
-    assert.ok(!css.includes(value.light), `${value.light} leaked into tokens.css`);
-  }
-  assert.doesNotMatch(css, /--(mac|surface|ink|state-ink|accent-fill)-/, "no Mac keys in tokens.css");
+test("Tend for Mac's roles have no effect on the dashboard's CSS", () => {
+  const { mac, ...shared } = tokens;
+  assert.ok(mac, "tokens.json has a mac section");
+  assert.equal(renderCss(tokens), renderCss(shared));
   assert.match(renderSwift(tokens), /enum Mac \{/);
 });
 
@@ -82,6 +80,13 @@ test("every Mac text ink reads at 4.5:1 or more on every Mac surface", () => {
     ...Object.entries(tokens.mac.ink).filter(([, v]) => v.text),
     ...Object.entries(tokens.mac["state-ink"]).map(([name, v]) => [`state-ink-${name}`, v]),
   ];
+  // The matrix composites text over each background as drawn: that holds
+  // only while the surfaces and the primary fills are opaque.
+  for (const scheme of ["light", "dark"]) {
+    for (const [name, value] of [...Object.entries(tokens.mac.surface), ["accent-fill", tokens.mac["accent-fill"]], ["accent-fill-pressed", tokens.mac["accent-fill-pressed"]]]) {
+      assert.equal(srgb(value[scheme]).alpha, 1, `${name} (${scheme}) must be opaque`);
+    }
+  }
   for (const scheme of ["light", "dark"]) {
     for (const [surface, value] of Object.entries(tokens.mac.surface)) {
       const bg = srgb(value[scheme]).rgb;
