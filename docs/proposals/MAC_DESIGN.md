@@ -80,12 +80,15 @@ Eight roles, three weights (regular, medium, semibold), all the system font
 | Card title | 14 / 19 | semibold | what a card or row is about |
 | Section | 13 / 16 | semibold | lane headers, sheet sections |
 | Body | 13 / 18 | regular | **decision text**: questions, options, answers, notes |
-| Secondary | 12 / 16 | regular | the line under a title, evidence, recommendation |
+| Secondary | 12 / 16 | regular | the line under a title, evidence labels |
 | Label | 11 / 14 | medium | short labels only: kind, status word, stage, badge |
 | Meta | 11 / 14 | regular, tabular digits | who, where, when |
 | Mono | 12 / 16 | regular | commands, paths, pane text |
 
-Nothing a decision rests on is under 13pt; 11pt is for short annotations.
+Decision-bearing prose (the question, its context, options, the asker's
+recommendation and rationale, answers) is Body, 13pt. Evidence keeps its
+full accessible label and its reveal path. 11pt is for short metadata and
+labels only.
 
 **Text size.** macOS has no user-facing Dynamic Type for SwiftUI apps
 (`dynamicTypeSize` does not follow a system setting on the Mac), so this
@@ -206,6 +209,25 @@ shared keys and changes no shared value. Shared identity and state meanings
 stay as they are. Changing a value for the web or iOS goes through their
 owners (%77, %56), with their own captures.
 
+### Acceptance details for the component PRs (agreed with the reviewer)
+- Numbered option chips use label ink (secondary on the chip fill is 4.4:1
+  in dark).
+- The primary button's pressed state is an opaque, darker fill. Today's
+  `tint.opacity(0.78)` would put white on 3.7:1. Real `Button` semantics,
+  focus, disabled and destructive states, and accessible names on
+  icon-only controls stay.
+- StatusTag takes its context. On any selected or tinted surface the word is
+  label ink.
+- The stage bar keeps today's projection. The marker sits only on
+  `FleetWork.currentStageIndex`, since stages can run in parallel. It needs a
+  non-colour cue that survives 1×: light done and your-turn fills are about
+  2.5:1 on white and the track is 1.5:1. VoiceOver reads the stage name,
+  state and count together. A single-stage Finished card has no bar, as today.
+- Cards wrap the existing contents and interactions; the chrome changes, the
+  behaviour does not. Full titles stay accessible when visually limited.
+- At narrow widths the who-and-where row may wrap or split. The Hosts control
+  keeps its label, help and connected / degraded cue.
+
 ## 3. Density
 
 Measured on the same fixture fleet: the before set from the CI capture, the
@@ -214,11 +236,13 @@ after set from the mockups with the same cards, groups and titles.
 | | Before 1440×900 | After 1440×900 | After 920×580 (minimum) |
 |---|---|---|---|
 | First-viewport cards: Your turn / In progress / Finished | 4 / 4 / 5 | 4 / 4 / 5 | 2 / 2 / 3 |
-| Titles cut with "…" | 2 of 13 visible | none (wrap to 3 lines) | none |
+| Titles cut with "…" | 2 of 13 visible | none (wrap to 3 lines) | some in Korean at the minimum |
 | A card's state said twice ("Working" in a box and in the status line) | every running and finished card | never | never |
 | Status, product, host, project, time on every card | yes | yes, one row | yes |
 
-The after board shows as many cards per viewport as today. It drops the
+The after sample places only the first 4 / 4 / 5 cards, so it shows that a
+viewport reads the same first cards, not its maximum capacity. At normal width
+it shows as many cards per viewport as today. It drops the
 inset box that repeated the state, and the lane hint, so titles get room to
 wrap instead of being cut. The capture has no minimum-width before shot, and
 neither set yet covers more than one host or the compact layout after. The

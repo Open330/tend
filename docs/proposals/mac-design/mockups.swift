@@ -199,13 +199,15 @@ struct StageBar: View {
     @Environment(\.palette) var p
     let stages: [StageState]
     let current: String
+    /// FleetWork.currentStageIndex: the named stage, marked by shape too.
+    var currentIndex: Int? = nil
     var body: some View {
         VStack(alignment: .leading, spacing: Space.xs + 1) {
             HStack(spacing: 3) {
-                ForEach(Array(stages.enumerated()), id: \.offset) { _, state in
+                ForEach(Array(stages.enumerated()), id: \.offset) { index, state in
                     Capsule().fill(color(state)).frame(height: 4)
                         .overlay(alignment: .trailing) {
-                            if state == .running || state == .needsYou {
+                            if index == (currentIndex ?? stages.firstIndex { $0 == .running || $0 == .needsYou }) {
                                 Circle().fill(p.card).frame(width: 2, height: 2).padding(.trailing, 2)
                             }
                         }
@@ -235,7 +237,7 @@ struct OptionList: View {
                 if i > 0 { Rectangle().fill(p.hairline).frame(height: 1).padding(.leading, 34) }
                 HStack(alignment: .firstTextBaseline, spacing: Space.s) {
                     Text("\(i + 1)").font(.system(size: 11, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(p.secondary)
+                        .foregroundStyle(p.label)
                         .frame(width: 18, height: 18)
                         .background(p.control, in: RoundedRectangle(cornerRadius: 5))
                     Text(option).font(Ramp.body).foregroundStyle(p.label).fixedSize(horizontal: false, vertical: true)
@@ -262,7 +264,7 @@ struct Evidence: View {
             }
             HStack(alignment: .firstTextBaseline, spacing: Space.xs + 1) {
                 Image(systemName: "lightbulb").font(.system(size: 10)).foregroundStyle(p.secondary)
-                Text(recommendation).font(Ramp.secondary).foregroundStyle(p.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(recommendation).font(Ramp.body).foregroundStyle(p.label).fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -543,7 +545,8 @@ struct HomeMock: View {
     func work(_ title: String, _ stages: [StageState], _ stage: String, _ headline: String?, _ status: (Color, String), _ agent: String, _ project: String, waiting: Bool = false) -> some View {
         Card(state: waiting ? p.orange : nil) {
             Text(title).font(Ramp.cardTitle).foregroundStyle(p.label).lineLimit(3).fixedSize(horizontal: false, vertical: true)
-            StageBar(stages: stages, current: stage)
+            // Today's rule: a single-stage Finished card has no stage bar.
+            if !(stages == [.done]) { StageBar(stages: stages, current: stage) }
             if let headline {
                 Text(headline).font(Ramp.body).foregroundStyle(p.label).fixedSize(horizontal: false, vertical: true)
             }
@@ -820,7 +823,7 @@ struct DecisionMock: View {
                 Text("The migration touches every host's data directory.").font(Ramp.body).foregroundStyle(p.label)
                 HStack(alignment: .firstTextBaseline, spacing: Space.xs + 1) {
                     Image(systemName: "lightbulb").font(.system(size: 10)).foregroundStyle(p.secondary)
-                    Text("Flag first").font(Ramp.secondary).foregroundStyle(p.secondary)
+                    Text("Flag first").font(Ramp.body).foregroundStyle(p.label)
                 }
                 OptionList(options: [
                     "Ship it behind a flag first, enable it on jiun-mini for a day, then turn it on for every host once the nightly backup finished cleanly",
