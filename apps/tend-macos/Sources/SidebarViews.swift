@@ -1030,6 +1030,7 @@ private struct ActivityRailItem: View {
     let select: () -> Void
     @State private var hovering = false
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
         Button(action: select) {
@@ -1040,6 +1041,14 @@ private struct ActivityRailItem: View {
                     RoundedRectangle(cornerRadius: TendRadius.group, style: .continuous)
                         .fill(active ? TendInk.selection(colorScheme) : hovering ? TendTheme.hover(colorScheme) : .clear)
                 )
+                .overlay {
+                    // Increase Contrast: the place showing also gets an
+                    // outline, a cue that does not rest on a fill's shade.
+                    if active, contrast == .increased {
+                        RoundedRectangle(cornerRadius: TendRadius.group, style: .continuous)
+                            .strokeBorder(TendInk.label(colorScheme), lineWidth: 1.5)
+                    }
+                }
                 .overlay(alignment: .topTrailing) {
                     if badge > 0 {
                         Text(verbatim: badge > 99 ? "99+" : "\(badge)")
