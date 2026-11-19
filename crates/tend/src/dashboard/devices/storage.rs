@@ -1,6 +1,6 @@
 //! Durable paired devices. Each row holds the SHA-256 of the device token,
 //! never the token, plus what the access dialog lists.
-use super::{ApprovedBy, Device, Scope, MAX_DEVICES};
+use super::{ApprovedBy, Device, PushRow, Scope, MAX_DEVICES};
 use rusqlite::{params, Connection};
 use std::{fs::File, io, path::Path, sync::Mutex, time::Duration};
 
@@ -8,6 +8,9 @@ use std::{fs::File, io, path::Path, sync::Mutex, time::Duration};
 const APPLICATION_ID: i64 = 0x4D58_4456;
 /// 1: phase 1 (every device may decide). 2: adds `scope`; a version 1
 /// store is migrated in place on open, every device keeping `decide`.
+/// `device_push` (push registrations) is an extra table at version 2, with
+/// no foreign key or trigger: an older tendd opens the store, ignores it,
+/// and can still delete a device (its row is then an orphan, deleted here).
 const SCHEMA_VERSION: i64 = 2;
 
 pub(super) struct Storage {
@@ -65,7 +68,11 @@ impl Storage {
                  CREATE TABLE IF NOT EXISTS device_starts (device_id TEXT NOT NULL, \
                  key TEXT NOT NULL, fingerprint BLOB NOT NULL, work TEXT NOT NULL, \
                  state TEXT NOT NULL, detail TEXT, created_at INTEGER NOT NULL, \
-                 updated_at INTEGER NOT NULL, PRIMARY KEY (device_id, key));",
+                 updated_at INTEGER NOT NULL, PRIMARY KEY (device_id, key)); \
+                 CREATE TABLE IF NOT EXISTS device_push (device_id TEXT PRIMARY KEY, \
+                 token TEXT NOT NULL UNIQUE, environment TEXT NOT NULL, \
+                 content INTEGER NOT NULL, channel TEXT NOT NULL, ref_key BLOB NOT NULL, \
+                 generation INTEGER NOT NULL, updated_at INTEGER NOT NULL);",
             )
             .map_err(io::Error::other)?;
         migrate(&connection)?;
@@ -187,24 +194,105 @@ impl Storage {
         }
     }
 
+    /// Every device, start and push registration, in one transaction.
     pub(super) fn clear(&self) -> io::Result<()> {
-        let connection = self.connection()?;
-        connection
-            .execute("DELETE FROM device_starts", [])
-            .map_err(io::Error::other)?;
-        connection
-            .execute("DELETE FROM devices", [])
-            .map(drop)
-            .map_err(io::Error::other)
+        let mut connection = self.connection()?;
+        let tx = connection.transaction().map_err(io::Error::other)?;
+        tx.execute_batch(
+            "DELETE FROM device_starts; DELETE FROM device_push; DELETE FROM devices;",
+        )
+        .map_err(io::Error::other)?;
+        tx.commit().map_err(io::Error::other)
     }
 
+    /// A device with its starts and its push registration, in one
+    /// transaction.
     pub(super) fn remove(&self, id: &str) -> io::Result<()> {
-        let connection = self.connection()?;
-        connection
-            .execute("DELETE FROM device_starts WHERE device_id = ?1", [id])
+        let mut connection = self.connection()?;
+        let tx = connection.transaction().map_err(io::Error::other)?;
+        tx.execute("DELETE FROM device_starts WHERE device_id = ?1", [id])
             .map_err(io::Error::other)?;
-        connection
-            .execute("DELETE FROM devices WHERE id = ?1", [id])
+        tx.execute("DELETE FROM device_push WHERE device_id = ?1", [id])
+            .map_err(io::Error::other)?;
+        tx.execute("DELETE FROM devices WHERE id = ?1", [id])
+            .map_err(io::Error::other)?;
+        tx.commit().map_err(io::Error::other)
+    }
+
+    /// Every push registration, for loading at open.
+    pub(super) fn push_rows(&self) -> io::Result<Vec<PushRow>> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT device_id, token, environment, content, channel, ref_key, generation, \
+                 updated_at FROM device_push",
+            )
+            .map_err(io::Error::other)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok(PushRow {
+                    device: row.get(0)?,
+                    token: row.get(1)?,
+                    environment: row.get(2)?,
+                    content: row.get::<_, i64>(3)? != 0,
+                    channel: row.get(4)?,
+                    ref_key: row.get(5)?,
+                    generation: row.get(6)?,
+                    updated_at: row.get(7)?,
+                })
+            })
+            .map_err(io::Error::other)?;
+        rows.collect::<Result<_, _>>().map_err(io::Error::other)
+    }
+
+    /// Store `row` as its device's registration, in one transaction: that
+    /// device's earlier row, and any row holding the same token (a phone
+    /// that paired again), are replaced.
+    pub(super) fn put_push(&self, row: &PushRow) -> io::Result<()> {
+        let mut connection = self.connection()?;
+        let tx = connection.transaction().map_err(io::Error::other)?;
+        tx.execute(
+            "DELETE FROM device_push WHERE device_id = ?1 OR token = ?2",
+            params![row.device, row.token],
+        )
+        .map_err(io::Error::other)?;
+        tx.execute(
+            "INSERT INTO device_push (device_id, token, environment, content, channel, \
+             ref_key, generation, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                row.device,
+                row.token,
+                row.environment,
+                i64::from(row.content),
+                row.channel,
+                row.ref_key,
+                row.generation,
+                row.updated_at
+            ],
+        )
+        .map_err(io::Error::other)?;
+        tx.commit().map_err(io::Error::other)
+    }
+
+    /// Delete the push rows of these devices, in one transaction.
+    pub(super) fn remove_push(&self, devices: &[String]) -> io::Result<()> {
+        let mut connection = self.connection()?;
+        let tx = connection.transaction().map_err(io::Error::other)?;
+        for device in devices {
+            tx.execute("DELETE FROM device_push WHERE device_id = ?1", [device])
+                .map_err(io::Error::other)?;
+        }
+        tx.commit().map_err(io::Error::other)
+    }
+
+    /// Delete a registration only while it is exactly the one a send used.
+    pub(super) fn remove_push_if(&self, sent: &PushRow) -> io::Result<()> {
+        self.connection()?
+            .execute(
+                "DELETE FROM device_push WHERE device_id = ?1 AND token = ?2 \
+                 AND environment = ?3 AND generation = ?4",
+                params![sent.device, sent.token, sent.environment, sent.generation],
+            )
             .map(drop)
             .map_err(io::Error::other)
     }

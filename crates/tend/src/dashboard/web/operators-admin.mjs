@@ -197,6 +197,13 @@ export function openAccessManager(request, { login = true, devices: pairing = fa
 
   function renderDevices(data) {
     deviceList.replaceChildren();
+    const push = data.push;
+    if (push?.enabled) {
+      const refused = push.refused_environments?.length ? ` · Apple refused the key for ${push.refused_environments.join(", ")} until tendd restarts` : "";
+      deviceList.append(note(`Notifications: on (${push.environments.join(", ")})${push.content_allowed ? ", with the item's text when the phone asks" : ""}${refused}.`));
+    } else if (push?.reason) {
+      deviceList.append(note(`Notifications are off: ${push.reason}`));
+    }
     if (!data.devices.length) {
       deviceList.append(note("No paired devices."));
       return;

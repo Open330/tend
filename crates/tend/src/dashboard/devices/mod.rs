@@ -44,6 +44,7 @@
 //! the first device is paired; an existing store is opened at start.
 
 mod operate;
+mod push;
 mod routes;
 mod storage;
 #[cfg(test)]
@@ -63,8 +64,9 @@ pub(in crate::dashboard) type WorkUpRunner = std::sync::Arc<
         + Sync,
 >;
 
+pub(in crate::dashboard) use push::{PushRegistered, PushRow};
 pub(in crate::dashboard) use routes::{
-    admin_routes, device_auth, device_routes, operate_routes, pairing_routes,
+    admin_routes, audit_entry, device_auth, device_routes, operate_routes, pairing_routes,
 };
 
 use serde::{Deserialize, Serialize};
@@ -272,6 +274,10 @@ pub(in crate::dashboard) struct Devices {
     /// Starts of new work, mirrored from the store (or only here, for an
     /// in-memory registry). Changed only under `transitions`.
     starts: Mutex<Vec<Start>>,
+    /// Push registrations, mirrored from the store (or only here, for an
+    /// in-memory registry), with the generation counter. Changed only under
+    /// `transitions`; taken after `registry` and `storage`.
+    pushes: Mutex<push::PushMirror>,
 }
 
 fn sha256(value: &str) -> [u8; 32] {
@@ -360,6 +366,7 @@ impl Devices {
             path: None,
             captures: Mutex::default(),
             starts: Mutex::default(),
+            pushes: Mutex::default(),
         })
     }
 
@@ -375,6 +382,7 @@ impl Devices {
             path: path.clone(),
             captures: Mutex::default(),
             starts: Mutex::default(),
+            pushes: Mutex::default(),
         });
         if let Some(path) = path.filter(|path| path.exists()) {
             let (storage, stored) =
@@ -382,9 +390,11 @@ impl Devices {
                     .await
                     .map_err(std::io::Error::other)??;
             let starts = storage.starts()?;
+            let pushes = push::PushMirror::load(&storage, &stored)?;
             *devices.storage_slot() = Some(Arc::new(storage));
             devices.registry().devices = stored;
             *devices.start_list() = starts;
+            *devices.push_list() = pushes;
         }
         Ok(devices)
     }
@@ -653,6 +663,7 @@ impl Devices {
         }
         self.registry().devices.retain(|device| device.id != id);
         self.start_list().retain(|start| start.device != id);
+        self.push_list().rows.retain(|row| row.device != id);
         Ok(true)
     }
 
@@ -706,6 +717,7 @@ impl Devices {
         }
         self.registry().devices.clear();
         self.start_list().clear();
+        self.push_list().rows.clear();
         Ok(count)
     }
 
@@ -828,7 +840,7 @@ impl Devices {
     }
 
     #[cfg(test)]
-    fn age_device(&self, id: &str, created_by: i64, seen_by: i64) {
+    pub(in crate::dashboard) fn age_device(&self, id: &str, created_by: i64, seen_by: i64) {
         let mut registry = self.registry();
         if let Some(device) = registry.devices.iter_mut().find(|d| d.id == id) {
             device.created_at -= created_by;

@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Push notifications to paired iOS devices, sent by the dashboard's host
+  straight to Apple with the publishing team's key (`[dashboard.push]`:
+  `enabled`, `key_path`, `key_id`, `team_id`, `topic`, `environments`,
+  `allow_content`; off by default). A phone registers its APNs token with
+  `POST /api/device/push` (and drops it with `POST
+  /api/device/push/remove`); `GET /api/device` says whether push is on. By
+  default a notification carries only the host, a count, the badge and an
+  opaque reference; the item's text only when both the host
+  (`allow_content`) and the phone ask for it. New items alert at most once
+  every 30 s per phone; what was there at start is not announced; a lower
+  total sends a badge-only update. A bad push config (an unsafe or
+  unreadable key, a malformed id) leaves push off with the reason in
+  **access ▸ Devices**, never stopping tendd. Registrations live in the
+  device store (`device_push`, schema version unchanged) and go with their
+  device. A decision sent with `X-Tend-Via: notification` is audited with
+  `"via": "notification"`.
 - Web: Explore opens a session's or a window's detail, as Tend for Mac's
   session and window views do. Selecting a session or window in the tree
   (its chevron still folds it) shows its name, host, window and pane

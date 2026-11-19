@@ -317,9 +317,10 @@ allow_content = false           # default false; see "What a notification shows"
   created with `CREATE TABLE IF NOT EXISTS`: `device_push (device_id TEXT
   PRIMARY KEY, token TEXT NOT NULL UNIQUE, environment TEXT NOT NULL,
   content INTEGER NOT NULL, channel TEXT NOT NULL, ref_key BLOB NOT NULL,
-  generation INTEGER NOT NULL, updated_at INTEGER NOT NULL)`. There are no
-  foreign keys or triggers, so an older tendd deleting a device can never
-  fail because of this table.
+  generation INTEGER NOT NULL, updated_at INTEGER NOT NULL)`, with
+  `updated_at` in unix milliseconds, like Apple's `410` timestamp. There
+  are no foreign keys or triggers, so an older tendd deleting a device can
+  never fail because of this table.
 - The schema version stays 2. The existing check accepts extra tables at
   version 2, so an older tendd opens the store and ignores the table.
 - **One writer, one order.** Register, move, remove and device removal
@@ -408,6 +409,16 @@ only while push is on and at least one registration exists.
     complete read shows gone are dropped, the count is recomputed, and
     consent (the host's `allow_content` and the row's `content`) is read
     again.
+  - Each request is built just before it is sent, after the ones before
+    it in the same tick have been answered. It goes out only while the
+    registration still has the device, token, environment and generation
+    it was planned for, its environment is still on, and neither the
+    device nor the sender has backed off since; the content is decided
+    then.
+  - The same device registering the same token and environment again
+    (every launch) keeps its pending set, its rates and its back-off, and
+    reads consent again. A token that moves, a removal, or another
+    environment starts over with nothing pending.
   - The alert names that host, the number of pending keys there, and the
     newest one's `ref`. Only a `200` from Apple clears what it announced.
 - **Fewer.** When the total goes down (decided anywhere: on the Mac, on
@@ -434,8 +445,8 @@ only while push is on and at least one registration exists.
   - **`410 Unregistered`, `400 BadDeviceToken`, `DeviceTokenNotForTopic`**:
     the registration is deleted, but only if the row still has the
     device, token, environment and generation the request was sent with.
-    For a 410, it is also kept when the row was updated after Apple's
-    timestamp. So a late answer to an old send never deletes a newer
+    For a 410, it is also kept when the row was updated at or after
+    Apple's timestamp (both in milliseconds, compared exactly). So a late answer to an old send never deletes a newer
     registration. Audited as `push_dropped`.
   - **`403 ExpiredProviderToken`**: a new provider token is signed and the
     request retried once.

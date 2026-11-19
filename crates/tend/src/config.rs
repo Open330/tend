@@ -1209,6 +1209,11 @@ pub struct DashboardTomlConfig {
     /// bypassed. That is a different kind of authority and deserves a
     /// different grant, the same way `[ask]` and `[collaboration]` do.
     pub allow_work_start: Option<bool>,
+    /// `[dashboard.push]`: notifications to paired iOS devices through
+    /// APNs. Kept as raw TOML here and parsed when the dashboard starts, so
+    /// a bad push section never fails the config load: push stays off and
+    /// says why (`dashboard::push`).
+    pub push: Option<toml::Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

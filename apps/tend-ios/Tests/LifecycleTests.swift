@@ -339,6 +339,8 @@ extension LifecycleTests {
         XCTAssertEqual(CredentialStore.load()?.token, "tdv_x")
         XCTAssertFalse(model.operates)
         // Only the new key, never kept, is given back: one forget, with it.
+        // It is sent just after the failure is reported.
+        await eventually { StubProtocol.authorized.contains { $0.path == "/api/device/forget" } }
         XCTAssertEqual(StubProtocol.authorized.filter { $0.path == "/api/device/forget" }.map(\.token), ["tdv_new"])
         XCTAssertNil(model.upgrade)
     }

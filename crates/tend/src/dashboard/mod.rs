@@ -44,6 +44,8 @@ pub mod pane_scan;
 #[cfg(feature = "dashboard")]
 mod pane_stream;
 #[cfg(feature = "dashboard")]
+mod push;
+#[cfg(feature = "dashboard")]
 pub mod server;
 #[cfg(feature = "dashboard")]
 pub mod sharing;

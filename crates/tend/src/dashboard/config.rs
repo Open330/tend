@@ -51,6 +51,9 @@ pub struct DashboardConfig {
     /// Whether `POST /api/work-control/up` may launch agents. See
     /// [`crate::config::DashboardTomlConfig::allow_work_start`].
     pub allow_work_start: bool,
+    /// The raw `[dashboard.push]` section, parsed and checked when the
+    /// dashboard starts (`dashboard::push`); never a startup error.
+    pub push: Option<toml::Value>,
 }
 
 /// Per-field overrides captured by the binary layer (CLI flags + env
@@ -203,6 +206,7 @@ impl DashboardConfig {
             allow_public,
             pane_cache_ttl,
             allow_work_start,
+            push: toml.push.clone(),
         })
     }
 
@@ -222,6 +226,7 @@ impl DashboardConfig {
             allow_public: false,
             pane_cache_ttl: DEFAULT_PANE_CACHE_TTL,
             allow_work_start: false,
+            push: None,
         }
     }
 }

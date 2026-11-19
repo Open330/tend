@@ -54,3 +54,20 @@ Not compared yet: decisions, the backlog, headlines, and limit-policy
 coverage (no rules are installed, so every cap counts). The two builders
 also still differ in deliberate ways the summary leaves out: the web cuts a
 review result at 4,000 characters, where the Mac shows all of it.
+
+## Push vectors
+
+`push-vectors.json` holds the cases tendd's push sender
+(`crates/tend/src/dashboard/push/payload.rs`) and the iOS app must both pass:
+
+- `ref`: `{key_hex, host, kind, id, ref}`, where `ref` is the hex of the
+  first 16 bytes of HMAC-SHA256(key, host NUL kind NUL id) and `kind` is
+  `request`, `review` or `waiting` (a waiting agent's id is its session id).
+- `canonical`: `{text, line}`, the canonical line a notification with
+  content shows. For each line (split on LF, a trailing CR dropped): strip
+  leading whitespace, then repeated leading `#`/`>` marks, each with the
+  spaces (U+0020) after it, then one leading `- `, `* ` or `+ `; remove
+  every `*`, `_`, backtick and `~`; trim and collapse whitespace runs to one
+  space. The first line that is not empty after that is the line. Longer
+  than 120 characters (Unicode scalars, not grapheme clusters) keeps the
+  first 119 and appends `…`.
