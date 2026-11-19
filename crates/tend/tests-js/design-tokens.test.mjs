@@ -75,6 +75,8 @@ test("Tend for Mac's roles have no effect on the dashboard's CSS", () => {
   assert.match(renderSwift(tokens), /enum Mac \{/);
 });
 
+const fills = ["accent-fill", "accent-fill-pressed", "danger-fill", "danger-fill-pressed"];
+
 test("every Mac text ink reads at 4.5:1 or more on every Mac surface", () => {
   const texts = [
     ...Object.entries(tokens.mac.ink).filter(([, v]) => v.text),
@@ -83,7 +85,7 @@ test("every Mac text ink reads at 4.5:1 or more on every Mac surface", () => {
   // The matrix composites text over each background as drawn: that holds
   // only while the surfaces and the primary fills are opaque.
   for (const scheme of ["light", "dark"]) {
-    for (const [name, value] of [...Object.entries(tokens.mac.surface), ["accent-fill", tokens.mac["accent-fill"]], ["accent-fill-pressed", tokens.mac["accent-fill-pressed"]]]) {
+    for (const [name, value] of [...Object.entries(tokens.mac.surface), ...fills.map((fill) => [fill, tokens.mac[fill]])]) {
       assert.equal(srgb(value[scheme]).alpha, 1, `${name} (${scheme}) must be opaque`);
     }
   }
@@ -96,7 +98,7 @@ test("every Mac text ink reads at 4.5:1 or more on every Mac surface", () => {
       }
     }
     // White on the primary button, at rest and pressed.
-    for (const fill of ["accent-fill", "accent-fill-pressed"]) {
+    for (const fill of fills) {
       const ratio = contrast([255, 255, 255], srgb(tokens.mac[fill][scheme]).rgb);
       assert.ok(ratio >= 4.5, `white on ${fill} (${scheme}): ${ratio.toFixed(2)}`);
     }

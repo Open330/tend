@@ -110,7 +110,11 @@ function renderMacSwift(mac) {
   for (const [name, value] of Object.entries(mac.ink)) lines.push(colour(`ink-${name}`, value));
   lines.push("", "        // A state's word: 4.5:1 or more on every surface above");
   for (const [name, value] of Object.entries(mac["state-ink"])) lines.push(colour(`state-ink-${name}`, value));
-  lines.push("", colour("accent-fill", mac["accent-fill"]), colour("accent-fill-pressed", mac["accent-fill-pressed"]), "    }");
+  lines.push("", "        // Primary button fills: white on each is 4.5:1 or more");
+  for (const fill of ["accent-fill", "accent-fill-pressed", "danger-fill", "danger-fill-pressed"]) {
+    if (mac[fill]) lines.push(colour(fill, mac[fill]));
+  }
+  lines.push("    }");
   return lines;
 }
 

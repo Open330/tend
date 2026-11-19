@@ -79,6 +79,9 @@ enum TendInk {
     static func accentFill(_ scheme: ColorScheme) -> Color { TendTheme.token(TendDesignTokens.Mac.accentFill, scheme) }
     /// Pressed: opaque and darker, never a translucent accent.
     static func accentFillPressed(_ scheme: ColorScheme) -> Color { TendTheme.token(TendDesignTokens.Mac.accentFillPressed, scheme) }
+    /// A destructive primary button's fill, and pressed.
+    static func dangerFill(_ scheme: ColorScheme) -> Color { TendTheme.token(TendDesignTokens.Mac.dangerFill, scheme) }
+    static func dangerFillPressed(_ scheme: ColorScheme) -> Color { TendTheme.token(TendDesignTokens.Mac.dangerFillPressed, scheme) }
 
     /// A state's word. On a selected or tinted surface use `label` instead
     /// and keep the hue for the dot.

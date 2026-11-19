@@ -163,7 +163,10 @@ enum TendDesignTokens {
         static let stateInkRed = TendTokenColor(light: 0xC8302E, lightAlpha: 1, dark: 0xFF5A5F, darkAlpha: 1)
         static let stateInkPurple = TendTokenColor(light: 0x8E3FC0, lightAlpha: 1, dark: 0xC77DFF, darkAlpha: 1)
 
+        // Primary button fills: white on each is 4.5:1 or more
         static let accentFill = TendTokenColor(light: 0x0066D6, lightAlpha: 1, dark: 0x0A6CDA, darkAlpha: 1)
         static let accentFillPressed = TendTokenColor(light: 0x0055B3, lightAlpha: 1, dark: 0x0959B8, darkAlpha: 1)
+        static let dangerFill = TendTokenColor(light: 0xC8302E, lightAlpha: 1, dark: 0xD13A36, darkAlpha: 1)
+        static let dangerFillPressed = TendTokenColor(light: 0xA82824, lightAlpha: 1, dark: 0xB8302D, darkAlpha: 1)
     }
 }
