@@ -103,6 +103,7 @@ pub(crate) async fn run(client: Client) -> Result<()> {
                         !matches!(**c, "collaboration_dispatch_v1" | "orchestration_v1")
                             || daemon.capabilities.iter().any(|d| d == *c)
                     })
+                    .filter(|c| relays_unanswerable(c, &daemon.capabilities))
                     .map(|capability| (*capability).to_string())
                     .collect(),
                 daemon_generation: daemon.generation,
@@ -535,6 +536,30 @@ async fn handle_request(
             Ok(RelayFrame::Result {
                 request_id,
                 result: Box::new(FleetCommandResult::review_dispose(outcome)),
+            })
+        }
+        RelayRequest::DecisionKeep { request_id, keep } => {
+            // As this host's operator, like a review decision; the daemon
+            // records where it came from in its collaboration audit.
+            let kept = client
+                .decision_keep_from_fleet(&keep)
+                .await
+                .context("keeping the question")?;
+            Ok(RelayFrame::Result {
+                request_id,
+                result: Box::new(FleetCommandResult::decision_keep(kept)),
+            })
+        }
+        RelayRequest::DecisionCloseUnanswerable { request_id, close } => {
+            // The daemon revalidates every pair under its own locks and
+            // refuses while this host's Close all is off.
+            let outcome = client
+                .decision_close_unanswerable_from_fleet(&close)
+                .await
+                .context("closing the questions")?;
+            Ok(RelayFrame::Result {
+                request_id,
+                result: Box::new(FleetCommandResult::decision_close_unanswerable(outcome)),
             })
         }
         RelayRequest::ServerInventory { request_id } => {
@@ -1106,6 +1131,23 @@ pub(crate) fn remote_attach(token: &str, fit: bool) -> Result<()> {
     Ok(())
 }
 
+/// Keep and Close all are offered over Fleet only as this host's daemon
+/// offers them: Keep with `subject_check_v1`, Close all with
+/// `close_unanswerable_v1` (on only while `[review] close_unanswerable`
+/// is). Every other capability passes.
+fn relays_unanswerable(capability: &str, daemon: &[String]) -> bool {
+    let needs = match capability {
+        tend::fleet::FLEET_DECISION_UNANSWERABLE_CAPABILITY => {
+            tend::collaboration::subject_check::SUBJECT_CHECK_CAPABILITY
+        }
+        tend::fleet::FLEET_CLOSE_UNANSWERABLE_CAPABILITY => {
+            tend::collaboration::subject_check::CLOSE_UNANSWERABLE_CAPABILITY
+        }
+        _ => return true,
+    };
+    daemon.iter().any(|d| d == needs)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1266,5 +1308,44 @@ mod tests {
         let token = encode_attach_token(&target).unwrap();
         assert!(token.chars().all(|ch| ch.is_ascii_hexdigit()));
         assert_eq!(decode_attach_token(&token).unwrap(), target);
+    }
+
+    #[test]
+    fn keep_and_close_all_are_relayed_only_as_the_daemon_offers_them() {
+        use tend::collaboration::subject_check::{
+            CLOSE_UNANSWERABLE_CAPABILITY, SUBJECT_CHECK_CAPABILITY,
+        };
+        use tend::fleet::{
+            FLEET_CLOSE_UNANSWERABLE_CAPABILITY, FLEET_DECISION_UNANSWERABLE_CAPABILITY,
+        };
+        let daemon = |caps: &[&str]| caps.iter().map(|c| (*c).to_owned()).collect::<Vec<_>>();
+        let older = daemon(&[]);
+        let keep_only = daemon(&[SUBJECT_CHECK_CAPABILITY]);
+        let both = daemon(&[SUBJECT_CHECK_CAPABILITY, CLOSE_UNANSWERABLE_CAPABILITY]);
+        assert!(!super::relays_unanswerable(
+            FLEET_DECISION_UNANSWERABLE_CAPABILITY,
+            &older
+        ));
+        assert!(!super::relays_unanswerable(
+            FLEET_CLOSE_UNANSWERABLE_CAPABILITY,
+            &older
+        ));
+        assert!(super::relays_unanswerable(
+            FLEET_DECISION_UNANSWERABLE_CAPABILITY,
+            &keep_only
+        ));
+        assert!(!super::relays_unanswerable(
+            FLEET_CLOSE_UNANSWERABLE_CAPABILITY,
+            &keep_only
+        ));
+        assert!(super::relays_unanswerable(
+            FLEET_DECISION_UNANSWERABLE_CAPABILITY,
+            &both
+        ));
+        assert!(super::relays_unanswerable(
+            FLEET_CLOSE_UNANSWERABLE_CAPABILITY,
+            &both
+        ));
+        assert!(super::relays_unanswerable("snapshot_watch", &older));
     }
 }

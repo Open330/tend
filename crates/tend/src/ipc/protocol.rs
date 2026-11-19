@@ -165,6 +165,10 @@ pub(super) enum RequestBody {
         episode: String,
         #[serde(default)]
         origin: Option<collaboration::CollaborationOrigin>,
+        /// Sent by a Fleet relay for another host's controller: recorded
+        /// in the collaboration audit, never trusted for authority.
+        #[serde(default)]
+        via_fleet: Option<crate::collaboration_audit::FleetVia>,
     },
     /// Close exactly these `(request id, episode)` pairs, each still open,
     /// unanswerable, in that episode and not kept, with the reply Dismiss
@@ -178,6 +182,13 @@ pub(super) enum RequestBody {
         /// `web`, `mac` or `ios`.
         #[serde(default)]
         by_label: Option<String>,
+        /// Who closed them, as the surface authenticated them; recorded as
+        /// each closure's `actor`.
+        #[serde(default)]
+        actor: Option<String>,
+        /// As for `decision_keep`.
+        #[serde(default)]
+        via_fleet: Option<crate::collaboration_audit::FleetVia>,
     },
     /// Durable Work records, backlog order (`work_backlog_v1`). With
     /// `stage`, only records at that stage.

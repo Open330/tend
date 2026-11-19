@@ -17,9 +17,10 @@ use tend::fleet::{
     FleetHostSnapshot, FleetHostState, FleetOperation, FleetRuntime, FleetStore,
     FleetWindowCapture, HostAccessMode, NodeId, RelayFrame, RelayHello, RelayRequest,
     RemoteSnapshot, FLEET_BOUNDED_CLAIM_CAPABILITY, FLEET_CAPABILITIES,
-    FLEET_DECISION_HISTORY_CAPABILITY, FLEET_DECISION_QUEUE_CAPABILITY, FLEET_MAX_DIAGNOSTIC_BYTES,
-    FLEET_MAX_FRAME_BYTES, FLEET_PROTOCOL_VERSION, FLEET_REVIEW_DISPOSE_CAPABILITY,
-    FLEET_SEND_KEYS_CAPABILITY, FLEET_SERVER_INVENTORY_CAPABILITY,
+    FLEET_CLOSE_UNANSWERABLE_CAPABILITY, FLEET_DECISION_HISTORY_CAPABILITY,
+    FLEET_DECISION_QUEUE_CAPABILITY, FLEET_DECISION_UNANSWERABLE_CAPABILITY,
+    FLEET_MAX_DIAGNOSTIC_BYTES, FLEET_MAX_FRAME_BYTES, FLEET_PROTOCOL_VERSION,
+    FLEET_REVIEW_DISPOSE_CAPABILITY, FLEET_SEND_KEYS_CAPABILITY, FLEET_SERVER_INVENTORY_CAPABILITY,
     FLEET_WORKTREE_CHANGE_CAPABILITY, FLEET_WORKTREE_INVENTORY_CAPABILITY,
     FLEET_WORK_COMMAND_CAPABILITY, LOCAL_HOST_ALIAS,
 };
@@ -509,6 +510,26 @@ impl LocalTask {
                     .map(FleetCommandResult::review_dispose)
                     .map_err(|error| error.to_string())
             }
+            FleetOperation::DecisionKeep { keep } => {
+                audit_operation(LOCAL_HOST_ALIAS, "decision_keep", 0);
+                self.client
+                    .decision_keep_from_fleet(&keep)
+                    .await
+                    .map(FleetCommandResult::decision_keep)
+                    .map_err(|error| error.to_string())
+            }
+            FleetOperation::DecisionCloseUnanswerable { close } => {
+                audit_operation(
+                    LOCAL_HOST_ALIAS,
+                    "decision_close_unanswerable",
+                    close.items.len(),
+                );
+                self.client
+                    .decision_close_unanswerable_from_fleet(&close)
+                    .await
+                    .map(FleetCommandResult::decision_close_unanswerable)
+                    .map_err(|error| error.to_string())
+            }
             // Runs in its own task; see `spawn_worktree_inventory`.
             FleetOperation::WorktreeInventory
             | FleetOperation::WorktreeChange { .. }
@@ -782,6 +803,35 @@ fn review_dispose_refusal(
     Some(format!(
         "host '{alias}' cannot decide review items over Fleet; upgrade tend on that host"
     ))
+}
+
+/// Keep and Close all go only to a relay that applies them on its host.
+/// Close all also needs that host's `[review] close_unanswerable` on, which
+/// its relay reports as a capability of its own: a host with it off still
+/// takes Keep, and is refused Close all with that reason, not an upgrade.
+fn unanswerable_refusal(
+    alias: &str,
+    hello: &RelayHello,
+    operation: &FleetOperation,
+) -> Option<String> {
+    let has = |capability: &str| hello.capabilities.iter().any(|c| c == capability);
+    match operation {
+        FleetOperation::DecisionKeep { .. } | FleetOperation::DecisionCloseUnanswerable { .. }
+            if !has(FLEET_DECISION_UNANSWERABLE_CAPABILITY) =>
+        {
+            Some(format!(
+                "host '{alias}' cannot keep or close unanswerable questions over Fleet; upgrade tend on that host"
+            ))
+        }
+        FleetOperation::DecisionCloseUnanswerable { .. }
+            if !has(FLEET_CLOSE_UNANSWERABLE_CAPABILITY) =>
+        {
+            Some(format!(
+                "Close all is turned off on host '{alias}' ([review] close_unanswerable)"
+            ))
+        }
+        _ => None,
+    }
 }
 
 /// The server inventory goes only to a relay that says it answers it.
@@ -1693,6 +1743,13 @@ impl HostTask {
                                     &command.operation,
                                 )
                             })
+                            .or_else(|| {
+                                unanswerable_refusal(
+                                    &self.alias,
+                                    &connected.hello,
+                                    &command.operation,
+                                )
+                            })
                     {
                         let _ = command.reply.send(Err(refusal));
                         continue;
@@ -1832,6 +1889,26 @@ impl HostTask {
                                 PendingRequest::new(PendingReply::Command(command.reply), command_timeout),
                             );
                             RelayRequest::ReviewDispose { request_id: id, dispose }
+                        }
+                        FleetOperation::DecisionKeep { keep } => {
+                            audit_operation(&self.alias, "decision_keep", 0);
+                            pending.insert(
+                                id.clone(),
+                                PendingRequest::new(PendingReply::Command(command.reply), command_timeout),
+                            );
+                            RelayRequest::DecisionKeep { request_id: id, keep }
+                        }
+                        FleetOperation::DecisionCloseUnanswerable { close } => {
+                            audit_operation(
+                                &self.alias,
+                                "decision_close_unanswerable",
+                                close.items.len(),
+                            );
+                            pending.insert(
+                                id.clone(),
+                                PendingRequest::new(PendingReply::Command(command.reply), command_timeout),
+                            );
+                            RelayRequest::DecisionCloseUnanswerable { request_id: id, close }
                         }
                         FleetOperation::ServerInventory => {
                             audit_operation(&self.alias, "server_inventory", 0);
@@ -2365,6 +2442,67 @@ mod tests {
         assert!(FLEET_CAPABILITIES.contains(&FLEET_BOUNDED_CLAIM_CAPABILITY));
         assert!(unbounded_claim_refusal("remote", &current, &claim).is_none());
         assert!(unbounded_claim_refusal("remote", &current, &list).is_none());
+    }
+
+    #[test]
+    fn keep_and_close_all_reach_only_relays_that_apply_them() {
+        use tend::collaboration::subject_check::CloseItem;
+        use tend::fleet::{FleetCloseUnanswerable, FleetDecisionKeep};
+        let hello = |capabilities: &[&str]| RelayHello {
+            fleet_protocol: FLEET_PROTOCOL_VERSION,
+            min_fleet_protocol: FLEET_PROTOCOL_VERSION,
+            node_id: NodeId::generate(),
+            hostname: "remote".into(),
+            os: "linux".into(),
+            arch: "x86_64".into(),
+            tend_version: "0.0.0".into(),
+            capabilities: capabilities.iter().map(|c| (*c).to_owned()).collect(),
+            daemon_generation: None,
+            boot_id: "boot".into(),
+            backends: Vec::new(),
+            server_time: OffsetDateTime::now_utc(),
+        };
+        let keep = FleetOperation::DecisionKeep {
+            keep: FleetDecisionKeep {
+                id: "rq_1".into(),
+                episode: "ep_1".into(),
+                actor: "web:owner".into(),
+                surface: "web".into(),
+                controller: "here".into(),
+            },
+        };
+        let close = FleetOperation::DecisionCloseUnanswerable {
+            close: FleetCloseUnanswerable {
+                items: vec![CloseItem {
+                    request_id: "rq_1".into(),
+                    episode: "ep_1".into(),
+                }],
+                actor: "web:owner".into(),
+                surface: "web".into(),
+                controller: "here".into(),
+            },
+        };
+        assert!(keep.is_control() && close.is_control());
+        // An older relay: neither, with an upgrade.
+        let older = hello(&[FLEET_REVIEW_DISPOSE_CAPABILITY]);
+        for operation in [&keep, &close] {
+            let refusal = unanswerable_refusal("remote", &older, operation).unwrap();
+            assert!(refusal.contains("upgrade tend"), "{refusal}");
+        }
+        // Close all off on that host: Keep goes, Close all is refused with
+        // that reason, not an upgrade.
+        let keep_only = hello(&[FLEET_DECISION_UNANSWERABLE_CAPABILITY]);
+        assert!(unanswerable_refusal("remote", &keep_only, &keep).is_none());
+        let refusal = unanswerable_refusal("remote", &keep_only, &close).unwrap();
+        assert!(refusal.contains("turned off"), "{refusal}");
+        assert!(!refusal.contains("upgrade"), "{refusal}");
+        // Both.
+        let current = hello(FLEET_CAPABILITIES);
+        assert!(unanswerable_refusal("remote", &current, &keep).is_none());
+        assert!(unanswerable_refusal("remote", &current, &close).is_none());
+        // Nothing else is judged here.
+        let queue = FleetOperation::DecisionQueue { limit: 1 };
+        assert!(unanswerable_refusal("remote", &older, &queue).is_none());
     }
 
     #[test]

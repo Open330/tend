@@ -107,6 +107,10 @@ pub struct CollaborationAuditEntry {
     pub purpose: Option<crate::collaboration::LaunchPurpose>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub release_reason: Option<String>,
+    /// A decision another host's controller sent over Fleet: who took it
+    /// there, from which surface, through which controller.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub via_fleet: Option<FleetVia>,
     /// Encoded daemon IPC response size, including its newline; not model tokens.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response_bytes: Option<usize>,
@@ -154,6 +158,18 @@ pub struct CollaborationAuditContext {
     pub target_sessions: Vec<String>,
     pub purpose: Option<crate::collaboration::LaunchPurpose>,
     pub release_reason: Option<String>,
+    pub via_fleet: Option<FleetVia>,
+}
+
+/// Where a Fleet decision came from (`docs/proposals/FLEET_UNANSWERABLE.md`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FleetVia {
+    /// The controller's Fleet alias.
+    pub controller: String,
+    /// The person, as the controller authenticated them.
+    pub actor: String,
+    /// The surface they used.
+    pub surface: String,
 }
 
 impl CollaborationAuditContext {
@@ -175,6 +191,7 @@ impl CollaborationAuditContext {
             target_sessions: Vec::new(),
             purpose: None,
             release_reason: None,
+            via_fleet: None,
         }
     }
 
@@ -208,6 +225,7 @@ impl CollaborationAuditContext {
             target_sessions: self.target_sessions,
             purpose: self.purpose,
             release_reason: self.release_reason,
+            via_fleet: self.via_fleet,
             response_bytes: None,
             request_bytes: None,
             response_body_bytes: None,

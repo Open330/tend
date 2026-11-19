@@ -168,6 +168,7 @@ async fn subject_response(
             request_id,
             episode,
             origin,
+            ..
         } => {
             if let Some(refused) = operator_only(origin.as_ref()) {
                 return ("decision_keep", Response::err(refused.to_string()));
@@ -185,6 +186,8 @@ async fn subject_response(
             items,
             origin,
             by_label,
+            actor,
+            ..
         } => {
             if let Some(refused) = operator_only(origin.as_ref()) {
                 return (
@@ -194,7 +197,7 @@ async fn subject_response(
             }
             let surface = by_label.as_deref().unwrap_or("cli");
             let response = match collaboration
-                .close_unanswerable(&items, store, surface, None)
+                .close_unanswerable(&items, store, surface, actor)
                 .await
             {
                 Ok(outcome) => Response {

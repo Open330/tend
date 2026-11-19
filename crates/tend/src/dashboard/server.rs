@@ -1356,6 +1356,19 @@ async fn fleet_command_handler(
         )
             .into_response();
     }
+    // Keep and Close all carry the person too: only the audited
+    // `/api/decisions/keep` and `/api/decisions/close-unanswerable` routes
+    // send them.
+    if matches!(
+        request.operation,
+        FleetOperation::DecisionKeep { .. } | FleetOperation::DecisionCloseUnanswerable { .. }
+    ) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "keep or close questions through /api/decisions/keep and /api/decisions/close-unanswerable" })),
+        )
+            .into_response();
+    }
     match fleet
         .execute(host, request.operation, Duration::from_secs(20))
         .await
@@ -4101,6 +4114,20 @@ mod tests {
         )
         .await;
         assert_eq!(raw.status(), StatusCode::FORBIDDEN);
+        // Nor a Keep or a Close all, which name the person too.
+        for operation in [
+            json!({ "kind": "decision_keep", "keep": { "id": "rq_1", "episode": "ep_1",
+                "actor": "web:someone-else", "surface": "web", "controller": "here" } }),
+            json!({ "kind": "decision_close_unanswerable", "close": { "items": [],
+                "actor": "web:someone-else", "surface": "web", "controller": "here" } }),
+        ] {
+            let raw = call(
+                "/api/fleet/ctl/command".into(),
+                json!({ "operation": operation }),
+            )
+            .await;
+            assert_eq!(raw.status(), StatusCode::FORBIDDEN);
+        }
         assert_eq!(sent.lock().unwrap().len(), 10);
     }
 
