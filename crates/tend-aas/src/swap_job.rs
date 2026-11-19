@@ -459,6 +459,36 @@ pub(crate) enum Readiness {
     Unsettled,
 }
 
+/// One row of the status query's targets.
+fn target_status(row: &rusqlite::Row<'_>) -> rusqlite::Result<TargetStatus> {
+    Ok(TargetStatus {
+        target_id: row.get(0)?,
+        attempt: row.get(1)?,
+        phase: row.get(2)?,
+        disposition: row.get(3)?,
+        reason: row.get::<_, Option<String>>(4)?.or_else(|| {
+            failed_readiness(
+                row.get::<_, Option<String>>(3).ok().flatten().as_deref(),
+                row.get::<_, Option<String>>(10).ok().flatten().as_deref(),
+            )
+        }),
+        uncertain_effects: row.get(5)?,
+        effects: row.get(6)?,
+        continuation: row
+            .get::<_, Option<String>>(7)?
+            .and_then(|json| serde_json::from_str::<Observation>(&json).ok())
+            .and_then(|observation| match observation {
+                Observation::Continuation {
+                    decision, withheld, ..
+                } => {
+                    Some(withheld.map_or_else(|| decision.to_string(), |reason| reason.to_string()))
+                }
+                _ => None,
+            }),
+        follow_up: follow_up_status(row.get(8)?, row.get(9)?),
+    })
+}
+
 /// Why a failed target failed, from the readiness its journal recorded,
 /// for a target that has no reason of its own: `readiness_blocked: <why>`
 /// and the like. `None` for any other target, or a readiness that was
@@ -1487,35 +1517,7 @@ impl SwapJobStore {
                  ORDER BY t.target_id",
             )?;
             let targets = statement
-                .query_map([job], |row| {
-                    Ok(TargetStatus {
-                        target_id: row.get(0)?,
-                        attempt: row.get(1)?,
-                        phase: row.get(2)?,
-                        disposition: row.get(3)?,
-                        reason: row.get::<_, Option<String>>(4)?.or_else(|| {
-                            failed_readiness(
-                                row.get::<_, Option<String>>(3).ok().flatten().as_deref(),
-                                row.get::<_, Option<String>>(10).ok().flatten().as_deref(),
-                            )
-                        }),
-                        uncertain_effects: row.get(5)?,
-                        effects: row.get(6)?,
-                        continuation: row
-                            .get::<_, Option<String>>(7)?
-                            .and_then(|json| serde_json::from_str::<Observation>(&json).ok())
-                            .and_then(|observation| match observation {
-                                Observation::Continuation {
-                                    decision, withheld, ..
-                                } => Some(withheld.map_or_else(
-                                    || decision.to_string(),
-                                    |reason| reason.to_string(),
-                                )),
-                                _ => None,
-                            }),
-                        follow_up: follow_up_status(row.get(8)?, row.get(9)?),
-                    })
-                })?
+                .query_map([job], target_status)?
                 .collect::<Result<Vec<TargetStatus>, _>>()?;
             let mut targets = targets;
             for target in &mut targets {
