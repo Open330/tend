@@ -27,22 +27,42 @@ item, under that host's own rules and locks.
 
 ### Relay operations
 
-Two new `FleetOperation` variants, both `is_control()`:
+Two new controller operations, both `is_control()`, and their relay
+envelopes. As for `ReviewDispose`, the `FleetOperation` carries only the
+payload, and the manager adds the transport correlation id on the
+`RelayRequest`. That id is never the item's id or episode.
 
 ```rust
+// FleetOperation (controller side)
+DecisionKeep { keep: FleetDecisionKeep }
+DecisionCloseUnanswerable { close: FleetCloseUnanswerable }
+
+// RelayRequest (wire to the relay)
 DecisionKeep { request_id: String, keep: FleetDecisionKeep }
-// { id, episode, by }
 DecisionCloseUnanswerable { request_id: String, close: FleetCloseUnanswerable }
-// { items: [{ request_id, episode }], by }
+
+struct FleetDecisionKeep { id: String, episode: String, actor: String, surface: String }
+struct FleetCloseUnanswerable {
+    items: Vec<CloseItem>,          // { request_id, episode }
+    actor: String,
+    surface: String,                // one of SURFACES: "web", "ios", "mac"
+    controller: String,             // the controller's Fleet alias
+}
 ```
 
 - The relay runs exactly what its own IPC runs:
   `CollaborationStore::keep_unanswerable` and `close_unanswerable`, with the
   registry hold, per-pair revalidation and the closure record. Nothing is
   decided on the controller.
-- `by` is the operator actor the controller authenticated
-  (`web:<email>`, `device:<id>`). The relay records it as the closer and
-  audits `fleet:<controller alias>` as the surface.
+- **Closure and audit stay in the holding store's schema.** The closure
+  keeps `by: "person"`, `surface` is the surface the person actually used
+  (one of the existing `SURFACES`, so `close_unanswerable` takes it
+  unchanged and every reader already knows it), and `actor` is the identity
+  the controller authenticated (`web:<email>`, `device:<id>`). The Fleet hop
+  is recorded beside it, not in place of it: the relay's audit line gains
+  `"via": "fleet", "controller": "<alias>"`, and the controller audits the
+  send as it does `ReviewDispose`. No new surface value and no closure
+  schema change.
 - Results are the existing `KeepOutcome` and `CloseOutcome`, carried back in
   `FleetCommandResult` as optional boxed fields like `decision_queue`.
 - **The holding host's setting wins.** A relay with `[review]
@@ -61,7 +81,7 @@ DecisionCloseUnanswerable { request_id: String, close: FleetCloseUnanswerable }
 - An older relay never receives the new variants, so it can never answer
   with something taken another way.
 
-### Dashboard and IPC
+### Dashboard
 
 - A remote section gains `subject_check` and `close_unanswerable` from those
   capabilities and from the host being in control mode.
@@ -71,21 +91,40 @@ DecisionCloseUnanswerable { request_id: String, close: FleetCloseUnanswerable }
   (`decision_auth_middleware`); a `decide` device can act on any control
   host the dashboard reaches, as it can for review items.
 - Close all stays one list per host: the confirmation names the host and the
-  count, and each host's result is reported on its own. A Close all that
-  spans hosts would need a cross-host transaction, which the Fleet does not
-  have, and partial success would be hard to read.
-- The Mac app sends a remote Keep or Close all through the dashboard routes,
-  as it already decides other hosts' review items there
-  (`FleetDecision.decidesReviews`), and keeps using IPC for its own host.
+  count, and each host's result is reported on its own. A batch across hosts
+  could report partial results explicitly, but it could never be
+  all-or-none without a cross-host transaction, and one host per
+  confirmation is easier to read.
+
+### The Mac and the phone
+
+- **Web** acts on remote hosts directly through the routes above, under the
+  dashboard's own sign-in.
+- **iOS** already talks to the dashboard with its device token, so it uses
+  the same routes with `host`.
+- **The Mac does not act on another host itself.** It has no authenticated
+  native path to the dashboard today: other hosts' review items are only
+  listed (`FleetDecisions.decidesReviews`), `FleetDecisionFeed.decide`
+  refuses them, and the row's action opens the dashboard in the browser
+  under its sign-in. A remote folded group on the Mac does the same: it is
+  listed, and Keep or Close all opens that host's group on the dashboard.
+  A native transport for the Mac would be its own design.
 
 ### Surfaces
 
-- Mac, web and iOS: the folded group of a remote host gets the same Keep and
+- Web and iOS: the folded group of a remote host gets the same Keep and
   Close all as the local one, plus the host name in the confirmation
-  ("Close 3 questions on jiun-mini? This cannot be undone.").
-- A host that cannot take them (older, read-only, or Close all off there)
-  shows the folded group without the buttons and one line saying why, as
-  review items do today.
+  ("Close 3 questions on jiun-mini? This cannot be undone."). The Mac hands
+  off to the dashboard as above.
+- Three cases are told apart:
+  - **Both capabilities, control mode**: Keep and Close all.
+  - **`fleet_decision_unanswerable_v1` but not
+    `fleet_close_unanswerable_v1`** (Close all is off on that host): Keep
+    stays, Close all is hidden, with "Close all is turned off on
+    jiun-mini". The route refuses Close all with the same reason, not an
+    upgrade message.
+  - **An older relay or a read-only host**: neither, with "upgrade tend on
+    that host" or "read-only host", as review items do today.
 
 ## Tests
 
@@ -99,10 +138,14 @@ DecisionCloseUnanswerable { request_id: String, close: FleetCloseUnanswerable }
 - Compatibility: an old controller against a new relay (never sends the
   operations), a new controller against an old relay (buttons hidden,
   routes refuse).
-- Surfaces: the remote folded group with and without the buttons, and the
-  host-named confirmation.
+- Surfaces: the three capability cases above, including base capability
+  present and close capability absent (Keep offered, Close all hidden); the
+  host-named confirmation; the Mac's dashboard hand-off.
+- Closure: a remote close records the person's real surface and actor, and
+  the relay audit carries `via` and `controller`.
 
 ## Size
 
-Three PRs: relay and manager; dashboard and IPC; Mac, web and iOS. Not
+Three PRs: relay and manager; dashboard routes; web, iOS and the Mac
+hand-off. Not
 small, which is why this is a proposal only for now.
