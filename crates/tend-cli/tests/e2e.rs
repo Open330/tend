@@ -940,6 +940,8 @@ fn manual_dashboard_without_token_fails_startup() {
 #[cfg(unix)]
 #[test]
 fn init_dashboard_prints_fragment_url_for_persisted_token() {
+    use std::os::unix::fs::PermissionsExt as _;
+
     let dir = tempfile::tempdir().expect("tempdir");
     let tools_dir = dir.path().join("tools");
     std::fs::create_dir(&tools_dir).expect("create fake tools dir");
