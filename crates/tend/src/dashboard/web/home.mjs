@@ -13,8 +13,7 @@ import { MESSAGES_PATH, messagesReturnPath } from "./messages-model.mjs";
 import { legacyLink } from "./legacy-link.mjs";
 import { openAccessManager } from "./operators-admin.mjs";
 import { openShareManager } from "./sharing-admin.mjs";
-
-const TOKEN_KEY = "tend.token";
+import { normalizeLogin, signInHref, signOut, TOKEN_KEY } from "./sign-in.mjs";
 /// The card layout, a per-browser preference like the Mac's
 /// `tend.home.cardLayout`: "emphasis" (the default) or "compact".
 const LAYOUT_KEY = "tend.home.cardLayout";
@@ -33,6 +32,9 @@ const state = {
   connection: "connecting",
   generation: 0,
   lost: false,
+  /// May read but not operate (`public_read`, auth off, a signed-in
+  /// viewer): Explore and Messages read-only, Home's operator notice.
+  readOnly: false,
   selected: null,
   lane: "needsYou",
   layout: "emphasis",
@@ -192,9 +194,13 @@ function localHost(alias) {
   return Boolean(state.board?.hosts.find((h) => h.alias === alias)?.local) || !state.board?.hosts.length;
 }
 
-function canWrite() {
-  const access = state.data.access;
+/// Whether an `/api/access` answer is an operator's.
+function operatorAccess(access) {
   return Boolean(access && access.write_authorized !== false && access.mode !== "read_only");
+}
+
+function canWrite() {
+  return operatorAccess(state.data.access);
 }
 
 // Looks Good marks a finished unit of the daemon's board. Where /api/access
@@ -1712,6 +1718,12 @@ export function composing() {
 function render() {
   if (state.lost) return;
   renderRoute();
+  const readOnly = state.readOnly;
+  for (const id of ["segments", "layout-toggle", "filter-menu"]) $(id).hidden = readOnly;
+  $("operator-notice").hidden = !readOnly;
+  if (readOnly) return renderReadOnlyHome();
+  $("operator-notice").replaceChildren();
+  delete $("operator-notice").dataset.signature;
   const board = currentBoard();
   state.board = board;
   renderHeader(board);
@@ -1737,13 +1749,169 @@ function render() {
     option.setAttribute("aria-checked", String(option.dataset.layout === state.layout));
   }
   for (const tab of document.querySelectorAll("#segments button")) tab.setAttribute("aria-selected", String(tab.dataset.lane === state.lane));
-  // Explore and pane links lead to the workbench, which only the full
-  // dashboard serves: hidden where /api/access is not answered (a paired
-  // device, the Windows app's scoped proxy).
+  // Explore and Settings read what only the full dashboard serves: hidden
+  // where /api/access is not answered (a paired device, the Windows app's
+  // scoped proxy).
   $("rail-explore").hidden = !state.data.access;
   $("rail-settings").hidden = !state.data.access;
   renderInspector();
   revealLinkedItem();
+}
+
+// ---- Read-only: may read, may not operate --------------------------------
+
+/// Home for someone who may read but not operate: no board (it is the
+/// operator's), the hosts and the status bar from the Fleet snapshot, and
+/// what would make this browser an operator.
+function renderReadOnlyHome() {
+  const board = buildBoard({ fleet: state.data.fleet, now: Date.now() });
+  state.board = null;
+  state.selected = null;
+  renderHeader(board);
+  renderStatus(board);
+  $("review-button").hidden = true;
+  $("empty-board").hidden = true;
+  $("lanes").replaceChildren();
+  $("lanes").hidden = true;
+  $("inspector").replaceChildren();
+  $("inspector").hidden = true;
+  $("seg-backlog-tab").hidden = true;
+  $("rail-explore").hidden = !state.data.access;
+  $("rail-settings").hidden = !state.data.access;
+  renderOperatorNotice();
+}
+
+/// What this access may become, in words: auth off has no token to
+/// upgrade with; a signed-in viewer enrolls its account; a browser without
+/// an account keeps the token.
+function readOnlyReason(access) {
+  const login = access?.login || {};
+  if (!access?.write_available) return S.roNoToken;
+  if (login.signed_in) return login.enrollment ? S.roViewer(login.email || "—") : S.roViewerNoEnroll(login.email || "—");
+  return S.roAnonymous;
+}
+
+/// Whether Upgrade with token can work here: a token to check, and for a
+/// signed-in account, enrollment allowed (else `/auth/enroll` refuses it).
+function canUpgrade(access) {
+  const login = access?.login || {};
+  return Boolean(access?.write_available && !operatorAccess(access) && (!login.signed_in || login.enrollment));
+}
+
+/// Changes only when what the notice says does, so a poll never redraws a
+/// field someone is typing a token into.
+function accessSignature(access) {
+  const login = access?.login || {};
+  return JSON.stringify([access?.mode, Boolean(access?.write_available), operatorAccess(access), Boolean(login.available), Boolean(login.signed_in), Boolean(login.enrollment), login.email || "", login.role || ""]);
+}
+
+function renderOperatorNotice() {
+  const box = $("operator-notice");
+  const access = state.data.access;
+  const signature = accessSignature(access);
+  if (box.dataset.signature === signature) return;
+  box.dataset.signature = signature;
+  box.replaceChildren(icon("hand", "big"), el("h2", null, S.roTitle), el("p", null, readOnlyReason(access)), ...accessActions(access));
+}
+
+/// Sign in, sign out and Upgrade with token, as this access allows: on
+/// Home's operator notice and in Settings.
+function accessActions(access) {
+  const login = access?.login || {};
+  const nodes = [];
+  const row = el("div", "row");
+  if (login.available && !login.signed_in) {
+    const link = el("a", "btn primary", S.signIn);
+    link.href = signInHref(normalizeLogin(login), shellReturnPath(window.location.pathname, window.location.hash));
+    row.append(link);
+  }
+  if (login.signed_in) row.append(button(S.signOut, () => signOut(), "btn"));
+  if (row.children.length) nodes.push(row);
+  if (canUpgrade(access)) nodes.push(upgradeForm(Boolean(login.signed_in)));
+  return nodes;
+}
+
+/// Upgrade with token, in the page (the workbench asked in a prompt).
+function upgradeForm(signedIn) {
+  const form = el("form", "upgrade");
+  const label = el("label", "upgrade-label");
+  const input = el("input", "field");
+  input.type = "password";
+  input.autocomplete = "off";
+  input.maxLength = 1024;
+  input.required = true;
+  input.placeholder = S.upgradePlaceholder;
+  label.append(el("span", null, S.upgradeLabel), input);
+  const submit = el("button", "btn primary", S.upgrade);
+  submit.type = "submit";
+  const status = el("p", "upgrade-status");
+  status.setAttribute("role", "status");
+  status.setAttribute("aria-live", "polite");
+  const fields = el("div", "row");
+  fields.append(label, submit);
+  form.append(fields, el("p", "set-help", signedIn ? S.upgradeHelpAccount : S.upgradeHelpBrowser), status);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const token = input.value.trim();
+    if (!token || submit.disabled) return;
+    submit.disabled = true;
+    status.className = "upgrade-status";
+    status.textContent = S.upgradeChecking;
+    const result = await upgradeWithToken(token, signedIn);
+    input.value = "";
+    submit.disabled = false;
+    status.className = `upgrade-status ${result.ok ? "ok" : "error"}`;
+    status.textContent = result.ok ? S.upgradeDone : result.error;
+  });
+  return form;
+}
+
+/// A signed-in viewer enrolls its own account with the token
+/// (`POST /auth/enroll`): the server checks it once and replaces the
+/// viewer session with an operator's; nothing is stored here. A browser
+/// without an account keeps the token as its credential instead, as the
+/// workbench's unlock did, and only if it makes this browser an operator.
+export async function upgradeWithToken(token, signedIn) {
+  if (signedIn) {
+    try {
+      const resp = await fetch("/auth/enroll", {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json", "X-Tend-Operator": "1" },
+        body: JSON.stringify({ token }),
+      });
+      const payload = await resp.json().catch(() => null);
+      if (resp.ok || payload?.restart) {
+        window.location.reload();
+        return { ok: true };
+      }
+      return { ok: false, error: payload?.error || S.upgradeFailed };
+    } catch {
+      return { ok: false, error: S.upgradeFailed };
+    }
+  }
+  try {
+    localStorage.setItem(TOKEN_KEY, token);
+  } catch {
+    return { ok: false, error: S.upgradeFailed };
+  }
+  let access = null;
+  try {
+    access = await read("/api/access");
+  } catch {
+    // Reported below.
+  }
+  if (operatorAccess(access)) {
+    refresh();
+    return { ok: true };
+  }
+  try {
+    localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // ignore
+  }
+  return { ok: false, error: S.upgradeInvalid };
 }
 
 // ---- Shell routes: Home, Explore, Settings ------------------------------
@@ -1755,6 +1923,9 @@ function dropShellPages() {
   state.explore = null;
   $("view-explore").replaceChildren();
   $("view-settings").replaceChildren();
+  delete $("view-settings").dataset.signature;
+  $("operator-notice").replaceChildren();
+  delete $("operator-notice").dataset.signature;
   for (const dialog of document.querySelectorAll("dialog.share-dialog")) {
     dialog.close?.();
     dialog.remove?.();
@@ -1815,22 +1986,30 @@ function settingsRow(label, value) {
 }
 
 /// Settings, the web's part of the Mac's Settings: who is signed in and
-/// what this dashboard allows, access and sharing administration, and the
-/// classic workbench for what has not moved into the shell yet.
+/// what this dashboard allows, sign-in, sign-out and Upgrade with token,
+/// access and sharing administration, and the classic workbench for what
+/// has not moved into the shell yet.
 function renderSettings() {
   const box = $("view-settings");
   const access = state.data.access;
+  // Redrawn only when what it says changes: a poll must not clear a token
+  // being typed.
+  const signature = JSON.stringify([accessSignature(access), Boolean(access?.capabilities?.work_start), Boolean(access?.capabilities?.pane_sharing), Boolean(access?.capabilities?.device_pairing)]);
+  if (box.dataset.signature === signature && box.children.length) return;
+  box.dataset.signature = signature;
   const page = el("div", "set-page");
   page.append(el("h1", null, S.settings));
   const general = el("section", "set-section");
   general.append(el("h2", null, S.settingsAccount));
   const login = access?.login || {};
   general.append(
-    settingsRow(S.settingsSignedIn, login.signed_in ? `${login.email || "—"} (${login.role || "—"})` : access ? S.settingsToken : "—"),
+    settingsRow(S.settingsSignedIn, login.signed_in ? `${login.email || "—"} (${login.role || "—"})` : operatorAccess(access) ? S.settingsToken : S.settingsNobody),
     settingsRow(S.settingsMode, access?.mode || "—"),
     settingsRow(S.settingsWrites, access?.write_authorized ? S.yes : S.no),
     settingsRow(S.settingsWorkStart, access?.capabilities?.work_start ? S.yes : S.no),
   );
+  if (!operatorAccess(access)) general.append(el("p", "set-help", readOnlyReason(access)));
+  general.append(...accessActions(access));
   page.append(general);
   if (canWrite()) {
     const admin = el("section", "set-section");
@@ -1899,18 +2078,75 @@ export function homeReturnPath(hash, pathname = "/home") {
   return item ? `/home${itemHash(item, linkedHostOf(hash))}` : "/home";
 }
 
+/// Where sign-in from any page of the shell comes back to, rebuilt from
+/// what the address names (so never with a credential): Home and its card,
+/// Explore and its pane, Messages and its message, or Settings.
+const EXPLORE_LINK_KEYS = new Set(["pane", "session", "window", "socket", "host", "workspace", "wsocket"]);
+
+export function shellReturnPath(pathname, hash) {
+  if (pathname === "/explore") {
+    // The whole selection Explore reads (pane, session, window and the
+    // workspace filter, with their sockets and host), in the link's order;
+    // anything else, a token included, stays behind.
+    const params = new URLSearchParams(String(hash || "").replace(/^#/, ""));
+    const kept = new URLSearchParams([...params].filter(([key]) => EXPLORE_LINK_KEYS.has(key)));
+    const rest = kept.toString();
+    return rest ? `/explore#${rest}` : "/explore";
+  }
+  if (pathname === "/settings") return "/settings";
+  return homeReturnPath(hash, pathname);
+}
+
+/// /welcome, for a visitor whose reads answer 401, keeping where they were.
+export function welcomeHref(pathname, hash) {
+  return `/welcome?return_to=${encodeURIComponent(shellReturnPath(pathname, hash))}`;
+}
+
+/// Asked to authenticate (the reads answer 401): nothing private stays,
+/// and the visitor goes to /welcome, to come back here after sign-in.
+function toWelcome(error) {
+  const target = welcomeHref(window.location.pathname, window.location.hash);
+  dropPrivate();
+  $("status").textContent = error.message;
+  window.location.replace(target);
+}
+
+/// May read, may not operate: the shell read-only. Coming down from an
+/// operator's view, everything private goes first (as on a lost sign-in)
+/// and Home shows; arriving read-only, the page asked for stays.
+function showReadOnly(access, fleet) {
+  const hadPrivate = !state.readOnly && Boolean(state.data.server || state.data.decisions || state.data.history || operatorAccess(state.data.access));
+  if (hadPrivate) dropPrivate();
+  state.lost = false;
+  state.readOnly = true;
+  state.data = { decisions: null, history: null, fleet: fleet?.status === "fulfilled" ? fleet.value : null, access, server: null };
+  state.errors = { decisions: null, history: null, fleet: fleet?.status === "rejected" && !fleet.reason?.auth ? fleet.reason.message : null };
+  state.fleetSettled = true;
+  state.connection = "connected";
+  $("login").hidden = true;
+  $("status").textContent = "";
+  render();
+}
+
 /// Signed out, expired or downgraded: nothing private stays on the page,
 /// drafts, host names, filters and an open sheet included, and no older
 /// read may bring it back.
 function lostAccess(error) {
-  // Someone who is not an operator opening the dashboard's address gets
-  // the classic page: its landing, its sign-in, its public read view.
-  if (window.location.pathname === "/") {
-    window.location.replace(`/workbench${window.location.hash}`);
-    return;
-  }
   // Before the shell pages go (and the address with them).
   const back = homeReturnPath(window.location.hash, window.location.pathname);
+  dropPrivate();
+  state.readOnly = false;
+  $("status").textContent = error.message;
+  const login = $("login");
+  login.href = `/auth/login?return_to=${encodeURIComponent(back)}`;
+  login.hidden = false;
+  state.connection = "connected";
+  renderStatus(null);
+}
+
+/// Everything private off the page and out of state; no older read may
+/// bring it back (`state.lost` until a poll says otherwise).
+function dropPrivate() {
   state.generation += 1;
   state.lost = true;
   state.drafts.clear();
@@ -1923,7 +2159,7 @@ function lostAccess(error) {
   state.composer = null;
   state.selected = null;
   state.filter = { host: "", project: "" };
-  state.data = { decisions: null, history: null, fleet: null, access: null };
+  state.data = { decisions: null, history: null, fleet: null, access: null, server: null };
   state.board = null;
   $("lanes").replaceChildren();
   $("inspector").replaceChildren();
@@ -1949,12 +2185,7 @@ function lostAccess(error) {
   $("view-home").hidden = false;
   $("view-explore").hidden = true;
   $("view-settings").hidden = true;
-  $("status").textContent = error.message;
-  const login = $("login");
-  login.href = `/auth/login?return_to=${encodeURIComponent(back)}`;
-  login.hidden = false;
-  state.connection = "connected";
-  renderStatus(null);
+  $("operator-notice").hidden = true;
 }
 
 /// One poll at a time: a slow host makes the next one wait rather than
@@ -1980,6 +2211,22 @@ export function refresh() {
 async function poll() {
   const generation = ++state.generation;
   const current = () => generation === state.generation;
+  // Read-only, the operator's reads (board, queue, history) would only be
+  // refused: ask what a reader may, and whether this browser became an
+  // operator (a token entered here), which the full poll below then reads.
+  if (state.readOnly && state.data.access && !operatorAccess(state.data.access)) {
+    const [access, fleet] = await Promise.allSettled([read("/api/access"), read("/api/fleet")]);
+    if (!current()) return;
+    if (access.status === "fulfilled" && !operatorAccess(access.value)) return showReadOnly(access.value, fleet);
+    if (access.status === "rejected") {
+      if (access.reason.status === 401) return toWelcome(access.reason);
+      if (access.reason.auth) return lostAccess(access.reason);
+      // A blip: the page stays as it is.
+      state.connection = access.reason.status > 0 ? "connected" : "failed";
+      $("status").textContent = state.connection === "failed" ? S.disconnected : "";
+      return;
+    }
+  }
   // The daemon's board (GET /api/home) when it has one; otherwise, or
   // where a proxy does not forward it (the Windows app) or a credential
   // may only decide (a paired device), the queue and the Fleet snapshot,
@@ -2005,9 +2252,22 @@ async function poll() {
   // The other reads may be refused to a credential that may only decide (a
   // paired device gets 401 there, the Windows app's proxy 403) while the
   // queue still reads: that leaves those parts empty, not the page. A
-  // session that ended fails the queue read too.
-  if (home.status === "rejected" && decisions.status === "rejected" && decisions.reason.auth) return lostAccess(decisions.reason);
+  // session that ended fails the queue read too. Then /api/access tells
+  // the rest: a reader who may not operate gets the shell read-only; a
+  // visitor asked to authenticate (401) goes to /welcome; anything else
+  // (a proxy's refusal) keeps the sign-in offer here.
+  if (home.status === "rejected" && decisions.status === "rejected" && decisions.reason.auth) {
+    if (access.status === "fulfilled" && !operatorAccess(access.value)) return showReadOnly(access.value, fleet);
+    if (access.status === "rejected" && access.reason.status === 401) return toWelcome(decisions.reason);
+    return lostAccess(decisions.reason);
+  }
   state.lost = false;
+  if (state.readOnly) {
+    // Now an operator: Explore mounts again, with output and composer.
+    state.readOnly = false;
+    state.explore?.destroy();
+    state.explore = null;
+  }
   $("login").hidden = true;
   const reached = [home, decisions, fleet, history].some((r) => r.status === "fulfilled" || r.reason?.status > 0);
   state.connection = reached ? "connected" : "failed";

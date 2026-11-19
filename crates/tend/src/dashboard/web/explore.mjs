@@ -1,7 +1,9 @@
 // Explore in the new shell: Tend for Mac's Explore sidebar (every host's
 // panes, by host tree or status group, needing-attention first) and the
 // pane it opens: live output and a composer, as the Mac's terminal tab
-// shows a pane. Output and prompts are operator-only and local-only (a
+// shows a pane. Output and prompts are operator-only and local-only:
+// someone who may only read sees the tree and each pane's state, and the
+// page never asks for output (a
 // pane on another Fleet host is listed with its state, and opens on that
 // host). Its other view, Messages (`/explore/messages`), is the
 // collaboration reader (explore-messages.mjs): a switch in the header
@@ -494,9 +496,14 @@ export function mountExplore(root, deps) {
     const nodes = [top, output, status];
     if (!item.local) {
       status.textContent = S.remotePane;
+    } else if (!canWrite()) {
+      // Read-only (a viewer, `public_read`, auth off): output, input and
+      // abort are operator routes, so none is asked for.
+      output.hidden = true;
+      status.textContent = S.outputOperatorOnly;
     } else {
       startOutput(item, output, status);
-      if (canWrite()) nodes.push(composer(item, status));
+      nodes.push(composer(item, status));
     }
     viewer.replaceChildren(...nodes);
   }
