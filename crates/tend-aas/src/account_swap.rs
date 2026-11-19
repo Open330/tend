@@ -3700,13 +3700,16 @@ fn await_ready(
         Duration::from_millis(250),
         answered,
     );
-    let seen = match &readiness {
-        Resume::Ready => Readiness::Ready,
-        Resume::Blocked(_) => Readiness::Blocked,
-        Resume::Exited => Readiness::Exited,
-        Resume::Unsettled => Readiness::Unsettled,
+    let (seen, why) = match &readiness {
+        Resume::Ready => (Readiness::Ready, None),
+        Resume::Blocked(reason) => (Readiness::Blocked, Some(blocked_why(reason))),
+        Resume::Exited => (Readiness::Exited, None),
+        Resume::Unsettled => (
+            Readiness::Unsettled,
+            Some(unsettled_why(io.capture().as_deref()).to_owned()),
+        ),
     };
-    if !runner.observe(Observation::Readiness { result: seen }) {
+    if !runner.observe(Observation::Readiness { result: seen, why }) {
         return Err(halt(runner));
     }
     // Codex asks to review new or changed hooks before it starts. Accepting
@@ -3752,6 +3755,28 @@ fn await_ready(
         }
     }
     Ok(())
+}
+
+/// A blocked readiness's reason as the journal keeps it. Every reason is
+/// tend's own words from its lists of blockers and dialogs, except an open
+/// question, which quotes the screen: that one is kept as its kind only.
+fn blocked_why(reason: &str) -> String {
+    const QUESTION: &str = "a dialog is waiting for an answer";
+    if reason.starts_with(QUESTION) {
+        return "open_question".into();
+    }
+    reason.to_owned()
+}
+
+/// What an unsettled readiness's last screen lacked, for the journal.
+fn unsettled_why(screen: Option<&str>) -> &'static str {
+    match screen {
+        None => "screen_unreadable",
+        Some(screen) if screen.trim().is_empty() => "screen_empty",
+        // The prompt drew, but the screen never held still long enough.
+        Some(screen) if tend::agent_tui::agent_prompt_visible(screen) => "never_quiet",
+        Some(_) => "no_agent_prompt",
+    }
 }
 
 /// Whether `screen` shows the relaunch's own prompt: an agent prompt and no

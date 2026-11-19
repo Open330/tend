@@ -739,7 +739,8 @@ fn a_swap_reports_what_it_saw_in_order() {
                 phase: Phase::Readiness
             },
             Observation::Readiness {
-                result: Readiness::Ready
+                result: Readiness::Ready,
+                why: None,
             },
             Observation::Phase {
                 phase: Phase::Verifying
@@ -2334,4 +2335,22 @@ fn the_relaunch_waits_for_the_shell_in_the_foreground() {
     // The agent still in front, or nothing readable: the whole ceiling.
     assert!(relaunch_delay(Some(("node", Duration::ZERO)), true) >= super::SHELL_SETTLE);
     assert!(relaunch_delay(None, true) >= super::SHELL_SETTLE);
+}
+
+/// The journal keeps a readiness's why in tend's own words: an open
+/// question's screen line is kept as its kind only.
+#[test]
+fn a_readiness_why_never_quotes_the_screen() {
+    assert_eq!(
+        super::blocked_why("a dialog is waiting for an answer (Delete ~/secret? y/n)"),
+        "open_question"
+    );
+    assert_eq!(
+        super::blocked_why("another app still owns this conversation"),
+        "another app still owns this conversation"
+    );
+    assert_eq!(super::unsettled_why(None), "screen_unreadable");
+    assert_eq!(super::unsettled_why(Some("  \n")), "screen_empty");
+    assert_eq!(super::unsettled_why(Some("loading…\n")), "no_agent_prompt");
+    assert_eq!(super::unsettled_why(Some(CODEX_IDLE)), "never_quiet");
 }

@@ -345,6 +345,12 @@ pub(crate) enum Observation {
     },
     Readiness {
         result: Readiness,
+        /// Why it was not ready, in words from tend's own closed lists
+        /// (the blocker or dialog it recognized, or what the unsettled
+        /// screen lacked), never text read off the screen. Absent when
+        /// ready, and in journals written before it was recorded.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        why: Option<String>,
     },
     Phase {
         phase: Phase,
@@ -451,6 +457,27 @@ pub(crate) enum Readiness {
     Blocked,
     Exited,
     Unsettled,
+}
+
+/// Why a failed target failed, from the readiness its journal recorded,
+/// for a target that has no reason of its own: `readiness_blocked: <why>`
+/// and the like. `None` for any other target, or a readiness that was
+/// ready.
+fn failed_readiness(disposition: Option<&str>, readiness: Option<&str>) -> Option<String> {
+    if disposition != Some("failed") {
+        return None;
+    }
+    match serde_json::from_str::<Observation>(readiness?).ok()? {
+        Observation::Readiness { result, why } if result != Readiness::Ready => {
+            let result = serde_json::to_value(result).ok()?;
+            let result = result.as_str()?;
+            Some(why.map_or_else(
+                || format!("readiness_{result}"),
+                |why| format!("readiness_{result}: {why}"),
+            ))
+        }
+        _ => None,
+    }
 }
 
 /// A job as read back.
@@ -1451,7 +1478,10 @@ impl SwapJobStore {
                             AND o.kind = 'follow_up_sent' ORDER BY o.seq DESC LIMIT 1),
                         (SELECT o.value_json FROM observations o WHERE o.job_id = t.job_id
                             AND o.target_id = t.target_id AND o.attempt = t.attempt
-                            AND o.kind = 'follow_up_evidence' ORDER BY o.seq DESC LIMIT 1)
+                            AND o.kind = 'follow_up_evidence' ORDER BY o.seq DESC LIMIT 1),
+                        (SELECT o.value_json FROM observations o WHERE o.job_id = t.job_id
+                            AND o.target_id = t.target_id AND o.attempt = t.attempt
+                            AND o.kind = 'readiness' ORDER BY o.seq DESC LIMIT 1)
                  FROM targets t WHERE t.job_id = ?1 AND t.attempt =
                     (SELECT MAX(l.attempt) FROM targets l WHERE l.job_id = t.job_id AND l.target_id = t.target_id)
                  ORDER BY t.target_id",
@@ -1463,7 +1493,12 @@ impl SwapJobStore {
                         attempt: row.get(1)?,
                         phase: row.get(2)?,
                         disposition: row.get(3)?,
-                        reason: row.get(4)?,
+                        reason: row.get::<_, Option<String>>(4)?.or_else(|| {
+                            failed_readiness(
+                                row.get::<_, Option<String>>(3).ok().flatten().as_deref(),
+                                row.get::<_, Option<String>>(10).ok().flatten().as_deref(),
+                            )
+                        }),
                         uncertain_effects: row.get(5)?,
                         effects: row.get(6)?,
                         continuation: row
