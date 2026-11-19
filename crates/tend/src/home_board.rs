@@ -1797,7 +1797,13 @@ pub fn build(input: &BoardInput) -> Value {
         ));
     }
     turn.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
-    let needs_count = turn.len();
+    // Questions nobody can answer (`subject_check_v1`) stay in the lane for
+    // older clients, which list them as before, but are not the person's
+    // turn: a client that knows them folds them into their own group.
+    let needs_count = turn
+        .iter()
+        .filter(|entry| entry.4.pointer("/entry/unanswerable").is_none())
+        .count();
     let needs_you = grouped(
         turn.into_iter()
             .map(|(system, _, _, repo, item)| (repo, system, item))
@@ -1843,6 +1849,12 @@ pub fn build(input: &BoardInput) -> Value {
             "covers": section.get("covers"),
             "truncated": section.pointer("/queue/truncated"),
             "unavailable": section.get("unavailable"),
+            // `subject_check_v1`: folded questions can be kept here, and
+            // closed while `[review] close_unanswerable` is on; their exact
+            // count even when the list was cut.
+            "subject_check": section.get("subject_check"),
+            "close_unanswerable": section.get("close_unanswerable"),
+            "unanswerable_count": section.pointer("/queue/unanswerable_count"),
         })).collect::<Vec<_>>(),
         "agent_count": agents.len(),
     })

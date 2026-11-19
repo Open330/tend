@@ -838,3 +838,21 @@ dialog.share-dialog ul { margin: 0; padding-left: 18px; }
   .ex-detail-icon { width: 32px; height: 32px; }
   .ex-session, .ex-window { min-height: 40px; }
 }
+
+/* ---- Can't be answered (Your turn's folded group) --------------------- */
+.cant-answer { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--border); }
+.cant-answer-toggle { color: var(--text-secondary); }
+.cant-answer:not(.open) .cant-answer-toggle .i-chevron { transform: rotate(-90deg); }
+.cant-answer-help { margin: 0 4px; color: var(--text-tertiary); font-size: var(--size-meta); }
+.cant-answer .confirm-close { display: grid; gap: 8px; padding: 10px; border: 1px solid color-mix(in srgb, var(--red) 45%, var(--border)); border-radius: var(--card-radius); background: var(--editor); }
+.cant-answer .confirm-close p { margin: 0; font-size: var(--size-detail); }
+.btn.primary.danger { background: var(--red); color: #fff; }
+.btn.primary.danger:hover { background: color-mix(in srgb, var(--red) 88%, transparent); }
+.cant-answer-item { gap: 5px; opacity: .9; }
+.cant-answer-item .why { display: flex; gap: 5px; align-items: center; color: var(--text-secondary); font-size: var(--size-detail); }
+.cant-answer-item .why .icon { color: var(--text-tertiary); }
+.cant-answer-item .meta .btn { margin-left: auto; }
+.decided.closedByTend .outcome .icon, .decided.closedByTend .inset .outcome .icon { color: var(--text-tertiary); }
+.cant-answer-report { display: flex; gap: 6px; align-items: flex-start; justify-content: space-between; }
+.cant-answer-report .result { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.cant-answer .confirm-close p.undo { font-weight: 700; color: var(--red); }

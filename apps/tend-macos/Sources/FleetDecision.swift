@@ -38,6 +38,12 @@ struct FleetDecision: Identifiable, Hashable, Sendable {
     /// read it. Not proof that it exited (a new asker can be missing from a
     /// board read before it started), so see `asksUnlisted(at:)`.
     var askerUnlisted = false
+    /// Nobody can answer it: tendd established its asker gone for a day
+    /// (`subject_check_v1`). Listed under Can't be answered, not in Your
+    /// turn, and not counted.
+    var unanswerable: TendUnanswerable?
+
+    var isUnanswerable: Bool { unanswerable != nil }
 
     /// How long a question must have waited before an unlisted asker is
     /// shown: longer than any board refresh, so a fresh asker is not
@@ -47,7 +53,7 @@ struct FleetDecision: Identifiable, Hashable, Sendable {
     /// Whether to tell the person the asker is not listed: unlisted, and
     /// asked longer ago than any board refresh takes.
     func asksUnlisted(at now: Date) -> Bool {
-        guard askerUnlisted, let since else { return false }
+        guard askerUnlisted, unanswerable == nil, let since else { return false }
         return now.timeIntervalSince(since) >= Self.unlistedGrace
     }
 
@@ -118,6 +124,7 @@ struct FleetDecision: Identifiable, Hashable, Sendable {
         since = TendUsageTimestamp.parse(entry.createdAt)
         evidence = entry.decision?.evidence ?? []
         isSystemAsk = entry.system == true || Self.tendServices.contains(entry.fromSessionID)
+        unanswerable = entry.unanswerable
     }
 
     /// The services an older tendd's own items come from.
@@ -206,14 +213,58 @@ enum FleetDecisions {
         } else {
             reviews.forEach { add(FleetDecision(review: $0, host: localHost)) }
         }
+        // A cut page of a queue that folds questions: a local question it
+        // left out may be folded, so it is never added back as live (the
+        // queue's own truncation note says more are waiting).
+        let omittedMayBeFolded = queue.map(FleetDecisions.omitsFoldedRows) ?? false
         let pending = messages
             .filter { $0.isHumanRequest && $0.request.needsHumanResponse }
             .filter { queue?.isComplete != true || $0.host.alias != localHost.alias }
+            .filter { !(omittedMayBeFolded && $0.host.alias == localHost.alias) }
             .sorted { $0.request.createdAt < $1.request.createdAt }
         pending.forEach { add(FleetDecision(humanRequest: $0)) }
         // tendd's own items after everything an agent asked or handed in,
-        // whichever host or daemon version listed them.
-        return result.filter { !$0.isSystemAsk } + result.filter(\.isSystemAsk)
+        // whichever host or daemon version listed them; questions nobody
+        // can answer last.
+        let live = result.filter { !$0.isUnanswerable }
+        return live.filter { !$0.isSystemAsk } + live.filter(\.isSystemAsk) + result.filter(\.isUnanswerable)
+    }
+
+    /// Whether a local question missing from this queue's page may be one
+    /// it folded: the page was cut and folded questions exist (folded rows
+    /// are listed after every live one, so they are the first to be cut).
+    static func omitsFoldedRows(_ queue: TendPendingQueue) -> Bool {
+        queue.truncated && queue.unanswerableCount > 0
+    }
+
+    /// Which local questions the badges may count, from this Mac's queue.
+    static func foldedQuestions(_ queue: TendPendingQueue?, localHost: String) -> FleetFoldedQuestions {
+        guard let queue else { return FleetFoldedQuestions() }
+        var folded = FleetFoldedQuestions(host: localHost)
+        var live = Set<String>()
+        for case .humanRequest(let entry) in queue.items {
+            let id = "\(localHost):\(entry.requestID)"
+            if entry.unanswerable != nil { folded.folded.insert(id) } else { live.insert(id) }
+        }
+        // A cut page that may have left folded questions out: only what it
+        // lists as live counts on this host.
+        if omitsFoldedRows(queue) { folded.live = live }
+        return folded
+    }
+}
+
+/// The questions on this Mac no badge counts: the ones the queue folded,
+/// and, when its page was cut with folded questions past it, every local
+/// one it did not list as live (`live`). Ids are `host:request`.
+struct FleetFoldedQuestions: Equatable, Sendable {
+    var folded: Set<String> = []
+    var host: String?
+    var live: Set<String>?
+
+    func counts(_ message: TendOperatorMessage) -> Bool {
+        if folded.contains(message.id) { return false }
+        if let live, message.host.alias == host { return live.contains(message.id) }
+        return true
     }
 }
 

@@ -518,6 +518,30 @@ fn decision_sources_that_could_not_be_read_are_reported() {
 }
 
 #[test]
+fn unanswerable_questions_stay_listed_but_leave_your_turns_count() {
+    let decisions = vec![json!({
+        "alias": "mba", "local": true, "control": true, "decides_reviews": true,
+        "subject_check": true, "close_unanswerable": false,
+        "queue": {"items": [
+            {"kind": "human_request", "request_id": "live", "body": "merge?", "created_at": at(30), "from_session_id": "a"},
+            {"kind": "human_request", "request_id": "gone", "body": "deploy?", "created_at": at(3000), "from_session_id": "b",
+             "unanswerable": {"cause": "pane_gone", "episode": "ep1", "since": at(1600), "pane": "%9"}},
+        ], "truncated": true, "unanswerable_count": 3},
+    })];
+    let b = board(BoardInput {
+        decisions,
+        ..Default::default()
+    });
+    let listed = items(&b, "needs_you");
+    assert_eq!(listed.len(), 2, "older clients still see both: {listed:?}");
+    assert_eq!(b["lanes"]["needs_you"]["count"], 1);
+    let host = &b["decision_hosts"][0];
+    assert_eq!(host["subject_check"], true);
+    assert_eq!(host["close_unanswerable"], false);
+    assert_eq!(host["unanswerable_count"], 3);
+}
+
+#[test]
 fn a_long_helper_chain_resolves_to_its_root() {
     let claimed = |from: &str| {
         format!(

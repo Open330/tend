@@ -14,10 +14,13 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var seen: [String] = []
     /// Each request's path with the bearer token it carried.
     nonisolated(unsafe) static var authorized: [(path: String, token: String?)] = []
+    /// The last body sent to each path, and each request's query.
+    nonisolated(unsafe) static var bodies: [String: Data] = [:]
+    nonisolated(unsafe) static var queries: [String] = []
     static let lock = NSLock()
 
     static func reset() {
-        lock.withLock { replies = [:]; seen = []; authorized = [] }
+        lock.withLock { replies = [:]; seen = []; authorized = []; bodies = [:]; queries = [] }
     }
 
     static func on(_ path: String, _ replies: Reply...) {
@@ -29,10 +32,26 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
 
     override func startLoading() {
         let path = request.url?.path ?? ""
+        var body = request.httpBody
+        if body == nil, let stream = request.httpBodyStream {
+            stream.open()
+            var data = Data()
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            while stream.hasBytesAvailable {
+                let read = stream.read(&buffer, maxLength: buffer.count)
+                if read <= 0 { break }
+                data.append(buffer, count: read)
+            }
+            stream.close()
+            body = data
+        }
+        let query = request.url?.query ?? ""
         let reply: Reply = Self.lock.withLock {
             Self.seen.append(path)
             let bearer = request.value(forHTTPHeaderField: "Authorization").map { $0.replacingOccurrences(of: "Bearer ", with: "") }
             Self.authorized.append((path, bearer))
+            Self.queries.append("\(path)?\(query)")
+            if let body, !body.isEmpty { Self.bodies[path] = body }
             guard var queue = Self.replies[path], !queue.isEmpty else {
                 return Reply(status: 404, body: #"{"error":"no stub"}"#)
             }

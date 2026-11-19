@@ -230,12 +230,18 @@ struct HostQueue: Decodable, Hashable, Sendable, Identifiable {
     let covers: [String]
     let unavailable: [String]
     let queue: TendPendingQueue
+    /// Questions nobody can answer can be kept here (`subject_check_v1`).
+    var subjectCheck = false
+    /// And closed, while the host's `[review] close_unanswerable` is on.
+    var closeUnanswerable = false
 
     var id: String { alias }
 
     enum CodingKeys: String, CodingKey {
         case alias, local, control, covers, unavailable, queue
         case decidesReviews = "decides_reviews"
+        case subjectCheck = "subject_check"
+        case closeUnanswerable = "close_unanswerable"
     }
 
     init(from decoder: Decoder) throws {
@@ -249,6 +255,8 @@ struct HostQueue: Decodable, Hashable, Sendable, Identifiable {
         // A section whose queue cannot be read is an error, never an empty
         // queue: "nothing needs you" must mean that.
         queue = try values.decode(TendPendingQueue.self, forKey: .queue)
+        subjectCheck = (try? values.decodeIfPresent(Bool.self, forKey: .subjectCheck)) ?? nil ?? false
+        closeUnanswerable = (try? values.decodeIfPresent(Bool.self, forKey: .closeUnanswerable)) ?? nil ?? false
     }
 }
 
@@ -401,7 +409,8 @@ struct DashboardClient: Sendable {
     }
 
     func history(limit: Int = 100) async throws -> [HostHistory] {
-        let (status, data) = try await send("GET", "/api/decisions/history?limit=\(limit)", authorized: true)
+        // tend's own closures too, with why (an older dashboard ignores it).
+        let (status, data) = try await send("GET", "/api/decisions/history?limit=\(limit)&closures=true", authorized: true)
         try check(status, data)
         return try decode(Hosts<HostHistory>.self, data).hosts
     }
@@ -412,6 +421,26 @@ struct DashboardClient: Sendable {
         if let host { body["host"] = host }
         let (status, data) = try await send("POST", "/api/decisions/requests/\(Self.segment(requestID))", body: body, authorized: true)
         try check(status, data)
+    }
+
+    /// `POST /api/decisions/keep`: keep a question nobody can answer in
+    /// Your turn through its current episode (this host only).
+    func keep(requestID: String, episode: String) async throws {
+        let body: [String: Any] = ["request_id": requestID, "episode": episode]
+        let (status, data) = try await send("POST", "/api/decisions/keep", body: body, authorized: true)
+        try check(status, data)
+    }
+
+    /// `POST /api/decisions/close-unanswerable`: close exactly these pairs
+    /// (this host only); what was skipped comes back.
+    func closeUnanswerable(_ items: [(requestID: String, episode: String)]) async throws -> TendCloseOutcome {
+        let body: [String: Any] = [
+            "items": items.map { ["request_id": $0.requestID, "episode": $0.episode] },
+            "by_label": "ios",
+        ]
+        let (status, data) = try await send("POST", "/api/decisions/close-unanswerable", body: body, authorized: true)
+        try check(status, data)
+        return try decode(TendCloseOutcome.self, data)
     }
 
     /// Decide a result: accept (optionally with one of its options), send it
