@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.25] - 2026-11-19
+
 ### Added
 
 - Tend for Mac's Home lists open review items on other Fleet hosts, each
