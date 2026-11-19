@@ -3,6 +3,8 @@
 // login state and sign-out. No DOM here, so the rules are tested on their
 // own.
 
+import { legacyLink } from "./legacy-link.mjs";
+
 export const TOKEN_KEY = "tend.token";
 /// Where a visitor goes when `return_to` is missing or refused.
 export const DEFAULT_RETURN = "/home";
@@ -58,11 +60,14 @@ export function consumeToken(
   storage = globalThis.localStorage,
   replace = (url) => globalThis.history.replaceState(null, "", url),
 ) {
-  const url = new URL(`${location?.pathname || "/"}${location?.search || ""}${location?.hash || ""}`, BASE);
-  const fragment = new URLSearchParams(url.hash.replace(/^#/, ""));
-  if (!fragment.has("token") && !url.searchParams.has("token")) return false;
-  const token = fragment.get("token") || url.searchParams.get("token");
-  url.searchParams.delete("token");
+  const pathname = location?.pathname || "/";
+  const search = location?.search || "";
+  const hash = location?.hash || "";
+  const has = (part) => new URLSearchParams(part.replace(/^[?#]/, "")).has("token");
+  if (!has(search) && !has(hash)) return false;
+  // The shell's own scrub (legacy-link.mjs), so both pages take a
+  // credential out of an address the same way.
+  const { token, href } = legacyLink(pathname, search, hash);
   if (token) {
     try {
       storage?.setItem(TOKEN_KEY, token);
@@ -70,7 +75,7 @@ export function consumeToken(
       // Storage blocked: the session cookie or a proxy may still authorize.
     }
   }
-  replace(`${url.pathname}${url.search}${withoutToken(url.hash)}`);
+  replace(href);
   return Boolean(token);
 }
 

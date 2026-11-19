@@ -159,6 +159,14 @@ test("the return address keeps what each page names, never a credential", () => 
     home.shellReturnPath("/explore", "#session=api&window=%401&socket=s&host=mini&token=x&workspace=tend&wsocket=w&pane=%253&junk=1"),
     "/explore#session=api&window=%401&socket=s&host=mini&workspace=tend&wsocket=w&pane=%253",
   );
+  // What the link adapter (legacy-link.mjs) maps an old link to is what a
+  // 401 keeps for after sign-in, without the link's credential.
+  for (const old of ["#window=%403&session=api&socket=s&token=x", "#session=api&socket=s&workspace=tend&wsocket=w", "#pane=%251&socket=s&workspace=tend"]) {
+    const mapped = new URL(home.legacyLink("/", "", old).href, "http://x");
+    assert.equal(mapped.pathname, "/explore");
+    assert.equal(home.shellReturnPath("/explore", mapped.hash), `/explore${mapped.hash}`, old);
+    assert.doesNotMatch(home.welcomeHref("/explore", mapped.hash), /token/);
+  }
   assert.equal(home.welcomeHref("/explore", "#workspace=tend&token=x"), `/welcome?return_to=${encodeURIComponent("/explore#workspace=tend")}`);
   assert.equal(home.shellReturnPath("/explore/messages", "#message=r1&token=x"), "/explore/messages#message=r1");
   assert.equal(home.shellReturnPath("/settings", "#token=x"), "/settings");

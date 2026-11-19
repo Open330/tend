@@ -411,7 +411,9 @@ The activity rail on the left switches between pages:
 The classic workbench (workspaces, the Work board, collaboration, the
 timeline and the execution inventory) is at `/workbench`, until it is
 retired. Links the workbench made before (`/#pane=…`,
-`/#workspace=…`, `/#window=…`, `/#session=…`, `/#message=…`) still open it.
+`/#workspace=…`, `/#window=…`, `/#session=…`, `/#message=…`) open in
+Explore or Messages (legacy-link.mjs), their credential stored and
+scrubbed first.
 
 ## Home (needs you)
 
