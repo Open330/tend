@@ -15,6 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `tend swap` works on up to 4 agents at once (`[swap] jobs`, `--jobs N`,
+  1–16; `--jobs 1` keeps the old order), each still stopped, relaunched and
+  checked in its own pane with every guarantee it had alone. Tend's own
+  activity on one account home (Codex hook trust, quitting an agent,
+  starting a relaunch until its prompt shows) still goes one at a time, and
+  a host has at most 16 agents in progress across its swap jobs. A daemon
+  job prints a line as each agent settles. Jobs accepted by an older daemon
+  resume one at a time.
 - iOS: the app is in Korean as well as English, with Tend for Mac's
   wording wherever the two share a sentence.
 - iOS: readability on real phones. Quieter text (meta rows, hints, times,

@@ -31,7 +31,7 @@ use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use tend::backend::SharedBackend;
 use tend::event::AgentKind;
 use tend::state::Agent;
@@ -105,6 +105,9 @@ impl ResolveOverrides for SwapOverrides {
             Some(other) => return Err(format!("unknown continue evidence {other:?}")),
         };
         request.exclude.clone_from(&self.exclude);
+        if let Some(jobs) = self.jobs {
+            request.jobs = usize::from(jobs).clamp(1, tend::swap_api::MAX_SWAP_JOBS);
+        }
         request.dry_run = false;
         Ok(request)
     }
@@ -903,6 +906,13 @@ pub(crate) struct Service<E: Engine> {
     /// Why the last pruning failed, if it did.
     maintenance: Mutex<Option<String>>,
     fault: Mutex<Option<String>>,
+    /// Held while a target's start is recorded and while a fault is set, so
+    /// a start either happened before the fault or sees it.
+    admission: Mutex<()>,
+    /// Targets in flight on this host, across every job; at most
+    /// [`tend::swap_api::MAX_SWAP_JOBS`].
+    inflight: Mutex<usize>,
+    slot_free: std::sync::Condvar,
     spawner: Spawner,
     /// The ownership lock ([`ownership_lock`]). Owned here, where every
     /// running job holds a reference, so it is released only once the
@@ -925,6 +935,53 @@ struct AttemptRun<T> {
     report_index: usize,
     identity: TargetIdentity,
     target: T,
+}
+
+/// How many workers one job's run has: the count accepted with it (none
+/// recorded: a journal from before parallel swaps, run one at a time),
+/// never more than its targets or [`tend::swap_api::MAX_SWAP_JOBS`]; an
+/// automation firing, which re-checks its trigger before each start, one.
+fn workers_for(accepted: Option<usize>, automation: bool, targets: usize) -> usize {
+    if automation {
+        return 1;
+    }
+    accepted
+        .unwrap_or(1)
+        .clamp(1, tend::swap_api::MAX_SWAP_JOBS)
+        .min(targets)
+        .max(1)
+}
+
+/// What every worker of one job's run reads.
+#[derive(Clone, Copy)]
+struct Lane<'a> {
+    job: &'a str,
+    request: &'a SwapRequest,
+    accepted: &'a crate::swap_job::AcceptedPlan,
+    deadline: Option<i64>,
+    began: std::time::Instant,
+}
+
+/// The targets one job's workers share: those not started yet, and the
+/// guard adopted from the job that handed this one over, until the worker
+/// that reaches its endpoint takes it.
+struct Queue<T> {
+    pending: Mutex<std::collections::VecDeque<AttemptRun<T>>>,
+    adopted: Mutex<Option<Box<dyn TargetGuard>>>,
+}
+
+/// A host-wide target slot ([`Service::slot`]).
+struct Slot<'a> {
+    inflight: &'a Mutex<usize>,
+    free: &'a std::sync::Condvar,
+}
+
+impl Drop for Slot<'_> {
+    fn drop(&mut self) {
+        let mut inflight = self.inflight.lock().unwrap_or_else(PoisonError::into_inner);
+        *inflight = inflight.saturating_sub(1);
+        self.free.notify_one();
+    }
 }
 
 impl<E: Engine> Service<E> {
@@ -950,6 +1007,9 @@ impl<E: Engine> Service<E> {
             pruned_at: Mutex::new(Some(std::time::Instant::now())),
             maintenance: Mutex::new(None),
             fault: Mutex::new(None),
+            admission: Mutex::new(()),
+            inflight: Mutex::new(0),
+            slot_free: std::sync::Condvar::new(),
             spawner: thread_spawner(),
             ownership: None,
             done: Mutex::new(HashMap::new()),
@@ -1177,8 +1237,56 @@ impl<E: Engine> Service<E> {
     }
 
     fn set_fault(&self, why: String) {
+        // Never called while `admission` is held (see `admit`).
+        let _admission = self
+            .admission
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         if let Ok(mut fault) = self.fault.lock() {
             fault.get_or_insert(why);
+        }
+    }
+
+    /// Record that a target starts, unless the service faulted first or a
+    /// cancel came: checked and recorded as one step against [`Self::set_fault`].
+    /// `None`: the worker stops (faulted, or the boundary could not be recorded).
+    fn admit(&self, job: &str, target_id: u32, attempt: u32) -> Option<Boundary> {
+        let recorded = {
+            let _admission = self
+                .admission
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if self.fault().is_some() {
+                return None;
+            }
+            self.store
+                .start_or_cancel(&self.lease, job, target_id, attempt, true)
+        };
+        match recorded {
+            Ok(boundary) => Some(boundary),
+            Err(error) => {
+                self.set_fault(format!(
+                    "job {job}: could not record the boundary of target {target_id}: {error}"
+                ));
+                None
+            }
+        }
+    }
+
+    /// One of this host's [`tend::swap_api::MAX_SWAP_JOBS`] target slots,
+    /// waited for; freed when dropped.
+    fn slot(&self) -> Slot<'_> {
+        let mut inflight = self.inflight.lock().unwrap_or_else(PoisonError::into_inner);
+        while *inflight >= tend::swap_api::MAX_SWAP_JOBS {
+            inflight = self
+                .slot_free
+                .wait(inflight)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+        *inflight += 1;
+        Slot {
+            inflight: &self.inflight,
+            free: &self.slot_free,
         }
     }
 
@@ -1350,6 +1458,7 @@ impl<E: Engine> Service<E> {
                 .map(|(report_index, identity, _)| planned_target(*report_index, identity))
                 .collect(),
             settled,
+            jobs: Some(resolved.jobs),
         };
         let created = match this
             .store
@@ -1612,6 +1721,8 @@ impl<E: Engine> Service<E> {
                 .map(|(report_index, identity, _)| planned_target(*report_index, identity))
                 .collect(),
             settled,
+            // A retry runs as its parent did.
+            jobs: plan.jobs,
         };
         let created = match this.store.create_retry_job(
             &this.lease,
@@ -1784,9 +1895,10 @@ impl<E: Engine> Service<E> {
         Ok(())
     }
 
-    /// Run targets in report order, rotating busy targets while waiting for idle.
-    /// Halt the whole job on the first failure to record.
-    #[allow(clippy::too_many_lines)] // boundaries, idle waiting, execution and journalling in order
+    /// Run targets in report order, up to `request.jobs` at once, rotating
+    /// busy targets while waiting for idle. Halt the whole job on the first
+    /// failure to record: from then on no worker starts a further target,
+    /// and the ones already started run to their end.
     fn run(
         &self,
         job: &str,
@@ -1795,9 +1907,7 @@ impl<E: Engine> Service<E> {
         adopted: Option<Box<dyn TargetGuard>>,
         still_due: Option<&StillDue>,
     ) {
-        let mut adopted = adopted;
         let began = std::time::Instant::now();
-        let mut pending: std::collections::VecDeque<_> = runs.into();
         let accepted = match self.store.plan(job) {
             Ok(plan) => plan,
             Err(error) => {
@@ -1808,15 +1918,83 @@ impl<E: Engine> Service<E> {
             }
         };
         let deadline = accepted.resume.as_ref().map(|policy| policy.idle_deadline);
+        // An automation firing (`still_due`) re-checks its trigger at the
+        // last moment before each start; it covers one agent and runs on
+        // this thread, one target at a time, as it always has. Otherwise the
+        // count accepted with the job: a resumed or retried job keeps it.
+        let workers = workers_for(accepted.jobs, still_due.is_some(), runs.len());
+        let queue = Queue {
+            pending: Mutex::new(runs.into()),
+            adopted: Mutex::new(adopted),
+        };
+        let lane = Lane {
+            job,
+            request,
+            accepted: &accepted,
+            deadline,
+            began,
+        };
+        // A worker that panics faults the service at once, so no other
+        // worker starts a further target; its own target keeps its pane
+        // reserved and unfinished, for recovery to reconcile.
+        let guarded = |still_due: Option<&StillDue>| {
+            let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.work(&lane, &queue, still_due);
+            }));
+            if ran.is_err() {
+                self.set_fault(format!(
+                    "job {job}: the swap executor panicked; no further target is started"
+                ));
+            }
+        };
+        if workers == 1 {
+            guarded(still_due);
+        } else {
+            std::thread::scope(|scope| {
+                for _ in 0..workers {
+                    scope.spawn(|| guarded(None));
+                }
+            });
+        }
+        if self.fault().is_none() {
+            if let Err(error) = self.store.finish(&self.lease, job) {
+                self.set_fault(format!("job {job}: could not record its end: {error}"));
+            }
+        }
+    }
+
+    /// One worker of [`Self::run`]: take the next target from `queue` and
+    /// carry it through, until the queue is empty or the service faults.
+    #[allow(clippy::too_many_lines)] // boundaries, idle waiting, execution and journalling in order
+    fn work(&self, lane: &Lane<'_>, queue: &Queue<E::Target>, still_due: Option<&StillDue>) {
+        let Lane {
+            job,
+            request,
+            accepted,
+            deadline,
+            began,
+        } = *lane;
         let mut next_poll = std::time::Instant::now();
-        while let Some(AttemptRun {
-            target_id,
-            attempt,
-            report_index,
-            identity,
-            mut target,
-        }) = pending.pop_front()
-        {
+        loop {
+            let next = queue
+                .pending
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .pop_front();
+            let Some(AttemptRun {
+                target_id,
+                attempt,
+                report_index,
+                identity,
+                mut target,
+            }) = next
+            else {
+                break;
+            };
+            // Before the pane is held: a worker waiting for a host slot
+            // holds no pane. Dropped at the end of this target, or when it
+            // goes back to wait for idle.
+            let slot = self.slot();
             if self.fault().is_some() {
                 // Halted: later targets are never reached, their pane stays
                 // reserved until the daemon restarts and recovers the job.
@@ -1844,10 +2022,15 @@ impl<E: Engine> Service<E> {
                 continue;
             }
             // An adopted guard protects the one endpoint it was taken for.
-            let held = match adopted.take() {
+            let taken = queue
+                .adopted
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take();
+            let held = match taken {
                 Some(guard) if guard.covers(&identity.endpoint) => Ok(guard),
                 other => {
-                    adopted = other;
+                    *queue.adopted.lock().unwrap_or_else(PoisonError::into_inner) = other;
                     self.provider
                         .acquire_guard(&identity.pane, identity.socket.as_deref())
                 }
@@ -1902,19 +2085,24 @@ impl<E: Engine> Service<E> {
                             // the per-endpoint reservation, to reject duplicate swaps;
                             // neither unrelated endpoints nor submissions are held.
                             drop(guard);
-                            pending.push_back(AttemptRun {
-                                target_id,
-                                attempt,
-                                report_index,
-                                identity,
-                                target,
-                            });
+                            drop(slot);
+                            let rotated = {
+                                let mut pending =
+                                    queue.pending.lock().unwrap_or_else(PoisonError::into_inner);
+                                pending.push_back(AttemptRun {
+                                    target_id,
+                                    attempt,
+                                    report_index,
+                                    identity,
+                                    target,
+                                });
+                                pending
+                                    .front()
+                                    .is_some_and(|run| run.target_id <= target_id)
+                            };
                             // Rotate the queue, so a busy target never blocks ready targets.
                             // Bound CPU use and cancellation latency to one second per round.
-                            if pending
-                                .front()
-                                .is_some_and(|run| run.target_id <= target_id)
-                            {
+                            if rotated {
                                 let now = std::time::Instant::now();
                                 if now < next_poll {
                                     std::thread::sleep(next_poll - now);
@@ -1964,9 +2152,9 @@ impl<E: Engine> Service<E> {
                 );
                 continue;
             }
-            // The pane is held: start it, unless a cancel came first. From
-            // here on it runs to its end.
-            match self.boundary(job, target_id, attempt, true) {
+            // The pane is held: start it, unless a cancel or a fault came
+            // first. From here on it runs to its end.
+            match self.admit(job, target_id, attempt) {
                 Some(Boundary::Started) => {}
                 Some(Boundary::Deferred) => {
                     self.release(&identity.endpoint);
@@ -2014,11 +2202,7 @@ impl<E: Engine> Service<E> {
             if recorded.is_ok() && !uncertain && !failed {
                 self.release(&identity.endpoint);
             }
-        }
-        if self.fault().is_none() {
-            if let Err(error) = self.store.finish(&self.lease, job) {
-                self.set_fault(format!("job {job}: could not record its end: {error}"));
-            }
+            drop(slot);
         }
     }
 

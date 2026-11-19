@@ -307,7 +307,35 @@ continue_when = "limited" # limited | always | never
 continue_evidence = "binding" # binding | verified
 aas = "aas"              # optional aas backend; the daemon also looks in /opt/homebrew/bin etc.
 relaunch = "type"        # type | respawn: how a pane that still has its shell is relaunched
+jobs = 4                 # agents swapped at once (1-16); --jobs N for one swap
 ```
+
+### Several agents at once
+
+A swap works on up to `jobs` agents at once (`[swap] jobs`, default 4;
+`tend swap --jobs N` for one swap, 1–16; `--jobs 1` is the old one-at-a-time
+order). Each agent still goes through its own pane in order — stopped,
+relaunched, waited for, checked, followed up — and keeps every guarantee it
+had alone: a mid-turn agent is not stopped without `--force`, the same
+conversation is resumed, the follow-up follows `continue_when` and
+`continue_evidence`, and accounts are assigned once, while planning, before
+any agent is touched. A target that fails does not hold up or change the
+others. Across all of a host's swap jobs at most 16 agents are in progress at
+once.
+
+What runs at the same time is limited per account home (the provider's
+`CLAUDE_CONFIG_DIR` / `CODEX_HOME`, from the account's profile or
+`aas export`): Tend's own bursts of activity on one home — carrying Codex hook
+trust there, quitting an agent that runs on it, and starting a relaunch on it
+until it first draws its prompt — go one at a time. So moving twenty agents
+onto one account overlaps their waits and checks but not their boots. A home
+that cannot be told shares one gate per provider with every other unknown
+home. This keeps a swap from adding a burst of simultaneous starts on one
+home; the agents already running there keep writing to it as they always do.
+
+While a daemon job runs, `tend swap` prints a line as each agent settles
+(`tend swap: [3/20] swapped %5 a@claude -> b@claude`) and the full report at
+the end.
 
 ### How the agent is started again
 

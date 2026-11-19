@@ -264,7 +264,17 @@ fn target(kind: AgentKind, direct: bool, busy: bool) -> Target {
             respawn_shell: Some("/bin/sh".into()),
             ..super::preflight::Prerequisites::default()
         },
+        // Homes of their own: the gates are process-wide and tests run at once.
+        source_home: own_home(),
+        destination_home: own_home(),
+        boot: std::cell::RefCell::new(None),
     }
+}
+
+fn own_home() -> crate::home_gate::HomeKey {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    crate::home_gate::HomeKey::unknown(&format!("executor-test-{n}"))
 }
 
 fn launch() -> PaneLaunch {

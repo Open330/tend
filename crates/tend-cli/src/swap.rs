@@ -107,6 +107,10 @@ pub struct Args {
     /// assigned account). Default from `[swap] continue_evidence`.
     #[arg(long = "continue-evidence", value_enum)]
     continue_evidence: Option<Evidence>,
+    /// How many agents to swap at once, each in its own pane (1-16).
+    /// Default from `[swap] jobs` (4).
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u8).range(1..=16))]
+    jobs: Option<u8>,
     /// Print the plan without stopping or typing anything.
     #[arg(long)]
     dry_run: bool,
@@ -131,7 +135,7 @@ pub struct Args {
         conflicts_with_all = [
             "targets", "all", "limited", "provider", "to", "spread", "force", "bare",
             "continue_text", "continue_legacy", "continue_when", "no_continue",
-            "continue_evidence", "dry_run",
+            "continue_evidence", "dry_run", "jobs",
             "exclude", "local", "when_idle", "idle_timeout",
         ]
     )]
@@ -147,7 +151,7 @@ pub struct Args {
         conflicts_with_all = [
             "targets", "all", "limited", "provider", "to", "spread", "bare",
             "continue_text", "continue_legacy", "continue_when", "no_continue",
-            "dry_run", "exclude", "local", "when_idle", "idle_timeout", "status",
+            "dry_run", "jobs", "exclude", "local", "when_idle", "idle_timeout", "status",
         ]
     )]
     retry: Option<String>,
@@ -160,7 +164,7 @@ pub struct Args {
         conflicts_with_all = [
             "targets", "all", "limited", "provider", "to", "spread", "force", "bare",
             "continue_text", "continue_legacy", "continue_when", "no_continue",
-            "continue_evidence", "dry_run", "exclude", "local", "when_idle", "idle_timeout", "status", "retry",
+            "continue_evidence", "dry_run", "jobs", "exclude", "local", "when_idle", "idle_timeout", "status", "retry",
         ]
     )]
     cancel: Option<String>,
@@ -287,6 +291,9 @@ fn request(args: &Args, config: &SwapConfig) -> SwapRequest {
     }
     request.dry_run = args.dry_run;
     request.exclude.clone_from(&args.exclude);
+    if let Some(jobs) = args.jobs {
+        request.jobs = usize::from(jobs);
+    }
     request
 }
 
@@ -502,6 +509,7 @@ fn overrides(args: &Args, explicit_config: Option<&Path>) -> SwapOverrides {
         no_continue: args.no_continue,
         continue_evidence: args.continue_evidence.map(|e| e.as_str().to_owned()),
         exclude: args.exclude.clone(),
+        jobs: args.jobs,
         caller_config: explicit_config.map(Path::to_path_buf),
     }
 }
@@ -622,7 +630,9 @@ async fn follow_from(
 ) -> JobEnd {
     let mut cancel = cancel;
     let job = JobRef::Id(view.job_id.clone());
+    let mut shown = std::collections::HashSet::new();
     loop {
+        progress(&view, &mut shown);
         if settled(&view) {
             return JobEnd::Ended(view);
         }
@@ -638,6 +648,38 @@ async fn follow_from(
             Ok(next) => view = next,
             Err(error) => return JobEnd::Unknown(format!("reading it back: {error}")),
         }
+    }
+}
+
+/// One stderr line per target as it settles, while the job runs: several
+/// targets run at once, and the report proper comes at the end.
+fn progress(view: &JobView, shown: &mut std::collections::HashSet<usize>) {
+    let total = view.entries.len();
+    let mut entries: Vec<&EntryView> = view.entries.iter().collect();
+    entries.sort_by_key(|entry| entry.report_index);
+    for entry in entries {
+        let Some(disposition) = entry.disposition.as_deref() else {
+            continue;
+        };
+        // A target's row is settled a moment before its full report is
+        // kept: wait for the report, unless the job has ended without one.
+        if disposition == "deferred"
+            || (entry.outcome.is_none() && !settled(view))
+            || !shown.insert(entry.report_index)
+        {
+            continue;
+        }
+        let outcome = entry_outcome(entry);
+        let accounts = match (&outcome.from, &outcome.to) {
+            (Some(from), Some(to)) => format!(" {from} -> {to}"),
+            (None, Some(to)) => format!(" -> {to}"),
+            _ => String::new(),
+        };
+        eprintln!(
+            "tend swap: [{}/{total}] {disposition} {}{accounts}",
+            shown.len(),
+            entry.pane.as_deref().unwrap_or("?"),
+        );
     }
 }
 

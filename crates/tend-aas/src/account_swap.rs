@@ -128,6 +128,8 @@ pub struct SwapRequest {
     /// The `aas` program (`[swap] aas`), asked for an account's
     /// `CODEX_HOME` when Codex hook trust is carried over.
     pub aas: String,
+    /// Targets worked on at once (`[swap] jobs`, `--jobs`), 1..=16.
+    pub jobs: usize,
 }
 
 impl SwapRequest {
@@ -151,6 +153,7 @@ impl SwapRequest {
             restore_draft: true,
             relaunch: config.relaunch,
             aas: config.aas.clone(),
+            jobs: config.jobs.clamp(1, tend::swap_api::MAX_SWAP_JOBS),
         }
     }
 
@@ -933,7 +936,8 @@ pub fn find_aas(configured: &str) -> Option<String> {
 
 /// Plan and carry out `request` over `agents`. Blocking: it signals
 /// processes and waits on panes, so async callers run it on a blocking
-/// thread. Targets are swapped one at a time.
+/// thread. Up to `request.jobs` targets are swapped at once, each in its
+/// own pane; the report keeps the plan's order.
 #[must_use]
 pub fn run(
     request: &SwapRequest,
@@ -943,12 +947,96 @@ pub fn run(
     accounts: &tend::accounts::AccountsConfig,
 ) -> Vec<SwapOutcome> {
     let (request, steps) = prepare(request, agents, backends, config, accounts);
-    steps
-        .into_iter()
+    let endpoints: Vec<Option<String>> = steps
+        .iter()
         .map(|step| match step {
-            Step::Done(outcome) => outcome,
-            Step::Run(target) => execute_target(&request, &target, &mut effects::NoObserver, None),
+            Step::Run(target) => Some(target.identity().endpoint),
+            Step::Done(_) => None,
         })
+        .collect();
+    by_endpoint(steps, &endpoints, request.jobs, |step| match step {
+        Step::Done(outcome) => outcome,
+        Step::Run(target) => execute_target(&request, &target, &mut effects::NoObserver, None),
+    })
+}
+
+/// [`map_bounded`], with items that name one endpoint run one after the
+/// other on one worker, in order: two targets never act on one pane at once.
+fn by_endpoint<T: Send, R: Send>(
+    items: Vec<T>,
+    endpoints: &[Option<String>],
+    jobs: usize,
+    f: impl Fn(T) -> R + Sync,
+) -> Vec<R> {
+    let mut groups: Vec<Vec<(usize, T)>> = Vec::new();
+    let mut group_of: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for (index, (item, endpoint)) in items.into_iter().zip(endpoints).enumerate() {
+        if let Some(group) = endpoint
+            .as_deref()
+            .and_then(|endpoint| group_of.get(endpoint).copied())
+        {
+            groups[group].push((index, item));
+        } else {
+            if let Some(endpoint) = endpoint.as_deref() {
+                group_of.insert(endpoint, groups.len());
+            }
+            groups.push(vec![(index, item)]);
+        }
+    }
+    let total = groups.iter().map(Vec::len).sum();
+    let mut results: Vec<Option<R>> = (0..total).map(|_| None).collect();
+    for group in map_bounded(groups, jobs, |group| {
+        group
+            .into_iter()
+            .map(|(index, item)| (index, f(item)))
+            .collect::<Vec<_>>()
+    }) {
+        for (index, result) in group {
+            results[index] = Some(result);
+        }
+    }
+    results
+        .into_iter()
+        .map(|result| result.expect("every item was mapped"))
+        .collect()
+}
+
+/// `items` through `f`, at most `jobs` at a time on scoped threads, in
+/// `items`' order. One job, or one item, runs on this thread.
+pub(crate) fn map_bounded<T: Send, R: Send>(
+    items: Vec<T>,
+    jobs: usize,
+    f: impl Fn(T) -> R + Sync,
+) -> Vec<R> {
+    let workers = jobs
+        .clamp(1, tend::swap_api::MAX_SWAP_JOBS)
+        .min(items.len());
+    if workers <= 1 {
+        return items.into_iter().map(f).collect();
+    }
+    let total = items.len();
+    let queue = std::sync::Mutex::new(items.into_iter().enumerate());
+    let results = std::sync::Mutex::new((0..total).map(|_| None).collect::<Vec<Option<R>>>());
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| loop {
+                let next = queue
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .next();
+                let Some((index, item)) = next else { break };
+                let result = f(item);
+                results
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)[index] = Some(result);
+            });
+        }
+    });
+    results
+        .into_inner()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .into_iter()
+        .map(|result| result.expect("every item was mapped"))
         .collect()
 }
 
@@ -975,15 +1063,20 @@ pub fn run_bound(
             Step::Run(target) => BoundStep::Run(target.identity(), target),
         })
         .collect();
-    bind(steps, bound)
-        .into_iter()
+    let steps = bind(steps, bound);
+    let endpoints: Vec<Option<String>> = steps
+        .iter()
         .map(|step| match step {
-            BoundStep::Done(outcome) => outcome,
-            BoundStep::Run(_, target) => {
-                execute_target(&request, &target, &mut effects::NoObserver, None)
-            }
+            BoundStep::Run(identity, _) => Some(identity.endpoint.clone()),
+            BoundStep::Done(_) => None,
         })
-        .collect()
+        .collect();
+    by_endpoint(steps, &endpoints, request.jobs, |step| match step {
+        BoundStep::Done(outcome) => outcome,
+        BoundStep::Run(_, target) => {
+            execute_target(&request, &target, &mut effects::NoObserver, None)
+        }
+    })
 }
 
 pub(crate) enum BoundStep<T> {
@@ -2006,6 +2099,14 @@ fn swap_one(
             tend::process_snapshot::process_argv(launch.agent_pid).as_deref(),
             BYPASS_SWITCH,
         ),
+        source_home: crate::home_gate::source_home(agent.kind, launch.agent_pid),
+        destination_home: crate::home_gate::destination_home(
+            agent.kind,
+            profiles.map_or(&[][..], |(profiles, _)| profiles),
+            &account,
+            &request.aas,
+        ),
+        boot: std::cell::RefCell::new(None),
     };
     // The relaunch must land on the account it was meant for, checked before
     // any follow-up starts work on the wrong one.
@@ -2027,6 +2128,11 @@ fn swap_one(
     // relaunch does not stop on "Hooks need review".
     let hooks_note = (agent.kind == AgentKind::Codex)
         .then(|| {
+            let _home = crate::home_gate::acquire(
+                &target.destination_home,
+                &target.pane,
+                "codex hook trust",
+            );
             carry_codex_hook_trust(
                 request,
                 profiles.map_or(&[][..], |(profiles, _)| profiles),
@@ -2667,6 +2773,24 @@ struct Target {
     ran_with_bypass: bool,
     /// What the relaunch needs, checked before anything is done.
     prerequisites: preflight::Prerequisites,
+    /// The home the stopped agent runs on, gated while it is quit.
+    source_home: crate::home_gate::HomeKey,
+    /// The home the relaunch runs on, gated from the relaunch until it
+    /// first draws its prompt.
+    destination_home: crate::home_gate::HomeKey,
+    /// That gate, while held.
+    boot: std::cell::RefCell<Option<crate::home_gate::Permit>>,
+}
+
+/// Lets `target`'s destination home go when dropped, if still held.
+struct BootGate<'a>(&'a Target);
+
+impl Drop for BootGate<'_> {
+    fn drop(&mut self) {
+        if let Some(permit) = self.0.boot.borrow_mut().take() {
+            permit.release("the swap of this target ended first");
+        }
+    }
 }
 
 impl Target {
@@ -2744,6 +2868,7 @@ fn with_launch_id(command: &str, launch_id: Option<&str>) -> String {
 
 /// Stop the agent, type `command` into the pane's shell, wait for the
 /// resumed agent, then send `follow_up`. `Ok` carries a note for the report.
+#[allow(clippy::too_many_lines)] // preflight, stop, relaunch, readiness, checks, in order
 fn execute(
     runner: &Runner,
     target: &Target,
@@ -2781,6 +2906,9 @@ fn execute(
         .and_then(|screen| composer_draft(&screen, target.kind))
         .filter(|_| target.restore_draft);
     enter(runner, Phase::Stopping)?;
+    // The old agent's exit writes to its home: gated until it has exited,
+    // or the stop has ended either way. Never held with the next one.
+    let quitting = crate::home_gate::acquire(&target.source_home, &target.pane, "stop");
     stop_agent(
         runner,
         target,
@@ -2789,7 +2917,17 @@ fn execute(
         draft.as_deref(),
         &mut answered,
     )?;
+    quitting.release("the agent exited");
     enter(runner, Phase::Launching)?;
+    // The relaunch boots on its home: gated until it first draws its own
+    // prompt (released in `await_ready`), or readiness ends.
+    *target.boot.borrow_mut() = Some(crate::home_gate::acquire(
+        &target.destination_home,
+        &target.pane,
+        "relaunch",
+    ));
+    // Whatever way this returns from here, the boot gate goes with it.
+    let _boot = BootGate(target);
     relaunch(runner, target, command)?;
     let started = io.now();
     let relaunched = loop {
@@ -2814,7 +2952,11 @@ fn execute(
         // Running again: the pane may close with its agent as before.
         runner.set_remain_on_exit(Purpose::ReleasePane, false);
     }
-    await_ready(runner, target, &mut answered)?;
+    let ready = await_ready(runner, target, &mut answered);
+    if let Some(permit) = target.boot.borrow_mut().take() {
+        permit.release("readiness ended");
+    }
+    ready?;
     let binding = launch_vetoed(
         resume_binding(
             &io.agent_argvs(target.pane_pid.get()),
@@ -3280,7 +3422,25 @@ fn await_ready(
     enter(runner, Phase::Readiness)?;
     let readiness = wait_for_resume_answering(
         io,
-        || io.capture(),
+        || {
+            let screen = io.capture();
+            // The relaunch has booted once it draws its own prompt: the
+            // process bound to this conversation runs, the screen shows the
+            // agent's prompt and no dialog. Its home is let go here; the
+            // full readiness checks below are unchanged.
+            if target.boot.borrow().is_some()
+                && screen.as_deref().is_some_and(|screen| {
+                    tend::agent_tui::agent_prompt_visible(screen)
+                        && tend::agent_tui::open_question(screen).is_none()
+                })
+                && bound_argv(io, target).is_some()
+            {
+                if let Some(permit) = target.boot.borrow_mut().take() {
+                    permit.release("its own prompt is on screen");
+                }
+            }
+            screen
+        },
         || io.agent_running(target.pane_pid.get()),
         |keys| {
             // Only into the relaunch itself: the one process resuming this
@@ -3870,6 +4030,46 @@ fn stop(runner: &Runner, launch: &PaneLaunch) -> Result<(), String> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn items_on_one_endpoint_run_in_order_on_one_worker_and_reports_keep_their_place() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let busy = std::sync::Mutex::new(std::collections::HashSet::new());
+        let overlap = AtomicUsize::new(0);
+        let order = std::sync::Mutex::new(Vec::new());
+        let items = vec![(0, "%1"), (1, "%2"), (2, "%1"), (3, "%3"), (4, "%1")];
+        let endpoints: Vec<Option<String>> = items
+            .iter()
+            .map(|(_, pane)| Some((*pane).to_owned()))
+            .collect();
+        let results = by_endpoint(items, &endpoints, 4, |(index, pane)| {
+            if !busy.lock().unwrap().insert(pane) {
+                overlap.fetch_add(1, Ordering::SeqCst);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            order.lock().unwrap().push((pane, index));
+            busy.lock().unwrap().remove(pane);
+            index * 10
+        });
+        assert_eq!(
+            results,
+            [0, 10, 20, 30, 40],
+            "each result in its item's place"
+        );
+        assert_eq!(
+            overlap.load(Ordering::SeqCst),
+            0,
+            "one pane, one target at a time"
+        );
+        let ones: Vec<usize> = order
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(pane, _)| *pane == "%1")
+            .map(|(_, index)| *index)
+            .collect();
+        assert_eq!(ones, [0, 2, 4], "in plan order");
+    }
     use tend::agent_tui::{DOWN, ENTER};
     use tend::pane_process::{is_shell, outside_codex_servers};
 

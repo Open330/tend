@@ -344,6 +344,39 @@ fn account_home_within(
     export_home(&output)
 }
 
+/// The directory `var` names when an account's relaunch runs: the
+/// configured profile's own (`env`, then `env_file`), or what
+/// `aas export <account>@<provider>` sets. `None` when it cannot be told
+/// without running a file, or is not set. Only that one line of the export
+/// is read; the rest may carry credentials.
+pub(crate) fn account_var(
+    profiles: &[tend::accounts::AccountProfile],
+    provider: &str,
+    account: &str,
+    var: &str,
+    aas: &str,
+) -> Option<PathBuf> {
+    if !profiles.is_empty() {
+        let profile = tend::accounts::find_profile(profiles, provider, account)?;
+        return profile_var(profile, var).ok().flatten().map(PathBuf::from);
+    }
+    let program = crate::account_swap::find_aas(aas)?;
+    let name = if account.contains('@') {
+        account.to_owned()
+    } else {
+        format!("{account}@{provider}")
+    };
+    let output = run_bounded(
+        Command::new(program).args(["export", &name]),
+        EXPORT_TIMEOUT,
+    )?;
+    let prefix = format!("export {var}=");
+    output
+        .lines()
+        .find_map(|line| line.trim().strip_prefix(prefix.as_str()))
+        .map(|value| PathBuf::from(value.trim().trim_matches('"').trim_matches('\'')))
+}
+
 /// The `CODEX_HOME` line of `aas export` output. Nothing else of it is
 /// read or kept: the rest may carry credentials.
 fn export_home(output: &str) -> Option<PathBuf> {

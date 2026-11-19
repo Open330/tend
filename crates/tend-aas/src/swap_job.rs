@@ -241,6 +241,10 @@ pub(crate) struct AcceptedPlan {
     /// Targets to run, in run order; `target_id` is the index here.
     pub(crate) targets: Vec<PlannedTarget>,
     pub(crate) settled: Vec<SettledEntry>,
+    /// Targets worked on at once, as accepted. Absent on journals from
+    /// before parallel swaps, which ran one at a time and resume that way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) jobs: Option<usize>,
 }
 
 /// Resolved non-text policy. Never serialize a request, which can contain text.
