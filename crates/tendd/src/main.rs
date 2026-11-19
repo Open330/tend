@@ -671,6 +671,10 @@ async fn run() -> Result<()> {
         .with_fleet(fleet_runtime)
         .with_pipeline_runs(pipeline_runs.clone())
         .with_reviews(reviews)
+        // One audit file for every person's decision, from the web or the app.
+        .with_decision_audit(
+            paths::data_dir().map(|dir| dir.join("tend").join("dashboard-decisions.jsonl")),
+        )
         .with_work_store(work_store)
         .with_work_queue(
             tend::work_queue::WorkQueueStore::load(tend::work_queue::default_work_queue_file()),

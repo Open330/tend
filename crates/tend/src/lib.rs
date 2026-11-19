@@ -43,6 +43,7 @@ pub mod agent_locator;
 pub mod agent_records;
 #[doc(hidden)]
 pub mod agent_tui;
+pub mod app_identity;
 pub mod ask;
 pub mod automation;
 pub mod automation_choice;
@@ -66,6 +67,7 @@ pub mod discovery;
 pub mod error;
 pub mod event;
 pub mod fleet;
+pub mod fleet_review;
 mod fleet_wait;
 pub mod history;
 pub mod home_board;
