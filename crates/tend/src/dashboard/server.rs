@@ -597,10 +597,13 @@ pub async fn serve(
     state.operator = operator;
     state.devices = devices;
     state.push = super::push::Push::start(config.push.as_ref());
-    let pusher = super::push::spawn(state.clone());
-    let app = router(state);
+    // Everything that can fail goes before the sender starts, and the
+    // sender stops when `pusher` drops: on shutdown, on an error from
+    // `axum::serve`, or when this future is dropped.
     let listener = TcpListener::bind(config.bind).await?;
     let local = listener.local_addr()?;
+    let pusher = super::push::spawn(state.clone());
+    let app = router(state);
     tracing::info!(addr = %local, "dashboard listening");
     log_access_url(&config, local);
     if let Some(link) = &bound_link {
@@ -611,9 +614,7 @@ pub async fn serve(
             let _ = shutdown.recv().await;
         })
         .await;
-    if let Some(pusher) = pusher {
-        pusher.abort();
-    }
+    drop(pusher);
     if let Some(link) = &bound_link {
         link.set(None);
     }

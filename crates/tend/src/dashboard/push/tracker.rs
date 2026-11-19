@@ -62,6 +62,11 @@ pub(super) struct Key {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Target {
     pub device: String,
+    /// The logical registration: the same token, environment and channel
+    /// on this device (a fingerprint, never the token itself). A refresh
+    /// of the same registration keeps what is pending, the rate and the
+    /// back-off; a different one starts over.
+    pub registration: String,
     pub generation: i64,
     /// The row's `content` (the host's `allow_content` is passed to
     /// [`Tracker::plan`]).
@@ -89,6 +94,31 @@ pub(super) enum Send {
         generation: i64,
         badge: usize,
     },
+}
+
+impl Send {
+    /// The device and the generation this send was planned for.
+    pub(super) fn target(&self) -> (&str, i64) {
+        match self {
+            Send::Alert {
+                device, generation, ..
+            }
+            | Send::Badge {
+                device, generation, ..
+            } => (device, *generation),
+        }
+    }
+}
+
+fn content_of(hosts: &BTreeMap<String, HostState>, host: &str, newest: &Key) -> Option<Content> {
+    hosts
+        .get(host)
+        .and_then(|h| h.known.get(newest))
+        .map(|known| Content {
+            kind: known.entry.kind,
+            body: canonical_line(&known.entry.text),
+            subtitle: known.entry.label.clone(),
+        })
 }
 
 /// How a send ended, as the tracker needs it.
@@ -160,6 +190,7 @@ struct Pending {
 
 #[derive(Debug)]
 struct DeviceState {
+    registration: String,
     generation: i64,
     pending: BTreeMap<String, Pending>,
     last_alert: Option<Duration>,
@@ -172,8 +203,9 @@ struct DeviceState {
 }
 
 impl DeviceState {
-    fn new(generation: i64) -> Self {
+    fn new(registration: String, generation: i64) -> Self {
         Self {
+            registration,
             generation,
             pending: BTreeMap::new(),
             last_alert: None,
@@ -196,19 +228,26 @@ pub(super) struct Tracker {
 }
 
 impl Tracker {
-    /// Follow the registrations: a new device or a new generation starts
-    /// with nothing pending; a device no longer registered is dropped.
+    /// Follow the registrations. A device registered again with the same
+    /// token, environment and channel (the app does at every launch) keeps
+    /// what is pending, its rate and its back-off, and takes the new
+    /// generation. A new device, a token that moved, a removal or another
+    /// environment starts with nothing pending; a device no longer
+    /// registered is dropped.
     fn sync(&mut self, targets: &[Target]) {
         self.devices
             .retain(|device, _| targets.iter().any(|t| &t.device == device));
         for target in targets {
-            let stale = self
-                .devices
-                .get(&target.device)
-                .is_none_or(|state| state.generation != target.generation);
-            if stale {
-                self.devices
-                    .insert(target.device.clone(), DeviceState::new(target.generation));
+            match self.devices.get_mut(&target.device) {
+                Some(state) if state.registration == target.registration => {
+                    state.generation = target.generation;
+                }
+                _ => {
+                    self.devices.insert(
+                        target.device.clone(),
+                        DeviceState::new(target.registration.clone(), target.generation),
+                    );
+                }
             }
         }
     }
@@ -369,16 +408,7 @@ impl Tracker {
                 for (host, pending) in &state.pending {
                     let newest = pending.keys.last().expect("non-empty").clone();
                     let content = (allow_content && target.content)
-                        .then(|| {
-                            self.hosts
-                                .get(host)
-                                .and_then(|h| h.known.get(&newest))
-                                .map(|known| Content {
-                                    kind: known.entry.kind,
-                                    body: canonical_line(&known.entry.text),
-                                    subtitle: known.entry.label.clone(),
-                                })
-                        })
+                        .then(|| content_of(&self.hosts, host, &newest))
                         .flatten();
                     sends.push(Send::Alert {
                         device: target.device.clone(),
@@ -408,16 +438,28 @@ impl Tracker {
         sends
     }
 
+    /// What content the alert for `newest` on `host` would show, as the
+    /// queue is known now (the caller decides consent).
+    pub(super) fn content(&self, host: &str, newest: &Key) -> Option<Content> {
+        content_of(&self.hosts, host, newest)
+    }
+
+    /// Whether a planned send may still go out at `now`: its device still
+    /// holds the generation it was planned for, and neither that device
+    /// nor the whole sender has backed off since (an earlier send in the
+    /// same tick may have).
+    pub(super) fn still_due(&self, now: Duration, send: &Send) -> bool {
+        let (device, generation) = send.target();
+        !self.backoff.active(now)
+            && self
+                .devices
+                .get(device)
+                .is_some_and(|state| state.generation == generation && !state.backoff.active(now))
+    }
+
     /// How a planned send ended.
     pub(super) fn record(&mut self, now: Duration, send: &Send, result: Result) {
-        let (device, generation) = match send {
-            Send::Alert {
-                device, generation, ..
-            }
-            | Send::Badge {
-                device, generation, ..
-            } => (device, *generation),
-        };
+        let (device, generation) = send.target();
         if result == Result::BackOffAll {
             self.backoff.bump(now);
         } else if result == Result::Accepted {
@@ -526,6 +568,7 @@ mod tests {
     fn phone() -> Vec<Target> {
         vec![Target {
             device: "dev_a".into(),
+            registration: "reg_a".into(),
             generation: 1,
             content: false,
         }]
@@ -861,6 +904,8 @@ mod tests {
         t.observe(s(0), &[read("mini", &[])], &targets);
         t.observe(s(15), &[read("mini", &["a"])], &targets);
         assert_eq!(t.pending("dev_a"), vec![("mini".into(), 1)]);
+        // Another token, environment or channel: a new registration.
+        targets[0].registration = "reg_a2".into();
         targets[0].generation = 2;
         t.observe(s(30), &[read("mini", &["a"])], &targets);
         assert!(t.plan(s(30), &targets, false).is_empty());
@@ -876,16 +921,56 @@ mod tests {
     }
 
     #[test]
+    fn a_refresh_of_the_same_registration_keeps_pending_rate_and_back_off() {
+        let mut t = Tracker::default();
+        let mut targets = phone();
+        t.observe(s(0), &[read("mini", &[])], &targets);
+        t.observe(s(15), &[read("mini", &["a"])], &targets);
+        let sends = t.plan(s(15), &targets, false);
+        assert_eq!(alerts(&sends).len(), 1);
+        t.record(s(15), &sends[0], Result::Retry);
+        // The app launches again: same token, environment and channel, a
+        // new generation, and consent read again.
+        targets[0].generation = 2;
+        targets[0].content = true;
+        t.observe(s(30), &[read("mini", &["a"])], &targets);
+        assert_eq!(t.pending("dev_a"), vec![("mini".into(), 1)]);
+        assert!(t.plan(s(30), &targets, true).is_empty(), "still backed off");
+        assert!(!t.still_due(s(30), &sends[0]), "planned for generation 1");
+        t.observe(s(45), &[read("mini", &["a"])], &targets);
+        let sends = t.plan(s(45), &targets, true);
+        match sends.as_slice() {
+            [Send::Alert {
+                generation,
+                content: Some(_),
+                ..
+            }] => assert_eq!(*generation, 2),
+            other => panic!("{other:?}"),
+        }
+        assert!(t.still_due(s(45), &sends[0]));
+        // A late answer to generation 1 changes nothing now.
+        let old = Send::Badge {
+            device: "dev_a".into(),
+            generation: 1,
+            badge: 0,
+        };
+        t.record(s(45), &old, Result::Retry);
+        assert!(t.still_due(s(45), &sends[0]));
+    }
+
+    #[test]
     fn too_many_token_updates_backs_off_every_device() {
         let mut t = Tracker::default();
         let targets = vec![
             Target {
                 device: "dev_a".into(),
+                registration: "reg_a".into(),
                 generation: 1,
                 content: false,
             },
             Target {
                 device: "dev_b".into(),
+                registration: "reg_b".into(),
                 generation: 1,
                 content: false,
             },

@@ -6,7 +6,7 @@
 //! past every stored row and is never reused in this process), so a late
 //! answer from Apple to an older send can tell that the row has changed
 //! since. The token is never logged: [`PushRow`]'s `Debug` leaves it out.
-use super::{now_unix, storage::Storage, Device, Devices, MAX_DEVICES};
+use super::{storage::Storage, Device, Devices, MAX_DEVICES};
 use sha2::{Digest, Sha256};
 use std::io;
 
@@ -26,6 +26,8 @@ pub(in crate::dashboard) struct PushRow {
     /// 256 random bits: the key of the payload's opaque `ref`.
     pub ref_key: Vec<u8>,
     pub generation: i64,
+    /// When this registration last changed, in unix milliseconds: compared
+    /// exactly with the timestamp of Apple's `410`.
     pub updated_at: i64,
 }
 
@@ -39,6 +41,22 @@ impl std::fmt::Debug for PushRow {
             .field("generation", &self.generation)
             .field("updated_at", &self.updated_at)
             .finish_non_exhaustive()
+    }
+}
+
+impl PushRow {
+    /// The logical registration, as a fingerprint of the token, the
+    /// environment and the channel (never the token itself). It stays the
+    /// same while this device registers the same token and environment
+    /// again (the channel is kept then), and changes at a token move, a
+    /// removal followed by a new registration, or another environment.
+    pub(in crate::dashboard) fn registration(&self) -> String {
+        let mut hasher = Sha256::new();
+        for part in [&self.token, &self.environment, &self.channel] {
+            hasher.update(part.as_bytes());
+            hasher.update([0]);
+        }
+        hex(&hasher.finalize()[..16])
     }
 }
 
@@ -75,6 +93,11 @@ impl PushMirror {
         }
         Ok(Self { rows, generation })
     }
+}
+
+fn now_unix_ms() -> i64 {
+    i64::try_from(time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000)
+        .unwrap_or(i64::MAX)
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -181,7 +204,7 @@ impl Devices {
             channel,
             ref_key,
             generation,
-            updated_at: now_unix(),
+            updated_at: now_unix_ms(),
         };
         if let Some(storage) = self.storage()? {
             storage.put_push(&row)?;
@@ -211,8 +234,8 @@ impl Devices {
     /// Apple said the token a send used is no longer valid: delete the
     /// registration, but only while it still has the device, token,
     /// environment and generation the send used, and, for a `410` with
-    /// Apple's timestamp (ms), only when the row was not updated in or
-    /// after the second Apple names. `true` when it was deleted.
+    /// Apple's timestamp (unix ms), only when the row was updated before
+    /// that millisecond. `true` when it was deleted.
     pub(in crate::dashboard) fn drop_push(
         &self,
         sent: &PushRow,
@@ -234,8 +257,8 @@ impl Devices {
             return Ok(false);
         };
         if let Some(ms) = apple_ms {
-            // Updated within or after Apple's second: a newer registration.
-            if current.updated_at.saturating_mul(1000) >= ms.saturating_sub(999) {
+            // Updated at or after Apple's timestamp: a newer registration.
+            if current.updated_at >= ms {
                 return Ok(false);
             }
         }

@@ -34,11 +34,16 @@ struct Recorded {
 /// An answer for the first request whose path starts with `prefix`.
 type Answer = (String, u16, String);
 
+/// Run once on receipt of the next request (given its path), before it is
+/// answered: what changes while a send waits for Apple.
+type Hook = Box<dyn FnOnce(&str) + Send>;
+
 #[derive(Clone)]
 struct Fake {
     url: String,
     requests: Arc<Mutex<Vec<Recorded>>>,
     answers: Arc<Mutex<Vec<Answer>>>,
+    before_response: Arc<Mutex<Option<Hook>>>,
 }
 
 impl Fake {
@@ -50,16 +55,18 @@ impl Fake {
         let url = format!("http://{}", listener.local_addr().unwrap());
         let requests: Arc<Mutex<Vec<Recorded>>> = Arc::default();
         let answers: Arc<Mutex<Vec<Answer>>> = Arc::default();
+        let before_response: Arc<Mutex<Option<Hook>>> = Arc::default();
+        let hook = before_response.clone();
         let (rec, ans) = (requests.clone(), answers.clone());
         tokio::spawn(async move {
             loop {
                 let Ok((stream, _)) = listener.accept().await else {
                     return;
                 };
-                let (rec, ans) = (rec.clone(), ans.clone());
+                let (rec, ans, hook) = (rec.clone(), ans.clone(), hook.clone());
                 let service = hyper::service::service_fn(
                     move |req: hyper::Request<hyper::body::Incoming>| {
-                        let (rec, ans) = (rec.clone(), ans.clone());
+                        let (rec, ans, hook) = (rec.clone(), ans.clone(), hook.clone());
                         async move {
                             let (parts, body) = req.into_parts();
                             let bytes = body
@@ -80,6 +87,10 @@ impl Fake {
                                 headers,
                                 body: serde_json::from_slice(&bytes).unwrap_or(Value::Null),
                             });
+                            let callback = hook.lock().unwrap().take();
+                            if let Some(callback) = callback {
+                                callback(&path);
+                            }
                             let (status, answer) = {
                                 let mut answers = ans.lock().unwrap();
                                 match answers
@@ -113,6 +124,7 @@ impl Fake {
             url,
             requests,
             answers,
+            before_response,
         }
     }
 
@@ -840,16 +852,14 @@ async fn late_answers_never_delete_a_newer_registration() {
     assert!(!devices.drop_push(&moved, None).unwrap());
     assert_eq!(stored(&devices), vec![back.clone()]);
 
-    // A 410 whose timestamp is older than the row's update keeps it; one
-    // after it drops it.
-    let at = back.updated_at * 1000;
-    assert!(!devices.drop_push(&back, Some(at - 5_000)).unwrap());
-    assert!(
-        !devices.drop_push(&back, Some(at + 500)).unwrap(),
-        "the same second"
-    );
+    // A 410 whose timestamp (ms) is before the row's update keeps it, and
+    // so does one in the same millisecond; one after it drops it.
+    let at = back.updated_at;
+    assert!(at > 1_000_000_000_000, "stored in milliseconds: {at}");
+    assert!(!devices.drop_push(&back, Some(at - 1)).unwrap());
+    assert!(!devices.drop_push(&back, Some(at)).unwrap(), "the same ms");
     assert_eq!(stored(&devices).len(), 1);
-    assert!(devices.drop_push(&back, Some(at + 2_000)).unwrap());
+    assert!(devices.drop_push(&back, Some(at + 1)).unwrap());
     assert!(stored(&devices).is_empty());
 
     // The store agrees after a restart.
@@ -896,7 +906,7 @@ async fn a_late_410_after_a_reregistration_keeps_it_end_to_end() {
                     alert: false,
                 },
             },
-            apns::Outcome::Unregistered(Some(sent_with.updated_at * 1000 - 60_000)),
+            apns::Outcome::Unregistered(Some(sent_with.updated_at - 60_000)),
         )
         .await;
     assert_eq!(outcome, tracker::Result::Dropped);
@@ -1412,4 +1422,162 @@ async fn a_decision_from_a_notification_is_audited_as_such() {
     assert_eq!(via[&one], json!("notification"));
     assert_eq!(via[&two], Value::Null);
     assert_eq!(via[&three], Value::Null);
+}
+
+#[tokio::test]
+async fn reviewer_removing_a_later_target_during_send_must_stop_it() {
+    let fake = Fake::start().await;
+    let h = harness(push_on(&fake, &[Environment::Production], true)).await;
+    let (a, aid) = pair(&h.app, "a").await;
+    let (b, bid) = pair(&h.app, "b").await;
+    register(&h.app, &a, PHONE_A, "production", true).await;
+    register(&h.app, &b, PHONE_B, "production", true).await;
+    tick(&h, 0).await;
+    review(&h.state, "SECRET REVIEW BODY").await;
+    // The test endpoint mutates state on receipt of the first request,
+    // before returning its response and allowing the second send: it
+    // removes the registration of whichever device was not sent to first.
+    *fake.before_response.lock().unwrap() = Some(Box::new({
+        let devices = h.state.devices.clone();
+        move |path: &str| {
+            let later = if path.ends_with(&PHONE_A.to_lowercase()) {
+                bid
+            } else {
+                aid
+            };
+            devices.remove_push(&later).unwrap();
+        }
+    }));
+    tick(&h, 15).await;
+    let sent = fake.take();
+    assert_eq!(
+        sent.len(),
+        1,
+        "a removed registration was still sent its prebuilt content: {sent:?}"
+    );
+}
+
+#[tokio::test]
+async fn reviewer_same_registration_retry_must_not_erase_pending() {
+    let fake = Fake::start().await;
+    let h = harness(push_on(&fake, &[Environment::Production], false)).await;
+    let (a, _) = pair(&h.app, "a").await;
+    register(&h.app, &a, PHONE_A, "production", false).await;
+    tick(&h, 0).await;
+    review(&h.state, "RETRY ME").await;
+    fake.answer("/production", 429, json!({"reason":"TooManyRequests"}));
+    tick(&h, 15).await;
+    assert_eq!(fake.take().len(), 1);
+    register(&h.app, &a, PHONE_A, "production", false).await;
+    tick(&h, 50).await;
+    assert_eq!(
+        fake.take().len(),
+        1,
+        "same-registration refresh discarded pending without a 200"
+    );
+}
+
+#[tokio::test]
+async fn a_content_opt_out_during_an_earlier_send_holds_for_the_later_one() {
+    let fake = Fake::start().await;
+    let h = harness(push_on(&fake, &[Environment::Production], true)).await;
+    let (a, aid) = pair(&h.app, "a").await;
+    let (b, bid) = pair(&h.app, "b").await;
+    register(&h.app, &a, PHONE_A, "production", true).await;
+    register(&h.app, &b, PHONE_B, "production", true).await;
+    tick(&h, 0).await;
+    review(&h.state, "SECRET REVIEW BODY").await;
+    // While the first send waits for Apple, the other phone turns its
+    // content switch off (the same token and environment, registered again).
+    let later_token = Arc::new(Mutex::new(String::new()));
+    *fake.before_response.lock().unwrap() = Some(Box::new({
+        let devices = h.state.devices.clone();
+        let later_token = later_token.clone();
+        move |path: &str| {
+            let (later, token) = if path.ends_with(&PHONE_A.to_lowercase()) {
+                (bid, PHONE_B.to_lowercase())
+            } else {
+                (aid, PHONE_A.to_lowercase())
+            };
+            devices
+                .register_push(&later, &token, "production", false)
+                .unwrap();
+            *later_token.lock().unwrap() = token;
+        }
+    }));
+    tick(&h, 15).await;
+    let sent = fake.take();
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(sent[0].body["aps"]["alert"]["body"], "SECRET REVIEW BODY");
+    // The later phone still gets its alert, from the same pending set, and
+    // without the text it opted out of.
+    tick(&h, 45).await;
+    let sent = fake.take();
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    let later_token = later_token.lock().unwrap().clone();
+    assert!(sent[0].path.ends_with(&later_token));
+    assert!(
+        !sent[0].body.to_string().contains("SECRET"),
+        "{:?}",
+        sent[0].body
+    );
+    assert_eq!(sent[0].body["aps"]["category"], "TEND_OPEN");
+}
+
+#[tokio::test]
+async fn a_failed_start_leaves_no_push_sender_and_a_stopped_one_ends() {
+    use std::sync::atomic::Ordering::SeqCst;
+    // The only test that starts the sender: `RUNNING` is process-wide.
+    let dir = tempfile::tempdir().unwrap();
+    let key = write_key(dir.path(), "key.p8", &key_pem(), 0o600);
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let mut cfg = DashboardConfig::loopback_default();
+    cfg.bind = taken.local_addr().unwrap();
+    cfg.push = Some(push_toml(&key));
+    let serve = |cfg: DashboardConfig, shutdown| {
+        crate::dashboard::server::serve(
+            Arc::new(cfg),
+            Store::shared(),
+            Arc::new(PaneCache::new(Duration::from_secs(60))),
+            crate::session::PtySessionBackend::shared(),
+            Vec::new(),
+            crate::dashboard::server::DashboardRuntimeConfig::default(),
+            shutdown,
+        )
+    };
+    let (stop, shutdown) = tokio::sync::broadcast::channel(1);
+    serve(cfg.clone(), shutdown)
+        .await
+        .expect_err("the address is taken");
+    tokio::task::yield_now().await;
+    assert_eq!(
+        RUNNING.load(SeqCst),
+        0,
+        "a push sender outlived a failed start"
+    );
+
+    // Started, then shut down: the sender stops with the server.
+    drop(taken);
+    cfg.bind = "127.0.0.1:0".parse().unwrap();
+    let (stop2, shutdown) = tokio::sync::broadcast::channel(1);
+    let server = tokio::spawn(serve(cfg, shutdown));
+    let started = async {
+        while RUNNING.load(SeqCst) == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(10), started)
+        .await
+        .expect("the sender starts");
+    stop2.send(()).unwrap();
+    server.await.unwrap().unwrap();
+    let stopped = async {
+        while RUNNING.load(SeqCst) != 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(10), stopped)
+        .await
+        .expect("the sender stops with the server");
+    drop(stop);
 }

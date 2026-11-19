@@ -328,29 +328,82 @@ impl Push {
         let reads: Vec<tracker::HostRead> = sections.iter().map(host_read).collect();
         // Consent is read again here, after the queue: a registration that
         // changed meanwhile is the one sent to.
-        let rows = self.targets(state);
-        let targets: Vec<tracker::Target> = rows
+        let targets: Vec<tracker::Target> = self
+            .targets(state)
             .iter()
             .map(|row| tracker::Target {
                 device: row.device.clone(),
+                registration: row.registration(),
                 generation: row.generation,
                 content: row.content,
             })
             .collect();
-        let planned: Vec<Planned> = {
+        let sends = {
             let mut tracker = self.tracker();
             tracker.observe(now, &reads, &targets);
-            tracker
-                .plan(now, &targets, self.allow_content)
-                .into_iter()
-                .filter_map(|send| plan_request(send, &rows))
-                .collect()
+            tracker.plan(now, &targets, self.allow_content)
         };
-        for planned in planned {
+        for send in sends {
+            // Each request is built only now, after every earlier send has
+            // been answered: a registration removed, moved, refreshed or
+            // opted out of content meanwhile, an environment Apple refused,
+            // or a back-off since, is honoured.
+            let Some(planned) = self.prepare(state, now, send) else {
+                continue;
+            };
             let outcome = sender.send(&planned.request).await;
             let result = self.settle(state, &planned, outcome).await;
             self.tracker().record(now, &planned.send, result);
         }
+    }
+
+    /// The request for `send`, built from the registration as it is now,
+    /// or `None` when it must not go out: the device no longer holds the
+    /// generation it was planned for (removed, signed out, its token moved,
+    /// registered again), its environment is off or refused, or the device
+    /// or the sender has backed off. The content is decided again from the
+    /// host's `allow_content` and the row's current `content`.
+    fn prepare(&self, state: &AppState, now: Duration, mut send: tracker::Send) -> Option<Planned> {
+        let (device, generation) = send.target();
+        let row = self
+            .targets(state)
+            .into_iter()
+            .find(|row| row.device == device && row.generation == generation)?;
+        let environment = Environment::parse(&row.environment)?;
+        let tracker = self.tracker();
+        if !tracker.still_due(now, &send) {
+            return None;
+        }
+        let (payload, collapse_id, alert) = match &mut send {
+            tracker::Send::Alert {
+                host,
+                count,
+                newest,
+                content,
+                badge,
+                ..
+            } => {
+                *content = (self.allow_content && row.content)
+                    .then(|| tracker.content(host, newest))
+                    .flatten();
+                let item = payload::item_ref(&row.ref_key, host, newest.kind, &newest.id);
+                (
+                    payload::alert(host, *count, *badge, &row.channel, &item, content.as_ref()),
+                    Some(payload::collapse_id(host)),
+                    true,
+                )
+            }
+            tracker::Send::Badge { badge, .. } => (payload::badge(*badge), None, false),
+        };
+        drop(tracker);
+        let request = apns::Request {
+            environment,
+            token: row.token.clone(),
+            payload,
+            collapse_id,
+            alert,
+        };
+        Some(Planned { send, row, request })
     }
 
     /// What Apple's answer means for the registration and the sender.
@@ -409,48 +462,6 @@ impl Push {
         }
         tracker::Result::Dropped
     }
-}
-
-fn plan_request(send: tracker::Send, rows: &[PushRow]) -> Option<Planned> {
-    let (device, generation) = match &send {
-        tracker::Send::Alert {
-            device, generation, ..
-        }
-        | tracker::Send::Badge {
-            device, generation, ..
-        } => (device, *generation),
-    };
-    let row = rows
-        .iter()
-        .find(|row| &row.device == device && row.generation == generation)?
-        .clone();
-    let environment = Environment::parse(&row.environment)?;
-    let (payload, collapse_id, alert) = match &send {
-        tracker::Send::Alert {
-            host,
-            count,
-            newest,
-            content,
-            badge,
-            ..
-        } => {
-            let item = payload::item_ref(&row.ref_key, host, newest.kind, &newest.id);
-            (
-                payload::alert(host, *count, *badge, &row.channel, &item, content.as_ref()),
-                Some(payload::collapse_id(host)),
-                true,
-            )
-        }
-        tracker::Send::Badge { badge, .. } => (payload::badge(*badge), None, false),
-    };
-    let request = apns::Request {
-        environment,
-        token: row.token.clone(),
-        payload,
-        collapse_id,
-        alert,
-    };
-    Some(Planned { send, row, request })
 }
 
 fn unix(value: &Value) -> i64 {
@@ -544,12 +555,38 @@ fn host_read(section: &Value) -> tracker::HostRead {
     }
 }
 
-/// Tick [`Push`] every [`TICK`] while it is on. `None` when it is off.
-pub(in crate::dashboard) fn spawn(state: AppState) -> Option<tokio::task::JoinHandle<()>> {
+/// The running sender. Dropping it stops the sender, so its lifetime ends
+/// with the dashboard's on every exit, an error and a panic included.
+pub(in crate::dashboard) struct Worker(tokio::task::JoinHandle<()>);
+
+impl Drop for Worker {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Senders running in this process (tests).
+#[cfg(test)]
+static RUNNING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Tick [`Push`] every [`TICK`] while it is on, until the returned
+/// [`Worker`] is dropped. `None` when push is off.
+pub(in crate::dashboard) fn spawn(state: AppState) -> Option<Worker> {
     if !state.push.enabled() {
         return None;
     }
-    Some(tokio::spawn(async move {
+    Some(Worker(tokio::spawn(async move {
+        #[cfg(test)]
+        let _running = {
+            struct Running;
+            impl Drop for Running {
+                fn drop(&mut self) {
+                    RUNNING.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+            RUNNING.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Running
+        };
         let mut interval = tokio::time::interval(TICK);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
@@ -557,5 +594,5 @@ pub(in crate::dashboard) fn spawn(state: AppState) -> Option<tokio::task::JoinHa
             let push = state.push.clone();
             push.tick(&state).await;
         }
-    }))
+    })))
 }
