@@ -358,3 +358,12 @@ Nothing was retired in this wave. Every old link still opens where it did, or re
 ### Screenshots
 
 The web shots are taken against a scratch tendd: light and dark, desktop and phone. The Mac shots beside them could not be taken in this wave, because this Mac's screen was locked for the whole session, and a locked screen shows no app window. The earlier Mac references in this folder (`mac-*.png`) still show Home and Explore.
+
+Wave 8 adds the Mac side, from a separate-bundle build (`dev.tend.audit.wave8`, its own preferences) on the demo fixture's sandboxed tendd. These are the same fleet the landing page's shots show, not the scratch daemon behind the web shots above:
+
+![Tend for Mac Home, light](web-home/w8-mac-home-light-en.png)
+![Tend for Mac Home, dark](web-home/w8-mac-home-dark-en.png)
+![Tend for Mac Explore with a pane open](web-home/w8-mac-explore-light-en.png)
+![Tend for Mac Home in a smaller window](web-home/w8-mac-home-small-light-en.png)
+
+The Mac's Review sheet could not be captured: the capture tool takes the window, not a sheet over it.

@@ -68,7 +68,7 @@ const COPY = {
         ["In the menu bar", "What is working, waiting, or failing, one click away."],
       ],
       shots: [
-        ["mac-watch", "Live Watch: every pane on the host, with the selected agent's own screen and a prompt box."],
+        ["mac-watch", "Explore: every pane on the host, with the selected agent's own screen and a prompt box."],
         ["mac-inbox", "Inbox: the agents waiting on you, what they asked, and where they run."],
       ],
     },
@@ -172,7 +172,7 @@ const COPY = {
         ["메뉴 막대에서", "작업 중, 대기, 실패 중인 에이전트를 클릭 한 번으로 확인합니다."],
       ],
       shots: [
-        ["mac-watch", "Live Watch: 호스트의 모든 pane과, 선택한 에이전트의 실제 화면과 프롬프트 입력창."],
+        ["mac-watch", "Explore: 호스트의 모든 페인과, 선택한 에이전트의 실제 화면과 프롬프트 입력창."],
         ["mac-inbox", "Inbox: 나를 기다리는 에이전트, 무엇을 물었는지, 어디서 돌고 있는지."],
       ],
     },
@@ -391,7 +391,7 @@ function markup(t, access, { host, email, shot }) {
           `<div class="l-mac-feature"><h3>${escapeText(heading)}</h3><p>${escapeText(body)}</p></div>`).join("")}</div>
         <div class="l-mac-shots">${t.mac.shots.map(([name, caption]) => `
           <figure>
-            <a class="l-shot-link" href="${asset(`landing/${name}.webp`)}" target="_blank" rel="noopener"><img src="${asset(`landing/${name}.webp`)}" alt="${escapeText(caption)}" loading="lazy" decoding="async" width="1600" height="954"></a>
+            <a class="l-shot-link" href="${asset(`landing/${name}.webp`)}" target="_blank" rel="noopener"><img src="${asset(`landing/${name}.webp`)}" alt="${escapeText(caption)}" loading="lazy" decoding="async" width="1600" height="894"></a>
             <figcaption>${escapeText(caption)}</figcaption>
           </figure>`).join("")}</div>
       </section>
