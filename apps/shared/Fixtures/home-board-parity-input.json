@@ -1,0 +1,593 @@
+{
+  "schema": 1,
+  "about": "Inputs both board builders read: tendd's home_board.rs (crates/tend/src/home_board/parity.rs) and Tend for Mac's FleetBoard (apps/tend-macos/Tests/HomeBoardParityTests.swift). Each must produce home-board-parity.json. Times are fixed against `now`.",
+  "now": "2026-11-16T09:00:00Z",
+  "cases": [
+    {
+      "name": "solo agents take the lane of their state",
+      "hosts": [
+        {
+          "alias": "mba",
+          "local": true,
+          "mode": "control",
+          "state": "online",
+          "remote": {
+            "agents": [
+              {
+                "agent_session_id": "w",
+                "kind": "claude_code",
+                "pane": "%1",
+                "tmux_socket": "s",
+                "cwd": "/w/tend",
+                "state": "working",
+                "last_prompt": "Port the board to Rust",
+                "state_entered_at": "2026-11-16T08:58:00Z",
+                "last_activity_at": "2026-11-16T08:59:30Z"
+              },
+              {
+                "agent_session_id": "q",
+                "kind": "codex",
+                "pane": "%2",
+                "tmux_socket": "s",
+                "cwd": "/w/site",
+                "state": "waiting_input",
+                "last_prompt": "Pick a font for the landing page",
+                "state_entered_at": "2026-11-16T08:55:00Z"
+              },
+              {
+                "agent_session_id": "d",
+                "kind": "codex",
+                "pane": "%3",
+                "tmux_socket": "s",
+                "cwd": "/w/tend",
+                "state": "idle",
+                "last_prompt": "Fix the toast",
+                "last_response": "Done: toast fixed\nmore lines",
+                "state_entered_at": "2026-11-16T08:50:00Z"
+              },
+              {
+                "agent_session_id": "x",
+                "kind": "claude_code",
+                "pane": "%4",
+                "tmux_socket": "s",
+                "cwd": "/w/tend",
+                "state": "stopped",
+                "last_prompt": "gone",
+                "state_entered_at": "2026-11-16T08:59:00Z"
+              }
+            ],
+            "panes": [
+              {
+                "pane_id": "%1",
+                "socket": "s",
+                "session": "w",
+                "window_id": "@1",
+                "window_index": "0",
+                "window_name": "a",
+                "pane_index": "0",
+                "current_path": "/w/tend",
+                "current_command": "claude",
+                "session_id": "$1",
+                "title": ""
+              },
+              {
+                "pane_id": "%2",
+                "socket": "s",
+                "session": "w",
+                "window_id": "@2",
+                "window_index": "1",
+                "window_name": "b",
+                "pane_index": "0",
+                "current_path": "/w/site",
+                "current_command": "codex",
+                "session_id": "$1",
+                "title": ""
+              },
+              {
+                "pane_id": "%3",
+                "socket": "s",
+                "session": "w",
+                "window_id": "@3",
+                "window_index": "2",
+                "window_name": "c",
+                "pane_index": "0",
+                "current_path": "/w/tend",
+                "current_command": "codex",
+                "session_id": "$1",
+                "title": ""
+              }
+            ]
+          }
+        }
+      ],
+      "runs": [],
+      "reviewed": []
+    },
+    {
+      "name": "a pipeline run is one unit with stages",
+      "hosts": [
+        {
+          "alias": "mba",
+          "local": true,
+          "mode": "control",
+          "state": "online",
+          "remote": {
+            "agents": [
+              {
+                "agent_session_id": "i",
+                "kind": "claude_code",
+                "pane": "%1",
+                "tmux_socket": "s",
+                "cwd": "/w/tend",
+                "state": "idle",
+                "last_prompt": "implement",
+                "last_response": "Implemented the retry path.",
+                "state_entered_at": "2026-11-16T08:40:00Z"
+              },
+              {
+                "agent_session_id": "r",
+                "kind": "codex",
+                "pane": "%2",
+                "tmux_socket": "s",
+                "cwd": "/w/tend",
+                "state": "working",
+                "last_prompt": "review the diff",
+                "recap": "Reading the retry path",
+                "state_entered_at": "2026-11-16T08:59:00Z"
+              }
+            ],
+            "panes": [
+              {
+                "pane_id": "%1",
+                "socket": "s",
+                "session": "w",
+                "window_id": "@1",
+                "window_index": "0",
+                "window_name": "impl",
+                "pane_index": "0",
+                "current_path": "/w/tend",
+                "workspace_id": "tend",
+                "work_id": "fix-login",
+                "agent_alias": "impl",
+                "session_id": "$1",
+                "title": "",
+                "current_command": ""
+              },
+              {
+                "pane_id": "%2",
+                "socket": "s",
+                "session": "w",
+                "window_id": "@1",
+                "window_index": "0",
+                "window_name": "impl",
+                "pane_index": "1",
+                "current_path": "/w/tend",
+                "workspace_id": "tend",
+                "work_id": "fix-login",
+                "agent_alias": "review",
+                "session_id": "$1",
+                "title": "",
+                "current_command": ""
+              }
+            ]
+          }
+        }
+      ],
+      "runs": [
+        {
+          "identity": {
+            "workspace_id": "tend",
+            "work_id": "fix-login"
+          },
+          "pipeline": "impl-review",
+          "cwd": "/w/tend",
+          "generation": 3,
+          "desired": [
+            {
+              "alias": "impl",
+              "program": "claude",
+              "role": "Implement"
+            },
+            {
+              "alias": "review",
+              "program": "codex",
+              "role": "Review"
+            }
+          ],
+          "aliases": {
+            "impl": {
+              "alias": "impl",
+              "status": "done",
+              "generation": 3
+            },
+            "review": {
+              "alias": "review",
+              "status": "running",
+              "generation": 3
+            }
+          }
+        }
+      ],
+      "reviewed": []
+    },
+    {
+      "name": "a helper folds into the unit it helps; an orphan stays marked",
+      "hosts": [
+        {
+          "alias": "mba",
+          "local": true,
+          "mode": "control",
+          "state": "online",
+          "remote": {
+            "agents": [
+              {
+                "agent_session_id": "lead",
+                "kind": "claude_code",
+                "pane": "%1",
+                "tmux_socket": "s",
+                "cwd": "/w/tend",
+                "state": "working",
+                "last_prompt": "Ship the queue",
+                "state_entered_at": "2026-11-16T08:57:00Z"
+              },
+              {
+                "agent_session_id": "help",
+                "kind": "codex",
+                "pane": "%2",
+                "tmux_socket": "s",
+                "cwd": "/w/tend",
+                "state": "working",
+                "last_prompt": "[tend] Claimed; review this.\n--- peer request ---\n{\"from\":{\"agent_session_id\":\"lead\",\"label\":\"claude@%1\"}}\n--- end peer request ---",
+                "state_entered_at": "2026-11-16T08:58:00Z"
+              },
+              {
+                "agent_session_id": "orphan",
+                "kind": "codex",
+                "pane": "%3",
+                "tmux_socket": "s",
+                "cwd": "/w/tend",
+                "state": "idle",
+                "last_prompt": "[tend] Claimed; review this.\n--- peer request ---\n{\"from\":{\"agent_session_id\":\"gone\",\"label\":\"claude@%9\"}}\n--- end peer request ---",
+                "last_response": "Reviewed.",
+                "state_entered_at": "2026-11-16T08:30:00Z"
+              }
+            ],
+            "panes": [
+              {
+                "pane_id": "%1",
+                "socket": "s",
+                "session": "w",
+                "window_id": "@1",
+                "window_index": "0",
+                "window_name": "a",
+                "pane_index": "0",
+                "current_path": "/w/tend",
+                "session_id": "$1",
+                "title": "",
+                "current_command": ""
+              },
+              {
+                "pane_id": "%2",
+                "socket": "s",
+                "session": "w",
+                "window_id": "@2",
+                "window_index": "1",
+                "window_name": "b",
+                "pane_index": "0",
+                "current_path": "/w/tend",
+                "session_id": "$1",
+                "title": "",
+                "current_command": ""
+              },
+              {
+                "pane_id": "%3",
+                "socket": "s",
+                "session": "w",
+                "window_id": "@3",
+                "window_index": "2",
+                "window_name": "c",
+                "pane_index": "0",
+                "current_path": "/w/tend",
+                "session_id": "$1",
+                "title": "",
+                "current_command": ""
+              }
+            ]
+          }
+        }
+      ],
+      "runs": [],
+      "reviewed": []
+    },
+    {
+      "name": "the same session id on two hosts is two units",
+      "hosts": [
+        {
+          "alias": "mba",
+          "local": true,
+          "mode": "control",
+          "state": "online",
+          "remote": {
+            "agents": [
+              {
+                "agent_session_id": "same",
+                "kind": "claude_code",
+                "pane": "%1",
+                "tmux_socket": "s",
+                "cwd": "/w/tend",
+                "state": "idle",
+                "last_prompt": "Write the docs",
+                "last_response": "Docs written.",
+                "state_entered_at": "2026-11-16T08:45:00Z"
+              }
+            ],
+            "panes": [
+              {
+                "pane_id": "%1",
+                "socket": "s",
+                "session": "w",
+                "window_id": "@1",
+                "window_index": "0",
+                "window_name": "a",
+                "pane_index": "0",
+                "current_path": "/w/tend",
+                "session_id": "$1",
+                "title": "",
+                "current_command": ""
+              }
+            ]
+          }
+        },
+        {
+          "alias": "mini",
+          "local": false,
+          "mode": "control",
+          "state": "online",
+          "remote": {
+            "agents": [
+              {
+                "agent_session_id": "same",
+                "kind": "codex",
+                "pane": "%1",
+                "tmux_socket": "s",
+                "cwd": "/srv/api",
+                "state": "working",
+                "last_prompt": "Migrate the database",
+                "state_entered_at": "2026-11-16T08:58:00Z"
+              }
+            ],
+            "panes": [
+              {
+                "pane_id": "%1",
+                "socket": "s",
+                "session": "w",
+                "window_id": "@1",
+                "window_index": "0",
+                "window_name": "a",
+                "pane_index": "0",
+                "current_path": "/srv/api",
+                "session_id": "$1",
+                "title": "",
+                "current_command": ""
+              }
+            ]
+          }
+        }
+      ],
+      "runs": [],
+      "reviewed": []
+    },
+    {
+      "name": "who asked: a person's result counts for Review, a peer's does not",
+      "hosts": [
+        {
+          "alias": "mba",
+          "local": true,
+          "mode": "control",
+          "state": "online",
+          "remote": {
+            "agents": [
+              {
+                "agent_session_id": "p",
+                "kind": "claude_code",
+                "pane": "%1",
+                "tmux_socket": "s",
+                "cwd": "/w/tend",
+                "state": "idle",
+                "last_prompt": "Bump the version",
+                "last_prompt_origin": "person_via_tend",
+                "last_response": "Bumped to 0.10.24.",
+                "state_entered_at": "2026-11-16T08:40:00Z"
+              },
+              {
+                "agent_session_id": "peer",
+                "kind": "codex",
+                "pane": "%2",
+                "tmux_socket": "s",
+                "cwd": "/w/tend",
+                "state": "idle",
+                "last_prompt": "Check the lockfile",
+                "last_prompt_origin": "peer",
+                "last_response": "Lockfile is clean.",
+                "state_entered_at": "2026-11-16T08:41:00Z"
+              },
+              {
+                "agent_session_id": "note",
+                "kind": "claude_code",
+                "pane": "%3",
+                "tmux_socket": "s",
+                "cwd": "/w/tend",
+                "state": "idle",
+                "last_prompt": "<task-notification>build finished</task-notification>",
+                "last_response": "Noted.",
+                "state_entered_at": "2026-11-16T08:42:00Z"
+              },
+              {
+                "agent_session_id": "empty",
+                "kind": "claude_code",
+                "pane": "%4",
+                "tmux_socket": "s",
+                "cwd": "/w/tend",
+                "state": "idle",
+                "state_entered_at": "2026-11-16T08:43:00Z"
+              }
+            ],
+            "panes": [
+              {
+                "pane_id": "%1",
+                "socket": "s",
+                "session": "w",
+                "window_id": "@1",
+                "window_index": "0",
+                "window_name": "a",
+                "pane_index": "0",
+                "current_path": "/w/tend",
+                "session_id": "$1",
+                "title": "",
+                "current_command": ""
+              },
+              {
+                "pane_id": "%2",
+                "socket": "s",
+                "session": "w",
+                "window_id": "@2",
+                "window_index": "1",
+                "window_name": "b",
+                "pane_index": "0",
+                "current_path": "/w/tend",
+                "session_id": "$1",
+                "title": "",
+                "current_command": ""
+              },
+              {
+                "pane_id": "%3",
+                "socket": "s",
+                "session": "w",
+                "window_id": "@3",
+                "window_index": "2",
+                "window_name": "c",
+                "pane_index": "0",
+                "current_path": "/w/tend",
+                "session_id": "$1",
+                "title": "",
+                "current_command": ""
+              },
+              {
+                "pane_id": "%4",
+                "socket": "s",
+                "session": "w",
+                "window_id": "@4",
+                "window_index": "3",
+                "window_name": "d",
+                "pane_index": "0",
+                "current_path": "/w/tend",
+                "session_id": "$1",
+                "title": "",
+                "current_command": ""
+              }
+            ]
+          }
+        }
+      ],
+      "runs": [],
+      "reviewed": []
+    },
+    {
+      "name": "a reviewed result hides until it changes; a usage cap with no policy needs you",
+      "hosts": [
+        {
+          "alias": "mba",
+          "local": true,
+          "mode": "control",
+          "state": "online",
+          "remote": {
+            "agents": [
+              {
+                "agent_session_id": "seen",
+                "kind": "claude_code",
+                "pane": "%1",
+                "tmux_socket": "s",
+                "cwd": "/w/tend",
+                "state": "idle",
+                "last_prompt": "Fix the flaky test",
+                "last_response": "Fixed.",
+                "state_entered_at": "2026-11-16T08:30:00Z"
+              },
+              {
+                "agent_session_id": "cap",
+                "kind": "codex",
+                "pane": "%2",
+                "tmux_socket": "s",
+                "cwd": "/w/tend",
+                "state": "idle",
+                "last_prompt": "Port the parser",
+                "rate_limit_scope": "five_hour",
+                "rate_limited_until": "2026-11-16T11:00:00Z",
+                "state_entered_at": "2026-11-16T08:20:00Z"
+              },
+              {
+                "agent_session_id": "ask",
+                "kind": "claude_code",
+                "pane": "%3",
+                "tmux_socket": "s",
+                "cwd": "/w/tend",
+                "state": "idle",
+                "last_prompt": "Plan the release",
+                "last_response": "Should I tag v0.10.25 now?",
+                "awaiting_reply": {
+                  "question": "Should I tag v0.10.25 now?"
+                },
+                "state_entered_at": "2026-11-16T08:35:00Z"
+              }
+            ],
+            "panes": [
+              {
+                "pane_id": "%1",
+                "socket": "s",
+                "session": "w",
+                "window_id": "@1",
+                "window_index": "0",
+                "window_name": "a",
+                "pane_index": "0",
+                "current_path": "/w/tend",
+                "session_id": "$1",
+                "title": "",
+                "current_command": ""
+              },
+              {
+                "pane_id": "%2",
+                "socket": "s",
+                "session": "w",
+                "window_id": "@2",
+                "window_index": "1",
+                "window_name": "b",
+                "pane_index": "0",
+                "current_path": "/w/tend",
+                "session_id": "$1",
+                "title": "",
+                "current_command": ""
+              },
+              {
+                "pane_id": "%3",
+                "socket": "s",
+                "session": "w",
+                "window_id": "@3",
+                "window_index": "2",
+                "window_name": "c",
+                "pane_index": "0",
+                "current_path": "/w/tend",
+                "session_id": "$1",
+                "title": "",
+                "current_command": ""
+              }
+            ]
+          }
+        }
+      ],
+      "runs": [],
+      "reviewed": [
+        "home:830790619aeeca3676643a1e8318291efff4bdeffe716260a28b5fe9709ce621"
+      ]
+    }
+  ]
+}

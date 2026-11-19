@@ -1,0 +1,581 @@
+{
+  "cases": [
+    {
+      "lanes": {
+        "finished": [
+          {
+            "agents": [
+              "mba:d"
+            ],
+            "empty_session": false,
+            "focus": {
+              "agent": "mba:d",
+              "state": "idle"
+            },
+            "handled_limit": false,
+            "helpers": [],
+            "id": "agent:mba:d",
+            "lane": "finished",
+            "orphan_helper": false,
+            "probable_helper": false,
+            "repo": "tend",
+            "requested_by_person": true,
+            "review_key": "home:416c3fa22d3063e1f033632b84dc332a41225daffd0a17926d74b440bbb8aeae",
+            "reviewed": false,
+            "revision": "mba:d|idle|2026-11-16T08:50:00Z",
+            "since": "2026-11-16T08:50:00Z",
+            "source": {
+              "host": "mba",
+              "kind": "agent",
+              "session_id": "d"
+            },
+            "stages": [
+              {
+                "name": "codex",
+                "state": "done"
+              }
+            ],
+            "title": "Fix the toast"
+          }
+        ],
+        "needs_you": [
+          {
+            "agents": [
+              "mba:q"
+            ],
+            "empty_session": false,
+            "focus": {
+              "agent": "mba:q",
+              "state": "waiting_input"
+            },
+            "handled_limit": false,
+            "helpers": [],
+            "id": "agent:mba:q",
+            "lane": "needs_you",
+            "orphan_helper": false,
+            "probable_helper": false,
+            "repo": "site",
+            "requested_by_person": true,
+            "review_key": "home:3b9e09e8544a2d5c224f6ac3d196a4d316e6eab0e9e0839a592789588343b4b9",
+            "reviewed": false,
+            "revision": "mba:q|waiting_input|2026-11-16T08:55:00Z",
+            "since": "2026-11-16T08:55:00Z",
+            "source": {
+              "host": "mba",
+              "kind": "agent",
+              "session_id": "q"
+            },
+            "stages": [
+              {
+                "name": "codex",
+                "state": "needs_you"
+              }
+            ],
+            "title": "Pick a font for the landing page"
+          }
+        ],
+        "running": [
+          {
+            "agents": [
+              "mba:w"
+            ],
+            "empty_session": false,
+            "focus": {
+              "agent": "mba:w",
+              "state": "working"
+            },
+            "handled_limit": false,
+            "helpers": [],
+            "id": "agent:mba:w",
+            "lane": "running",
+            "orphan_helper": false,
+            "probable_helper": false,
+            "repo": "tend",
+            "requested_by_person": true,
+            "review_key": "home:aaf58c46cd28115d3aee6c4e7091a0b9264e42cb1dbfa8e2b0eb8a3fd5e0658a",
+            "reviewed": false,
+            "revision": "mba:w|working|2026-11-16T08:58:00Z",
+            "since": "2026-11-16T08:58:00Z",
+            "source": {
+              "host": "mba",
+              "kind": "agent",
+              "session_id": "w"
+            },
+            "stages": [
+              {
+                "name": "claude",
+                "state": "running"
+              }
+            ],
+            "title": "Port the board to Rust"
+          }
+        ]
+      },
+      "name": "solo agents take the lane of their state"
+    },
+    {
+      "lanes": {
+        "finished": [],
+        "needs_you": [],
+        "running": [
+          {
+            "agents": [
+              "mba:r",
+              "mba:i"
+            ],
+            "empty_session": false,
+            "focus": {
+              "agent": "mba:r",
+              "state": "working"
+            },
+            "handled_limit": false,
+            "helpers": [],
+            "id": "work:tend/fix-login",
+            "lane": "running",
+            "orphan_helper": false,
+            "probable_helper": false,
+            "repo": "tend",
+            "requested_by_person": true,
+            "review_key": "home:89156c49badaa68846c3a2d4f50ad4a87c69964924f68f403b5617ff067b2a37",
+            "reviewed": false,
+            "revision": "mba:i|idle|2026-11-16T08:40:00Z;mba:r|working|2026-11-16T08:59:00Z;gen:3;impl=done;review=running",
+            "since": "2026-11-16T08:59:00Z",
+            "source": {
+              "kind": "work",
+              "work": "fix-login",
+              "workspace": "tend"
+            },
+            "stages": [
+              {
+                "name": "Implement",
+                "state": "done"
+              },
+              {
+                "name": "Review",
+                "state": "running"
+              }
+            ],
+            "title": "fix-login"
+          }
+        ]
+      },
+      "name": "a pipeline run is one unit with stages"
+    },
+    {
+      "lanes": {
+        "finished": [
+          {
+            "agents": [
+              "mba:orphan"
+            ],
+            "empty_session": false,
+            "focus": {
+              "agent": "mba:orphan",
+              "state": "idle"
+            },
+            "handled_limit": false,
+            "helpers": [],
+            "id": "agent:mba:orphan",
+            "lane": "finished",
+            "orphan_helper": true,
+            "probable_helper": false,
+            "repo": "tend",
+            "requested_by_person": false,
+            "review_key": "home:772c879e16326d888e6273903c7e97540459026a354e98228658da1ba7c5a4d9",
+            "reviewed": false,
+            "revision": "mba:orphan|idle|2026-11-16T08:30:00Z",
+            "since": "2026-11-16T08:30:00Z",
+            "source": {
+              "host": "mba",
+              "kind": "agent",
+              "session_id": "orphan"
+            },
+            "stages": [
+              {
+                "name": "codex",
+                "state": "done"
+              }
+            ],
+            "title": "[tend] Claimed; review this."
+          }
+        ],
+        "needs_you": [],
+        "running": [
+          {
+            "agents": [
+              "mba:lead"
+            ],
+            "empty_session": false,
+            "focus": {
+              "agent": "mba:lead",
+              "state": "working"
+            },
+            "handled_limit": false,
+            "helpers": [
+              "mba:help"
+            ],
+            "id": "agent:mba:lead",
+            "lane": "running",
+            "orphan_helper": false,
+            "probable_helper": false,
+            "repo": "tend",
+            "requested_by_person": true,
+            "review_key": "home:0c00bf9ac7366c8a8c83fcf3e7c283192b374100d226398525cb6ece4addaaee",
+            "reviewed": false,
+            "revision": "mba:lead|working|2026-11-16T08:57:00Z;mba:help|working|2026-11-16T08:58:00Z",
+            "since": "2026-11-16T08:57:00Z",
+            "source": {
+              "host": "mba",
+              "kind": "agent",
+              "session_id": "lead"
+            },
+            "stages": [
+              {
+                "name": "claude",
+                "state": "running"
+              }
+            ],
+            "title": "Ship the queue"
+          }
+        ]
+      },
+      "name": "a helper folds into the unit it helps; an orphan stays marked"
+    },
+    {
+      "lanes": {
+        "finished": [
+          {
+            "agents": [
+              "mba:same"
+            ],
+            "empty_session": false,
+            "focus": {
+              "agent": "mba:same",
+              "state": "idle"
+            },
+            "handled_limit": false,
+            "helpers": [],
+            "id": "agent:mba:same",
+            "lane": "finished",
+            "orphan_helper": false,
+            "probable_helper": false,
+            "repo": "tend",
+            "requested_by_person": true,
+            "review_key": "home:9563c1c803555ca96863c0be413ddeb76b1897a351ce949e611ae22b02a56282",
+            "reviewed": false,
+            "revision": "mba:same|idle|2026-11-16T08:45:00Z",
+            "since": "2026-11-16T08:45:00Z",
+            "source": {
+              "host": "mba",
+              "kind": "agent",
+              "session_id": "same"
+            },
+            "stages": [
+              {
+                "name": "claude",
+                "state": "done"
+              }
+            ],
+            "title": "Write the docs"
+          }
+        ],
+        "needs_you": [],
+        "running": [
+          {
+            "agents": [
+              "mini:same"
+            ],
+            "empty_session": false,
+            "focus": {
+              "agent": "mini:same",
+              "state": "working"
+            },
+            "handled_limit": false,
+            "helpers": [],
+            "id": "agent:mini:same",
+            "lane": "running",
+            "orphan_helper": false,
+            "probable_helper": false,
+            "repo": "api",
+            "requested_by_person": true,
+            "review_key": "home:37052f1bb5bb7555e2ffdd9a61bf07f9f8c7b932839e19ff94624d71e4e65bae",
+            "reviewed": false,
+            "revision": "mini:same|working|2026-11-16T08:58:00Z",
+            "since": "2026-11-16T08:58:00Z",
+            "source": {
+              "host": "mini",
+              "kind": "agent",
+              "session_id": "same"
+            },
+            "stages": [
+              {
+                "name": "codex",
+                "state": "running"
+              }
+            ],
+            "title": "Migrate the database"
+          }
+        ]
+      },
+      "name": "the same session id on two hosts is two units"
+    },
+    {
+      "lanes": {
+        "finished": [
+          {
+            "agents": [
+              "mba:empty"
+            ],
+            "empty_session": true,
+            "focus": {
+              "agent": "mba:empty",
+              "state": "idle"
+            },
+            "handled_limit": false,
+            "helpers": [],
+            "id": "agent:mba:empty",
+            "lane": "finished",
+            "orphan_helper": false,
+            "probable_helper": false,
+            "repo": "tend",
+            "requested_by_person": false,
+            "review_key": "home:ceb9a98fdc502f8d64b8c30674416c2d7cae695e3b7459927c5d68ddcc75d609",
+            "reviewed": false,
+            "revision": "mba:empty|idle|2026-11-16T08:43:00Z",
+            "since": "2026-11-16T08:43:00Z",
+            "source": {
+              "host": "mba",
+              "kind": "agent",
+              "session_id": "empty"
+            },
+            "stages": [
+              {
+                "name": "claude",
+                "state": "done"
+              }
+            ],
+            "title": "claude on mba"
+          },
+          {
+            "agents": [
+              "mba:note"
+            ],
+            "empty_session": false,
+            "focus": {
+              "agent": "mba:note",
+              "state": "idle"
+            },
+            "handled_limit": false,
+            "helpers": [],
+            "id": "agent:mba:note",
+            "lane": "finished",
+            "orphan_helper": false,
+            "probable_helper": false,
+            "repo": "tend",
+            "requested_by_person": false,
+            "review_key": "home:975c1a17dc2186e22ef2f840cee3a7a1fe8190e0bb4f4a5c2d8fa294cc316d45",
+            "reviewed": false,
+            "revision": "mba:note|idle|2026-11-16T08:42:00Z",
+            "since": "2026-11-16T08:42:00Z",
+            "source": {
+              "host": "mba",
+              "kind": "agent",
+              "session_id": "note"
+            },
+            "stages": [
+              {
+                "name": "claude",
+                "state": "done"
+              }
+            ],
+            "title": "⟳ Background task"
+          },
+          {
+            "agents": [
+              "mba:peer"
+            ],
+            "empty_session": false,
+            "focus": {
+              "agent": "mba:peer",
+              "state": "idle"
+            },
+            "handled_limit": false,
+            "helpers": [],
+            "id": "agent:mba:peer",
+            "lane": "finished",
+            "orphan_helper": false,
+            "probable_helper": false,
+            "repo": "tend",
+            "requested_by_person": false,
+            "review_key": "home:cbefe0057f3a78c7e0b55cf9ee7c43fab53358e9c10bdc7e959c82976edd70dc",
+            "reviewed": false,
+            "revision": "mba:peer|idle|2026-11-16T08:41:00Z",
+            "since": "2026-11-16T08:41:00Z",
+            "source": {
+              "host": "mba",
+              "kind": "agent",
+              "session_id": "peer"
+            },
+            "stages": [
+              {
+                "name": "codex",
+                "state": "done"
+              }
+            ],
+            "title": "Check the lockfile"
+          },
+          {
+            "agents": [
+              "mba:p"
+            ],
+            "empty_session": false,
+            "focus": {
+              "agent": "mba:p",
+              "state": "idle"
+            },
+            "handled_limit": false,
+            "helpers": [],
+            "id": "agent:mba:p",
+            "lane": "finished",
+            "orphan_helper": false,
+            "probable_helper": false,
+            "repo": "tend",
+            "requested_by_person": true,
+            "review_key": "home:a66aa465188dd743414be8e013b32dc357869f9fc8c3c0252eb31b8eb84ee2fe",
+            "reviewed": false,
+            "revision": "mba:p|idle|2026-11-16T08:40:00Z",
+            "since": "2026-11-16T08:40:00Z",
+            "source": {
+              "host": "mba",
+              "kind": "agent",
+              "session_id": "p"
+            },
+            "stages": [
+              {
+                "name": "claude",
+                "state": "done"
+              }
+            ],
+            "title": "Bump the version"
+          }
+        ],
+        "needs_you": [],
+        "running": []
+      },
+      "name": "who asked: a person's result counts for Review, a peer's does not"
+    },
+    {
+      "lanes": {
+        "finished": [
+          {
+            "agents": [
+              "mba:seen"
+            ],
+            "empty_session": false,
+            "focus": {
+              "agent": "mba:seen",
+              "state": "idle"
+            },
+            "handled_limit": false,
+            "helpers": [],
+            "id": "agent:mba:seen",
+            "lane": "finished",
+            "orphan_helper": false,
+            "probable_helper": false,
+            "repo": "tend",
+            "requested_by_person": true,
+            "review_key": "home:830790619aeeca3676643a1e8318291efff4bdeffe716260a28b5fe9709ce621",
+            "reviewed": true,
+            "revision": "mba:seen|idle|2026-11-16T08:30:00Z",
+            "since": "2026-11-16T08:30:00Z",
+            "source": {
+              "host": "mba",
+              "kind": "agent",
+              "session_id": "seen"
+            },
+            "stages": [
+              {
+                "name": "claude",
+                "state": "done"
+              }
+            ],
+            "title": "Fix the flaky test"
+          }
+        ],
+        "needs_you": [
+          {
+            "agents": [
+              "mba:cap"
+            ],
+            "empty_session": false,
+            "focus": {
+              "agent": "mba:cap",
+              "state": "idle"
+            },
+            "handled_limit": false,
+            "helpers": [],
+            "id": "agent:mba:cap",
+            "lane": "needs_you",
+            "orphan_helper": false,
+            "probable_helper": false,
+            "repo": "tend",
+            "requested_by_person": true,
+            "review_key": "home:de94f9609d1a6cd952f561764c9afe9ba54ab46d98ddf6334f66a805a5ea73bc",
+            "reviewed": false,
+            "revision": "mba:cap|idle|2026-11-16T08:20:00Z",
+            "since": "2026-11-16T08:20:00Z",
+            "source": {
+              "host": "mba",
+              "kind": "agent",
+              "session_id": "cap"
+            },
+            "stages": [
+              {
+                "name": "codex",
+                "state": "needs_you"
+              }
+            ],
+            "title": "Port the parser"
+          },
+          {
+            "agents": [
+              "mba:ask"
+            ],
+            "empty_session": false,
+            "focus": {
+              "agent": "mba:ask",
+              "state": "idle"
+            },
+            "handled_limit": false,
+            "helpers": [],
+            "id": "agent:mba:ask",
+            "lane": "needs_you",
+            "orphan_helper": false,
+            "probable_helper": false,
+            "repo": "tend",
+            "requested_by_person": true,
+            "review_key": "home:564a1b931ed376eae0860dd1bc5eef93c041d30578c077477e7eedc41556f292",
+            "reviewed": false,
+            "revision": "mba:ask|idle|2026-11-16T08:35:00Z",
+            "since": "2026-11-16T08:35:00Z",
+            "source": {
+              "host": "mba",
+              "kind": "agent",
+              "session_id": "ask"
+            },
+            "stages": [
+              {
+                "name": "claude",
+                "state": "needs_you"
+              }
+            ],
+            "title": "Plan the release"
+          }
+        ],
+        "running": []
+      },
+      "name": "a reviewed result hides until it changes; a usage cap with no policy needs you"
+    }
+  ],
+  "schema": 1
+}

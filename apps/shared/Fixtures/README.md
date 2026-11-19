@@ -29,3 +29,28 @@ them when those documents change.
   the two files above by a Rust test
   (`the_device_board_fixture_is_the_projection_of_the_board_fixture`,
   `UPDATE_FIXTURES=1` rewrites it).
+
+## The board parity contract
+
+Tend for Mac computes Home itself (`FleetBoard`), and tendd computes the same
+board for every other client (`crates/tend/src/home_board.rs`). These two
+files hold them to one result:
+
+- `home-board-parity-input.json`: small named cases, each one or more Fleet
+  hosts as the snapshot carries them, plus pipeline runs and recorded Looks
+  Good keys, at a fixed `now`.
+- `home-board-parity.json`: every unit each lane holds, in order, with its
+  source, title (in English), agents, helpers, focus, stages, since,
+  revision, review key, reviewed mark and fold flags.
+
+`crates/tend/src/home_board/parity.rs` builds the summary from the input,
+and so does `apps/tend-macos/Tests/HomeBoardParityTests.swift`, through Home's
+own path. Both must equal the file. A rule changed on one side fails there
+until the other follows. `UPDATE_FIXTURES=1 cargo test -p tend --lib
+parity` rewrites the summary from tendd's side; review the diff. The macOS
+workflow also runs when the board's Rust files change.
+
+Not compared yet: decisions, the backlog, headlines, and limit-policy
+coverage (no rules are installed, so every cap counts). The two builders
+also still differ in deliberate ways the summary leaves out: the web cuts a
+review result at 4,000 characters, where the Mac shows all of it.
