@@ -74,11 +74,21 @@ enum TendInk {
     static func control(_ scheme: ColorScheme) -> Color { TendTheme.token(TendDesignTokens.Mac.inkControl, scheme) }
     static func track(_ scheme: ColorScheme) -> Color { TendTheme.token(TendDesignTokens.Mac.inkTrack, scheme) }
     static func selection(_ scheme: ColorScheme) -> Color { TendTheme.token(TendDesignTokens.Mac.inkSelection, scheme) }
+    /// A soft-filled control while pressed: a clear step from hover.
+    static func controlPressed(_ scheme: ColorScheme) -> Color { TendTheme.token(TendDesignTokens.Mac.inkControlPressed, scheme) }
     static func accentText(_ scheme: ColorScheme) -> Color { TendTheme.token(TendDesignTokens.Mac.inkAccentText, scheme) }
     /// The primary button's fill; white on it is 5:1 or more.
     static func accentFill(_ scheme: ColorScheme) -> Color { TendTheme.token(TendDesignTokens.Mac.accentFill, scheme) }
     /// Pressed: opaque and darker, never a translucent accent.
     static func accentFillPressed(_ scheme: ColorScheme) -> Color { TendTheme.token(TendDesignTokens.Mac.accentFillPressed, scheme) }
+    /// Hover: opaque, between the rest and pressed fills.
+    static func accentFillHover(_ scheme: ColorScheme) -> Color { TendTheme.token(TendDesignTokens.Mac.accentFillHover, scheme) }
+    /// A destructive primary button's fill, hovered, and pressed.
+    static func dangerFill(_ scheme: ColorScheme) -> Color { TendTheme.token(TendDesignTokens.Mac.dangerFill, scheme) }
+    static func dangerFillHover(_ scheme: ColorScheme) -> Color { TendTheme.token(TendDesignTokens.Mac.dangerFillHover, scheme) }
+    static func dangerFillPressed(_ scheme: ColorScheme) -> Color { TendTheme.token(TendDesignTokens.Mac.dangerFillPressed, scheme) }
+    /// A destructive secondary label: 4.5:1 on its rest, hover and pressed fills.
+    static func dangerText(_ scheme: ColorScheme) -> Color { TendTheme.token(TendDesignTokens.Mac.dangerText, scheme) }
 
     /// A state's word. On a selected or tinted surface use `label` instead
     /// and keep the hue for the dot.

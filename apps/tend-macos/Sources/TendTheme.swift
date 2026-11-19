@@ -189,11 +189,12 @@ extension ButtonStyle where Self == TendIconButtonStyle {
 }
 
 /// The workbench's text buttons, sized by `controlSize` (22pt small, 26pt
-/// regular):
-/// - `primary`: the accent fill, one per surface, for the action that moves
-///   work forward (Send, Start, Click to Type).
-/// - `secondary`: a hairline outline that fills on hover — the everyday
-///   action (Details, Open in Shell).
+/// regular), on the Mac design tokens (docs/proposals/MAC_DESIGN.md):
+/// - `primary`: the accent fill (white on it is 5:1 or more; a destructive
+///   one the danger fill), one per surface, for the action that moves work
+///   forward (Send, Start, Click to Type). Pressed is a darker opaque fill.
+/// - `secondary`: a soft fill without an outline (an outline again under
+///   Increase Contrast), the everyday action (Details, Open in Shell).
 /// - `ghost`: no chrome until hovered, for actions inside dense rows.
 struct TendButtonStyle: ButtonStyle {
     enum Kind { case primary, secondary, ghost }
@@ -210,6 +211,7 @@ private struct TendButtonBody: View {
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.controlSize) private var controlSize
+    @Environment(\.colorSchemeContrast) private var contrast
     @State private var hovering = false
 
     private var compact: Bool { controlSize == .small || controlSize == .mini }
@@ -222,11 +224,11 @@ private struct TendButtonBody: View {
             .padding(.horizontal, compact ? 8 : 10)
             .frame(minHeight: compact ? 22 : 26)
             .background(
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                RoundedRectangle(cornerRadius: TendRadius.control, style: .continuous)
                     .fill(fill)
             )
             .overlay {
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                RoundedRectangle(cornerRadius: TendRadius.control, style: .continuous)
                     .strokeBorder(stroke, lineWidth: 1)
             }
             .foregroundStyle(foreground)
@@ -236,16 +238,22 @@ private struct TendButtonBody: View {
             .animation(.easeOut(duration: 0.12), value: hovering)
     }
 
-    private var tint: Color {
-        configuration.role == .destructive ? .red : .accentColor
-    }
+    private var destructive: Bool { configuration.role == .destructive }
 
     private var fill: Color {
         switch kind {
         case .primary:
-            if configuration.isPressed { return tint.opacity(0.78) }
-            return hovering ? tint.opacity(0.9) : tint
-        case .secondary, .ghost:
+            // Opaque at rest and pressed: white text keeps its contrast.
+            if destructive {
+                if configuration.isPressed { return TendInk.dangerFillPressed(colorScheme) }
+                return hovering ? TendInk.dangerFillHover(colorScheme) : TendInk.dangerFill(colorScheme)
+            }
+            if configuration.isPressed { return TendInk.accentFillPressed(colorScheme) }
+            return hovering ? TendInk.accentFillHover(colorScheme) : TendInk.accentFill(colorScheme)
+        case .secondary:
+            if configuration.isPressed { return TendInk.controlPressed(colorScheme) }
+            return hovering ? TendInk.selection(colorScheme) : TendInk.control(colorScheme)
+        case .ghost:
             if configuration.isPressed { return TendTheme.pressed(colorScheme) }
             return hovering ? TendTheme.hover(colorScheme) : .clear
         }
@@ -253,8 +261,9 @@ private struct TendButtonBody: View {
 
     private var stroke: Color {
         switch kind {
-        case .primary: Color.black.opacity(colorScheme == .dark ? 0.25 : 0.08)
-        case .secondary: TendTheme.inputBorder(colorScheme)
+        case .primary: .clear
+        // No outline, except where the person asked for more contrast.
+        case .secondary: contrast == .increased ? TendTheme.inputBorder(colorScheme) : .clear
         case .ghost: .clear
         }
     }
@@ -262,8 +271,11 @@ private struct TendButtonBody: View {
     private var foreground: Color {
         switch kind {
         case .primary: .white
-        case .secondary, .ghost:
-            configuration.role == .destructive ? .red : Color.primary.opacity(0.85)
+        case .secondary:
+            destructive ? TendInk.dangerText(colorScheme) : TendInk.label(colorScheme)
+        case .ghost:
+            // Unchanged in this pass.
+            destructive ? .red : Color.primary.opacity(0.85)
         }
     }
 }
