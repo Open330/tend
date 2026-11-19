@@ -32,6 +32,24 @@ enum FleetCantAnswer {
         filtered ? listed : max(listed, exact)
     }
 
+    /// The same across hosts: each host's exact count (this Mac's queue, or
+    /// another host's read over Fleet), never less than what that host
+    /// lists, summed over the hosts `host` keeps (all when nil). A cut page
+    /// limits the rows, never the count. Under a project filter only what
+    /// is listed counts.
+    static func count(
+        listed: [FleetDecision],
+        exact: [String: Int],
+        host: String?,
+        filtered: Bool
+    ) -> Int {
+        let rows = listed.filter { host == nil || $0.host.alias == host }
+        if filtered { return rows.count }
+        let listedByHost = Dictionary(grouping: rows, by: \.host.alias).mapValues(\.count)
+        let hosts = Set(listedByHost.keys).union(exact.keys.filter { host == nil || $0 == host })
+        return hosts.reduce(0) { $0 + max(listedByHost[$1] ?? 0, exact[$1] ?? 0) }
+    }
+
     /// `Close 3 questions?`
     static func confirmTitle(_ count: Int) -> String {
         count == 1 ? String(localized: "Close 1 question?") : String(localized: "Close \(count) questions?")

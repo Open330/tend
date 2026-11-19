@@ -204,6 +204,30 @@ private func message(id: String) throws -> TendOperatorMessage {
         let badge = TendAttentionSummary.make(agents: [], messages: [copy, liveThere], unread: [], folded: foldedIDs, paneKey: { $0.id })
         #expect(badge.decisions == 1)
 
+        // The group's count: each host's exact count, never less than it
+        // lists. A remote page cut before any folded row still counts them
+        // (and its omitted mailbox copies stay out of Your turn); with this
+        // Mac's, the hosts add up; a host filter keeps that host's.
+        let cutJSON = #"{"items":[{"kind":"human_request","request_id":"rq_x","body":"?","from_session_id":"s","from_pane":"%1","created_at":"2026-11-10T11:00:00Z"}],"truncated":true,"unanswerable_count":2}"#
+        let cut = try JSONDecoder().decode(TendPendingQueue.self, from: Data(cutJSON.utf8))
+        let omittedCopy = TendOperatorMessage(host: mini.identity, routePane: .operatorRoute, request: try message(id: "rq_gone").request)
+        let cutDecisions = FleetDecisions.withRemote(
+            FleetDecisions.merge(queue: nil, reviews: [], messages: [omittedCopy], localHost: local),
+            queues: [(mini.identity, cut)], deciding: []
+        )
+        #expect(cutDecisions.isEmpty, "the omitted copy may be folded there; not live here")
+        let exact = ["mac": 5, "jiun-mini": 2]
+        #expect(FleetCantAnswer.count(listed: [], exact: exact, host: "jiun-mini", filtered: false) == 2)
+        let localQueue = try JSONDecoder().decode(TendPendingQueue.self, from: Data(foldedQueueJSON.utf8))
+        let ourFolded = FleetDecisions.merge(queue: localQueue, reviews: [], messages: [], localHost: local).filter(\.isUnanswerable)
+        let mixed = Array(ourFolded.prefix(1)) + decisions.filter(\.isUnanswerable)
+        #expect(FleetCantAnswer.count(listed: Array(mixed), exact: exact, host: nil, filtered: false) == 7)
+        #expect(FleetCantAnswer.count(listed: Array(mixed), exact: exact, host: "mac", filtered: false) == 5)
+        // Listed rows stand in for a reader without exact counts; a project
+        // filter counts only what is listed.
+        #expect(FleetCantAnswer.count(listed: Array(mixed), exact: [:], host: nil, filtered: false) == 2)
+        #expect(FleetCantAnswer.count(listed: Array(mixed), exact: exact, host: nil, filtered: true) == 2)
+
         // This Mac's own folded question is kept here, never opened there.
         let queue = try JSONDecoder().decode(TendPendingQueue.self, from: Data(foldedQueueJSON.utf8))
         let ours = FleetDecisions.merge(queue: queue, reviews: [], messages: [], localHost: local).filter(\.isUnanswerable)

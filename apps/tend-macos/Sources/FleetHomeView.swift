@@ -331,8 +331,12 @@ struct FleetHomeView: View {
     /// when there is nothing in it (always from an older tendd).
     private var cantAnswerGroup: FleetCantAnswerGroup? {
         let folded = filteredDecisions.filter(\.isUnanswerable)
-        let exact = hostFilter == nil || hostFilter == homeBoard.localHostAlias ? decisionFeed.unanswerableCount : 0
-        let count = FleetCantAnswer.count(listed: folded.count, exact: exact, filtered: projectFilter != nil)
+        let count = FleetCantAnswer.count(
+            listed: folded,
+            exact: decisionFeed.unanswerableCounts(localHost: homeBoard.localHostAlias),
+            host: hostFilter,
+            filtered: projectFilter != nil
+        )
         // An emptied group still shows the last Close all's report.
         guard count > 0 || decisionFeed.closeAllResult != nil else { return nil }
         let feed = decisionFeed

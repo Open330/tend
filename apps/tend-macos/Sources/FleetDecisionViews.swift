@@ -349,6 +349,16 @@ final class FleetDecisionFeed: ObservableObject {
     /// was cut (0 from a daemon that does not fold them).
     var unanswerableCount: Int { queue?.unanswerableCount ?? 0 }
 
+    /// The exact counts by host: this Mac's (`localHost`) and every other
+    /// host's queue read over Fleet.
+    func unanswerableCounts(localHost: String) -> [String: Int] {
+        var counts = [localHost: unanswerableCount]
+        for entry in remoteQueues where !entry.host.local {
+            counts[entry.host.alias] = entry.queue.unanswerableCount
+        }
+        return counts
+    }
+
     /// Keep: puts a question nobody can answer back in Your turn until its
     /// asker is seen again and gone again.
     func keep(_ decision: FleetDecision, model: AppModel) async -> Bool {
