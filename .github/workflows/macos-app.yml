@@ -10,12 +10,18 @@ on:
     paths:
       - "apps/tend-macos/**"
       - "apps/shared/**"
+      # tendd's board: HomeBoardParityTests holds Home to the same contract.
+      - "crates/tend/src/home_board.rs"
+      - "crates/tend/src/home_board/**"
       - ".github/workflows/macos-app.yml"
   pull_request:
     branches: [main]
     paths:
       - "apps/tend-macos/**"
       - "apps/shared/**"
+      # tendd's board: HomeBoardParityTests holds Home to the same contract.
+      - "crates/tend/src/home_board.rs"
+      - "crates/tend/src/home_board/**"
       - ".github/workflows/macos-app.yml"
   # Run on main by hand to seed the shared libghostty and Rust caches.
   workflow_dispatch:

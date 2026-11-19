@@ -149,6 +149,21 @@ struct FleetWork: Identifiable, Sendable {
 }
 
 enum FleetBoard {
+    /// The agents Home is built from: every one not stopped, what needs the
+    /// person first, then this host's, then by host and session.
+    static func homeAgents(_ snapshot: TendExecutionSnapshot, now: Date = .now) -> [TendHostedAgent] {
+        snapshot.hostedAgents
+            .filter { $0.agent.state != "stopped" }
+            .sorted { left, right in
+                let leftPriority = left.agent.status(at: now).priority
+                let rightPriority = right.agent.status(at: now).priority
+                if leftPriority != rightPriority { return leftPriority < rightPriority }
+                if left.host.local != right.host.local { return left.host.local }
+                if left.host.alias != right.host.alias { return left.host.alias < right.host.alias }
+                return left.agent.agentSessionID < right.agent.agentSessionID
+            }
+    }
+
     static func works(groups: [TendWorkGroup], agents: [TendHostedAgent], now: Date = .now) -> [FleetWork] {
         let managedIDs = Set(groups.flatMap { $0.participants.map(\.id) })
         let live = agents.filter { $0.agent.state != "stopped" }

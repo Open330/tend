@@ -1906,4 +1906,6 @@ mod sources;
 pub use sources::{accepted, HomeSources, BOARD_REUSE};
 
 #[cfg(test)]
+mod parity;
+#[cfg(test)]
 mod tests;

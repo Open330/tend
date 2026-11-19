@@ -1040,16 +1040,7 @@ final class AppModel: ObservableObject {
             let now = Date()
             TendPerf.count("projection.built")
             return await Task.detached(priority: .userInitiated) {
-                let agents = snapshot.hostedAgents
-                    .filter { $0.agent.state != "stopped" }
-                    .sorted { left, right in
-                        let leftPriority = left.agent.status.priority
-                        let rightPriority = right.agent.status.priority
-                        if leftPriority != rightPriority { return leftPriority < rightPriority }
-                        if left.host.local != right.host.local { return left.host.local }
-                        if left.host.alias != right.host.alias { return left.host.alias < right.host.alias }
-                        return left.agent.agentSessionID < right.agent.agentSessionID
-                    }
+                let agents = FleetBoard.homeAgents(snapshot, now: now)
                 let groups = snapshot.workGroups(pipelineRuns: runs)
                 var projection = TendWorkspaceProjection(agents: agents, index: TendHostedAgentIndex(agents), groups: groups,
                     works: FleetBoard.works(groups: groups, agents: agents, now: now),
