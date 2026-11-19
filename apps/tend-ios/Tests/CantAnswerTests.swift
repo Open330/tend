@@ -97,8 +97,8 @@ final class CantAnswerTests: XCTestCase {
         XCTAssertEqual(try JSONSerialization.jsonObject(with: keepBody) as? [String: String], ["request_id": "gone_a", "episode": "ep_a"])
 
         // The board now says the switch is on.
-        XCTAssertEqual(model.closable.count, 2)
-        await model.closeAll(model.closable)
+        XCTAssertEqual(model.closable.first?.decisions.count, 2)
+        await model.closeAll(model.closable[0])
         let closeBody = try XCTUnwrap(StubProtocol.bodies["/api/decisions/close-unanswerable"])
         let sent = try XCTUnwrap(JSONSerialization.jsonObject(with: closeBody) as? [String: Any])
         XCTAssertEqual(sent["by_label"] as? String, "ios")
@@ -162,8 +162,8 @@ final class CantAnswerTests: XCTestCase {
                         .init(status: 401, body: #"{"error":"unknown device"}"#))
         let model = decideModel()
         await model.refresh()
-        XCTAssertEqual(model.closable.count, 2)
-        await model.closeAll(model.closable)
+        XCTAssertEqual(model.closable.first?.decisions.count, 2)
+        await model.closeAll(model.closable[0])
         // One closed, one skipped; the refresh left nothing folded.
         XCTAssertEqual(model.cantAnswerCount, 0)
         XCTAssertEqual(model.closeAllResult?.text, "Closed 1 question. Skipped 1: gone_b (no longer unanswerable)")
@@ -183,7 +183,7 @@ final class CantAnswerTests: XCTestCase {
         XCTAssertNil(model.closeAllResult, "the old pairing's report is gone")
 
         // The dashboard forgot this device mid-close: unpaired, no report.
-        await model.closeAll(model.closable)
+        await model.closeAll(model.closable[0])
         XCTAssertNil(model.pairing)
         XCTAssertNil(model.closeAllResult)
     }
@@ -194,10 +194,49 @@ final class CantAnswerTests: XCTestCase {
         StubProtocol.on("/api/decisions/close-unanswerable", .init(status: 200, body: #"{"closed":[],"skipped":[{"request_id":"gone_a","reason":"kept"}]}"#))
         let model = decideModel()
         await model.refresh()
-        await model.closeAll(model.closable)
+        await model.closeAll(model.closable[0])
         XCTAssertEqual(model.closeAllResult?.text, "Closed 0 questions. Skipped 1: gone_a (kept)")
         XCTAssertEqual(model.cantAnswerCount, 2)
         model.dismissCloseAllResult()
         XCTAssertNil(model.closeAllResult)
+    }
+
+    /// Another Fleet host's questions are kept and closed on that host:
+    /// each request names it, Close all is one per host, and a host that
+    /// cannot take them says why (docs/proposals/FLEET_UNANSWERABLE.md).
+    func testAnotherHostsQuestionsAreKeptAndClosedThere() async throws {
+        func host(_ alias: String, _ flags: String, _ id: String) -> String {
+            #"{"alias":"\#(alias)","local":false,"control":true,\#(flags)"queue":{"items":[\#(Self.question(id, unanswerable: #"{"cause":"pane_gone","episode":"ep_\#(id)","since":"2026-11-16T00:00:00Z"}"#))],"unanswerable_count":1}}"#
+        }
+        let queue = #"{"hosts":[{"alias":"here","local":true,"control":true,"subject_check":true,"close_unanswerable":true,"queue":{"items":[\#(Self.question("gone_a", unanswerable: #"{"cause":"ended","episode":"ep_a","since":"2026-11-16T00:00:00Z"}"#))],"unanswerable_count":1}},"#
+            + host("mini", #""subject_check":true,"close_unanswerable":true,"#, "m1") + ","
+            + host("mbp", #""subject_check":true,"close_unanswerable":false,"#, "b1") + ","
+            + host("old", "", "o1") + "]}"
+        StubProtocol.on("/api/decisions", .init(status: 200, body: queue))
+        StubProtocol.on("/api/decisions/history", .init(status: 200, body: #"{"hosts":[]}"#))
+        StubProtocol.on("/api/decisions/keep", .init(status: 200, body: #"{"request_id":"b1","episode":"ep_b1"}"#))
+        StubProtocol.on("/api/decisions/close-unanswerable", .init(status: 200, body: #"{"closed":["m1"],"skipped":[]}"#))
+        let model = decideModel()
+        await model.refresh()
+        XCTAssertEqual(model.closable.map(\.host), ["here", "mini"], "the paired host first, one per host")
+        XCTAssertEqual(model.closable.map { $0.decisions.map(\.title) }, [["gone_a?"], ["m1?"]])
+        XCTAssertEqual(model.cantAnswerNotes.map(\.host), ["mbp", "old"])
+        XCTAssertEqual(model.cantAnswerNotes.map(\.reason), [.closeOff, .upgrade])
+        XCTAssertEqual(CantAnswerGroup.confirmTitle(model.closable[1]), "Close 1 question on mini?")
+
+        let theirs = try XCTUnwrap(model.cantAnswer.first { $0.title == "b1?" })
+        XCTAssertTrue(model.canKeep(theirs), "Close all off there; Keep still works")
+        XCTAssertFalse(model.canKeep(try XCTUnwrap(model.cantAnswer.first { $0.title == "o1?" })))
+        let kept = await model.keep(theirs)
+        XCTAssertTrue(kept)
+        let keepBody = try XCTUnwrap(StubProtocol.bodies["/api/decisions/keep"])
+        XCTAssertEqual(try JSONSerialization.jsonObject(with: keepBody) as? [String: String], ["request_id": "b1", "episode": "ep_b1", "host": "mbp"])
+
+        await model.closeAll(model.closable[1])
+        let closeBody = try XCTUnwrap(StubProtocol.bodies["/api/decisions/close-unanswerable"])
+        let sent = try XCTUnwrap(JSONSerialization.jsonObject(with: closeBody) as? [String: Any])
+        XCTAssertEqual(sent["host"] as? String, "mini")
+        XCTAssertEqual(sent["items"] as? [[String: String]], [["request_id": "m1", "episode": "ep_m1"]])
+        XCTAssertEqual(model.closeAllResult?.text, "mini: Closed 1 question.")
     }
 }

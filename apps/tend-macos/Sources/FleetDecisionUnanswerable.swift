@@ -3,7 +3,10 @@
 // for a day (`subject_check_v1`). They leave Your turn and every count, are
 // collapsed by default, and say why and since when. Keep puts one back in
 // Your turn; Close all, only where the daemon allows it, declines exactly
-// the listed ones after one confirmation.
+// the listed ones after one confirmation. Another Fleet host's are kept or
+// closed on the dashboard, under its sign-in: this app opens them there and
+// never acts on them itself (docs/proposals/FLEET_UNANSWERABLE.md).
+import AppKit
 import SwiftUI
 
 extension TendUnanswerable {
@@ -29,12 +32,37 @@ enum FleetCantAnswer {
         filtered ? listed : max(listed, exact)
     }
 
+    /// The same across hosts: each host's exact count (this Mac's queue, or
+    /// another host's read over Fleet), never less than what that host
+    /// lists, summed over the hosts `host` keeps (all when nil). A cut page
+    /// limits the rows, never the count. Under a project filter only what
+    /// is listed counts.
+    static func count(
+        listed: [FleetDecision],
+        exact: [String: Int],
+        host: String?,
+        filtered: Bool
+    ) -> Int {
+        let rows = listed.filter { host == nil || $0.host.alias == host }
+        if filtered { return rows.count }
+        let listedByHost = Dictionary(grouping: rows, by: \.host.alias).mapValues(\.count)
+        let hosts = Set(listedByHost.keys).union(exact.keys.filter { host == nil || $0 == host })
+        return hosts.reduce(0) { $0 + max(listedByHost[$1] ?? 0, exact[$1] ?? 0) }
+    }
+
     /// `Close 3 questions?`
     static func confirmTitle(_ count: Int) -> String {
         count == 1 ? String(localized: "Close 1 question?") : String(localized: "Close \(count) questions?")
     }
 
     static let confirmMessage = String(localized: "Each asking agent gets a reply that you dismissed it. This can't be undone.")
+
+    /// Another host's question in the dashboard's Can't be answered group:
+    /// `<origin>/needs#item=<id>&host=<alias>`, which opens the group.
+    static func dashboardLink(_ decision: FleetDecision, on dashboard: URL?) -> URL? {
+        guard !decision.host.local, let dashboard, case .humanRequest(let id) = decision.source else { return nil }
+        return TendDashboardLink.item(id, host: decision.host.alias, on: dashboard)
+    }
 }
 
 struct FleetCantAnswerGroup: View {
@@ -49,6 +77,8 @@ struct FleetCantAnswerGroup: View {
     var result: (ok: Bool, text: String)?
     var keep: (FleetDecision) -> Void = { _ in }
     var closeAll: ([FleetDecision]) -> Void = { _ in }
+    /// The dashboard tendd names, where another host's are kept or closed.
+    var dashboard: URL?
     /// Clears the Close all report.
     var dismissResult: () -> Void = {}
     /// Opens unfolded, for previews and screenshots.
@@ -143,12 +173,22 @@ struct FleetCantAnswerGroup: View {
                 .help(String(localized: "Close every question listed here; each asker gets a reply that you dismissed it"))
         }
         report
+        if decisions.contains(where: { !$0.host.local }) {
+            Text(dashboard == nil
+                ? String(localized: "tendd names no dashboard, so other hosts' questions are kept or closed on those hosts.")
+                : String(localized: "Other hosts' questions are kept or closed on the dashboard."))
+                .font(TendType.meta)
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 4)
+        }
         ForEach(decisions) { decision in
             FleetCantAnswerRow(
                 decision: decision,
                 busy: busy.contains(decision.id),
                 failure: failures[decision.id],
-                keep: canKeep && decision.host.local ? { keep(decision) } : nil
+                keep: canKeep && decision.host.local ? { keep(decision) } : nil,
+                dashboardLink: FleetCantAnswer.dashboardLink(decision, on: dashboard)
             )
         }
         if count > decisions.count {
@@ -167,6 +207,8 @@ struct FleetCantAnswerRow: View {
     var busy = false
     var failure: String?
     var keep: (() -> Void)?
+    /// Another host's question, opened on the dashboard to keep or close.
+    var dashboardLink: URL?
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -206,6 +248,11 @@ struct FleetCantAnswerRow: View {
                         .buttonStyle(.tendGhost)
                         .controlSize(.small)
                         .help(String(localized: "Put it back in Your turn"))
+                } else if let dashboardLink {
+                    Button("Open on the Dashboard") { NSWorkspace.shared.open(dashboardLink) }
+                        .buttonStyle(.tendGhost)
+                        .controlSize(.small)
+                        .help(String(localized: "Keep or close it on the dashboard's Needs you page"))
                 }
             }
             .font(TendType.meta)

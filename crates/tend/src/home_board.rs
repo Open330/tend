@@ -1854,6 +1854,8 @@ pub fn build(input: &BoardInput) -> Value {
             // count even when the list was cut.
             "subject_check": section.get("subject_check"),
             "close_unanswerable": section.get("close_unanswerable"),
+            // Another host's: why Keep or Close all cannot be sent there.
+            "unanswerable_note": section.get("unanswerable_note"),
             "unanswerable_count": section.pointer("/queue/unanswerable_count"),
         })).collect::<Vec<_>>(),
         "agent_count": agents.len(),

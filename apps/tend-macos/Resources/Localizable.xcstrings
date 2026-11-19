@@ -24652,6 +24652,46 @@
           }
         }
       }
+    },
+    "tendd names no dashboard, so other hosts' questions are kept or closed on those hosts." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "tendd에 대시보드가 없어 다른 호스트의 질문은 그 호스트에서 유지하거나 닫습니다."
+          }
+        }
+      }
+    },
+    "Other hosts' questions are kept or closed on the dashboard." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다른 호스트의 질문은 대시보드에서 유지하거나 닫습니다."
+          }
+        }
+      }
+    },
+    "Open on the Dashboard" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대시보드에서 열기"
+          }
+        }
+      }
+    },
+    "Keep or close it on the dashboard's Needs you page" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대시보드의 내 차례 페이지에서 유지하거나 닫습니다"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

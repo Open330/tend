@@ -28,6 +28,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`unanswerable_note`: observe-only, Close all off there, or an upgrade).
   A host's answer about anything it was not asked to keep or close is
   refused. (Step 2 of 3.)
+- Home keeps and closes questions nobody can answer on other Fleet hosts.
+  The web and Tend for iPhone and iPad offer Keep, and one Close all per
+  host whose relay takes it, each confirmation naming the host; a host
+  that cannot take them says why (observe-only, Close all off there, or
+  an upgrade). Tend for Mac now reads the decision queue of every Fleet
+  host that sends one, so another host's questions nobody can answer fold
+  out of Your turn and the badges there too; it opens them on the
+  dashboard's Can't be answered group (which a link now opens) and never
+  acts on them itself. New iOS and Mac strings are in Korean too. (Step 3
+  of 3.)
 - iOS: notifications from the dashboard's host (design: docs/proposals/
   IOS_APP.md, "Push"). Settings has a switch, and Your turn offers it once
   when the host sends notifications; iOS asks for permission only then. A

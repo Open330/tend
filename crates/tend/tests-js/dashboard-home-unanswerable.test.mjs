@@ -6,7 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildBoard, cantAnswerGroup, closeAllPayload, fromServerBoard, keepPayload, laneCounts, unanswerableOf } from "../src/dashboard/web/home-board.mjs";
+import { buildBoard, cantAnswerGroup, cantAnswerReason, closeAllPayload, fromServerBoard, keepPayload, laneCounts, unanswerableOf } from "../src/dashboard/web/home-board.mjs";
 import { decidedCard, hostSections } from "../src/dashboard/web/needs-model.mjs";
 
 const now = Date.parse("2026-11-19T12:00:00Z");
@@ -66,35 +66,74 @@ test("Keep sends the request and its episode; Close all exactly the listed pairs
   const group = buildBoard({ decisions: decisions({ closeUnanswerable: true }), now }).lanes.needsYou.cantAnswer;
   assert.ok(group.units.every((u) => u.keepable));
   assert.deepEqual(keepPayload(group.units[0]), { request_id: "rq_a", episode: "ep_a" });
-  assert.deepEqual(group.closeAll, {
-    items: [
-      { request_id: "rq_a", episode: "ep_a" },
-      { request_id: "rq_b", episode: "ep_b" },
-    ],
-    by_label: "web",
-  });
+  assert.deepEqual(group.closeAll, [
+    {
+      host: "mba",
+      remote: false,
+      count: 2,
+      payload: {
+        items: [
+          { request_id: "rq_a", episode: "ep_a" },
+          { request_id: "rq_b", episode: "ep_b" },
+        ],
+        by_label: "web",
+      },
+    },
+  ]);
   assert.deepEqual(closeAllPayload(group.units.slice(1)).items, [{ request_id: "rq_b", episode: "ep_b" }]);
 });
 
-test("Close all is hidden while the host's switch is off, and never offered for another host", () => {
+test("Close all is hidden while the host's switch is off", () => {
   const off = buildBoard({ decisions: decisions({ closeUnanswerable: false }), now }).lanes.needsYou.cantAnswer;
-  assert.equal(off.closeAll, null);
+  assert.deepEqual(off.closeAll, []);
   assert.ok(off.units.every((u) => u.keepable), "Keep works either way");
-  const remote = {
-    alias: "mini",
-    local: false,
-    control: true,
-    subject_check: true,
-    close_unanswerable: true,
-    queue: { items: [gone("rq_r", "agent_exited", "ep_r")], unanswerable_count: 1 },
-  };
-  const group = buildBoard({ decisions: decisions({ closeUnanswerable: false, remote }), now }).lanes.needsYou.cantAnswer;
+  assert.deepEqual(off.notes, [], "this host's own switch needs no note");
+});
+
+const remoteHost = (alias, flags) => ({
+  alias,
+  local: false,
+  control: true,
+  subject_check: true,
+  close_unanswerable: true,
+  ...flags,
+  queue: { items: [gone(`rq_${alias}`, "agent_exited", `ep_${alias}`)], unanswerable_count: 1 },
+});
+
+test("another host's questions are kept and closed on that host, one Close all per host", () => {
+  const group = buildBoard({ decisions: decisions({ closeUnanswerable: true, remote: remoteHost("mini") }), now }).lanes.needsYou.cantAnswer;
   assert.equal(group.count, 3);
-  const theirs = group.units.find((u) => u.id === "rq_r");
-  assert.equal(theirs.keepable, false, "Keep acts on this host only");
-  assert.equal(theirs.closable, false);
-  assert.equal(group.closeAll, null);
-  assert.equal(group.remote, true);
+  const theirs = group.units.find((u) => u.id === "rq_mini");
+  assert.equal(theirs.keepable, true);
+  assert.equal(theirs.closable, true);
+  assert.deepEqual(keepPayload(theirs), { request_id: "rq_mini", episode: "ep_mini", host: "mini" });
+  assert.deepEqual(
+    group.closeAll.map((entry) => [entry.host, entry.remote, entry.count, entry.payload.host ?? null, entry.payload.items.map((i) => i.request_id)]),
+    [
+      ["mba", false, 2, null, ["rq_a", "rq_b"]],
+      ["mini", true, 1, "mini", ["rq_mini"]],
+    ],
+  );
+  assert.deepEqual(group.notes, []);
+});
+
+test("a host that cannot take them from here says why", () => {
+  const cases = [
+    [{ close_unanswerable: false }, "closeOff", true, false],
+    [{ subject_check: false, close_unanswerable: false }, "upgrade", false, false],
+    [{ control: false }, "observeOnly", true, true],
+  ];
+  for (const [flags, reason, keepable, closable] of cases) {
+    const group = buildBoard({ decisions: decisions({ remote: remoteHost("mini", flags) }), now }).lanes.needsYou.cantAnswer;
+    assert.deepEqual(group.notes, [{ host: "mini", reason }], reason);
+    const theirs = group.units.find((u) => u.id === "rq_mini");
+    assert.equal(theirs.keepable, keepable, reason);
+    assert.equal(theirs.closable, closable, reason);
+    // Nothing is sent where it is not taken: an observe-only host's units
+    // are not actionable, so no Close all either.
+    assert.ok(!group.closeAll.some((entry) => entry.host === "mini"), reason);
+  }
+  assert.equal(cantAnswerReason({ control: true, subject_check: true, close_unanswerable: true }), null);
 });
 
 test("an older daemon's queue reads exactly as before", () => {
@@ -121,12 +160,12 @@ test("the daemon's board folds the same way, with its host flags", () => {
   const board = fromServerBoard(server, { now });
   assert.equal(board.lanes.needsYou.count, 1);
   assert.equal(board.lanes.needsYou.cantAnswer.count, 4);
-  assert.deepEqual(board.lanes.needsYou.cantAnswer.closeAll.items, [{ request_id: "rq_a", episode: "ep_a" }]);
+  assert.deepEqual(board.lanes.needsYou.cantAnswer.closeAll[0].payload.items, [{ request_id: "rq_a", episode: "ep_a" }]);
   // Without the flags (an older daemon's board) nothing can be kept or closed.
   server.decision_hosts = [{ alias: "mba", local: true, control: true }];
   const older = fromServerBoard(server, { now }).lanes.needsYou.cantAnswer;
   assert.equal(older.count, 1);
-  assert.equal(older.closeAll, null);
+  assert.deepEqual(older.closeAll, []);
   assert.equal(older.units[0].keepable, false);
 });
 
