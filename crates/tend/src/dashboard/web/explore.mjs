@@ -399,7 +399,9 @@ export function mountExplore(root, deps) {
     view.detailKey = detail.key;
     const windowView = detail.kind === "window";
     const top = el("header", "ex-pane-head ex-detail-head");
-    top.append(icon(windowView ? "window" : "layers", "ex-detail-icon"));
+    const badge = el("span", "ex-detail-icon");
+    badge.append(icon(windowView ? "window" : "layers"));
+    top.append(badge);
     const titles = el("div", "titles");
     titles.append(el("h2", null, detail.name || (windowView ? detail.id : detail.sessionId) || "—"));
     const meta = el("div", "sub");

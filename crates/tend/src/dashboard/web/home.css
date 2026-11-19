@@ -774,7 +774,8 @@ dialog.share-dialog ul { margin: 0; padding-left: 18px; }
 /* Explore's session and window detail (FleetSessionDetailView,
    FleetWindowDetailView). */
 .ex-detail-head { align-items: center; }
-.ex-detail-icon { width: 22px; height: 22px; padding: 9px; box-sizing: content-box; border-radius: var(--panel-radius); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.ex-detail-icon { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; flex: none; border-radius: var(--panel-radius); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.ex-detail-icon .icon { width: 22px; height: 22px; }
 .ex-work { padding: 1px 7px; border-radius: 999px; font-weight: 600; color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); white-space: nowrap; }
 .ex-facts-menu .popover { min-width: 300px; }
 .ex-facts-list { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; font-size: var(--size-detail); }
@@ -815,5 +816,7 @@ dialog.share-dialog ul { margin: 0; padding-left: 18px; }
 @media (max-width: 760px) {
   .ex-detail { padding: 14px 14px 24px; }
   .ex-detail-head { flex-wrap: wrap; }
+  .ex-detail-head .titles { flex-basis: calc(100% - 52px); }
+  .ex-detail-icon { width: 32px; height: 32px; }
   .ex-session, .ex-window { min-height: 40px; }
 }
