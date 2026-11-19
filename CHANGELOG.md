@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `tend swap --host a --host b …` swaps on several Fleet hosts at once
+  (`local` is this host): each host runs its own job under its own request
+  key, printed before anything is sent; the reports come host by host, and
+  a host that fails neither stops the others nor goes unnamed. `--jobs` is
+  now passed on to a Fleet host (relayed swaps used the host's default).
 - Fleet relays apply Keep and Close all for questions nobody can answer on
   their own host (`fleet_decision_unanswerable_v1`, and
   `fleet_close_unanswerable_v1` while that host's `[review]
