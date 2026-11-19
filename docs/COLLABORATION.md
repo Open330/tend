@@ -47,6 +47,10 @@ linked operator Inbox recovery item and keeps the original request open. This
 state survives daemon restart. When the recipient resumes, Tend clears the
 interruption and retires its unanswered recovery item automatically; it neither
 resends the request nor reports the work complete merely because approval ended.
+A recipient interrupted by a usage limit (`rate_limited`) or an error counts as
+resumed only after it has stayed working or idle for ten minutes: a capped
+agent that a `continue` sends back to work for a moment and that hits its
+limit again stays in the same interruption, with the same recovery item.
 Startup/trust choices before handover do not become delivery failures.
 
 Automatic creation requires the daemon capability
@@ -773,7 +777,8 @@ That session is then woken at its next idle turn and may read the reply. A
 session that merely reuses the sender's pane inherits nothing. With no single
 successor, two minutes after the reply Tend opens one human item that names
 the request; the wake stays owed in case the session returns, and the item is
-withdrawn once the reply is read or delivered. Room context reports incoming unread requests and
+withdrawn once the reply is read or delivered. A reply that is already a week
+old when its sender is found gone opens no item (the wake still stays owed). Room context reports incoming unread requests and
 unacknowledged replies separately. `tend_list_messages` is non-claiming history;
 the sender may cancel only while a request remains `queued`, before the
 recipient has claimed it.

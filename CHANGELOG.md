@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fewer items for the person, at the source. A recipient interrupted by a
+  usage limit or an error now counts as resumed only after ten minutes of
+  work or idle: a capped agent that the `resume-after-limit` rule sends back
+  to work for a moment, and that hits its limit again, keeps one recovery
+  item instead of a new one every cycle. One capped session on one host had
+  990 items in four days this way, none answered. A reply that is already a
+  week old when its sender is found gone opens no reply-wake item (an
+  upgrade opened one for every such reply, up to 73 days old, on three hosts
+  in the same minute). `tend_request_attention` asks agents to put the
+  decisions they need in one request and not to ask the same thing twice.
 - iOS: the app now declares `NSFaceIDUsageDescription`. Start Work asks
   for Face ID, and without the key iOS can refuse the request on a phone
   with Face ID.

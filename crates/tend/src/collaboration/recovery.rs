@@ -17,6 +17,28 @@ pub struct PeerInterruption {
     pub reset_at: Option<String>,
     pub action_request_id: Option<String>,
     pub decision: Option<CollaborationReply>,
+    /// When the recipient of a `rate_limited` or `error` episode was first
+    /// seen healthy again. The episode ends only after it stayed healthy for
+    /// [`RECOVERED_AFTER`]: a capped agent resumed by `continue` works for a
+    /// few seconds and hits its limit again, and ending the episode on that
+    /// blip closed the person's item and opened a new one each cycle (990
+    /// items for one capped session on one host in four days).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "time::serde::rfc3339::option"
+    )]
+    pub healthy_since: Option<OffsetDateTime>,
+}
+
+/// How long the recipient of a flapping episode (`rate_limited`, `error`)
+/// must stay working or idle before the episode counts as over.
+pub const RECOVERED_AFTER: time::Duration = time::Duration::minutes(10);
+
+/// Reasons whose recipient flaps: a resume prompt makes it work briefly
+/// before the same condition returns.
+fn flapping(reason: &str) -> bool {
+    matches!(reason, "rate_limited" | "error")
 }
 
 impl CollaborationRequest {
@@ -358,9 +380,12 @@ impl CollaborationStore {
                             .map(|t| t.to_string()),
                         action_request_id: None,
                         decision: None,
+                        healthy_since: None,
                     });
                 }
                 let info = parent.interruption.as_mut().expect("initialized");
+                // The condition is back: any healthy stretch is over.
+                info.healthy_since = None;
                 info.reason = current_reason.into();
                 info.reset_at = agent
                     .and_then(|a| a.rate_limited_until)
@@ -441,6 +466,20 @@ impl CollaborationStore {
                         open_by_subject.insert(key, id.clone());
                         changed.push(recovery_action(&parent, id, now, current_reason));
                     }
+                }
+            } else if !parent.status.is_terminal()
+                && agent.is_some_and(|a| matches!(a.state, AgentState::Working | AgentState::Idle))
+                && parent
+                    .interruption
+                    .as_ref()
+                    .is_some_and(|i| i.active && flapping(&i.reason))
+            {
+                // A flapping episode ends only after a healthy stretch.
+                let info = parent.interruption.as_mut().expect("checked");
+                let since = *info.healthy_since.get_or_insert(now);
+                if now - since >= RECOVERED_AFTER {
+                    info.active = false;
+                    info.healthy_since = None;
                 }
             } else if parent.status.is_terminal()
                 || agent.is_some_and(|a| matches!(a.state, AgentState::Working | AgentState::Idle))
@@ -550,6 +589,105 @@ mod tests {
         }))
         .unwrap();
         (participant, agent)
+    }
+
+    /// Measured on jiun-mbp (2026-11-15..18): a capped recipient, resumed by
+    /// the default `resume-after-limit` rule every ~20 minutes, worked for a
+    /// moment and hit its limit again. Each blip ended the episode, closed
+    /// the person's item and, two minutes later, opened a new one: 990 items
+    /// for one session. The episode now survives the blip, so the person
+    /// has one item for the whole capped stretch.
+    #[tokio::test]
+    async fn a_capped_recipient_resumed_for_a_moment_keeps_one_item() {
+        let mailbox = CollaborationStore::in_memory(CollaborationOptions::default());
+        let (sender, mut coordinator) = actor("%1", "sender").await;
+        let (recipient, mut peer) = actor("%2", "peer").await;
+        let request = mailbox
+            .create(
+                sender.clone(),
+                recipient.clone(),
+                NewRequest {
+                    body: "work".into(),
+                    ..NewRequest::default()
+                },
+            )
+            .await
+            .unwrap();
+        mailbox.claim_for(&recipient).await.unwrap();
+        // The coordinator cannot act, so the person is asked at once.
+        coordinator.state = AgentState::Error;
+        let mut items = std::collections::BTreeSet::new();
+        for _cycle in 0..5 {
+            peer.state = AgentState::Error;
+            peer.rate_limit_scope = Some(RateLimitScope::FiveHour);
+            mailbox
+                .reconcile_peer_interruptions(&[coordinator.clone(), peer.clone()])
+                .await
+                .unwrap();
+            for item in mailbox.pending_human_notifications().await {
+                items.insert(item.id);
+            }
+            let (open, _) = mailbox.open_human_requests(10).await.unwrap();
+            assert_eq!(open.len(), 1, "one open item at a time");
+            // `continue`: a few seconds of work, then the limit again.
+            peer.state = AgentState::Working;
+            peer.rate_limit_scope = None;
+            mailbox
+                .reconcile_peer_interruptions(&[coordinator.clone(), peer.clone()])
+                .await
+                .unwrap();
+            let (open, _) = mailbox.open_human_requests(10).await.unwrap();
+            assert_eq!(open.len(), 1, "the blip does not close the item");
+            assert!(mailbox
+                .get_for(&sender, &request.id)
+                .await
+                .unwrap()
+                .peer_interrupted());
+        }
+        let (open, _) = mailbox.open_human_requests(10).await.unwrap();
+        assert_eq!(items.len(), 1, "one item across five cycles: {items:?}");
+        assert_eq!(open[0].id, *items.iter().next().unwrap());
+    }
+
+    /// Other reasons end at once, as before: an answered approval prompt is
+    /// over when the agent works again.
+    #[tokio::test]
+    async fn an_episode_that_does_not_flap_ends_when_the_recipient_works() {
+        let mailbox = CollaborationStore::in_memory(CollaborationOptions::default());
+        let (sender, coordinator) = actor("%1", "sender").await;
+        let (recipient, mut peer) = actor("%2", "peer").await;
+        let request = mailbox
+            .create(
+                sender.clone(),
+                recipient.clone(),
+                NewRequest {
+                    body: "work".into(),
+                    ..NewRequest::default()
+                },
+            )
+            .await
+            .unwrap();
+        mailbox.claim_for(&recipient).await.unwrap();
+        peer.state = AgentState::Stopped;
+        mailbox
+            .reconcile_peer_interruptions(&[coordinator.clone(), peer.clone()])
+            .await
+            .unwrap();
+        assert!(mailbox
+            .get_for(&sender, &request.id)
+            .await
+            .unwrap()
+            .peer_interrupted());
+        peer.state = AgentState::Working;
+        mailbox
+            .reconcile_peer_interruptions(&[coordinator, peer])
+            .await
+            .unwrap();
+        assert!(!mailbox
+            .get_for(&sender, &request.id)
+            .await
+            .unwrap()
+            .peer_interrupted());
     }
 
     #[tokio::test]
@@ -753,7 +891,26 @@ mod tests {
             "Wait; do not reassign"
         );
         assert_eq!(parent.status, RequestStatus::Claimed);
+        // Working again after a rate limit: a capped agent resumed by
+        // `continue` often hits the limit again within seconds, so the
+        // episode holds until it has stayed healthy for RECOVERED_AFTER.
         peer.state = AgentState::Working;
+        restored
+            .reconcile_peer_interruptions(&[coordinator.clone(), peer.clone()])
+            .await
+            .unwrap();
+        let held = restored.get_for(&sender, &request.id).await.unwrap();
+        assert!(held.peer_interrupted(), "a healthy blip ends nothing");
+        let mut aged = restored
+            .requests
+            .read()
+            .await
+            .get(&request.id)
+            .cloned()
+            .unwrap();
+        let info = aged.interruption.as_mut().unwrap();
+        *info.healthy_since.as_mut().unwrap() -= RECOVERED_AFTER;
+        restored.commit_request_rows(&[aged]).await.unwrap();
         restored
             .reconcile_peer_interruptions(&[coordinator, peer])
             .await
