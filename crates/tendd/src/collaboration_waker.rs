@@ -136,8 +136,8 @@ const SYSTEM_ASK_SWEEP_EVERY: std::time::Duration = std::time::Duration::from_se
 /// reconcile above (`subject_check.rs`).
 async fn check_subjects(collaboration: &CollaborationStore, store: &tend::Store) {
     let observations = store.subject_observations();
-    if let Err(error) = collaboration.record_subject_facts(observations.take_facts()) {
-        tracing::warn!(%error, "keeping subject evidence failed");
+    if let Err(error) = collaboration.keep_facts_from(observations) {
+        tracing::warn!(%error, "keeping subject evidence failed; retried next pass");
     }
     let agents = store.snapshot().await;
     let scan = observations.scan();

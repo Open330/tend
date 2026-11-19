@@ -192,10 +192,9 @@ async fn subject_response(
                     Response::err(refused.to_string()),
                 );
             }
-            let agents = store.snapshot().await;
             let surface = by_label.as_deref().unwrap_or("cli");
             let response = match collaboration
-                .close_unanswerable(&items, &agents, surface, None)
+                .close_unanswerable(&items, store, surface, None)
                 .await
             {
                 Ok(outcome) => Response {

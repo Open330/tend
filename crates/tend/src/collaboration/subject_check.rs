@@ -75,6 +75,9 @@ pub const UNKNOWN_GAP: time::Duration = time::Duration::minutes(10);
 /// A gone confirmation is written to the row at most this often; the
 /// current pass keeps the exact time in memory.
 const CONFIRM_PERSIST_EVERY: time::Duration = time::Duration::minutes(5);
+/// A pass's confirmation counts for this long. Passes run at least every
+/// 30 seconds while tendd is up.
+pub const CONFIRMATION_FRESH: time::Duration = time::Duration::minutes(5);
 /// A scan older than this shows nothing.
 const SCAN_FRESH: time::Duration = time::Duration::minutes(5);
 /// The inactivity floor `stop_rows_without_agent_process` uses.
@@ -329,18 +332,22 @@ pub(super) fn step(
     }
 }
 
-/// Whether `request` is unanswerable now, given the episode the current
-/// pass confirmed for it.
+/// Whether `request` is unanswerable now, given the episode the newest
+/// pass confirmed for it and when. A confirmation older than
+/// [`CONFIRMATION_FRESH`] confirms nothing: the queue, its count and every
+/// action see the item as live until a pass confirms it again.
 pub(super) fn unanswerable(
     request: &CollaborationRequest,
-    confirmed_episode: Option<&str>,
+    confirmed: Option<(&str, OffsetDateTime)>,
     now: OffsetDateTime,
 ) -> Option<Unanswerable> {
     let check = request.subject_check.as_ref()?;
     let since = check.gone_since?;
     (request.needs_human_response()
         && check.state == SubjectState::Gone
-        && confirmed_episode == Some(check.episode.as_str())
+        && confirmed.is_some_and(|(episode, at)| {
+            episode == check.episode && (now - at).abs() <= CONFIRMATION_FRESH
+        })
         && now - since >= SUBJECT_GONE_GRACE
         && now - request.created_at >= ITEM_MIN_AGE
         && check.kept_episode.as_deref() != Some(check.episode.as_str()))
@@ -354,11 +361,12 @@ pub(super) fn unanswerable(
 
 /// The subjects of an open item: one per original request it covers, or
 /// `None` when it has none this host may judge (a console sender, a
-/// subject on another host, an address still pending).
+/// subject on another host, an address still pending). A covered request
+/// that cannot be found is a subject nobody can show gone: `Some(None)`.
 fn subjects<'a>(
     request: &'a CollaborationRequest,
     requests: &'a HashMap<String, CollaborationRequest>,
-) -> Option<Vec<&'a Participant>> {
+) -> Option<Vec<Option<&'a Participant>>> {
     use super::system_asks::{system_ask_kind, SystemAskKind};
     let Some(kind) = system_ask_kind(request) else {
         // An agent's own question. One that came over Fleet has its asker
@@ -366,7 +374,7 @@ fn subjects<'a>(
         return (!request.from.console
             && request.source_node_id.is_none()
             && request.delegation_parent.is_none())
-        .then(|| vec![&request.from]);
+        .then(|| vec![Some(&request.from)]);
     };
     let mut parents: Vec<&str> = request
         .parent_request_id
@@ -392,7 +400,11 @@ fn subjects<'a>(
     parents.sort_unstable();
     parents.dedup();
     let mut out = Vec::new();
-    for parent in parents.iter().filter_map(|id| requests.get(*id)) {
+    for id in &parents {
+        let Some(parent) = requests.get(*id) else {
+            out.push(None);
+            continue;
+        };
         let subject = match kind {
             SystemAskKind::Recovery => &parent.to,
             SystemAskKind::ReplyWake => {
@@ -402,7 +414,7 @@ fn subjects<'a>(
                 &parent.from
             }
         };
-        out.push(subject);
+        out.push(Some(subject));
     }
     (!out.is_empty()).then_some(out)
 }
@@ -512,10 +524,27 @@ fn scan_evidence(
         .find(|p| p.pane_id == pane && p.endpoint.as_deref() == Some(endpoint.as_str()))
         .filter(|_| server.running);
     let Some(entry) = entry else {
-        // E3: absent from a socket that answered. A server known to have
-        // been restarted since the binding says nothing about it.
-        let changed = server.running && matches!((bound, current), (Some(a), Some(b)) if a != b);
-        return (!changed).then_some(GoneCause::PaneGone);
+        // E3: absent from a socket that answered.
+        // - "No server running": no server holds any pane there, so none
+        //   from any incarnation is left.
+        // - tmux: only on the server incarnation the session was bound on.
+        //   When that cannot be established (no binding remembered, as
+        //   after a daemon restart, or an incarnation unreported) the
+        //   absence says nothing: the session may have been bound on a
+        //   server that is gone, and restored since into a pane tendd has
+        //   not tied to it yet.
+        // - rmux reports no incarnation at all, so it can never show the
+        //   same one. Its pane ids are namespaced to the endpoint tendd
+        //   scans, and an rmux restart ends every pane it had, so absence
+        //   from a running endpoint is that pane's end. A restored session
+        //   still wins through the live-session check, and the 24-hour
+        //   grace needs every pass for a day to keep confirming it.
+        let gone = !server.running
+            || match kind {
+                HostKind::Rmux => true,
+                _ => bound.is_some() && bound == current,
+            };
+        return gone.then_some(GoneCause::PaneGone);
     };
     // E4: the same incarnation, and exactly the agentless-pane conjunction.
     let row = row?;
@@ -545,6 +574,10 @@ pub(super) fn evaluate(
     let mut pane = None;
     let mut all_gone = true;
     for subject in subjects {
+        let Some(subject) = subject else {
+            all_gone = false;
+            continue;
+        };
         match judge(subject, inputs, facts, now) {
             Verdict::Alive => return Some(Verdict::Alive),
             Verdict::Gone {
@@ -563,25 +596,6 @@ pub(super) fn evaluate(
         Verdict::Gone { causes, pane }
     } else {
         Verdict::Unknown
-    })
-}
-
-/// Whether any subject of `request` has a live row now.
-fn any_subject_alive(
-    request: &CollaborationRequest,
-    requests: &HashMap<String, CollaborationRequest>,
-    agents: &[Agent],
-) -> bool {
-    let bindings = HashMap::new();
-    let inputs = SubjectInputs {
-        agents,
-        scan: None,
-        bindings: &bindings,
-    };
-    subjects(request, requests).is_some_and(|subjects| {
-        subjects.into_iter().any(|subject| {
-            judge(subject, &inputs, &[], OffsetDateTime::now_utc()) == Verdict::Alive
-        })
     })
 }
 
@@ -659,6 +673,22 @@ impl CollaborationStore {
         Ok(())
     }
 
+    /// Take the facts the registry recorded and keep them durably. On a
+    /// failed write they go back to the registry, ahead of newer ones, for
+    /// the next pass: a fact is dropped only once it is written.
+    pub fn keep_facts_from(
+        &self,
+        observations: &crate::subject_evidence::SubjectObservations,
+    ) -> Result<(), CollaborationError> {
+        let facts = observations.take_facts();
+        if facts.is_empty() {
+            return Ok(());
+        }
+        self.record_subject_facts(facts.clone()).inspect_err(|_| {
+            observations.requeue(facts);
+        })
+    }
+
     /// The facts kept now (tests and diagnostics).
     #[must_use]
     pub fn subject_facts(&self) -> Vec<SubjectFact> {
@@ -673,7 +703,11 @@ impl CollaborationStore {
         now: OffsetDateTime,
     ) -> Option<Unanswerable> {
         let confirmed = self.subject.confirmed(&request.id);
-        unanswerable(request, confirmed.as_ref().map(|(ep, _)| ep.as_str()), now)
+        unanswerable(
+            request,
+            confirmed.as_ref().map(|(ep, at)| (ep.as_str(), *at)),
+            now,
+        )
     }
 
     fn unanswerable_ids(
@@ -686,7 +720,9 @@ impl CollaborationStore {
             .filter(|request| {
                 unanswerable(
                     request,
-                    confirmed.get(&request.id).map(|(ep, _)| ep.as_str()),
+                    confirmed
+                        .get(&request.id)
+                        .map(|(ep, at)| (ep.as_str(), *at)),
                     now,
                 )
                 .is_some()
@@ -768,7 +804,12 @@ impl CollaborationStore {
                 .values()
                 .map(|r| overlay.get(&r.id).unwrap_or(r))
                 .filter(|r| {
-                    unanswerable(r, confirmed.get(&r.id).map(|(ep, _)| ep.as_str()), now).is_some()
+                    unanswerable(
+                        r,
+                        confirmed.get(&r.id).map(|(ep, at)| (ep.as_str(), *at)),
+                        now,
+                    )
+                    .is_some()
                 })
                 .map(|r| r.id.clone())
                 .collect();
@@ -842,10 +883,16 @@ impl CollaborationStore {
     /// the same episode, not kept, and with no subject back. Each gets the
     /// body Dismiss sends and a [`QuestionClosure`]; the rest are reported
     /// skipped. Refused while `[review] close_unanswerable` is off.
+    ///
+    /// Inside the transaction the subject evidence is read again from the
+    /// agent registry (`registry`): its rows, newest scan, bindings and the
+    /// facts it has not handed over yet. A pair whose subjects are not all
+    /// established gone by that evidence now is skipped.
+    #[allow(clippy::too_many_lines)] // every recheck of one pair sits in one transaction
     pub async fn close_unanswerable(
         &self,
         items: &[CloseItem],
-        agents: &[Agent],
+        registry: &crate::state::Store,
         surface: &str,
         actor: Option<String>,
     ) -> Result<CloseOutcome, CollaborationError> {
@@ -862,6 +909,19 @@ impl CollaborationStore {
             )));
         }
         let _transaction = self.transaction_lock.lock().await;
+        // The evidence as it is now, read after taking the lock: a resume
+        // or a hook that landed while this call waited is seen.
+        let agents = registry.snapshot().await;
+        let observations = registry.subject_observations();
+        let scan = observations.scan();
+        let bindings = observations.bindings();
+        let mut facts = self.subject.facts();
+        facts.extend(observations.peek_facts());
+        let inputs = SubjectInputs {
+            agents: &agents,
+            scan: scan.as_deref(),
+            bindings: &bindings,
+        };
         let now = OffsetDateTime::now_utc();
         let snapshot = self.requests.read().await;
         let mut outcome = CloseOutcome::default();
@@ -900,9 +960,18 @@ impl CollaborationStore {
                 outcome.skipped.push(skip("not unanswerable now"));
                 continue;
             };
-            if any_subject_alive(request, &snapshot, agents) {
-                outcome.skipped.push(skip("its subject is back"));
-                continue;
+            match evaluate(request, &snapshot, &inputs, &facts, now) {
+                Some(Verdict::Gone { .. }) => {}
+                Some(Verdict::Alive) => {
+                    outcome.skipped.push(skip("its subject is back"));
+                    continue;
+                }
+                _ => {
+                    outcome
+                        .skipped
+                        .push(skip("its subject is no longer established gone"));
+                    continue;
+                }
             }
             let mut row = request.clone();
             row.status = RequestStatus::Declined;
@@ -957,7 +1026,9 @@ impl CollaborationStore {
             .map(|request| {
                 let folded = unanswerable(
                     request,
-                    confirmed.get(&request.id).map(|(ep, _)| ep.as_str()),
+                    confirmed
+                        .get(&request.id)
+                        .map(|(ep, at)| (ep.as_str(), *at)),
                     now,
                 );
                 (request, folded)

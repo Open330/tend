@@ -983,10 +983,9 @@ pub(super) async fn close_unanswerable_handler(
         .by_label
         .clone()
         .unwrap_or_else(|| if device.is_some() { "ios" } else { "web" }.to_owned());
-    let agents = state.store.snapshot().await;
     let result = state
         .collaboration
-        .close_unanswerable(&close.items, &agents, &surface, Some(by.clone()))
+        .close_unanswerable(&close.items, &state.store, &surface, Some(by.clone()))
         .await;
     let (code, outcome) = match &result {
         Ok(outcome) => (

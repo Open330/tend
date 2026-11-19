@@ -1704,7 +1704,6 @@ impl Store {
                 let Some(pane) = id.pane.as_deref() else {
                     return;
                 };
-                let scan = self.subject.scan();
                 for predecessor in agents.values().filter(|agent| {
                     agent.session_id != id.session_id
                         && !is_synthetic(&agent.session_id)
@@ -1714,28 +1713,22 @@ impl Store {
                         .subject
                         .binding(&predecessor.session_id)
                         .filter(|binding| binding.pane == pane);
-                    let current = match (
-                        crate::backend::pane_id_host_kind(pane),
-                        binding.as_ref(),
-                        scan.as_deref(),
-                    ) {
-                        (Some(kind), Some(binding), Some(scan)) => {
-                            scan.incarnation(kind, &binding.endpoint)
-                        }
-                        _ => None,
-                    };
-                    let incarnation = binding.and_then(|binding| binding.incarnation);
                     let mut fact = SubjectFact::new(
                         FactKind::Replaced,
                         &predecessor.session_id,
                         Some(pane),
-                        predecessor.tmux_socket.as_deref(),
-                        incarnation,
+                        binding
+                            .as_ref()
+                            .map(|binding| binding.endpoint.as_str())
+                            .or(predecessor.tmux_socket.as_deref()),
+                        binding.as_ref().and_then(|binding| binding.incarnation),
                         now,
                     );
-                    fact.same_incarnation = incarnation.is_some() && incarnation == current;
                     fact.replaced_by = Some(id.session_id.clone());
-                    self.subject.record(fact);
+                    // Whether the server is still the one the predecessor
+                    // was bound on is settled by the first scan after this
+                    // hook, never by an older one.
+                    self.subject.record_unverified(fact);
                 }
                 // A fresh start binds anew; the next scan stamps it.
                 self.subject.forget_binding(&id.session_id);

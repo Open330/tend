@@ -295,6 +295,7 @@ async fn a_device_token_decides_and_nothing_else() {
 /// A `decide` device keeps and closes unanswerable questions like any
 /// other decision; Close all answers 403 while it is turned off.
 #[tokio::test]
+#[allow(clippy::too_many_lines)] // one device, both settings
 async fn a_decide_device_keeps_and_closes_unanswerable_questions() {
     use crate::collaboration::subject_check::{GoneCause, CLOSE_UNANSWERABLE_OFF, DISMISSED_BODY};
     use crate::collaboration::{
@@ -329,7 +330,44 @@ async fn a_decide_device_keeps_and_closes_unanswerable_questions() {
         .fold_for_test(&ids[0], GoneCause::PaneGone)
         .await;
     let closed_episode = collaboration.fold_for_test(&ids[1], GoneCause::Ended).await;
-    let app = router(state(Some(TOKEN)).with_collaboration(collaboration.clone()));
+    let state = state(Some(TOKEN)).with_collaboration(collaboration.clone());
+    // The registry shows `gone` bound to %42 on server A, and %42 gone
+    // from a fresh scan: what Close all reads again in its transaction.
+    {
+        use crate::subject_evidence::{
+            HostScan, PaneScan, ServerAnswer, ServerIncarnation, SubjectBinding,
+        };
+        let a = ServerIncarnation {
+            pid: 1,
+            start_time: 1,
+        };
+        let observations = state.store.subject_observations();
+        observations.stamp_bindings(
+            vec![(
+                "gone".into(),
+                SubjectBinding {
+                    pane: "%42".into(),
+                    endpoint: "default".into(),
+                    incarnation: Some(a),
+                },
+            )],
+            &std::collections::HashSet::new(),
+        );
+        observations.set_scan(PaneScan {
+            at: time::OffsetDateTime::now_utc(),
+            hosts: vec![HostScan {
+                kind: crate::backend::HostKind::Tmux,
+                complete: true,
+                servers: vec![ServerAnswer {
+                    endpoint: "default".into(),
+                    running: true,
+                    incarnation: Some(a),
+                }],
+                panes: vec![],
+            }],
+        });
+    }
+    let app = router(state);
     let (token, device) = pair(&app, "phone").await;
 
     let (status, queue) = call(&app, "GET", "/api/decisions", Some(&token), None).await;

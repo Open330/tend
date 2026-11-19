@@ -183,14 +183,15 @@ into another pane or `tend restore`) means alive. Otherwise only these count:
 | Cause | Evidence |
 | --- | --- |
 | `ended` | the provider's own `SessionEnded` hook, recorded when tendd ingests it |
-| `replaced` | a real provider `Started` hook for another session in the pane, on the same tmux server incarnation, recorded before the old row changes |
-| `pane_gone` | the pane is absent from a complete tmux or rmux scan of a socket that answered, unless that server is known to have restarted since |
+| `replaced` | a real provider `Started` hook for another session in the pane, recorded before the old row changes; it counts only if the first scan after the hook finds the tmux server on the incarnation the old session was bound on |
+| `pane_gone` | the pane is absent from a complete scan of a socket that answered: for tmux, on the incarnation the session was bound on (not known after a daemon restart until the session is seen again, and then unknown); for rmux, which reports none, from its running endpoint; or the socket answers that no server runs there |
 | `agent_exited` | what tendd already requires to stop a row with no agent process (a complete host, a recognized agent, an hour idle, no agent process, a shell in the foreground), on the same server incarnation |
 
 Nothing else is evidence: not a missing row, `binding_unavailable`, a rate
 limit, a failed or partial scan (herdr, cmux and zellij never show absence),
 or a subject on another host. The facts (`ended`, `replaced`) are kept in the
-mailbox database for 30 days; the reconcile sweeps write none. The server
+mailbox database for 30 days (a failed write keeps them queued for the next
+pass); the reconcile sweeps write none. The server
 incarnation is the tmux server's `#{pid}` and `#{start_time}`, read in the
 same `list-panes` call as the panes; rmux does not report one, so on rmux only
 `ended` and `pane_gone` apply.
@@ -199,8 +200,8 @@ Every reconcile pass keeps an evidence episode on the request
 (`subject_check`: `episode`, `state`, `gone_since`, `confirmed_at`, `causes`,
 `kept_episode`). Alive ends it; gone extends it; unknown pauses it, and more
 than 10 minutes of unknown restarts only the grace clock, never the episode.
-An item is unanswerable when the episode is gone and confirmed in the
-current pass, has been for 24 hours, the item is at least 24 hours old, and
+An item is unanswerable when the episode is gone and confirmed by a pass in
+the last 5 minutes, has been for 24 hours, the item is at least 24 hours old, and
 the person has not kept this episode. A daemon that was down cannot fold
 anything at start.
 
@@ -216,8 +217,11 @@ ignore both and list the item as before.
 - **Close all** (`decision_close_unanswerable {items: [{request_id,
   episode}], by_label?}`, `POST /api/decisions/close-unanswerable`, `tend
   review cleanup --questions --apply`) declines exactly the listed pairs, in
-  one transaction, each still open, still unanswerable, in that episode, not
-  kept and with no subject back; the rest come back in `skipped` with why.
+  one transaction, each still open, still unanswerable, in that episode and
+  not kept, and still established gone by the registry's evidence read
+  again inside that transaction (a resume, a returned pane or a stale scan
+  stops it); the rest come back in `skipped` with why. An item covering a
+  request that cannot be found never folds.
   Each gets the reply Tend for Mac's Dismiss sends and a `closure` (`reason:
   "subject_gone"`, the cause, the episode, `by: "person"` and the surface).
   Closing a recovery item records the dismissal in the original request's

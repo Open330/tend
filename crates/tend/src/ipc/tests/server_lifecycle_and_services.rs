@@ -3366,7 +3366,44 @@ async fn keep_and_close_unanswerable_are_operator_actions_and_close_follows_its_
             episode,
         });
     }
-    let server = Server::new(sock.clone(), Store::shared()).with_collaboration(mailbox.clone());
+    let registry = Store::shared();
+    // The registry shows `gone` bound to %42 on server A, and %42 gone
+    // from a fresh scan: what Close all reads again in its transaction.
+    {
+        use crate::subject_evidence::{
+            HostScan, PaneScan, ServerAnswer, ServerIncarnation, SubjectBinding,
+        };
+        let a = ServerIncarnation {
+            pid: 1,
+            start_time: 1,
+        };
+        let observations = registry.subject_observations();
+        observations.stamp_bindings(
+            vec![(
+                "gone".into(),
+                SubjectBinding {
+                    pane: "%42".into(),
+                    endpoint: "default".into(),
+                    incarnation: Some(a),
+                },
+            )],
+            &std::collections::HashSet::new(),
+        );
+        observations.set_scan(PaneScan {
+            at: time::OffsetDateTime::now_utc(),
+            hosts: vec![HostScan {
+                kind: crate::backend::HostKind::Tmux,
+                complete: true,
+                servers: vec![ServerAnswer {
+                    endpoint: "default".into(),
+                    running: true,
+                    incarnation: Some(a),
+                }],
+                panes: vec![],
+            }],
+        });
+    }
+    let server = Server::new(sock.clone(), registry).with_collaboration(mailbox.clone());
     let (tx, rx) = broadcast::channel(1);
     let handle = tokio::spawn(async move { server.run(rx).await.unwrap() });
     wait_for_socket(&sock).await;

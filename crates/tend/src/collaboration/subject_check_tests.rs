@@ -190,6 +190,67 @@ async fn folded(store: &CollaborationStore, id: &str) -> Option<Unanswerable> {
     store.unanswerable(&get(store, id).await, OffsetDateTime::now_utc())
 }
 
+/// Every fixture session bound on server A of `default`, as tendd's scans
+/// would have stamped them while they were live.
+fn everyone() -> HashMap<String, SubjectBinding> {
+    [
+        ("otpeek", "%42"),
+        ("s5", "%5"),
+        ("capped", "%6"),
+        ("remote", "%1"),
+        ("s7", "%7"),
+        ("s8", "%8"),
+        ("s9", "%9"),
+        ("t1", "%9"),
+        ("peer", "%2"),
+        ("a", "%11"),
+        ("b", "%12"),
+        ("c", "%13"),
+        ("d", "%14"),
+        ("e", "%15"),
+        ("ga", "%31"),
+        ("gb", "%32"),
+        ("live", "%33"),
+        ("gone-sender", "%40"),
+    ]
+    .into_iter()
+    .flat_map(|(session, pane)| bound(session, pane, "default", A))
+    .collect()
+}
+
+/// The agent registry as Close all reads it inside its transaction: these
+/// sessions live, every fixture session bound on A, and a fresh scan of
+/// `default` on A with no panes.
+async fn registry(live: &[(&str, &str)]) -> crate::state::Store {
+    let registry = crate::state::Store::default();
+    for (session, pane) in live {
+        registry
+            .apply(&AgentEvent::Started {
+                id: AgentId {
+                    kind: AgentKind::ClaudeCode,
+                    session_id: (*session).into(),
+                    surface: None,
+                    pane: Some((*pane).into()),
+                    tmux_socket: Some("default".into()),
+                    cwd: None,
+                },
+                at: OffsetDateTime::now_utc(),
+            })
+            .await;
+    }
+    let observations = registry.subject_observations();
+    observations.stamp_bindings(
+        everyone().into_iter().collect(),
+        &std::collections::HashSet::new(),
+    );
+    observations.set_scan(scan(
+        OffsetDateTime::now_utc(),
+        &[("default", Some(A))],
+        &[],
+    ));
+    registry
+}
+
 #[allow(clippy::unnecessary_wraps)] // the shape `drive` takes
 fn gone_scan(at: OffsetDateTime) -> Option<PaneScan> {
     Some(scan(at, &[("default", Some(A))], &[]))
@@ -201,7 +262,7 @@ async fn an_agents_question_whose_pane_is_gone_folds_after_a_day_and_is_never_cl
     let asker = participant("otpeek", "%42", "default");
     let q = question(&store, &asker).await;
     // 23 hours of pane gone: listed, not folded.
-    drive(&store, &[], &HashMap::new(), 23, gone_scan).await;
+    drive(&store, &[], &everyone(), 23, gone_scan).await;
     assert!(folded(&store, &q.id).await.is_none());
     let check = get(&store, &q.id).await.subject_check.unwrap();
     assert_eq!(check.state, SubjectState::Gone);
@@ -214,7 +275,7 @@ async fn an_agents_question_whose_pane_is_gone_folds_after_a_day_and_is_never_cl
     pass(
         &store,
         &[],
-        &HashMap::new(),
+        &everyone(),
         gone_scan(OffsetDateTime::now_utc()).as_ref(),
     )
     .await;
@@ -232,7 +293,7 @@ async fn an_agents_question_whose_pane_is_gone_folds_after_a_day_and_is_never_cl
 async fn a_full_day_of_five_minute_passes_folds_without_a_gap() {
     let store = CollaborationStore::in_memory(CollaborationOptions::default());
     let q = question(&store, &participant("otpeek", "%42", "default")).await;
-    drive(&store, &[], &HashMap::new(), 25, gone_scan).await;
+    drive(&store, &[], &everyone(), 25, gone_scan).await;
     let gone = folded(&store, &q.id).await.expect("folded after 25h");
     assert_eq!(gone.cause, GoneCause::PaneGone);
 }
@@ -349,7 +410,13 @@ async fn the_same_pane_id_on_two_sockets_is_told_apart() {
         &[("work", Some(A)), ("other", Some(B))],
         &[pane("%3", "other", "claude", Some(true))],
     );
-    pass(&store, &[], &HashMap::new(), Some(&other_only)).await;
+    pass(
+        &store,
+        &[],
+        &bound("s3", "%3", "work", A),
+        Some(&other_only),
+    )
+    .await;
     let check = get(&store, &q.id).await.subject_check.unwrap();
     assert_eq!(check.causes, [GoneCause::PaneGone]);
 
@@ -398,7 +465,7 @@ async fn a_partial_herdr_scan_or_a_failed_socket_never_shows_absence() {
         servers: vec![],
         panes: vec![],
     });
-    pass(&store, &[], &HashMap::new(), Some(&partial)).await;
+    pass(&store, &[], &everyone(), Some(&partial)).await;
     assert!(get(&store, &herdr.id).await.subject_check.is_none());
     assert!(
         get(&store, &tmux.id).await.subject_check.is_none(),
@@ -406,11 +473,11 @@ async fn a_partial_herdr_scan_or_a_failed_socket_never_shows_absence() {
     );
     // A complete scan in which the subject's socket did not answer.
     let elsewhere = scan(now, &[("other", Some(A))], &[]);
-    pass(&store, &[], &HashMap::new(), Some(&elsewhere)).await;
+    pass(&store, &[], &everyone(), Some(&elsewhere)).await;
     assert!(get(&store, &tmux.id).await.subject_check.is_none());
     // A stale scan shows nothing either.
     let stale = scan(now - Duration::hours(1), &[("default", Some(A))], &[]);
-    pass(&store, &[], &HashMap::new(), Some(&stale)).await;
+    pass(&store, &[], &everyone(), Some(&stale)).await;
     assert!(get(&store, &tmux.id).await.subject_check.is_none());
 }
 
@@ -430,7 +497,7 @@ async fn a_live_session_anywhere_wins_after_a_resume_or_restore() {
             now - Duration::hours(3),
         )])
         .unwrap();
-    pass(&store, &[], &HashMap::new(), gone_scan(now).as_ref()).await;
+    pass(&store, &[], &everyone(), gone_scan(now).as_ref()).await;
     assert!(get(&store, &q.id).await.subject_check.is_some());
     // Resumed into a new pane (or `tend restore`): alive, episode over.
     let resumed = row(
@@ -444,7 +511,7 @@ async fn a_live_session_anywhere_wins_after_a_resume_or_restore() {
     pass(
         &store,
         std::slice::from_ref(&resumed),
-        &HashMap::new(),
+        &everyone(),
         gone_scan(now).as_ref(),
     )
     .await;
@@ -458,7 +525,7 @@ async fn a_live_session_anywhere_wins_after_a_resume_or_restore() {
         &[("default", Some(A))],
         &[pane("%8", "default", "claude", Some(true))],
     );
-    pass(&store, &[stopped], &HashMap::new(), Some(&alive_pane)).await;
+    pass(&store, &[stopped], &everyone(), Some(&alive_pane)).await;
     assert!(get(&store, &q.id).await.subject_check.is_none());
 }
 
@@ -475,7 +542,7 @@ async fn a_rate_limited_agent_is_alive() {
     )
     .await;
     capped.rate_limit_scope = Some(crate::event::RateLimitScope::FiveHour);
-    drive(&store, &[capped], &HashMap::new(), 25, gone_scan).await;
+    drive(&store, &[capped], &everyone(), 25, gone_scan).await;
     assert!(get(&store, &q.id).await.subject_check.is_none());
 }
 
@@ -498,7 +565,7 @@ async fn an_asker_on_another_host_is_never_judged() {
         .await
         .unwrap();
     backdate(&store, &request.id, Duration::days(8)).await;
-    drive(&store, &[], &HashMap::new(), 25, gone_scan).await;
+    drive(&store, &[], &everyone(), 25, gone_scan).await;
     assert!(get(&store, &request.id).await.subject_check.is_none());
 }
 
@@ -520,7 +587,7 @@ async fn a_daemon_down_a_day_restarts_the_grace_clock_not_the_episode() {
     });
     put(&store, left).await;
     // The first pass after start cannot fold anything.
-    pass(&store, &[], &HashMap::new(), gone_scan(now).as_ref()).await;
+    pass(&store, &[], &everyone(), gone_scan(now).as_ref()).await;
     let check = get(&store, &q.id).await.subject_check.unwrap();
     assert_eq!(check.episode, "ep_before", "the episode survives an outage");
     assert_eq!(
@@ -539,7 +606,7 @@ async fn a_daemon_down_a_day_restarts_the_grace_clock_not_the_episode() {
 async fn keep_holds_through_unknown_and_a_change_of_cause_until_alive() {
     let store = CollaborationStore::in_memory(CollaborationOptions::default());
     let q = question(&store, &participant("s8", "%8", "default")).await;
-    drive(&store, &[], &HashMap::new(), 25, gone_scan).await;
+    drive(&store, &[], &everyone(), 25, gone_scan).await;
     let gone = folded(&store, &q.id).await.expect("folded");
     let kept = store.keep_unanswerable(&q.id, &gone.episode).await.unwrap();
     assert_eq!(kept.episode, gone.episode);
@@ -548,7 +615,7 @@ async fn keep_holds_through_unknown_and_a_change_of_cause_until_alive() {
         "kept: back in the person's turn"
     );
     // A day of unknown (failed scans), then gone again with another cause.
-    drive(&store, &[], &HashMap::new(), 24, |_| None).await;
+    drive(&store, &[], &everyone(), 24, |_| None).await;
     store
         .record_subject_facts(vec![SubjectFact::new(
             FactKind::Ended,
@@ -559,7 +626,7 @@ async fn keep_holds_through_unknown_and_a_change_of_cause_until_alive() {
             OffsetDateTime::now_utc(),
         )])
         .unwrap();
-    drive(&store, &[], &HashMap::new(), 25, gone_scan).await;
+    drive(&store, &[], &everyone(), 25, gone_scan).await;
     let check = get(&store, &q.id).await.subject_check.unwrap();
     assert_eq!(
         check.episode, gone.episode,
@@ -569,7 +636,7 @@ async fn keep_holds_through_unknown_and_a_change_of_cause_until_alive() {
     assert!(folded(&store, &q.id).await.is_none(), "still kept");
     // Seen alive, then gone again: a new episode Keep does not cover.
     let alive = row("s8", "%8", "default", AgentState::Idle, Duration::ZERO).await;
-    pass(&store, &[alive], &HashMap::new(), None).await;
+    pass(&store, &[alive], &everyone(), None).await;
     assert!(get(&store, &q.id).await.subject_check.is_none());
     store
         .record_subject_facts(vec![SubjectFact::new(
@@ -581,7 +648,7 @@ async fn keep_holds_through_unknown_and_a_change_of_cause_until_alive() {
             OffsetDateTime::now_utc() + Duration::seconds(1),
         )])
         .unwrap();
-    pass(&store, &[], &HashMap::new(), None).await;
+    pass(&store, &[], &everyone(), None).await;
     let check = get(&store, &q.id).await.subject_check.unwrap();
     assert_ne!(check.episode, gone.episode);
     assert!(check.kept_episode.is_none());
@@ -666,6 +733,14 @@ async fn ended_and_replaced_facts_come_from_real_hooks_only() {
             at: now,
         })
         .await;
+    // Settled by the first scan after the hook, still on server A.
+    registry
+        .record_pane_scan(scan(
+            OffsetDateTime::now_utc() + Duration::seconds(1),
+            &[("default", Some(A))],
+            &[pane("%4", "default", "claude", Some(true))],
+        ))
+        .await;
     let facts = registry.subject_observations().take_facts();
     assert_eq!(facts.len(), 1, "{facts:?}");
     assert_eq!(facts[0].kind, FactKind::Replaced);
@@ -699,7 +774,7 @@ async fn ended_and_replaced_facts_come_from_real_hooks_only() {
     replaced.same_incarnation = true;
     store.record_subject_facts(vec![replaced]).unwrap();
     let agents = registry.snapshot().await;
-    pass(&store, &agents, &HashMap::new(), None).await;
+    pass(&store, &agents, &everyone(), None).await;
     let check = get(&store, &q.id).await.subject_check.unwrap();
     assert_eq!(check.causes, [GoneCause::Replaced]);
 }
@@ -718,7 +793,7 @@ async fn a_replacement_on_another_server_incarnation_never_counts() {
             OffsetDateTime::now_utc(),
         )])
         .unwrap();
-    pass(&store, &[], &HashMap::new(), None).await;
+    pass(&store, &[], &everyone(), None).await;
     assert!(get(&store, &q.id).await.subject_check.is_none());
 }
 
@@ -804,7 +879,7 @@ async fn a_console_recovery_with_only_binding_unavailable_stays() {
     let (_, item) = Box::pin(console_recovery(&store)).await;
     assert!(item.needs_human_response());
     // No scan establishes anything: a day of passes changes nothing.
-    drive(&store, &[], &HashMap::new(), 25, |_| None).await;
+    drive(&store, &[], &everyone(), 25, |_| None).await;
     assert!(get(&store, &item.id).await.subject_check.is_none());
     assert!(folded(&store, &item.id).await.is_none());
     store.sweep_system_asks(&[]).await.unwrap();
@@ -815,7 +890,7 @@ async fn a_console_recovery_with_only_binding_unavailable_stays() {
 async fn a_console_recovery_whose_recipient_pane_is_gone_folds_and_is_never_auto_closed() {
     let store = CollaborationStore::in_memory(CollaborationOptions::default());
     let (_, item) = Box::pin(console_recovery(&store)).await;
-    drive(&store, &[], &HashMap::new(), 25, gone_scan).await;
+    drive(&store, &[], &everyone(), 25, gone_scan).await;
     let gone = folded(&store, &item.id).await.expect("folded");
     assert_eq!(gone.cause, GoneCause::PaneGone);
     store.sweep_system_asks(&[]).await.unwrap();
@@ -831,7 +906,7 @@ async fn closing_a_recovery_item_records_the_dismissal_on_the_original_request_o
     let store = CollaborationStore::in_memory(CollaborationOptions::default());
     store.set_close_unanswerable(true);
     let (parent, item) = Box::pin(console_recovery(&store)).await;
-    drive(&store, &[], &HashMap::new(), 25, gone_scan).await;
+    drive(&store, &[], &everyone(), 25, gone_scan).await;
     let gone = folded(&store, &item.id).await.unwrap();
     let before = store.requests.read().await.len();
     let outcome = store
@@ -840,7 +915,7 @@ async fn closing_a_recovery_item_records_the_dismissal_on_the_original_request_o
                 request_id: item.id.clone(),
                 episode: gone.episode.clone(),
             }],
-            &[],
+            &registry(&[]).await,
             "cli",
             None,
         )
@@ -884,7 +959,7 @@ async fn closing_a_recovery_item_records_the_dismissal_on_the_original_request_o
 async fn close_all_is_refused_while_turned_off() {
     let store = CollaborationStore::in_memory(CollaborationOptions::default());
     let q = question(&store, &participant("s9", "%9", "default")).await;
-    drive(&store, &[], &HashMap::new(), 25, gone_scan).await;
+    drive(&store, &[], &everyone(), 25, gone_scan).await;
     let gone = folded(&store, &q.id).await.unwrap();
     let error = store
         .close_unanswerable(
@@ -892,7 +967,7 @@ async fn close_all_is_refused_while_turned_off() {
                 request_id: q.id.clone(),
                 episode: gone.episode,
             }],
-            &[],
+            &registry(&[]).await,
             "cli",
             None,
         )
@@ -913,7 +988,7 @@ async fn close_all_closes_exactly_the_list_and_loses_every_race() {
         question(&store, &participant("d", "%14", "default")).await,
         question(&store, &participant("e", "%15", "default")).await,
     ];
-    drive(&store, &[], &HashMap::new(), 25, gone_scan).await;
+    drive(&store, &[], &everyone(), 25, gone_scan).await;
     let mut list = Vec::new();
     for q in &questions[..4] {
         let gone = folded(&store, &q.id).await.expect("folded");
@@ -938,10 +1013,9 @@ async fn close_all_closes_exactly_the_list_and_loses_every_race() {
         .keep_unanswerable(&questions[1].id, &list[1].episode)
         .await
         .unwrap();
-    let resumed = row("c", "%20", "default", AgentState::Idle, Duration::ZERO).await;
     // `e` was never in the list: it arrived after it was drawn.
     let outcome = store
-        .close_unanswerable(&list, &[resumed], "mac", None)
+        .close_unanswerable(&list, &registry(&[("c", "%20")]).await, "mac", None)
         .await
         .unwrap();
     assert_eq!(outcome.closed, [questions[3].id.clone()]);
@@ -965,7 +1039,7 @@ async fn close_all_closes_exactly_the_list_and_loses_every_race() {
                 request_id: questions[4].id.clone(),
                 episode: "ep_earlier".into(),
             }],
-            &[],
+            &registry(&[]).await,
             "web",
             None,
         )
@@ -980,7 +1054,7 @@ async fn the_queue_lists_live_items_first_and_counts_every_folded_one() {
     let store = CollaborationStore::in_memory(CollaborationOptions::default());
     let gone_a = question(&store, &participant("ga", "%31", "default")).await;
     let gone_b = question(&store, &participant("gb", "%32", "default")).await;
-    drive(&store, &[], &HashMap::new(), 25, gone_scan).await;
+    drive(&store, &[], &everyone(), 25, gone_scan).await;
     // A live question asked later, by an agent that is still there.
     let live_asker = participant("live", "%33", "default");
     let live = question(&store, &live_asker).await;
@@ -989,7 +1063,7 @@ async fn the_queue_lists_live_items_first_and_counts_every_folded_one() {
     pass(
         &store,
         std::slice::from_ref(&alive),
-        &HashMap::new(),
+        &everyone(),
         gone_scan(OffsetDateTime::now_utc()).as_ref(),
     )
     .await;
@@ -1132,7 +1206,275 @@ async fn a_reply_wake_folds_when_the_original_sender_is_gone() {
     );
     put(&store, wake).await;
     // The reply is 73 days old; the item was recreated 6.9 days ago.
-    drive(&store, &[], &HashMap::new(), 25, gone_scan).await;
+    drive(&store, &[], &everyone(), 25, gone_scan).await;
     let gone = folded(&store, "rq_wake").await.expect("folded");
     assert_eq!(gone.pane.as_deref(), Some("%40"));
+}
+
+// Regressions from the review of #642.
+
+/// After a daemon restart no binding is remembered: a tmux pane absent from
+/// server B says nothing about a session that may have been bound on A.
+#[tokio::test]
+async fn reviewer_missing_incarnation_is_unknown() {
+    let store = CollaborationStore::in_memory(CollaborationOptions::default());
+    let q = question(&store, &participant("old", "%3", "default")).await;
+    let absent = scan(OffsetDateTime::now_utc(), &[("default", Some(B))], &[]);
+    pass(&store, &[], &HashMap::new(), Some(&absent)).await;
+    assert!(get(&store, &q.id).await.subject_check.is_none());
+    // Nor does a server that reports no incarnation, even with a binding.
+    let unreported = scan(OffsetDateTime::now_utc(), &[("default", None)], &[]);
+    pass(
+        &store,
+        &[],
+        &bound("old", "%3", "default", A),
+        Some(&unreported),
+    )
+    .await;
+    assert!(get(&store, &q.id).await.subject_check.is_none());
+    // A socket that says no server runs there holds no pane at all.
+    let mut stopped = scan(OffsetDateTime::now_utc(), &[("default", None)], &[]);
+    stopped.hosts[0].servers[0].running = false;
+    pass(&store, &[], &HashMap::new(), Some(&stopped)).await;
+    assert_eq!(
+        get(&store, &q.id).await.subject_check.unwrap().causes,
+        [GoneCause::PaneGone]
+    );
+}
+
+/// rmux reports no incarnation; absence from its running endpoint counts.
+#[tokio::test]
+async fn an_rmux_pane_absent_from_its_running_endpoint_is_gone() {
+    let store = CollaborationStore::in_memory(CollaborationOptions::default());
+    let endpoint = "/tmp/rmux-501/default";
+    let q = question(&store, &participant("r1", "rmux:%3", endpoint)).await;
+    let mut absent = scan(OffsetDateTime::now_utc(), &[(endpoint, None)], &[]);
+    absent.hosts[0].kind = HostKind::Rmux;
+    pass(&store, &[], &HashMap::new(), Some(&absent)).await;
+    assert_eq!(
+        get(&store, &q.id).await.subject_check.unwrap().causes,
+        [GoneCause::PaneGone]
+    );
+}
+
+/// A confirmation older than a few minutes folds nothing and authorizes
+/// no close.
+#[tokio::test]
+async fn reviewer_expired_confirmation_cannot_close() {
+    let store = CollaborationStore::in_memory(CollaborationOptions::default());
+    store.set_close_unanswerable(true);
+    let q = question(&store, &participant("old", "%3", "default")).await;
+    let episode = store.fold_for_test(&q.id, GoneCause::PaneGone).await;
+    store
+        .subject
+        .pass
+        .lock()
+        .unwrap()
+        .confirmed
+        .get_mut(&q.id)
+        .unwrap()
+        .1 -= Duration::hours(2);
+    assert!(folded(&store, &q.id).await.is_none(), "not folded either");
+    let page = store.open_human_requests_folded(10).await.unwrap();
+    assert_eq!(page.unanswerable_count, 0);
+    let result = store
+        .close_unanswerable(
+            &[CloseItem {
+                request_id: q.id.clone(),
+                episode,
+            }],
+            &registry(&[]).await,
+            "cli",
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(result.closed.is_empty());
+    assert_eq!(result.skipped[0].reason, "not unanswerable now");
+}
+
+/// Close all reads the evidence again inside its transaction: a resume or a
+/// scan that no longer shows the subject gone stops the close, however
+/// fresh the pass was.
+#[tokio::test]
+async fn close_all_rechecks_the_evidence_at_the_commit() {
+    let store = CollaborationStore::in_memory(CollaborationOptions::default());
+    store.set_close_unanswerable(true);
+    let q = question(&store, &participant("s9", "%9", "default")).await;
+    let episode = store.fold_for_test(&q.id, GoneCause::PaneGone).await;
+    let item = [CloseItem {
+        request_id: q.id.clone(),
+        episode,
+    }];
+    // The pane is back on the same server.
+    let back = registry(&[]).await;
+    back.subject_observations().set_scan(scan(
+        OffsetDateTime::now_utc(),
+        &[("default", Some(A))],
+        &[pane("%9", "default", "claude", Some(true))],
+    ));
+    let outcome = store
+        .close_unanswerable(&item, &back, "cli", None)
+        .await
+        .unwrap();
+    assert!(outcome.closed.is_empty());
+    assert_eq!(
+        outcome.skipped[0].reason,
+        "its subject is no longer established gone"
+    );
+    // The newest scan is stale.
+    let stale = registry(&[]).await;
+    stale.subject_observations().set_scan(scan(
+        OffsetDateTime::now_utc() - Duration::hours(1),
+        &[("default", Some(A))],
+        &[],
+    ));
+    let outcome = store
+        .close_unanswerable(&item, &stale, "cli", None)
+        .await
+        .unwrap();
+    assert!(outcome.closed.is_empty());
+    // The session resumed elsewhere.
+    let resumed = registry(&[("s9", "%30")]).await;
+    let outcome = store
+        .close_unanswerable(&item, &resumed, "cli", None)
+        .await
+        .unwrap();
+    assert_eq!(outcome.skipped[0].reason, "its subject is back");
+    // Gone by the evidence now: closed.
+    let outcome = store
+        .close_unanswerable(&item, &registry(&[]).await, "cli", None)
+        .await
+        .unwrap();
+    assert_eq!(outcome.closed, std::slice::from_ref(&q.id));
+}
+
+/// A covered request that cannot be found is a subject nobody can show
+/// gone, so the item does not fold.
+#[tokio::test]
+async fn reviewer_missing_covered_parent_is_unknown() {
+    let store = CollaborationStore::in_memory(CollaborationOptions::default());
+    let (_, item) = Box::pin(console_recovery(&store)).await;
+    let mut item = get(&store, &item.id).await;
+    item.system_ask
+        .as_mut()
+        .unwrap()
+        .covers
+        .push("missing_parent".into());
+    put(&store, item.clone()).await;
+    // `peer` is bound and its pane is gone: only the missing one is unknown.
+    pass(
+        &store,
+        &[],
+        &everyone(),
+        gone_scan(OffsetDateTime::now_utc()).as_ref(),
+    )
+    .await;
+    assert!(get(&store, &item.id).await.subject_check.is_none());
+}
+
+/// The registry of the replacement fixture: `old` bound to %4 on server A
+/// by a scan two days ago, then `new` started in %4 now.
+async fn replaced_after_an_old_scan() -> crate::state::SharedStore {
+    let id = |session: &str| AgentId {
+        kind: AgentKind::ClaudeCode,
+        session_id: session.into(),
+        surface: None,
+        pane: Some("%4".into()),
+        tmux_socket: Some("default".into()),
+        cwd: None,
+    };
+    let now = OffsetDateTime::now_utc();
+    let registry = crate::state::Store::shared();
+    registry
+        .apply(&AgentEvent::Started {
+            id: id("old"),
+            at: now - Duration::days(2),
+        })
+        .await;
+    registry
+        .record_pane_scan(scan(
+            now - Duration::days(2),
+            &[("default", Some(A))],
+            &[pane("%4", "default", "claude", Some(true))],
+        ))
+        .await;
+    registry
+        .apply(&AgentEvent::Started {
+            id: id("new"),
+            at: now,
+        })
+        .await;
+    registry
+}
+
+/// A replacement is settled by the first scan after its hook, never by an
+/// older one: a server restart between the last scan and the hook makes it
+/// not count.
+#[tokio::test]
+async fn reviewer_stale_scan_cannot_certify_replacement_incarnation() {
+    // No scan since the hook: nothing is settled, so nothing counts.
+    let registry = replaced_after_an_old_scan().await;
+    assert!(registry.subject_observations().take_facts().is_empty());
+    // The server was restarted between the old scan and the hook.
+    registry
+        .record_pane_scan(scan(
+            OffsetDateTime::now_utc() + Duration::seconds(1),
+            &[("default", Some(B))],
+            &[pane("%4", "default", "claude", Some(true))],
+        ))
+        .await;
+    let facts = registry.subject_observations().take_facts();
+    assert_eq!(facts.len(), 1);
+    assert_eq!(facts[0].kind, FactKind::Replaced);
+    assert!(!facts[0].same_incarnation);
+    // The same server before and after the hook: it counts.
+    let registry = replaced_after_an_old_scan().await;
+    registry
+        .record_pane_scan(scan(
+            OffsetDateTime::now_utc() + Duration::seconds(1),
+            &[("default", Some(A))],
+            &[pane("%4", "default", "claude", Some(true))],
+        ))
+        .await;
+    let facts = registry.subject_observations().take_facts();
+    assert!(facts[0].same_incarnation);
+}
+
+/// A failed write puts the facts back; the next pass keeps them.
+#[tokio::test]
+async fn facts_survive_a_failed_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mailbox.db");
+    let store = CollaborationStore::load(CollaborationOptions {
+        path: Some(path.clone()),
+        ..CollaborationOptions::default()
+    })
+    .await
+    .unwrap();
+    let registry = crate::state::Store::shared();
+    let observations = registry.subject_observations();
+    observations.record(SubjectFact::new(
+        FactKind::Ended,
+        "s1",
+        Some("%1"),
+        Some("default"),
+        None,
+        OffsetDateTime::now_utc(),
+    ));
+    // The database is replaced under the store: the write fails.
+    std::fs::rename(&path, dir.path().join("moved.db")).unwrap();
+    assert!(store.keep_facts_from(observations).is_err());
+    assert_eq!(observations.peek_facts().len(), 1, "requeued");
+    assert!(store.subject_facts().is_empty());
+    // A store over a working database keeps them, and they are drained.
+    let recovered = CollaborationStore::load(CollaborationOptions {
+        path: Some(dir.path().join("fresh.db")),
+        ..CollaborationOptions::default()
+    })
+    .await
+    .unwrap();
+    recovered.keep_facts_from(observations).unwrap();
+    assert!(observations.peek_facts().is_empty());
+    assert_eq!(recovered.subject_facts()[0].session_id, "s1");
 }

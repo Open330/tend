@@ -212,7 +212,15 @@ pub struct SubjectObservations {
     scan: std::sync::Mutex<Option<std::sync::Arc<PaneScan>>>,
     bindings: std::sync::Mutex<std::collections::HashMap<String, SubjectBinding>>,
     facts: std::sync::Mutex<Vec<SubjectFact>>,
+    /// Replacement facts waiting for the first scan after their hook to
+    /// establish whether the server is the incarnation the predecessor was
+    /// bound on.
+    unverified: std::sync::Mutex<Vec<SubjectFact>>,
 }
+
+/// A replacement no complete scan of its socket could settle within this
+/// long is recorded as not on the same incarnation (it never counts).
+const UNVERIFIED_FOR: time::Duration = time::Duration::minutes(10);
 
 /// Facts waiting to be taken are bounded: a collaboration store that never
 /// takes them (collaboration off) must not grow the registry.
@@ -224,9 +232,56 @@ impl SubjectObservations {
         self.scan.lock().ok().and_then(|scan| scan.clone())
     }
 
+    /// Keep `scan` as the newest, and settle the replacement facts whose
+    /// hook came before it: the server answered with the incarnation the
+    /// predecessor was bound on both before the hook (the binding) and after
+    /// it (this scan), so no restart happened in between, or it did not.
     pub fn set_scan(&self, scan: PaneScan) {
+        let settled = self.unverified.lock().map_or_else(
+            |_| Vec::new(),
+            |mut pending| {
+                let mut settled = Vec::new();
+                pending.retain_mut(|fact| {
+                    if scan.at <= fact.observed_at {
+                        return true;
+                    }
+                    let answer = fact.backend.and_then(|kind| {
+                        let host = scan.complete_host(kind)?;
+                        let endpoint = fact.endpoint.as_deref()?;
+                        host.servers
+                            .iter()
+                            .find(|server| server.endpoint == endpoint)
+                    });
+                    match answer {
+                        Some(server) => {
+                            fact.same_incarnation = server.running
+                                && fact.incarnation.is_some()
+                                && server.incarnation == fact.incarnation;
+                        }
+                        None if scan.at - fact.observed_at < UNVERIFIED_FOR => return true,
+                        None => fact.same_incarnation = false,
+                    }
+                    settled.push(fact.clone());
+                    false
+                });
+                settled
+            },
+        );
+        for fact in settled {
+            self.record(fact);
+        }
         if let Ok(mut slot) = self.scan.lock() {
             *slot = Some(std::sync::Arc::new(scan));
+        }
+    }
+
+    /// A replacement fact, held until a scan after its hook settles it.
+    pub fn record_unverified(&self, fact: SubjectFact) {
+        if let Ok(mut pending) = self.unverified.lock() {
+            if pending.len() >= MAX_PENDING_FACTS {
+                pending.remove(0);
+            }
+            pending.push(fact);
         }
     }
 
@@ -293,6 +348,22 @@ impl SubjectObservations {
                 facts.remove(0);
             }
             facts.push(fact);
+        }
+    }
+
+    /// The settled facts not yet taken, left in place.
+    #[must_use]
+    pub fn peek_facts(&self) -> Vec<SubjectFact> {
+        self.facts.lock().map(|f| f.clone()).unwrap_or_default()
+    }
+
+    /// Put back facts a failed write could not keep, ahead of newer ones.
+    pub fn requeue(&self, mut facts: Vec<SubjectFact>) {
+        if let Ok(mut held) = self.facts.lock() {
+            facts.append(&mut held);
+            let excess = facts.len().saturating_sub(MAX_PENDING_FACTS);
+            facts.drain(..excess);
+            *held = facts;
         }
     }
 
