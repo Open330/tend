@@ -151,7 +151,17 @@ bash "$SANDBOX" up \
 
 # TEND_SOCKET, TEND_CONFIG, XDG_DATA_HOME, TEND_TMUX_SOCKET and the shimmed
 # PATH all arrive here. Nothing below may reach a real tend surface.
-eval "$(bash "$SANDBOX" env --name "$TMUX_LBL")"
+# A failed export stops here: an empty eval would leave every seed below on
+# the caller's own socket and config.
+sandbox_env=$(bash "$SANDBOX" env --name "$TMUX_LBL") || {
+  echo "demo-setup: the sandbox's environment is unavailable" >&2
+  exit 1
+}
+eval "$sandbox_env"
+case "${TEND_SOCKET:-}" in
+  /tmp/"$TMUX_LBL"-sandbox/*) ;;
+  *) echo "demo-setup: TEND_SOCKET is not the sandbox's (${TEND_SOCKET:-unset})" >&2; exit 1 ;;
+esac
 # The sandbox addresses its tmux server by socket path (and its own config),
 # not by `-L` label; every call below goes through this.
 tm() { "$TEND_SANDBOX_TMUX" -u -f "$TEND_SANDBOX_TMUX_CONFIG" -S "$TEND_TMUX_SOCKET" "$@"; }

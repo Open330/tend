@@ -268,7 +268,7 @@ final class AppModel: ObservableObject {
     let attention: TendAgentAttentionCenter
     /// Swaps the app started or follows (switch account and resume).
     let swaps = TendSwapCenter()
-    private let daemon = DaemonManager()
+    private let daemon: DaemonManager
     private var refreshTask: Task<Void, Never>?
     private var fleetRefreshTask: Task<Void, Never>?
     private var inboxEventTask: Task<Void, Never>?
@@ -324,8 +324,11 @@ final class AppModel: ObservableObject {
         return id
     }
 
-    init(client: TendIPCClient = TendIPCClient()) {
+    /// `launchesDaemon: false` connects only to a tendd already running at
+    /// the client's socket and never starts or replaces one.
+    init(client: TendIPCClient = TendIPCClient(), launchesDaemon: Bool = true) {
         self.client = client
+        daemon = DaemonManager(launchesDaemon: launchesDaemon)
         defer { swaps.attach(self) }
         // WS-A: tests get an in-memory center that never touches
         // UserDefaults, the notification center, or the Dock.

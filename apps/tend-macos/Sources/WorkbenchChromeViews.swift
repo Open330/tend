@@ -13,6 +13,8 @@ struct WorkbenchWindowPresenter: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {}
 
     private func revealWindow(for view: NSView, remainingAttempts: Int) {
+        // A test host draws windows off-screen and never brings one forward.
+        guard !AppModel.isRunningTests() else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak view] in
             guard let view else { return }
             if let window = view.window {
