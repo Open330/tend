@@ -1524,6 +1524,8 @@ async fn a_content_opt_out_during_an_earlier_send_holds_for_the_later_one() {
     assert_eq!(sent[0].body["aps"]["category"], "TEND_OPEN");
 }
 
+// Push needs a key file read with unix checks; it is off on other systems.
+#[cfg(unix)]
 #[tokio::test]
 async fn a_failed_start_leaves_no_push_sender_and_a_stopped_one_ends() {
     use std::sync::atomic::Ordering::SeqCst;

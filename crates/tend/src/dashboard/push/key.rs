@@ -9,6 +9,7 @@
 use p256::ecdsa::SigningKey;
 use std::path::Path;
 
+#[cfg(unix)]
 pub(super) const MAX_KEY_BYTES: u64 = 4096;
 
 /// Load the key at `path`, which must be owned by `uid` (the daemon's own).
@@ -69,6 +70,7 @@ pub(super) fn load(_path: &Path) -> Result<SigningKey, String> {
 }
 
 /// A PKCS#8 PEM private key on P-256. The error carries nothing.
+#[cfg(unix)]
 fn parse(pem: &str) -> Result<SigningKey, ()> {
     use p256::pkcs8::DecodePrivateKey;
     SigningKey::from_pkcs8_pem(pem.trim()).map_err(drop)
