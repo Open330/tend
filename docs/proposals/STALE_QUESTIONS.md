@@ -1,6 +1,6 @@
 # Questions nobody can be answered
 
-Status: agreed design (wave 8, 2026-11-19, Codex agreed on 43531a1a). Part 1, tend's own items, is built (#638). The rest of build-plan step 1 (evidence, episodes, folding, Keep, and Close all off behind `[review] close_unanswerable`) is built in daemon, IPC, dashboard and CLI (`feat/unanswerable-questions`); the surfaces (step 2) are not yet.
+Status: agreed design (wave 8, 2026-11-19, Codex agreed on 43531a1a). Built: tend's own items (#638); evidence, episodes, folding, Keep and Close all in the daemon, IPC, dashboard and CLI (#642); Close all on by default by the owner's decision. The surfaces (step 2) are in #643.
 
 ## The complaint
 
@@ -275,17 +275,23 @@ The choice for the owner:
 - (b) commission the answer-revision design first, and ship folding and Keep
   without Close all until then.
 
-**Status of the choice (2026-11-19):** the coordinator recommended (a), with
-safeguards: Close all asks for one confirmation that names the count and says
-each asker gets a declined reply; it never includes an item whose evidence is
-younger than the 24-hour grace or that was kept; and `tend review cleanup
---questions` is a dry run unless `--apply` is given. The owner has not yet
-accepted it in their own words. Until they do, Close all is built but
-**off**: it sits behind `[review] close_unanswerable = false`, and the route,
-the button and `--questions --apply` refuse with that reason. Silence does not
-select (a). If the owner chooses (b), the answer-revision design comes first.
+**Decision (2026-11-19): (a), by the owner.** Asked by the coordinator
+whether Close all may be irreversible, the owner answered in their own
+words: "모두닫기는 왜 꺼집니까? 되돌릴수없음만 표시해주면 사용자가닫을수도있을것같습니다"
+("Why is Close all turned off? If it just shows that it cannot be undone,
+the user may as well close them."). So:
 
-Folding and Keep do not depend on this choice and ship enabled.
+- Close all is **on by default** (`[review] close_unanswerable = true`);
+  `false` turns it off.
+- Its one confirmation, on Mac, web and iOS, names the count, says each
+  asking agent gets a reply that the person dismissed it, and says plainly
+  that this cannot be undone.
+- It never includes an item whose evidence is younger than the 24-hour grace
+  or that was kept, and `tend review cleanup --questions` stays a dry run
+  unless `--apply` is given.
+- Reopening a closed item is not offered: a close is final, as Dismiss is.
+
+Folding and Keep do not depend on this choice.
 
 ### Alternatives considered
 
@@ -352,7 +358,7 @@ run with --apply to close tend's items; add --questions to also close these 3
 
 ## Build plan
 
-Close all ships off, behind `[review] close_unanswerable`, until the owner accepts (a).
+Close all is on by default since the owner's decision above.
 
 1. **Daemon and CLI** (one PR):
    - end and replacement facts recorded at ingestion;

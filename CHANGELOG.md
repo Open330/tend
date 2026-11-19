@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Close all for questions nobody can answer is on by default, by the
+  owner's decision: its confirmation says each asking agent gets a reply
+  that you dismissed it and that this cannot be undone. `[review]
+  close_unanswerable = false` turns it off (docs/CONFIGURATION.md, Review).
 - iOS: the app is in Korean as well as English, with Tend for Mac's
   wording wherever the two share a sentence.
 - iOS: readability on real phones. Quieter text (meta rows, hints, times,
