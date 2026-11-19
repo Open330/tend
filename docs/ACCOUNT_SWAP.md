@@ -544,8 +544,9 @@ the host before running it again.
 $ tend swap --host build --to work --dry-run
 ```
 
-Repeat `--host` to swap on several hosts at once (`local` is this host):
-each host runs its own job, under its own request key printed before
+Repeat `--host` to swap on several hosts at once (`local` is this host),
+up to four in flight (each is a work command on this host's daemon, which
+runs at most four at a time); each host runs its own job, under its own request key printed before
 anything is sent, and the reports are printed host by host once all have
 answered. A host that fails does not stop the others; the command fails if
 any did, naming them. `--jobs` goes to every host (a host whose `tend` is

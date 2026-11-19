@@ -13,6 +13,7 @@
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Args as ClapArgs, ValueEnum};
+use futures_util::StreamExt as _;
 use std::fmt::Write as _;
 use std::future::Future;
 use std::path::Path;
@@ -1636,6 +1637,11 @@ fn fleet_hosts(hosts: &[String]) -> Vec<String> {
     out
 }
 
+/// How many hosts' swaps are in flight at once: each is a work command on
+/// this host's daemon, which runs at most four at a time and refuses the
+/// rest (`MAX_CONCURRENT_WORK_COMMANDS`).
+const HOSTS_AT_ONCE: usize = 4;
+
 /// One host's part of a swap on several.
 #[derive(serde::Serialize)]
 struct HostReport {
@@ -1675,15 +1681,21 @@ async fn run_hosts(relay: &impl Relay, args: &Args, hosts: &[String]) -> Result<
     }
     if !args.dry_run {
         eprintln!(
-            "tend swap: swapping on {} hosts at once; Ctrl-C stops this client from waiting, \
-             not the swaps",
+            "tend swap: swapping on {} hosts, up to {HOSTS_AT_ONCE} at once. Ctrl-C stops \
+             this client from waiting; it does not reliably cancel a swap already sent, and \
+             hosts not yet sent to are not started. Check each host by its request key \
+             before retrying.",
             hosts.len()
         );
     }
-    let answers = futures_util::future::join_all(
+    // In host order, at most HOSTS_AT_ONCE in flight: every host's swap is
+    // one work command on this daemon, which refuses more than that.
+    let answers: Vec<_> = futures_util::stream::iter(
         runs.iter()
             .map(|(_, remote, _, words)| relay.run(remote.as_deref(), words)),
     )
+    .buffered(HOSTS_AT_ONCE)
+    .collect()
     .await;
     let mut reports = Vec::new();
     for ((host, remote, key, _), answer) in runs.iter().zip(answers) {
@@ -3158,5 +3170,57 @@ mod tests {
             .await
             .is_err());
         assert!(fake.calls.borrow().is_empty());
+    }
+
+    /// A relay whose answers take a while, counting calls in flight.
+    struct SlowRelay {
+        in_flight: std::rc::Rc<std::cell::Cell<usize>>,
+        most: std::rc::Rc<std::cell::Cell<usize>>,
+        order: std::cell::RefCell<Vec<Option<String>>>,
+    }
+
+    impl Relay for SlowRelay {
+        fn run(
+            &self,
+            host: Option<&str>,
+            _argv: &[String],
+        ) -> impl Future<Output = Result<tend::work_control::WorkCommandOutput, RuntimeError>>
+        {
+            self.order.borrow_mut().push(host.map(str::to_owned));
+            let (in_flight, most) = (self.in_flight.clone(), self.most.clone());
+            async move {
+                in_flight.set(in_flight.get() + 1);
+                most.set(most.get().max(in_flight.get()));
+                // The daemon refuses a fifth work command at once.
+                let refused = in_flight.get() > HOSTS_AT_ONCE;
+                for _ in 0..5 {
+                    tokio::task::yield_now().await;
+                }
+                in_flight.set(in_flight.get() - 1);
+                if refused {
+                    return Ok(output(1, "", "at most 4 work commands may run at once"));
+                }
+                Ok(output(0, "[]", ""))
+            }
+        }
+    }
+
+    /// More hosts than the daemon runs work commands at once: never more
+    /// than that in flight, every host still swapped, reports in order.
+    #[tokio::test]
+    async fn a_swap_on_more_hosts_than_the_daemon_runs_at_once_waits_its_turn() {
+        let fake = SlowRelay {
+            in_flight: std::rc::Rc::default(),
+            most: std::rc::Rc::default(),
+            order: std::cell::RefCell::default(),
+        };
+        let hosts: Vec<String> = (1..=6).map(|i| format!("h{i}")).collect();
+        let cli = Cli::parse_from(["swap", "--all"]);
+        run_hosts(&fake, &cli.args, &hosts).await.unwrap();
+        assert_eq!(fake.most.get(), HOSTS_AT_ONCE);
+        assert_eq!(
+            *fake.order.borrow(),
+            hosts.iter().cloned().map(Some).collect::<Vec<_>>()
+        );
     }
 }
