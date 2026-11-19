@@ -666,6 +666,27 @@ pub struct Store {
     /// same instance so SSE subscriber bumps and event-apply bumps land
     /// in the same atomics.
     metrics: Metrics,
+    /// Scan, bindings and ingestion facts for the subject check of human
+    /// items (`subject_evidence.rs`).
+    subject: crate::subject_evidence::SubjectObservations,
+}
+
+/// The registry held still ([`Store::hold`]).
+pub struct RegistryHold<'a> {
+    agents: tokio::sync::RwLockReadGuard<'a, HashMap<String, Agent>>,
+    subject: &'a crate::subject_evidence::SubjectObservations,
+}
+
+impl RegistryHold<'_> {
+    #[must_use]
+    pub fn agents(&self) -> Vec<Agent> {
+        self.agents.values().cloned().collect()
+    }
+
+    #[must_use]
+    pub fn observations(&self) -> &crate::subject_evidence::SubjectObservations {
+        self.subject
+    }
 }
 
 impl std::fmt::Debug for Store {
@@ -719,7 +740,74 @@ impl Store {
             history,
             dirty: Arc::new(Notify::new()),
             metrics: Metrics::new(),
+            subject: crate::subject_evidence::SubjectObservations::default(),
         }
+    }
+
+    /// Keep the registry still: no hook is applied, and no scan, binding or
+    /// fact is recorded (each does so under the registry's write guard)
+    /// until the hold is dropped. Only Close all of unanswerable questions
+    /// takes it, after the collaboration locks, and keeps it through its one
+    /// durable commit, so a resume or new evidence either lands before its
+    /// evaluation or after its commit. An exception to the rule that the
+    /// registry guard is never held across an `.await`: the commit awaits
+    /// only the mailbox's own lock and write, never the registry.
+    pub async fn hold(&self) -> RegistryHold<'_> {
+        RegistryHold {
+            agents: self.agents.read().await,
+            subject: &self.subject,
+        }
+    }
+
+    /// The evidence the subject check of human items reads: the newest
+    /// scan, each session's binding, and facts recorded at ingestion.
+    #[must_use]
+    pub fn subject_observations(&self) -> &crate::subject_evidence::SubjectObservations {
+        &self.subject
+    }
+
+    /// Keep the newest reconcile scan for the subject check, and stamp each
+    /// live row present in a complete scan with the binding it is seen on.
+    pub async fn record_pane_scan(&self, scan: crate::subject_evidence::PaneScan) {
+        // Under the write guard, like every hook: evidence never changes
+        // while a [`RegistryHold`] keeps the registry still.
+        let agents = self.agents.write().await;
+        let rows: HashSet<String> = agents.keys().cloned().collect();
+        let mut live = Vec::new();
+        for agent in agents.values() {
+            if agent.state == AgentState::Stopped || is_synthetic(&agent.session_id) {
+                continue;
+            }
+            let (Some(pane), Some(socket)) = (agent.pane.as_deref(), agent.tmux_socket.as_deref())
+            else {
+                continue;
+            };
+            let Some(kind) = crate::backend::pane_id_host_kind(pane) else {
+                continue;
+            };
+            let endpoint = crate::backend::pane_endpoint_identity(Some(pane), socket);
+            let Some(host) = scan.complete_host(kind) else {
+                continue;
+            };
+            if !host
+                .panes
+                .iter()
+                .any(|p| p.pane_id == pane && p.endpoint.as_deref() == Some(endpoint.as_str()))
+            {
+                continue;
+            }
+            live.push((
+                agent.session_id.clone(),
+                crate::subject_evidence::SubjectBinding {
+                    pane: pane.to_owned(),
+                    incarnation: scan.incarnation(kind, &endpoint),
+                    endpoint,
+                },
+            ));
+        }
+        self.subject.stamp_bindings(live, &rows);
+        self.subject.set_scan(scan);
+        drop(agents);
     }
 
     /// Borrow the runtime metrics handle. Daemon hands this off to the
@@ -1616,6 +1704,74 @@ fn remove_surface_task_placeholder(agents: &mut HashMap<String, Agent>, id: &Age
 }
 
 impl Store {
+    /// E1 for a `SessionEnded` hook; E2 for a `Started` hook in a pane that
+    /// another session was bound to. The predecessor is still unchanged in
+    /// `agents` here.
+    fn record_subject_facts(
+        &self,
+        agents: &HashMap<String, Agent>,
+        ev: &AgentEvent,
+        id: &crate::event::AgentId,
+    ) {
+        use crate::subject_evidence::{FactKind, SubjectFact};
+        let now = OffsetDateTime::now_utc();
+        match ev {
+            AgentEvent::SessionEnded { .. } => {
+                let row = agents.get(&id.session_id);
+                let pane = id.pane.as_deref().or(row.and_then(|r| r.pane.as_deref()));
+                let endpoint = row
+                    .and_then(|r| r.tmux_socket.as_deref())
+                    .or(id.tmux_socket.as_deref());
+                let incarnation = self
+                    .subject
+                    .binding(&id.session_id)
+                    .and_then(|binding| binding.incarnation);
+                self.subject.record(SubjectFact::new(
+                    FactKind::Ended,
+                    &id.session_id,
+                    pane,
+                    endpoint,
+                    incarnation,
+                    now,
+                ));
+            }
+            AgentEvent::Started { .. } => {
+                let Some(pane) = id.pane.as_deref() else {
+                    return;
+                };
+                for predecessor in agents.values().filter(|agent| {
+                    agent.session_id != id.session_id
+                        && !is_synthetic(&agent.session_id)
+                        && same_pane_identity(agent, pane, id.tmux_socket.as_deref())
+                }) {
+                    let binding = self
+                        .subject
+                        .binding(&predecessor.session_id)
+                        .filter(|binding| binding.pane == pane);
+                    let mut fact = SubjectFact::new(
+                        FactKind::Replaced,
+                        &predecessor.session_id,
+                        Some(pane),
+                        binding
+                            .as_ref()
+                            .map(|binding| binding.endpoint.as_str())
+                            .or(predecessor.tmux_socket.as_deref()),
+                        binding.as_ref().and_then(|binding| binding.incarnation),
+                        now,
+                    );
+                    fact.replaced_by = Some(id.session_id.clone());
+                    // Whether the server is still the one the predecessor
+                    // was bound on is settled by the first scan after this
+                    // hook, never by an older one.
+                    self.subject.record_unverified(fact);
+                }
+                // A fresh start binds anew; the next scan stamps it.
+                self.subject.forget_binding(&id.session_id);
+            }
+            _ => {}
+        }
+    }
+
     pub fn shared() -> SharedStore {
         Arc::new(Self::default())
     }
@@ -2019,6 +2175,13 @@ impl Store {
             AgentEvent::RateLimited { .. } => "rate_limited",
         };
         tracing::Span::current().record("event_type", event_type);
+
+        // Evidence a question's subject check may count later, recorded
+        // only from a real provider hook and before this event changes any
+        // row (`subject_evidence.rs`).
+        if ingested && source == StateSource::Hook && !is_synthetic(&id.session_id) {
+            self.record_subject_facts(&agents, ev, id);
+        }
 
         // A tend-owned PTY is surfaced immediately as a pid-tracked Task so
         // users can attach/control it before an agent's first hook. The hook's

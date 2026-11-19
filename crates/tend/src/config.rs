@@ -193,6 +193,9 @@ pub struct Config {
     pub stats: StatsConfig,
     /// How `tend work up` turns a work id into ticket context.
     pub ticket: TicketConfig,
+    /// What the person's review surfaces may do.
+    #[serde(skip_serializing_if = "ReviewConfig::is_default")]
+    pub review: ReviewConfig,
     /// Work-id routing rules, first match wins.
     pub route: Vec<RouteConfig>,
     /// Named agent line-ups, keyed by pipeline name.
@@ -659,6 +662,24 @@ pub const DEFAULT_TICKET_TIMEOUT_SECS: u64 = 180;
 /// Disabled by default in the sense that matters: with no `[ticket.source]`
 /// entries nothing is ever spawned, and `tend work up` runs on the work id
 /// alone.
+/// `[review]`: what the person's review surfaces may do.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ReviewConfig {
+    /// Let a person close, in one go, the questions nobody can answer any
+    /// more (their asker gone for a day): `decision_close_unanswerable`,
+    /// Close all and `tend review cleanup --questions --apply`. Each gets
+    /// the reply Dismiss sends, which is final. Off by default; folding the
+    /// questions into their own group and Keep work either way.
+    pub close_unanswerable: bool,
+}
+
+impl ReviewConfig {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct TicketConfig {

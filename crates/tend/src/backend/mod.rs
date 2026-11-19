@@ -99,6 +99,10 @@ pub enum ObservationCompleteness {
 pub struct PaneObservation {
     pub panes: Vec<PaneInfo>,
     pub completeness: ObservationCompleteness,
+    /// The sockets that answered, with their server incarnation when the
+    /// backend reports one. Empty for a backend that does not say; the
+    /// subject check then never reads absence from it.
+    pub servers: Vec<crate::subject_evidence::ServerAnswer>,
 }
 
 impl PaneObservation {
@@ -106,6 +110,7 @@ impl PaneObservation {
         Self {
             panes,
             completeness: ObservationCompleteness::Complete,
+            servers: Vec::new(),
         }
     }
 
@@ -113,6 +118,7 @@ impl PaneObservation {
         Self {
             panes,
             completeness: ObservationCompleteness::Incomplete,
+            servers: Vec::new(),
         }
     }
 
@@ -123,6 +129,7 @@ impl PaneObservation {
         Self {
             panes,
             completeness: ObservationCompleteness::Partial,
+            servers: Vec::new(),
         }
     }
 

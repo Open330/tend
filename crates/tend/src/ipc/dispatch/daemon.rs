@@ -41,7 +41,7 @@ pub(super) async fn handle(
                     "hello"
                 );
                 let mut r = Response::hello(restart.as_deref());
-                r.collaboration_error = collaboration.initialization_error().map(str::to_owned);
+                collaboration_hello(&mut r, collaboration);
                 r.protocol = requested;
                 r.dashboard_url = ctx.dashboard_url.get();
                 // Only a service that would take a job now is
@@ -112,4 +112,16 @@ pub(super) async fn handle(
         other => unreachable!("dispatch routed {other:?} to daemon"),
     };
     Ok(Flow::Respond(response))
+}
+
+/// The mailbox's part of `hello`: why it is unavailable, if it is, and
+/// Close all, offered only while `[review] close_unanswerable` is on so a
+/// surface shows its button only then.
+fn collaboration_hello(response: &mut Response, collaboration: &CollaborationStore) {
+    response.collaboration_error = collaboration.initialization_error().map(str::to_owned);
+    if collaboration.close_unanswerable_enabled() {
+        if let Some(capabilities) = response.capabilities.as_mut() {
+            capabilities.push(collaboration::subject_check::CLOSE_UNANSWERABLE_CAPABILITY);
+        }
+    }
 }

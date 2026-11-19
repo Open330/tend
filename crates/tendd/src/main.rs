@@ -945,6 +945,7 @@ async fn build_collaboration(cfg: &Config) -> Result<Arc<CollaborationStore>> {
                 );
             }
             store.set_turn_continuation(cfg.collaboration.wake != CollaborationWake::Never);
+            store.set_close_unanswerable(cfg.review.close_unanswerable);
             store.set_hook_transport(
                 cfg.collaboration.hook_transport
                     == tend::config::CollaborationHookTransport::Primary,

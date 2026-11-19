@@ -106,6 +106,7 @@ pub mod shell;
 pub mod sinks;
 pub mod snapshot;
 pub mod state;
+pub mod subject_evidence;
 #[doc(hidden)]
 pub mod swap_api;
 pub mod timeline;

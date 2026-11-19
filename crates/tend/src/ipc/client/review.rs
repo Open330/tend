@@ -179,6 +179,46 @@ impl Client {
 }
 
 impl Client {
+    /// Keep one unanswerable question in the person's turn through its
+    /// current episode (`subject_check_v1`).
+    pub async fn decision_keep(
+        &self,
+        request_id: &str,
+        episode: &str,
+    ) -> Result<crate::collaboration::subject_check::KeepOutcome, RuntimeError> {
+        let req = serde_json::json!({
+            "protocol": PROTOCOL_VERSION,
+            "kind": "decision_keep",
+            "request_id": request_id,
+            "episode": episode,
+            "origin": crate::decision_queue::operator_origin(),
+        });
+        field(&self.call_checked(&req).await?, "decision_keep")
+    }
+
+    /// Close exactly these `(request id, episode)` pairs as the person, from
+    /// `surface` (`close_unanswerable_v1`). Pairs that no longer qualify are
+    /// skipped and reported.
+    pub async fn decision_close_unanswerable(
+        &self,
+        items: &[crate::collaboration::subject_check::CloseItem],
+        surface: &str,
+    ) -> Result<crate::collaboration::subject_check::CloseOutcome, RuntimeError> {
+        let req = serde_json::json!({
+            "protocol": PROTOCOL_VERSION,
+            "kind": "decision_close_unanswerable",
+            "items": items,
+            "origin": crate::decision_queue::operator_origin(),
+            "by_label": surface,
+        });
+        field(
+            &self.call_checked(&req).await?,
+            "decision_close_unanswerable",
+        )
+    }
+}
+
+impl Client {
     /// Apply a Fleet review decision on this host, as the operator, and
     /// say exactly how it ended: the option must be one the item offers,
     /// and the item must end up holding this disposition and note (a

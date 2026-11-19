@@ -113,6 +113,11 @@ pub struct HumanRequestEntry {
     /// sender), not an agent. Listed after agents' questions and results.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub system: bool,
+    /// Nobody can answer it: its subject has been established gone for a
+    /// day (`subject_check_v1`). Listed after every live item, in its own
+    /// group; only a person closes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unanswerable: Option<Box<crate::collaboration::subject_check::Unanswerable>>,
 }
 
 impl HumanRequestEntry {
@@ -130,6 +135,7 @@ impl HumanRequestEntry {
             work_id: request.work_id.clone(),
             created_at: request.created_at,
             system: crate::collaboration::system_asks::system_ask_kind(request).is_some(),
+            unanswerable: None,
         }
     }
 }
@@ -161,6 +167,16 @@ pub struct PendingQueue {
     /// failed to open), so an empty section is never mistaken for none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unavailable: Vec<String>,
+    /// How many open questions are unanswerable, exact even when their
+    /// entries were cut by the limit (`subject_check_v1`). Not counted in
+    /// the person's turn.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub unanswerable_count: usize,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde's skip_serializing_if signature
+fn is_zero(count: &usize) -> bool {
+    *count == 0
 }
 
 /// One past decision.
@@ -233,6 +249,10 @@ pub struct HumanAnswerEntry {
     pub answer: String,
     #[serde(with = "time::serde::rfc3339")]
     pub answered_at: OffsetDateTime,
+    /// A person closed it because its subject was gone: why, and from
+    /// where.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closure: Option<crate::collaboration::subject_check::QuestionClosure>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -324,11 +344,17 @@ pub async fn read_pending(
     let mut unavailable = Vec::new();
     let mut truncated = false;
     let human = if operator {
-        collaboration.open_human_requests(limit).await
+        collaboration
+            .open_human_requests_folded(limit)
+            .await
+            .map(|page| (vec![page], false))
     } else {
         Err(crate::collaboration::CollaborationError::ScopeDenied)
     };
-    let human = human_source(human, &mut truncated, &mut unavailable);
+    let human = human_source(human, &mut truncated, &mut unavailable)
+        .pop()
+        .unwrap_or_default();
+    truncated |= human.more;
     let page = reviews
         .list(crate::review::ReviewQuery {
             open_only: true,
@@ -347,7 +373,14 @@ pub async fn read_pending(
             Vec::new()
         }
     };
-    let mut queue = assemble_queue(&human, agents, reviews, limit);
+    let mut queue = assemble_queue_folded(
+        &human.requests,
+        agents,
+        reviews,
+        limit,
+        &human.folded,
+        human.unanswerable_count,
+    );
     queue.truncated |= truncated;
     queue.unavailable = unavailable;
     queue
@@ -404,10 +437,49 @@ pub fn assemble_queue(
     reviews: Vec<ReviewItem>,
     limit: usize,
 ) -> PendingQueue {
-    let mut human: Vec<&CollaborationRequest> = human
+    assemble_queue_folded(
+        human,
+        agents,
+        reviews,
+        limit,
+        &std::collections::HashMap::new(),
+        0,
+    )
+}
+
+/// [`assemble_queue`] with the unanswerable questions (`folded`, by request
+/// id) taken out of their places and listed last, after every live item,
+/// and their exact count.
+#[must_use]
+#[allow(clippy::implicit_hasher)] // built by the store with the default hasher
+pub fn assemble_queue_folded(
+    human: &[CollaborationRequest],
+    agents: &[Agent],
+    reviews: Vec<ReviewItem>,
+    limit: usize,
+    folded: &std::collections::HashMap<String, crate::collaboration::subject_check::Unanswerable>,
+    unanswerable_count: usize,
+) -> PendingQueue {
+    let human: Vec<&CollaborationRequest> = human
         .iter()
         .filter(|request| request.needs_human_response())
         .collect();
+    let (gone, mut human): (Vec<_>, Vec<_>) = human
+        .into_iter()
+        .partition(|request| folded.contains_key(&request.id));
+    let mut gone: Vec<HumanRequestEntry> = gone
+        .into_iter()
+        .map(|request| {
+            let mut entry = HumanRequestEntry::from_request(request);
+            entry.unanswerable = folded.get(&request.id).cloned().map(Box::new);
+            entry
+        })
+        .collect();
+    gone.sort_by(|a, b| {
+        a.created_at
+            .cmp(&b.created_at)
+            .then(a.request_id.cmp(&b.request_id))
+    });
     human.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));
     // tendd's own items (recovery, gone-sender replies) go last: an agent's
     // question or a result to review is never buried under them.
@@ -428,29 +500,32 @@ pub fn assemble_queue(
     let mut reviews: Vec<ReviewItem> = reviews.into_iter().filter(ReviewItem::is_open).collect();
     reviews.sort_by(|a, b| a.requested_at.cmp(&b.requested_at).then(a.id.cmp(&b.id)));
 
-    let (items, truncated) = bounded(
-        human
-            .into_iter()
-            .map(|request| PendingItem::HumanRequest(HumanRequestEntry::from_request(request)))
-            .chain(
-                waiting
-                    .into_iter()
-                    .map(|(_, entry)| PendingItem::AgentWaiting(entry)),
-            )
-            .chain(
-                reviews
-                    .into_iter()
-                    .map(|item| PendingItem::Review(Box::new(item))),
-            )
-            .chain(system.into_iter().map(|request| {
-                PendingItem::HumanRequest(HumanRequestEntry::from_request(request))
-            })),
-        limit,
-    );
+    let (items, truncated) =
+        bounded(
+            human
+                .into_iter()
+                .map(|request| PendingItem::HumanRequest(HumanRequestEntry::from_request(request)))
+                .chain(
+                    waiting
+                        .into_iter()
+                        .map(|(_, entry)| PendingItem::AgentWaiting(entry)),
+                )
+                .chain(
+                    reviews
+                        .into_iter()
+                        .map(|item| PendingItem::Review(Box::new(item))),
+                )
+                .chain(system.into_iter().map(|request| {
+                    PendingItem::HumanRequest(HumanRequestEntry::from_request(request))
+                }))
+                .chain(gone.into_iter().map(PendingItem::HumanRequest)),
+            limit,
+        );
     PendingQueue {
         truncated,
         items,
         unavailable: Vec::new(),
+        unanswerable_count,
     }
 }
 
@@ -484,6 +559,7 @@ pub fn assemble_history_with_closures(
                 status: reply.status,
                 answer: reply.body.clone(),
                 answered_at: reply.at,
+                closure: request.closure.clone(),
             })))
         }))
         .chain(closed.iter().filter_map(|request| {

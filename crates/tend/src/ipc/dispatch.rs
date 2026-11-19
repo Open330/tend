@@ -291,7 +291,9 @@ async fn route(
         | RequestBody::ReviewRecord { .. }
         | RequestBody::DecisionQueue { .. }
         | RequestBody::DecisionHistory { .. }
-        | RequestBody::SystemAskCleanup { .. }) => {
+        | RequestBody::SystemAskCleanup { .. }
+        | RequestBody::DecisionKeep { .. }
+        | RequestBody::DecisionCloseUnanswerable { .. }) => {
             Box::pin(decisions::handle(ctx, conn, turn, body)).await
         }
         body @ (RequestBody::WorkBacklog { .. }

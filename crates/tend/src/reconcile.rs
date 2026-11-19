@@ -108,6 +108,41 @@ pub trait LivenessSource: Send + Sync + 'static {
 /// Every pane backend is a liveness source. Saves every backend impl
 /// from repeating a one-line delegation, and keeps the reconciler
 /// integration colocated with the trait whose contract it leans on.
+/// One reconcile tick's scan as the subject check reads it
+/// (`subject_evidence.rs`): per backend, whether it was complete, the
+/// sockets that answered, and each pane's foreground and agent process.
+fn pane_scan(
+    at: time::OffsetDateTime,
+    observations: &[(HostKind, PaneObservation)],
+    workloads: &HashMap<String, crate::WorkloadSummary>,
+) -> crate::subject_evidence::PaneScan {
+    crate::subject_evidence::PaneScan {
+        at,
+        hosts: observations
+            .iter()
+            .map(|(kind, observation)| crate::subject_evidence::HostScan {
+                kind: *kind,
+                complete: observation.is_complete(),
+                servers: observation.servers.clone(),
+                panes: observation
+                    .panes
+                    .iter()
+                    .map(|pane| crate::subject_evidence::ScannedPane {
+                        pane_id: pane.pane_id.clone(),
+                        endpoint: pane.socket.as_deref().map(|socket| {
+                            crate::backend::pane_endpoint_identity(Some(&pane.pane_id), socket)
+                        }),
+                        foreground: pane.current_command.clone(),
+                        agent_process: workloads
+                            .get(&pane.pane_id)
+                            .map(|workload| workload.primary_pid.is_some()),
+                    })
+                    .collect(),
+            })
+            .collect(),
+    }
+}
+
 impl<B: crate::backend::PaneBackend> LivenessSource for B {
     fn observe_panes(&self) -> PaneObservation {
         crate::backend::PaneBackend::observe_panes(self)
@@ -730,6 +765,11 @@ impl<L: LivenessSource> Reconciler<L> {
                 "stopped agent rows whose pane runs no agent process"
             );
         }
+        // What the subject check of human items reads: this scan, with each
+        // pane's foreground and whether its workload has an agent process.
+        self.store
+            .record_pane_scan(pane_scan(inventory_observed_at, &observations, &workloads))
+            .await;
         let store_update_us =
             u64::try_from(reconcile_started.elapsed().as_micros()).unwrap_or(u64::MAX);
         if let Some(sessions) = &self.native_sessions {

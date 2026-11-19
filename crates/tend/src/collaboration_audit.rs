@@ -56,6 +56,11 @@ pub enum CollaborationAuditOperation {
     WithdrawReplyWakes,
     /// `system_ask_cleanup` with `apply`: tendd's own items closed.
     SystemAskCleanup,
+    /// `decision_keep`: a person kept an unanswerable question.
+    DecisionKeep,
+    /// `decision_close_unanswerable`: a person closed unanswerable
+    /// questions.
+    DecisionCloseUnanswerable,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

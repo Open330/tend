@@ -32,6 +32,7 @@ pub(super) fn spawn_collaboration_waker_task(
         {
             tracing::warn!(%error, "initial peer interruption reconciliation failed");
         }
+        check_subjects(&collaboration, &store).await;
         retire_gone_sender_items(&collaboration).await;
         sweep_system_asks(&collaboration, &store).await;
         let mut last_sweep = std::time::Instant::now();
@@ -98,6 +99,7 @@ pub(super) fn spawn_collaboration_waker_task(
                 {
                     tracing::warn!(%error, "peer interruption reconciliation failed");
                 }
+                check_subjects(&collaboration, &store).await;
                 retire_gone_sender_items(&collaboration).await;
                 if last_sweep.elapsed() >= SYSTEM_ASK_SWEEP_EVERY {
                     sweep_system_asks(&collaboration, &store).await;
@@ -128,6 +130,27 @@ const SYSTEM_ASK_SWEEP_EVERY: std::time::Duration = std::time::Duration::from_se
         .whole_seconds()
         .unsigned_abs(),
 );
+
+/// Keep the evidence facts recorded at ingestion, then run the subject
+/// check over every open human item, under the same transaction lock as the
+/// reconcile above (`subject_check.rs`).
+async fn check_subjects(collaboration: &CollaborationStore, store: &tend::Store) {
+    let observations = store.subject_observations();
+    if let Err(error) = collaboration.keep_facts_from(observations) {
+        tracing::warn!(%error, "keeping subject evidence failed; retried next pass");
+    }
+    let agents = store.snapshot().await;
+    let scan = observations.scan();
+    let bindings = observations.bindings();
+    let inputs = tend::collaboration::subject_check::SubjectInputs {
+        agents: &agents,
+        scan: scan.as_deref(),
+        bindings: &bindings,
+    };
+    if let Err(error) = collaboration.check_subjects(&inputs).await {
+        tracing::warn!(%error, "subject check of human items failed");
+    }
+}
 
 async fn sweep_system_asks(collaboration: &CollaborationStore, store: &tend::Store) {
     if let Err(error) = collaboration

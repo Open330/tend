@@ -148,6 +148,63 @@ pub(super) async fn decision_response(
             };
             ("system_ask_cleanup", response)
         }
+        body @ (RequestBody::DecisionKeep { .. }
+        | RequestBody::DecisionCloseUnanswerable { .. }) => {
+            Box::pin(subject_response(collaboration, store, body)).await
+        }
+        _ => ("decision", Response::err("not a decision request")),
+    }
+}
+
+/// Serve `decision_keep` and `decision_close_unanswerable`
+/// (`subject_check.rs`): operator-console actions, like the cleanup.
+async fn subject_response(
+    collaboration: &crate::collaboration::CollaborationStore,
+    store: &super::SharedStore,
+    body: RequestBody,
+) -> (&'static str, Response) {
+    match body {
+        RequestBody::DecisionKeep {
+            request_id,
+            episode,
+            origin,
+        } => {
+            if let Some(refused) = operator_only(origin.as_ref()) {
+                return ("decision_keep", Response::err(refused.to_string()));
+            }
+            let response = match collaboration.keep_unanswerable(&request_id, &episode).await {
+                Ok(kept) => Response {
+                    decision_keep: Some(Box::new(kept)),
+                    ..Response::ok()
+                },
+                Err(error) => Response::err(error.to_string()),
+            };
+            ("decision_keep", response)
+        }
+        RequestBody::DecisionCloseUnanswerable {
+            items,
+            origin,
+            by_label,
+        } => {
+            if let Some(refused) = operator_only(origin.as_ref()) {
+                return (
+                    "decision_close_unanswerable",
+                    Response::err(refused.to_string()),
+                );
+            }
+            let surface = by_label.as_deref().unwrap_or("cli");
+            let response = match collaboration
+                .close_unanswerable(&items, store, surface, None)
+                .await
+            {
+                Ok(outcome) => Response {
+                    decision_close_unanswerable: Some(Box::new(outcome)),
+                    ..Response::ok()
+                },
+                Err(error) => Response::err(error.to_string()),
+            };
+            ("decision_close_unanswerable", response)
+        }
         _ => ("decision", Response::err("not a decision request")),
     }
 }

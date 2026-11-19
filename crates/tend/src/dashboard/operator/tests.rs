@@ -1892,6 +1892,8 @@ async fn rule_viewer_reads_cannot_write_and_is_revoked_with_its_rule() {
         ("GET", "/api/decisions/history"),
         ("POST", "/api/decisions/reviews/rv_x"),
         ("POST", "/api/decisions/requests/rq_x"),
+        ("POST", "/api/decisions/keep"),
+        ("POST", "/api/decisions/close-unanswerable"),
     ] {
         for proof in [false, true] {
             let response = call(

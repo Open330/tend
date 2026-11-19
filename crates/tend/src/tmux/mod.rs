@@ -922,6 +922,18 @@ impl PaneScan {
             self.observation.completeness = ObservationCompleteness::Incomplete;
         }
         self.observation.panes.extend(observation.panes);
+        self.observation.servers.extend(observation.servers);
+    }
+
+    /// A socket that answered that no server runs there.
+    fn add_stopped_server(&mut self, socket: String) {
+        self.observation
+            .servers
+            .push(crate::subject_evidence::ServerAnswer {
+                endpoint: socket,
+                running: false,
+                incarnation: None,
+            });
     }
 
     fn add_failure(&mut self, error: TmuxError) {
@@ -952,12 +964,21 @@ fn scan_panes() -> PaneScan {
             scan.add_failure(TmuxError::BadOutput("non-UTF-8 tmux socket path".into()));
             continue;
         };
-        match tmux_output(&["-S", sock_str, "list-panes", "-a", "-F", PANE_FMT]) {
+        match tmux_output(&["-S", sock_str, "list-panes", "-a", "-F", &scan_format()]) {
             Ok(o) if o.status.success() => {
                 let socket = socket_short_name(sock_str);
                 match String::from_utf8(o.stdout) {
                     Ok(stdout) => {
-                        let observed = observe_pane_lines_for_socket(&stdout, Some(&socket));
+                        let mut observed = observe_pane_lines_for_socket(&stdout, Some(&socket));
+                        if observed.is_complete() {
+                            observed
+                                .servers
+                                .push(crate::subject_evidence::ServerAnswer {
+                                    endpoint: socket.clone(),
+                                    running: true,
+                                    incarnation: scan_incarnation(&stdout),
+                                });
+                        }
                         if !observed.is_complete() {
                             scan.add_failure(TmuxError::BadOutput(format!(
                                 "malformed list-panes output from socket {socket}",
@@ -975,7 +996,9 @@ fn scan_panes() -> PaneScan {
                 // "no server running" is the steady-state for stale socket
                 // files left behind by crashed servers; treat as empty
                 // rather than a hard error.
-                if !is_stale_socket_error(&stderr) {
+                if is_stale_socket_error(&stderr) {
+                    scan.add_stopped_server(socket_short_name(sock_str));
+                } else {
                     scan.add_failure(TmuxError::NonZero(stderr));
                 }
             }
@@ -985,6 +1008,26 @@ fn scan_panes() -> PaneScan {
         }
     }
     scan
+}
+
+/// [`PANE_FMT`] plus the server's `#{pid}` and `#{start_time}`, so one
+/// `list-panes` call per socket also says which server incarnation
+/// answered. The extra columns come after every column the pane parsers
+/// read.
+fn scan_format() -> String {
+    format!("{PANE_FMT}\t#{{pid}}\t#{{start_time}}")
+}
+
+/// The server incarnation in a [`scan_format`] listing: the same on every
+/// row, so the first well-formed row says it.
+fn scan_incarnation(stdout: &str) -> Option<crate::subject_evidence::ServerIncarnation> {
+    let width = PANE_FMT.split('\t').count();
+    let line = stdout.lines().find(|line| !line.is_empty())?;
+    let columns: Vec<&str> = line.split('\t').collect();
+    crate::subject_evidence::ServerIncarnation::parse(
+        columns.get(width).copied(),
+        columns.get(width + 1).copied(),
+    )
 }
 
 /// Observe all tmux servers with an explicit indication of whether every
@@ -1427,6 +1470,30 @@ pub(crate) fn parse_pane_pid_map(stdout: &str) -> std::collections::HashMap<u32,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_scan_says_which_server_incarnation_answered() {
+        let width = PANE_FMT.split('\t').count();
+        let mut columns = vec![""; width];
+        columns[0] = "%3";
+        columns[5] = "zsh";
+        let mut line = columns.join("\t");
+        line.push_str("\t4242\t1700000000");
+        let observed = observe_pane_lines_for_socket(&line, Some("default"));
+        assert!(observed.is_complete());
+        assert_eq!(observed.panes[0].pane_id, "%3");
+        assert_eq!(observed.panes[0].current_command, "zsh");
+        assert_eq!(
+            scan_incarnation(&line),
+            Some(crate::subject_evidence::ServerIncarnation {
+                pid: 4242,
+                start_time: 1_700_000_000,
+            })
+        );
+        // Without the columns (a backend that does not expand them): none.
+        assert_eq!(scan_incarnation(&columns.join("\t")), None);
+        assert!(scan_format().starts_with(PANE_FMT));
+    }
 
     #[test]
     #[cfg(unix)]
