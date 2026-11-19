@@ -24,6 +24,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prompt composer: the next instruction goes to every live agent of the
   Work at once (`POST /api/work-control/prompt`). Operator-only; as on the
   Mac, nothing is sent while one of the Work's hosts is in observe mode.
+- Dashboard: `/welcome`, the landing for visitors (what tend is, the
+  docs, sign-in) as a page of its own, without the workbench and under
+  Home's strict content policy. A visitor whose reads answer 401 at `/`,
+  `/home`, `/explore` or `/settings` is sent there and comes back to the
+  same address after sign-in. That address is rebuilt from what the page
+  names, so it never carries a credential: a `#token=` or legacy `?token=`
+  is stored and scrubbed first.
+- Dashboard: someone who may read but not operate (anonymous with
+  `auth = "public_read"`, anyone with `auth = "none"`, a signed-in viewer)
+  gets the shell read-only. Explore lists every host's panes and their
+  state without asking for output, Messages shows the collaboration with
+  details redacted, and Home says it needs an operator and offers
+  *Upgrade with token* in the page, also in Settings with sign-in and
+  sign-out. This is phase 1 of retiring `/workbench`
+  (docs/proposals/WEB_HOME.md, wave 9).
 
 ### Changed
 
@@ -35,6 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `?token=` credential is stored and scrubbed first, never carried into
   the new address. The same adapter is ready for `/workbench#…`, which
   still serves the workbench for now.
+- Dashboard: a visitor who is not an operator opening `/` is no longer
+  sent to `/workbench`, but to `/welcome` or the read-only shell (above).
+  `/workbench` itself still works, until phase 3.
 
 ### Fixed
 

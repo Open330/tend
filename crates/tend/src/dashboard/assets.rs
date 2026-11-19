@@ -7,7 +7,9 @@
 //!
 //! Routes:
 //!
-//! - `GET /`            — `index.html`
+//! - `GET /`, `/explore`, `/explore/messages`, `/settings` — the shell (`home.html`)
+//! - `GET /welcome`     — the landing for visitors asked to sign in (`welcome.html`)
+//! - `GET /workbench`   — the classic workbench (`index.html`)
 //! - `GET /static/{path}` — any embedded file by relative path
 //!
 //! These two routes are intentionally **not** behind the bearer-token
@@ -40,15 +42,19 @@ struct WebAssets;
 /// token.
 pub fn router<S: Clone + Send + Sync + 'static>() -> Router<S> {
     Router::new()
-        // The dashboard's address opens Home, as Tend for Mac opens on it;
-        // the classic workbench (and its landing page for visitors) moved
-        // to /workbench, where Home sends anyone who is not an operator and
-        // every link the workbench made (`/#pane=…`).
+        // The dashboard's address opens Home, as Tend for Mac opens on it.
+        // A visitor who may read but not operate gets the shell read-only;
+        // one whose reads answer 401 is sent to /welcome. The classic
+        // workbench is at /workbench, where the links it made (`/#pane=…`)
+        // still go.
         .route("/", get(home_handler))
         .route("/explore", get(home_handler))
         // Explore → Messages, the collaboration reader (explore-messages.mjs).
         .route("/explore/messages", get(home_handler))
         .route("/settings", get(home_handler))
+        // The landing (product, docs, sign-in) for a visitor the dashboard
+        // asks to authenticate: its own page, without the workbench.
+        .route("/welcome", get(welcome_handler))
         .route("/workbench", get(index_handler))
         .route("/static/{*path}", get(static_handler))
 }
@@ -59,6 +65,10 @@ async fn index_handler() -> Response {
 
 async fn home_handler() -> Response {
     serve_page("home.html")
+}
+
+async fn welcome_handler() -> Response {
+    serve_page("welcome.html")
 }
 
 async fn static_handler(Path(path): Path<String>) -> Response {
@@ -104,13 +114,13 @@ fn unversioned(path: &str) -> &str {
 /// No dashboard page may be framed by another site.
 pub(super) const FRAME_POLICY: &str = "frame-ancestors 'none'";
 
-/// Home (`/home`, `/needs`) is written for a strict policy: its own scripts
-/// and styles only, no inline code, no other origin. The older pages still
-/// carry inline handlers and only get [`FRAME_POLICY`].
+/// Home (`/home`, `/needs`) and `/welcome` are written for a strict policy:
+/// their own scripts and styles only, no inline code, no other origin. The
+/// older pages still carry inline handlers and only get [`FRAME_POLICY`].
 pub(super) const HOME_POLICY: &str = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'";
 
 fn policy_for(path: &str) -> &'static str {
-    if path == "home.html" {
+    if matches!(path, "home.html" | "welcome.html") {
         HOME_POLICY
     } else {
         FRAME_POLICY
@@ -200,6 +210,9 @@ mod tests {
         assert!(WebAssets::get("topology-model.mjs").is_some());
         assert!(WebAssets::get("workspace-rail.mjs").is_some());
         assert!(WebAssets::get("landing.mjs").is_some());
+        assert!(WebAssets::get("welcome.html").is_some());
+        assert!(WebAssets::get("welcome.mjs").is_some());
+        assert!(WebAssets::get("sign-in.mjs").is_some());
         assert!(WebAssets::get("landing-film.mjs").is_some());
         assert!(WebAssets::get("landing-frames.mjs").is_some());
         for mac in ["mac-icon", "mac-watch", "mac-inbox"] {

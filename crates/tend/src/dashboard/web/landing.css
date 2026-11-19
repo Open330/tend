@@ -16,6 +16,7 @@ body[data-view="landing"] > :not(.landing):not(.toast) {
 /* style.css locks the desktop page to one viewport; the landing is an
    ordinary scrolling document. */
 body[data-view="landing"] {
+  margin: 0;
   display: block;
   height: auto;
   min-height: 100vh;

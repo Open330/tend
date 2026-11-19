@@ -32,8 +32,9 @@ bound to loopback and configure the public origin as described below.
 
 | Path                | What it returns                                                                |
 | ------------------- | ------------------------------------------------------------------------------ |
-| `GET /`, `/home`, `/explore`, `/settings` | The shell's pages: Home, Explore, Settings. At `/`, a visitor without operator access is sent to `/workbench`; the other shell addresses show the sign-in state. |
-| `GET /workbench`    | The classic workbench, with its landing page, sign-in and public read view.   |
+| `GET /`, `/home`, `/explore`, `/settings` | The shell's pages: Home, Explore, Settings. Someone who may read but not operate gets them read-only; a visitor whose reads answer 401 is sent to `/welcome`. |
+| `GET /welcome`      | The landing for visitors asked to sign in: what tend is, the docs, sign-in. `?return_to=<path>` is where sign-in comes back to. |
+| `GET /workbench`    | The classic workbench, with its own landing page, sign-in and public read view (to be retired; see [WEB_HOME.md](proposals/WEB_HOME.md#wave-9-retiring-workbench)). |
 | `GET /static/*`     | Embedded JS/CSS/font assets.                                                   |
 | `GET /api/health`   | `{ ok, version, protocol }`                                                    |
 | `GET /api/proof?nonce=N` | No credential: `{ version: 1, proof }`, `proof` = hex HMAC-SHA256(token, `tend-dashboard-proof/v1\n` + node + `\n` + bind + `\n` + N), where node is this host's Fleet node id (`host-id`) and bind the dashboard's address, for a 32-128 hex-digit nonce. A client checks it before sending the token, since anyone can bind a loopback port while tendd is down; node and bind stop an impostor from relaying the nonce to another tend that shares the token. 404 without a token or with `auth = "none"`. |
@@ -109,13 +110,41 @@ scrubbed, but fragments are the supported bootstrap format because browsers do
 not send them in HTTP requests or `Referer` headers.
 
 A browser that can read nothing (reads return 401: no operator session and no
-working token) gets a landing page instead of an empty dashboard. It says what
-tend is and offers the ways in: **Sign in** when
-[operator sign-in](#operator-sign-in-with-oidc) is configured, and **Use access
-token**, which stores the token like `#token=` and reloads. A stored token that
-the server rejects is reported there. `public_read` and `auth = "none"`
-dashboards never show it, since their reads succeed without credentials. The
-page is served from the daemon itself and loads nothing from other origins.
+working token) is sent from `/`, `/home`, `/explore` or `/settings` to
+`/welcome` instead of an empty dashboard. That page says what tend is and
+offers the ways in: **Sign in** when
+[operator sign-in](#operator-sign-in-with-oidc) is configured, or else a
+pointer to the dashboard link `tend init` prints. A stored token that the
+server rejects is reported there. The address the visitor opened goes along
+as `return_to` (a same-origin path, rebuilt from what the page names, so
+never with a credential: `#token=`/`?token=` is stored and scrubbed first),
+and sign-in comes back to it. `/welcome` is its own page (`welcome.html`,
+`welcome.mjs`, `landing.css`) under the same strict policy as Home: no inline
+script or style, nothing from other origins. `public_read` and
+`auth = "none"` dashboards never send anyone there, since their reads
+succeed without credentials.
+
+Someone who may read but not operate (an anonymous visitor with
+`auth = "public_read"`, any visitor with `auth = "none"`, or a signed-in
+viewer, who gets 403 on operator routes) gets the shell read-only:
+
+- **Explore** lists every host's panes and their state from `/api/fleet`.
+  Pane output, the composer and Interrupt are operator routes, so the page
+  never asks for them.
+- **Messages** shows the collaboration with details redacted, as the API
+  already returns it.
+- **Home** says it needs an operator and offers **Upgrade with token**, a
+  field in the page. A signed-in viewer's token goes once to
+  `POST /auth/enroll`, which makes the account an operator; a browser
+  without an account keeps the token as its credential, and only if it
+  makes the browser an operator. With `auth = "none"` there is no token, so
+  there is nothing to upgrade with.
+- **Settings** shows who is signed in, with sign-in, sign-out and the same
+  upgrade.
+
+An operator who loses operator access mid-session (signed out, downgraded
+to a viewer) loses everything private on the page first: the board,
+drafts, open sheets, Explore's output and drafts.
 Its dashboard screenshots show the demo GIFs' made-up fleet, captured from a
 real tend in the isolated sandbox; regenerate them with
 `scripts/landing-shots/live.sh` (tmux, Playwright, Chrome and `cwebp`).
@@ -379,9 +408,8 @@ The activity rail on the left switches between pages:
   devices), pane sharing, and the classic workbench.
 
 The classic workbench (workspaces, the Work board, collaboration, the
-timeline and the execution inventory) is at `/workbench`. Anyone who is not
-an operator opening `/` is sent there, to its landing page, sign-in and
-public read view. Links the workbench made before (`/#pane=…`,
+timeline and the execution inventory) is at `/workbench`, until it is
+retired. Links the workbench made before (`/#pane=…`,
 `/#workspace=…`, `/#window=…`, `/#session=…`, `/#message=…`) still open it.
 
 ## Home (needs you)
