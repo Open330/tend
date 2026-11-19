@@ -267,6 +267,14 @@ impl CollaborationStore {
             return Ok(None);
         };
         let replied_at = parent.reply.as_ref().map(|reply| reply.at);
+        // A reply already older than the stale week when its sender is first
+        // found gone would only open an item the next cleanup closes as
+        // stale: on 2026-11-12 an upgrade opened one for every such reply on
+        // three hosts at once, about replies up to 73 days old. If the sender
+        // comes back it is still woken; nobody is asked about it.
+        if replied_at.is_some_and(|at| now - at >= super::system_asks::SYSTEM_ASK_STALE_AFTER) {
+            return Ok(None);
+        }
         if !parent.reply_wake_owed()
             || replied_at.is_none_or(|at| now - at < SENDER_GONE_GRACE)
             || parent
@@ -556,6 +564,28 @@ mod tests {
         );
     }
 
+    /// On 2026-11-12 an upgrade opened a reply-wake item for every owed
+    /// reply whose sender was gone, on three hosts in the same minute, about
+    /// replies 25 to 73 days old. A reply already past the stale week opens
+    /// nothing; the wake stays owed for a sender that comes back.
+    #[tokio::test]
+    async fn a_reply_already_a_week_old_opens_no_item() {
+        let store = CollaborationStore::in_memory(CollaborationOptions::default());
+        let lead = participant("lead-1", "%1", None);
+        let id = replied(&store, &lead).await;
+        {
+            let mut requests = store.requests.write().await;
+            let reply = requests.get_mut(&id).unwrap().reply.as_mut().unwrap();
+            reply.at -= super::super::system_asks::SYSTEM_ASK_STALE_AFTER;
+        }
+        assert!(store.report_gone_sender(&id).await.unwrap().is_none());
+        assert!(store.pending_human_notifications().await.is_empty());
+        assert!(
+            row(&store, &id).await.reply_wake_owed(),
+            "a returning sender is still woken"
+        );
+    }
+
     #[tokio::test]
     async fn a_gone_sender_opens_one_human_item_after_the_grace_and_it_retires() {
         let store = CollaborationStore::in_memory(CollaborationOptions::default());
@@ -679,11 +709,13 @@ mod tests {
         let old = replied(&store, &lead).await;
         {
             let mut requests = store.requests.write().await;
-            requests.get_mut(&old).unwrap().reply.as_mut().unwrap().at -= time::Duration::days(30);
+            requests.get_mut(&old).unwrap().reply.as_mut().unwrap().at -= SENDER_GONE_GRACE;
         }
+        // Opened when the reply was fresh; a month has passed since.
         let action = store.report_gone_sender(&old).await.unwrap().unwrap();
         {
             let mut requests = store.requests.write().await;
+            requests.get_mut(&old).unwrap().reply.as_mut().unwrap().at -= time::Duration::days(30);
             requests.get_mut(&action.id).unwrap().created_at -= time::Duration::days(30);
         }
         let fresh = replied(&store, &lead).await;

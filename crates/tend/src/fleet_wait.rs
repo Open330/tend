@@ -274,6 +274,7 @@ mod tests {
             reset_at: None,
             action_request_id: Some("human-action".into()),
             decision: None,
+            healthy_since: None,
         });
         commands
             .recv()
