@@ -185,8 +185,21 @@ pub fn shell_above(processes: &[ProcessInfo], agent_pid: u32, pane_pid: u32) -> 
 /// Every process in a pane: its root, then the root's descendants. The root
 /// is the agent itself in a pane started as `exec claude …`.
 pub fn pane_processes(pane_pid: u32) -> Vec<ProcessInfo> {
-    let mut processes = crate::process_tree::read_descendants(pane_pid);
-    if let Some(cmdline) = process_command(pane_pid) {
+    with_root(
+        crate::process_tree::read_descendants(pane_pid),
+        pane_pid,
+        process_command(pane_pid),
+    )
+}
+
+/// `descendants` with the pane's root process first, when its command line
+/// could be read.
+fn with_root(
+    mut processes: Vec<ProcessInfo>,
+    pane_pid: u32,
+    cmdline: Option<String>,
+) -> Vec<ProcessInfo> {
+    if let Some(cmdline) = cmdline {
         processes.insert(
             0,
             ProcessInfo {
@@ -203,6 +216,45 @@ pub fn pane_processes(pane_pid: u32) -> Vec<ProcessInfo> {
         );
     }
     processes
+}
+
+/// The processes of many panes from one read: [`pane_processes`] for each,
+/// where a process table costs a `ps` (macOS, Windows) read once for all of
+/// them. On Linux, where `/proc` is read per process anyway, each pane is
+/// read as it is asked for. A snapshot: what it says is as of [`Self::read`].
+pub struct PaneProcessReader {
+    #[cfg(not(target_os = "linux"))]
+    table: crate::process_snapshot::ProcessTable,
+}
+
+impl PaneProcessReader {
+    #[must_use]
+    pub fn read() -> Self {
+        Self {
+            #[cfg(not(target_os = "linux"))]
+            table: crate::process_snapshot::read_current_process_table(),
+        }
+    }
+
+    /// [`pane_processes`] of `pane_pid`, as of the read.
+    #[must_use]
+    pub fn of(&self, pane_pid: u32) -> Vec<ProcessInfo> {
+        #[cfg(target_os = "linux")]
+        {
+            pane_processes(pane_pid)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            with_root(
+                crate::process_tree::descendants_in(&self.table, pane_pid),
+                pane_pid,
+                self.table
+                    .get(pane_pid)
+                    .map(|root| root.cmdline.clone())
+                    .filter(|cmdline| !cmdline.is_empty()),
+            )
+        }
+    }
 }
 
 /// Codex app-servers outside this pane, which can keep writer ownership of a
@@ -284,6 +336,41 @@ pub fn outside_codex_servers<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One read for many panes says what a read per pane says: the root
+    /// first, then its descendants, with the same parents and command lines.
+    #[cfg(unix)]
+    #[test]
+    fn one_read_for_many_panes_matches_a_read_per_pane() {
+        let mut root = std::process::Command::new("/bin/sh")
+            .args(["-c", "sleep 30 & sleep 30 & wait"])
+            .spawn()
+            .expect("spawn a pane-like tree");
+        let pid = root.id();
+        // Both children up.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while pane_processes(pid).len() < 3 && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let shape = |processes: Vec<ProcessInfo>| {
+            let mut shape: Vec<(u32, u32, u8, String)> = processes
+                .into_iter()
+                .map(|p| (p.pid, p.parent_pid, p.depth, p.cmdline))
+                .collect();
+            shape.sort();
+            shape
+        };
+        let per_pane = shape(pane_processes(pid));
+        let shared = shape(PaneProcessReader::read().of(pid));
+        // The children first, so none is left behind.
+        let _ = std::process::Command::new("kill")
+            .args(per_pane.iter().map(|p| p.0.to_string()))
+            .status();
+        let _ = root.kill();
+        let _ = root.wait();
+        assert_eq!(per_pane.len(), 3, "{per_pane:?}");
+        assert_eq!(shared, per_pane);
+    }
 
     fn proc(pid: u32, parent_pid: u32, depth: u8, cmdline: &str) -> ProcessInfo {
         ProcessInfo {

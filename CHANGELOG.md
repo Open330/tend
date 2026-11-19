@@ -23,6 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   own count. Builds carry the `aps-environment` entitlement (development
   for Debug, production for Release).
 
+### Changed
+
+- `tend swap` plans with one read of the panes and processes for all its
+  agents instead of one per agent, and no longer reads a pane's processes
+  again each time its plan is looked at. Planning 20 agents took ~0.1 s
+  instead of 3–5 s on a scratch bench, so a large swap starts its first
+  agent at once. Every agent is still checked again, live, right before it
+  is stopped.
+
 ### Fixed
 
 - Tend for iOS: the **Can't be answered** group, its Close all report and
