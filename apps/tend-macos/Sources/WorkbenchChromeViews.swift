@@ -488,7 +488,7 @@ struct WorkbenchStatusBar: View {
                 Text("Connecting to tendd…")
             case .connected:
                 HStack(spacing: 5) {
-                    Circle().fill(Color(nsColor: .systemGreen)).frame(width: 6, height: 6)
+                    Circle().fill(TendInk.state(.green, colorScheme)).frame(width: 6, height: 6)
                     Text(verbatim: "tendd")
                 }
                 .accessibilityElement(children: .ignore)
