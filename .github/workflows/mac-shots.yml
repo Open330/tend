@@ -9,6 +9,10 @@ on:
     branches: [main]
     types: [opened, synchronize, reopened, labeled]
 
+# The PR's own code runs here; it gets a read-only token and keeps none.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -23,6 +27,8 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
 
       # AppIcon.icon (Icon Composer) needs Xcode 26 or newer on macOS 26 or
@@ -95,5 +101,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mac-shots
-          path: ${{ runner.temp }}/mac-shots
+          path: ${{ runner.temp }}/mac-shots/*.png
           if-no-files-found: warn
+
+      - name: Upload the capture logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-shots-logs
+          path: ${{ runner.temp }}/mac-shots/*.log
+          retention-days: 3
+          if-no-files-found: ignore

@@ -345,6 +345,13 @@ final class TendBoundedSubprocess: @unchecked Sendable {
 @MainActor
 final class DaemonManager {
     private var launchedProcess: Process?
+    /// False: only connect to a tendd that is already running, never start
+    /// or replace one (the design capture's fixture daemon).
+    let launchesDaemon: Bool
+
+    init(launchesDaemon: Bool = true) {
+        self.launchesDaemon = launchesDaemon
+    }
 
     func ensureRunning(client: TendIPCClient) async throws {
         do {
@@ -357,7 +364,7 @@ final class DaemonManager {
                     socketPath: client.socketPath,
                     detail: error.localizedDescription
                 )
-            case .posix(_, let code) where code == ENOENT || code == ECONNREFUSED || code == ENOTSOCK:
+            case .posix(_, let code) where launchesDaemon && (code == ENOENT || code == ECONNREFUSED || code == ENOTSOCK):
                 break
             default:
                 throw error
@@ -368,6 +375,9 @@ final class DaemonManager {
     }
 
     func replaceRunningDaemon(client: TendIPCClient) async throws {
+        guard launchesDaemon else {
+            throw TendIPCError.server("this window only connects to a running tendd")
+        }
         let socketPath = client.socketPath
         let owner = try await DaemonSocketOwner.find(socketPath: socketPath)
         try await owner.stop()

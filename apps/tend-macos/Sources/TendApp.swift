@@ -52,7 +52,7 @@ private final class TendApplicationDelegate: NSObject, NSApplicationDelegate {
         if !AppModel.isRunningTests() {
             TendGlobalHotKey.shared.apply()
         }
-        if UserDefaults.standard.bool(forKey: TendPreferences.showWorkbenchOnLaunchKey) {
+        if !AppModel.isRunningTests(), UserDefaults.standard.bool(forKey: TendPreferences.showWorkbenchOnLaunchKey) {
             presentWorkbench(remainingAttempts: 50)
         }
     }

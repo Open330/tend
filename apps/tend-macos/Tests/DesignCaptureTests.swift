@@ -8,10 +8,14 @@ import Testing
 // design reviews: Home (both card layouts, the Review and Start Work
 // sheets), Explore, Inbox, every Settings tab, the menu bar popover and the
 // Welcome guide, light and dark. Runs only where the capture workflow
-// (.github/workflows/mac-shots.yml) sets TEND_CAPTURE_SOCKET to the demo
-// fixture's sandboxed tendd and TEND_RENDER_DIR to where the PNGs go; the
-// language is the test run's (`xcodebuild -testLanguage`). Nothing here is
-// shown on screen: every window sits far off any display, behind the rest.
+// (.github/workflows/mac-shots.yml, on a CI runner) sets TEND_CAPTURE_SOCKET
+// to the demo fixture's sandboxed tendd and TEND_RENDER_DIR to where the
+// PNGs go; the language is the test run's (`xcodebuild -testLanguage`).
+//
+// It only ever talks to that fixture: the socket must be the sandbox's own
+// and already answering, and the model never starts or replaces a daemon.
+// Nothing is shown on screen (a test host presents no window), and the
+// preferences it changes are put back.
 
 private let environment = ProcessInfo.processInfo.environment
 
@@ -22,9 +26,21 @@ struct DesignCaptureTests {
     private let language = Locale.preferredLanguages.first.map { String($0.prefix(2)) } ?? "en"
     private let schemes: [ColorScheme] = [.light, .dark]
 
+    /// The demo fixture's sandbox socket (scripts/tend-sandbox.sh): nothing else.
+    static let fixtureSocket = "/tmp/tend-demo-sandbox/tendd.sock"
+
     @Test func everyScreen() async throws {
+        let socket = try #require(environment["TEND_CAPTURE_SOCKET"])
+        guard socket == Self.fixtureSocket,
+              let type = try? FileManager.default.attributesOfItem(atPath: socket)[.type] as? FileAttributeType,
+              type == .typeSocket else {
+            Issue.record("TEND_CAPTURE_SOCKET must be the running fixture's \(Self.fixtureSocket), not \(socket)")
+            return
+        }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let model = AppModel(client: TendIPCClient(socketPath: try #require(environment["TEND_CAPTURE_SOCKET"])))
+        let saved = savePreferences()
+        defer { restorePreferences(saved) }
+        let model = AppModel(client: TendIPCClient(socketPath: socket), launchesDaemon: false)
         model.retryConnection()
         try await until("connected with agents", timeout: 60) {
             model.connectionState == .connected && !model.fleetHosts.isEmpty
@@ -48,7 +64,7 @@ struct DesignCaptureTests {
         }
 
         // Before tendd answers: what a window shows while it connects.
-        let unconnected = AppModel(client: TendIPCClient(socketPath: "/tmp/tend-capture-\(UUID().uuidString).sock"))
+        let unconnected = AppModel(client: TendIPCClient(socketPath: "/tmp/tend-capture-\(UUID().uuidString).sock"), launchesDaemon: false)
         for scheme in schemes {
             try await capture(ContentView(model: unconnected).environmentObject(unconnected),
                               name: "home-unconnected", scheme: scheme, size: CGSize(width: 1280, height: 800))
@@ -115,14 +131,29 @@ struct DesignCaptureTests {
         try png.write(to: file)
     }
 
+    private struct TimedOut: Error, CustomStringConvertible {
+        let what: String
+        var description: String { "timed out waiting: \(what)" }
+    }
+
+    /// Fails the capture (nothing is drawn from a fixture that never came up).
     private func until(_ what: String, timeout: TimeInterval, _ condition: () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while !condition() {
-            guard Date() < deadline else {
-                Issue.record("timed out waiting: \(what)")
-                return
-            }
+            guard Date() < deadline else { throw TimedOut(what: what) }
             try await Task.sleep(for: .milliseconds(200))
+        }
+    }
+
+    private static let preferenceKeys = [TendPreferences.homeCardLayoutKey, TendPreferences.settingsTabKey]
+
+    private func savePreferences() -> [String: Any?] {
+        Dictionary(uniqueKeysWithValues: Self.preferenceKeys.map { ($0, UserDefaults.standard.object(forKey: $0)) })
+    }
+
+    private func restorePreferences(_ saved: [String: Any?]) {
+        for (key, value) in saved {
+            if let value { UserDefaults.standard.set(value, forKey: key) } else { UserDefaults.standard.removeObject(forKey: key) }
         }
     }
 }

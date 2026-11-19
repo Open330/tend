@@ -18,8 +18,13 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 bash "$REPO_DIR/scripts/tend-sandbox.sh" down \
   --name tend-demo \
   ${TEND_DEMO_TMUX:+--tmux "$TEND_DEMO_TMUX"}
+down_status=$?
 
 # Fixture-only paths. The sandbox never knew about these, so it cannot have
 # removed them.
 rm -rf /tmp/tend-demo-bashrc /tmp/tend-demo-transcripts /tmp/tend-demo-frames /tmp/tend-demo-home
 rm -f /tmp/tend-demo-config.src.toml
+
+# The files above are best-effort; the sandbox's own teardown is not: a
+# caller learns when it failed.
+exit "$down_status"
