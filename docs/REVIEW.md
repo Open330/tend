@@ -256,14 +256,18 @@ sent) and, when either is false, `unanswerable_note` saying why: an
 observe-only host (403), Close all turned off there (403, Keep still
 works), or a relay that needs an upgrade (409). The raw Fleet command route
 and the IPC socket refuse both; every attempt goes in the decision audit
-with its `host`.
+with its `host`. The web and the phone show one Close all per host and name it
+in the confirmation; Tend for Mac opens another host's question on the
+dashboard (`/needs#item=<id>&host=<alias>` opens the folded group there)
+and keeps and closes only its own.
 
 Tend for Mac, the web Home and Tend for iPhone and iPad list them in a
 collapsed **Can't be answered (N)** group at the end of Your turn (N is
 `unanswerable_count`), out of Your turn's count, the badges and the Mac's
 menu bar and Dock counts. Each row says why and since when and offers
-**Keep** on this host. **Close all** shows only while the host advertises
-`close_unanswerable_v1` (the dashboard's `close_unanswerable` flag), asks
+**Keep** where the host takes it. **Close all** shows only while the host
+advertises `close_unanswerable_v1` (the dashboard's `close_unanswerable`
+flag; for another Fleet host, as above), asks
 once ("Close N questions? Each asking agent gets a reply that you dismissed
 it. This can't be undone."), sends exactly the listed pairs and says which
 were skipped. Their history reads ask for closures (`include_closures`,

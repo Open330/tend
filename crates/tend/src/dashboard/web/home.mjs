@@ -1384,6 +1384,7 @@ function findWhere(board, match) {
     for (const group of data.groups) for (const unit of group.units) if (match(unit)) return unit;
     for (const unit of data.older) if (match(unit)) return unit;
     for (const list of Object.values(data.folds || {})) for (const unit of list) if (match(unit)) return unit;
+    for (const unit of data.cantAnswer?.units || []) if (match(unit)) return unit;
   }
   return null;
 }
@@ -2207,7 +2208,12 @@ function revealLinkedItem() {
   state.lane = "needsYou";
   $("board").dataset.lane = "needsYou";
   for (const tab of document.querySelectorAll("#segments button")) tab.setAttribute("aria-selected", String(tab.dataset.lane === "needsYou"));
-  if (state.layout === "compact") {
+  if (unit.unanswerable) {
+    // A question nobody can answer, linked from Tend for Mac to keep or
+    // close it here: its folded group opens.
+    state.folds.needsYou.cantAnswer = true;
+    render();
+  } else if (state.layout === "compact") {
     state.selected = selectionKey(unit);
     render();
   }

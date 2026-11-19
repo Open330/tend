@@ -399,25 +399,49 @@ final class AppModel {
         return max(cantAnswer.count, hosts.reduce(0) { $0 + $1.queue.unanswerableCount })
     }
 
-    /// Keep and Close all act on the host this app is paired with, where
-    /// it advertises them.
+    /// Keep and Close all act on the host that holds the question, the
+    /// paired one or a Fleet host whose section says it takes them
+    /// (docs/proposals/FLEET_UNANSWERABLE.md).
     func canKeep(_ decision: PendingDecision) -> Bool {
-        decision.hostIsLocal && decision.decidable && localFlags.keep
+        decision.decidable && flags(decision.host).keep
     }
 
-    /// The questions Close all would close, empty while the switch is off.
-    var closable: [PendingDecision] {
-        guard localFlags.close else { return [] }
-        return cantAnswer.filter { $0.hostIsLocal && $0.decidable }
+    /// One Close all per host, each with exactly its listed questions:
+    /// the paired host first, then the others by name. Empty where a
+    /// host's switch is off.
+    var closable: [CloseAllGroup] {
+        let listed = cantAnswer.filter { $0.decidable && flags($0.host).close }
+        let hosts = Dictionary(grouping: listed, by: \.host)
+        return hosts.map { CloseAllGroup(host: $0.key, local: $0.value.first?.hostIsLocal ?? false, decisions: $0.value) }
+            .sorted { ($0.local ? 0 : 1, $0.host) < ($1.local ? 0 : 1, $1.host) }
     }
 
-    private var localFlags: (keep: Bool, close: Bool) {
-        if let board = visibleBoard {
-            let local = board.decisionHosts.first(where: \.local)
-            return (local?.subjectCheck ?? false, local?.closeUnanswerable ?? false)
+    /// Another host's folded questions that cannot be kept or closed from
+    /// here, and why.
+    var cantAnswerNotes: [CantAnswerNote] {
+        let remote = Set(cantAnswer.filter { !$0.hostIsLocal }.map(\.host))
+        return remote.sorted().compactMap { host in
+            let f = flags(host)
+            let reason: CantAnswerNote.Reason? = if !f.control {
+                .observeOnly
+            } else if !f.keep {
+                .upgrade
+            } else if !f.close {
+                .closeOff
+            } else {
+                nil
+            }
+            return reason.map { CantAnswerNote(host: host, reason: $0) }
         }
-        let local = hosts.first(where: \.local)
-        return (local?.subjectCheck ?? false, local?.closeUnanswerable ?? false)
+    }
+
+    private func flags(_ host: String) -> (keep: Bool, close: Bool, control: Bool) {
+        if let board = visibleBoard {
+            let section = board.decisionHosts.first { $0.alias == host }
+            return (section?.subjectCheck ?? false, section?.closeUnanswerable ?? false, section?.control ?? false)
+        }
+        let section = hosts.first { $0.alias == host }
+        return (section?.subjectCheck ?? false, section?.closeUnanswerable ?? false, section?.control ?? false)
     }
 
     /// What the last Close all did, in words, until dismissed. It belongs
@@ -922,15 +946,17 @@ final class AppModel {
     /// Keep: back in Your turn until its asker is seen again and gone again.
     func keep(_ decision: PendingDecision) async -> Bool {
         guard case .question(let entry) = decision.kind, let unanswerable = entry.unanswerable else { return false }
+        let host = decision.hostIsLocal ? nil : decision.host
         return await act(decision, done: String(localized: "Back in Your turn.")) {
-            try await $0.keep(requestID: entry.requestID, episode: unanswerable.episode)
+            try await $0.keep(requestID: entry.requestID, episode: unanswerable.episode, host: host)
         }
     }
 
     /// Close all: exactly the listed questions, after the person's one
     /// confirmation; what was skipped is said.
-    func closeAll(_ decisions: [PendingDecision]) async {
+    func closeAll(_ group: CloseAllGroup) async {
         guard let client else { return }
+        let decisions = group.decisions
         let pairs: [(requestID: String, episode: String)] = decisions.compactMap { decision in
             guard case .question(let entry) = decision.kind, let unanswerable = entry.unanswerable else { return nil }
             return (entry.requestID, unanswerable.episode)
@@ -942,9 +968,10 @@ final class AppModel {
         closeAllResult = nil
         defer { busy.subtract(ids) }
         do {
-            let outcome = try await client.closeUnanswerable(pairs)
+            let outcome = try await client.closeUnanswerable(pairs, host: group.local ? nil : group.host)
             guard session == mine else { return }
-            closeAllResult = (outcome.skipped.isEmpty, Self.closeAllText(outcome))
+            let text = Self.closeAllText(outcome)
+            closeAllResult = (outcome.skipped.isEmpty, group.local ? text : "\(group.host): \(text)")
             await refresh()
             await refreshHistory()
         } catch {
@@ -952,7 +979,7 @@ final class AppModel {
             let message = handle(error, session: mine)
             // A 401 unpaired this device: nothing of the old pairing stays.
             guard session == mine else { return }
-            closeAllResult = (false, message)
+            closeAllResult = (false, group.local ? message : "\(group.host): \(message)")
         }
     }
 
@@ -1197,6 +1224,36 @@ extension AppModel {
             }
         } catch {
             return .unknown
+        }
+    }
+}
+
+/// One host's Close all: exactly its listed questions.
+struct CloseAllGroup: Hashable, Identifiable {
+    let host: String
+    /// The host this app is paired with.
+    let local: Bool
+    let decisions: [PendingDecision]
+
+    var id: String { host }
+}
+
+/// Why another host's folded questions cannot be kept, or closed, here.
+struct CantAnswerNote: Hashable, Identifiable {
+    enum Reason: Hashable {
+        case observeOnly, upgrade, closeOff
+    }
+
+    let host: String
+    let reason: Reason
+
+    var id: String { host }
+
+    var text: String {
+        switch reason {
+        case .observeOnly: String(localized: "\(host) is observe-only: keep or close its questions there.")
+        case .upgrade: String(localized: "Keep or close \(host)'s questions on that host, or upgrade tend there.")
+        case .closeOff: String(localized: "Close all is turned off on \(host); Keep still works.")
         }
     }
 }

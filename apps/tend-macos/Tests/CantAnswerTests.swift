@@ -131,6 +131,21 @@ private func message(id: String) throws -> TendOperatorMessage {
         #expect(FleetDecisions.foldedQuestions(plain, localHost: "mac").live == nil)
     }
 
+    /// Another host's folded question opens on the dashboard's group to be
+    /// kept or closed there; this Mac's never does, and neither does one
+    /// when tendd names no dashboard (docs/proposals/FLEET_UNANSWERABLE.md).
+    @Test func anotherHostsQuestionOpensOnTheDashboard() throws {
+        let queue = try JSONDecoder().decode(TendPendingQueue.self, from: Data(foldedQueueJSON.utf8))
+        let mini = TendFleetHostIdentity(alias: "jiun-mini", local: false, state: "online", mode: "control")
+        let folded = FleetDecisions.merge(queue: queue, reviews: [], messages: [], localHost: local).filter(\.isUnanswerable)
+        let theirs = FleetDecisions.merge(queue: queue, reviews: [], messages: [], localHost: mini).filter(\.isUnanswerable)
+        let dashboard = try #require(URL(string: "https://tend.example"))
+        #expect(FleetCantAnswer.dashboardLink(folded[0], on: dashboard) == nil, "this Mac's is kept here")
+        #expect(FleetCantAnswer.dashboardLink(theirs[0], on: dashboard)?.absoluteString
+            == "https://tend.example/needs#item=rq_a&host=jiun-mini")
+        #expect(FleetCantAnswer.dashboardLink(theirs[0], on: nil) == nil)
+    }
+
     @Test func theCloseAllReportListsEverySkippedQuestion() {
         let skipped = (1...8).map { TendCloseOutcome.Skipped(requestID: "rq_\($0)", reason: "kept") }
         let text = FleetDecisions.closeAllText(TendCloseOutcome(closed: ["rq_0"], skipped: skipped))

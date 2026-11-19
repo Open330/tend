@@ -347,6 +347,7 @@ struct FleetHomeView: View {
             result: feed.closeAllResult,
             keep: { decision in Task { _ = await feed.keep(decision, model: model) } },
             closeAll: { decisions in Task { await feed.closeAll(decisions, model: model) } },
+            dashboard: feed.dashboard,
             dismissResult: { feed.closeAllResult = nil }
         )
     }

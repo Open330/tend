@@ -2,8 +2,9 @@
 // STALE_QUESTIONS.md), as Tend for Mac and the web Home draw it: questions
 // whose asking agent tendd established gone for a day. Not in Your turn and
 // not on the badge; collapsed by default; each says why and since when.
-// Keep puts one back in Your turn; Close all, only where the paired host
-// allows it, declines exactly the listed ones after one confirmation.
+// Keep puts one back in Your turn; Close all, one per host that allows it
+// (the paired one, or a Fleet host: docs/proposals/FLEET_UNANSWERABLE.md),
+// declines exactly that host's listed ones after one confirmation.
 import SwiftUI
 
 extension TendUnanswerable {
@@ -21,7 +22,8 @@ struct CantAnswerGroup: View {
     @Environment(AppModel.self) private var model
     /// Collapsed by default, as on the Mac and the web.
     @State private var expanded = false
-    @State private var confirming = false
+    /// The host whose Close all is being confirmed.
+    @State private var confirming: CloseAllGroup?
 
     var body: some View {
         let count = model.cantAnswerCount
@@ -55,21 +57,31 @@ struct CantAnswerGroup: View {
                 .accessibilityIdentifier("cantAnswer")
                 if expanded { content(count: count) } else { CloseAllReport() }
             }
-            .confirmationDialog(confirmTitle, isPresented: $confirming, titleVisibility: .visible) {
-                let closable = model.closable
-                Button(String(localized: "Close \(closable.count)"), role: .destructive) {
-                    Task { await model.closeAll(closable) }
+            .confirmationDialog(
+                confirming.map(Self.confirmTitle) ?? "",
+                isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }),
+                titleVisibility: .visible,
+                presenting: confirming
+            ) { group in
+                Button(String(localized: "Close \(group.decisions.count)"), role: .destructive) {
+                    Task { await model.closeAll(group) }
                 }
                 Button("Cancel", role: .cancel) {}
-            } message: {
+            } message: { _ in
                 Text("Each asking agent gets a reply that you dismissed it. This can't be undone.")
             }
         }
     }
 
-    private var confirmTitle: String {
-        let n = model.closable.count
-        return n == 1 ? String(localized: "Close 1 question?") : String(localized: "Close \(n) questions?")
+    /// Names the host when it is not the paired one.
+    static func confirmTitle(_ group: CloseAllGroup) -> String {
+        let n = group.decisions.count
+        if group.local {
+            return n == 1 ? String(localized: "Close 1 question?") : String(localized: "Close \(n) questions?")
+        }
+        return n == 1
+            ? String(localized: "Close 1 question on \(group.host)?")
+            : String(localized: "Close \(n) questions on \(group.host)?")
     }
 
     @ViewBuilder
@@ -78,10 +90,20 @@ struct CantAnswerGroup: View {
             .font(TendType.meta)
             .foregroundStyle(TendInk.tertiary)
             .fixedSize(horizontal: false, vertical: true)
-        if !model.closable.isEmpty {
-            Button("Close All…") { confirming = true }
-                .buttonStyle(.card)
-                .accessibilityIdentifier("closeAll")
+        let groups = model.closable
+        let named = groups.count > 1 || groups.contains { !$0.local }
+        ForEach(groups) { group in
+            Button(named ? String(localized: "Close All on \(group.host)…") : String(localized: "Close All…")) {
+                confirming = group
+            }
+            .buttonStyle(.card)
+            .accessibilityIdentifier("closeAll")
+        }
+        ForEach(model.cantAnswerNotes) { note in
+            Text(note.text)
+                .font(TendType.meta)
+                .foregroundStyle(TendInk.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         CloseAllReport()
         let listed = model.cantAnswer
