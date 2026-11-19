@@ -136,6 +136,10 @@ pub(super) enum RequestBody {
         limit: usize,
         #[serde(default)]
         origin: Option<collaboration::CollaborationOrigin>,
+        /// Also list the items tendd closed itself
+        /// (`decision_history_closures_v1`).
+        #[serde(default)]
+        include_closures: bool,
     },
     /// Close the human items tendd opened itself that can no longer matter
     /// (`system_ask_cleanup_v1`): merged duplicates, ones whose original
@@ -1157,6 +1161,7 @@ pub(super) const CAPABILITIES: &[&str] = &[
     crate::decision::REVIEW_DECISION_CAPABILITY,
     crate::decision::HUMAN_DECISION_CAPABILITY,
     crate::decision_queue::DECISION_QUEUE_CAPABILITY,
+    crate::decision_queue::DECISION_HISTORY_CLOSURES_CAPABILITY,
     collaboration::system_asks::SYSTEM_ASK_CLEANUP_CAPABILITY,
     crate::work::WORK_BACKLOG_CAPABILITY,
     crate::work::WORK_VERIFY_CAPABILITY,

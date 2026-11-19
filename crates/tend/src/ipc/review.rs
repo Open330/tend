@@ -109,10 +109,20 @@ pub(super) async fn decision_response(
                 },
             )
         }
-        RequestBody::DecisionHistory { limit, origin } => {
+        RequestBody::DecisionHistory {
+            limit,
+            origin,
+            include_closures,
+        } => {
             let operator = operator_only(origin.as_ref()).is_none();
-            let history =
-                crate::decision_queue::read_history(reviews, collaboration, limit, operator).await;
+            let history = crate::decision_queue::read_history(
+                reviews,
+                collaboration,
+                limit,
+                operator,
+                include_closures,
+            )
+            .await;
             (
                 "decision_history",
                 Response {

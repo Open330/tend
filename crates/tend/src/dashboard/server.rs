@@ -3737,7 +3737,7 @@ mod tests {
                     FleetOperation::DecisionHistory { .. } if command.host == "mute" => {
                         Ok(FleetCommandResult::accepted("decision history"))
                     }
-                    FleetOperation::DecisionHistory { limit } => {
+                    FleetOperation::DecisionHistory { limit, .. } => {
                         assert_eq!(command.host, "mini", "only a host that sends it is asked");
                         let mut history =
                             crate::decision_queue::assemble_history(Vec::new(), &[], limit);

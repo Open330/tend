@@ -104,6 +104,9 @@ pub const FLEET_REVIEW_DISPOSE_CAPABILITY: &str = "fleet_review_dispose_v1";
 /// Relay capability: the relay answers [`RelayRequest::DecisionHistory`]
 /// with its host's past decisions, read as the operator console.
 pub const FLEET_DECISION_HISTORY_CAPABILITY: &str = "fleet_decision_history_v1";
+/// Relay capability: [`RelayRequest::DecisionHistory`] takes
+/// `include_closures` and passes it to its host's daemon.
+pub const FLEET_DECISION_HISTORY_CLOSURES_CAPABILITY: &str = "fleet_decision_history_closures_v1";
 /// The relay (and, in a daemon's own hello, the controller) carries
 /// `SendPrompt.force` end to end and enforces it through the destination
 /// daemon's guarded `send_prompt`. Distinct from the local
@@ -135,6 +138,7 @@ pub const FLEET_CAPABILITIES: &[&str] = &[
     FLEET_DECISION_QUEUE_CAPABILITY,
     FLEET_REVIEW_DISPOSE_CAPABILITY,
     FLEET_DECISION_HISTORY_CAPABILITY,
+    FLEET_DECISION_HISTORY_CLOSURES_CAPABILITY,
 ];
 
 /// Read one UTF-8 line without allowing a peer that withholds `\n` to grow
@@ -610,6 +614,10 @@ pub enum RelayRequest {
     DecisionHistory {
         request_id: String,
         limit: usize,
+        /// `fleet_decision_history_closures_v1`; never sent as `false`, so
+        /// an older relay sees the request it knows.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        include_closures: bool,
     },
     CollaborationSend {
         request_id: String,
@@ -850,6 +858,9 @@ pub enum FleetOperation {
     /// answered questions to its operator, newest first. Read-only.
     DecisionHistory {
         limit: usize,
+        /// Also tend's own closures (`fleet_decision_history_closures_v1`).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        include_closures: bool,
     },
     CollaborationSend {
         pane: PaneKey,
@@ -1844,6 +1855,39 @@ mod tests {
             error: None,
             remote: None,
         }
+    }
+
+    /// An older relay knows `decision_history` as `{request_id, limit}`: a
+    /// request without closures must still be exactly that, and one with
+    /// them is only sent to a relay that says it can take it.
+    #[test]
+    fn decision_history_without_closures_is_the_request_older_relays_know() {
+        let plain = serde_json::to_value(RelayRequest::DecisionHistory {
+            request_id: "r".into(),
+            limit: 5,
+            include_closures: false,
+        })
+        .unwrap();
+        assert!(plain.get("include_closures").is_none(), "{plain}");
+        let with = serde_json::to_value(RelayRequest::DecisionHistory {
+            request_id: "r".into(),
+            limit: 5,
+            include_closures: true,
+        })
+        .unwrap();
+        assert_eq!(with["include_closures"], true);
+        let old: RelayRequest = serde_json::from_value(serde_json::json!({
+            "kind": plain["kind"], "request_id": "r", "limit": 5
+        }))
+        .unwrap();
+        assert!(matches!(
+            old,
+            RelayRequest::DecisionHistory {
+                include_closures: false,
+                ..
+            }
+        ));
+        assert!(FLEET_CAPABILITIES.contains(&FLEET_DECISION_HISTORY_CLOSURES_CAPABILITY));
     }
 
     #[tokio::test]

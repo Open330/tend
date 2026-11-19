@@ -486,10 +486,17 @@ impl LocalTask {
                     .map(FleetCommandResult::decision_queue)
                     .map_err(|error| error.to_string())
             }
-            FleetOperation::DecisionHistory { limit } => {
+            FleetOperation::DecisionHistory {
+                limit,
+                include_closures,
+            } => {
                 audit_operation(LOCAL_HOST_ALIAS, "decision_history", 0);
                 self.client
-                    .decision_history(&tend::decision_queue::operator_origin(), limit)
+                    .decision_history_with(
+                        &tend::decision_queue::operator_origin(),
+                        limit,
+                        include_closures,
+                    )
                     .await
                     .map(FleetCommandResult::decision_history)
                     .map_err(|error| error.to_string())
@@ -1793,13 +1800,20 @@ impl HostTask {
                             );
                             RelayRequest::DecisionQueue { request_id: id, limit }
                         }
-                        FleetOperation::DecisionHistory { limit } => {
+                        FleetOperation::DecisionHistory {
+                            limit,
+                            include_closures,
+                        } => {
                             audit_operation(&self.alias, "decision_history", 0);
                             pending.insert(
                                 id.clone(),
                                 PendingRequest::new(PendingReply::Command(command.reply), command_timeout),
                             );
-                            RelayRequest::DecisionHistory { request_id: id, limit }
+                            RelayRequest::DecisionHistory {
+                                request_id: id,
+                                limit,
+                                include_closures,
+                            }
                         }
                         FleetOperation::ReviewDispose { dispose } => {
                             audit_operation(&self.alias, "review_dispose", 0);
@@ -2361,7 +2375,10 @@ mod tests {
         };
         let older = hello(&[FLEET_DECISION_QUEUE_CAPABILITY]);
         let current = hello(FLEET_CAPABILITIES);
-        let history = FleetOperation::DecisionHistory { limit: 50 };
+        let history = FleetOperation::DecisionHistory {
+            limit: 50,
+            include_closures: false,
+        };
         let refusal = decision_queue_refusal("remote", &older, &history).unwrap();
         assert!(refusal.contains("decision history"), "{refusal}");
         assert!(decision_queue_refusal("remote", &current, &history).is_none());

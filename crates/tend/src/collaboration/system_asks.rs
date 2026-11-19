@@ -13,8 +13,10 @@
 //! - **Closed when they can no longer matter**, never when they still might:
 //!   the original request is gone, or it no longer holds the condition the
 //!   ask was about (it finished, was cancelled or retired, recovered, or the
-//!   reply was delivered or read); or, after [`SYSTEM_ASK_STALE_AFTER`],
-//!   nobody is left to act on an answer (see [`abandoned`]). A recovery ask
+//!   reply was delivered or read); or nobody is left to act on an answer
+//!   (see [`abandoned`]) and every request it covers has been in its
+//!   condition for [`SYSTEM_ASK_STALE_AFTER`], once the item itself has been
+//!   listed for [`SYSTEM_ASK_MIN_VISIBLE`]. A recovery ask
 //!   whose original request came from the operator console, or from a Fleet
 //!   initiator, is never closed for age: a person is that request's
 //!   sender, so the decision is theirs.
@@ -22,9 +24,10 @@
 //!   `Cancelled`, with [`SystemAskClosure`] saying why, when, by whom, and
 //!   (for a merged duplicate) which item now covers it.
 //!
-//! The daemon applies these rules only to items it opened under them
-//! (`system_ask` set). Items from before, the backlog, are left to
-//! `tend review cleanup`, which shows what it would close before closing it.
+//! The daemon applies these rules to items it opened under them (`system_ask`
+//! set) on every reconcile, and to every system ask, the backlog included,
+//! at start and every [`SYSTEM_ASK_SWEEP_EVERY`]. `tend review cleanup`
+//! runs the same full pass on demand and shows what it would close first.
 use super::{CollaborationError, CollaborationRequest, CollaborationStore, RequestStatus};
 use crate::state::Agent;
 use crate::AgentState;
@@ -42,6 +45,18 @@ pub const SYSTEM_ASK_CLEANUP_CAPABILITY: &str = "system_ask_cleanup_v1";
 /// comes back; the rule also needs the sessions involved to be absent now
 /// (see [`abandoned`]).
 pub const SYSTEM_ASK_STALE_AFTER: time::Duration = time::Duration::days(7);
+
+/// How long an item must have been listed before it can close as stale. The
+/// stale clock is the condition's ([`SYSTEM_ASK_STALE_AFTER`] from when each
+/// covered request began waiting), not the item's: items are recreated (a
+/// merge keeps the newest, a new episode opens a new one), and an item-age
+/// clock restarted every time. This floor only keeps a recreated item from
+/// vanishing the moment it appears.
+pub const SYSTEM_ASK_MIN_VISIBLE: time::Duration = time::Duration::hours(24);
+
+/// How often tendd runs the full pass ([`CollaborationStore::sweep_system_asks`])
+/// over every system ask, the backlog included.
+pub const SYSTEM_ASK_SWEEP_EVERY: time::Duration = time::Duration::hours(1);
 
 /// Request ids listed in one item's text; the rest are counted.
 const LISTED_COVERS: usize = 10;
@@ -88,7 +103,8 @@ pub enum SystemAskCloseReason {
     ParentMissing,
     /// No original request still holds the condition it was about.
     ParentClosed,
-    /// Older than [`SYSTEM_ASK_STALE_AFTER`] and nobody is left to act.
+    /// Nobody is left to act, and every covered request has waited
+    /// [`SYSTEM_ASK_STALE_AFTER`].
     Stale,
     /// Another open item about the same session covers it now.
     Collapsed,
@@ -109,7 +125,8 @@ impl SystemAskCloseReason {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SystemAskCloser {
-    /// The daemon's own reconcile, for items it opened under these rules.
+    /// The daemon: its reconcile, for items it opened under these rules,
+    /// and its scheduled full pass over every system ask.
     Daemon,
     /// `tend review cleanup --apply`.
     Cleanup,
@@ -357,7 +374,7 @@ pub(super) fn settle(
             Some(SystemAskCloseReason::ParentMissing)
         } else if ask.waiting.is_empty() {
             Some(SystemAskCloseReason::ParentClosed)
-        } else if now - ask.created_at >= SYSTEM_ASK_STALE_AFTER
+        } else if now - ask.created_at >= SYSTEM_ASK_MIN_VISIBLE
             && ask.waiting.iter().all(|id| {
                 view.get(id).is_some_and(|parent| {
                     abandoned(ask.kind, parent, agents)
@@ -628,6 +645,26 @@ impl CollaborationStore {
         agents: &[Agent],
         dry_run: bool,
     ) -> Result<SystemAskCleanup, CollaborationError> {
+        self.settle_all(agents, dry_run, SystemAskCloser::Cleanup)
+            .await
+    }
+
+    /// tendd's scheduled full pass: the same rules as `tend review cleanup
+    /// --apply`, over every system ask, recorded as the daemon's.
+    pub async fn sweep_system_asks(
+        &self,
+        agents: &[Agent],
+    ) -> Result<SystemAskCleanup, CollaborationError> {
+        self.settle_all(agents, false, SystemAskCloser::Daemon)
+            .await
+    }
+
+    async fn settle_all(
+        &self,
+        agents: &[Agent],
+        dry_run: bool,
+        by: SystemAskCloser,
+    ) -> Result<SystemAskCleanup, CollaborationError> {
         self.ensure_enabled()?;
         let _transaction = self.transaction_lock.lock().await;
         let now = OffsetDateTime::now_utc();
@@ -636,7 +673,7 @@ impl CollaborationStore {
             base: &snapshot,
             overlay: HashMap::new(),
         };
-        let closed = settle(&mut view, agents, now, Scope::All, SystemAskCloser::Cleanup);
+        let closed = settle(&mut view, agents, now, Scope::All, by);
         let (mut open_after, mut agent_asks_open) = (0, 0);
         for request in view.all().filter(|r| r.needs_human_response()) {
             if system_ask_kind(request).is_some() {
@@ -650,7 +687,7 @@ impl CollaborationStore {
         if !dry_run && !rows.is_empty() {
             self.commit_request_rows(&rows).await?;
             self.publish_change();
-            log_settled(&closed, SystemAskCloser::Cleanup);
+            log_settled(&closed, by);
         }
         Ok(SystemAskCleanup {
             dry_run,
@@ -892,6 +929,135 @@ mod tests {
         assert!(held.peer_interrupted());
         store.reconcile_peer_interruptions(&agents).await.unwrap();
         assert!(open_system(&store).await.is_empty(), "not asked again");
+    }
+
+    async fn age_hours(store: &CollaborationStore, id: &str, hours: i64) {
+        let mut aged = row(store, id).await;
+        aged.created_at -= time::Duration::hours(hours);
+        put(store, &[aged]).await;
+    }
+
+    /// Measured on jiun-mbp (2026-11-19): items created 3 days ago about
+    /// interruptions 22 and 26 days old, with a live sender and a vanished
+    /// recipient. The stale clock is the condition's: a recreated item no
+    /// longer restarts it, but it is listed for a day before it can close.
+    #[tokio::test]
+    async fn a_recreated_item_about_an_old_condition_closes_after_a_day_not_a_week() {
+        let store = CollaborationStore::in_memory(CollaborationOptions::default());
+        let (sender, coordinator) = actor("%1", "coord", AgentState::Idle).await;
+        let (recipient, _gone) = actor("%2", "peer", AgentState::Idle).await;
+        let parent = claimed(&store, &sender, &recipient, "work").await;
+        let agents = [coordinator.clone()];
+        recipient_vanishes(&store, &parent.id, &agents).await;
+        episode_age(&store, &parent.id, 26).await;
+        store.reconcile_peer_interruptions(&agents).await.unwrap();
+        let item = open_system(&store).await.remove(0);
+        // Just recreated: listed for less than a day, so it stays.
+        age_hours(&store, &item.id, 12).await;
+        store.reconcile_peer_interruptions(&agents).await.unwrap();
+        assert!(store
+            .cleanup_system_asks(&agents, true)
+            .await
+            .unwrap()
+            .closed
+            .is_empty());
+        assert_eq!(open_system(&store).await.len(), 1);
+        // Three days old, about a 26-day condition: the daemon's own
+        // reconcile closes it, where the item-age clock kept it four more
+        // days.
+        age_hours(&store, &item.id, 60).await;
+        store.reconcile_peer_interruptions(&agents).await.unwrap();
+        assert!(open_system(&store).await.is_empty());
+        let record = row(&store, &item.id)
+            .await
+            .system_ask
+            .unwrap()
+            .closed
+            .unwrap();
+        assert_eq!(record.reason, SystemAskCloseReason::Stale);
+        assert_eq!(record.by, SystemAskCloser::Daemon);
+        let held = row(&store, &parent.id).await;
+        assert_eq!(
+            held.status,
+            RequestStatus::Claimed,
+            "the request is untouched"
+        );
+    }
+
+    /// The scheduled full pass reaches the backlog, which the per-reconcile
+    /// pass does not, and records the closure as the daemon's.
+    #[tokio::test]
+    async fn the_scheduled_sweep_closes_the_backlog_as_the_daemon() {
+        let store = CollaborationStore::in_memory(CollaborationOptions::default());
+        let (sender, coordinator) = actor("%1", "coord", AgentState::Error).await;
+        let (recipient, peer) = actor("%2", "peer", AgentState::Error).await;
+        let done = claimed(&store, &sender, &recipient, "done").await;
+        store
+            .reconcile_peer_interruptions(&[coordinator.clone(), peer.clone()])
+            .await
+            .unwrap();
+        let managed = open_system(&store).await.remove(0);
+        let mut cancelled = managed.clone();
+        cancelled.status = RequestStatus::Cancelled;
+        let mut parent = row(&store, &done.id).await;
+        parent.interruption.as_mut().unwrap().action_request_id = Some("legacy_done".into());
+        parent.status = RequestStatus::Completed;
+        put(
+            &store,
+            &[legacy(&managed, "legacy_done", &done), cancelled, parent],
+        )
+        .await;
+        store
+            .reconcile_peer_interruptions(&[coordinator.clone(), peer.clone()])
+            .await
+            .unwrap();
+        assert_eq!(
+            open_system(&store).await.len(),
+            1,
+            "the per-reconcile pass leaves the backlog alone"
+        );
+        let swept = store.sweep_system_asks(&[coordinator, peer]).await.unwrap();
+        assert!(!swept.dry_run);
+        assert_eq!(swept.closed.len(), 1);
+        assert!(open_system(&store).await.is_empty());
+        let record = row(&store, "legacy_done")
+            .await
+            .system_ask
+            .unwrap()
+            .closed
+            .unwrap();
+        assert_eq!(record.reason, SystemAskCloseReason::ParentClosed);
+        assert_eq!(record.by, SystemAskCloser::Daemon);
+
+        // History lists it, with why, only for a reader that asks.
+        let (closed, more) = store.closed_system_asks(10).await.unwrap();
+        assert!(!more);
+        assert_eq!(
+            closed.len(),
+            1,
+            "only a closure tend recorded; a hand-cancelled row is not one"
+        );
+        let history =
+            crate::decision_queue::assemble_history_with_closures(Vec::new(), &[], &closed, 10);
+        let entry = history
+            .items
+            .iter()
+            .find_map(|item| match item {
+                crate::decision_queue::DecidedItem::ClosedByTend(entry)
+                    if entry.request.request_id == "legacy_done" =>
+                {
+                    Some(entry)
+                }
+                _ => None,
+            })
+            .expect("the closure is in the history");
+        assert_eq!(entry.reason_text, "original request no longer waiting");
+        assert_eq!(entry.closed_by, SystemAskCloser::Daemon);
+        assert!(entry.request.system);
+        let plain = crate::decision_queue::assemble_history(Vec::new(), &[], 10);
+        assert!(!serde_json::to_string(&plain)
+            .unwrap()
+            .contains("closed_by_tend"));
     }
 
     #[tokio::test]
