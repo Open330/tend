@@ -494,12 +494,116 @@ test("Review goes through results three ways, with Later and Send Back", async (
   await home.refresh();
 });
 
-test("the workbench's old links still open the workbench; Home's own do not", () => {
-  assert.equal(home.legacyTarget("/", "#pane=%251&socket=s"), "/workbench#pane=%251&socket=s");
-  assert.equal(home.legacyTarget("/", "#workspace=tend"), "/workbench#workspace=tend");
-  assert.equal(home.legacyTarget("/", "#item=req_9"), null);
-  assert.equal(home.legacyTarget("/home", "#pane=%251"), null);
+test("the workbench's old links open Explore; Home's own stay (legacy-link.mjs has every case)", () => {
+  assert.deepEqual(home.legacyLink("/", "", "#pane=%251&socket=s"), { token: null, href: "/explore#pane=%251&socket=s" });
+  assert.deepEqual(home.legacyLink("/", "", "#item=req_9"), { token: null, href: "/#item=req_9" });
+  assert.deepEqual(home.legacyLink("/home", "", "#pane=%251"), { token: null, href: "/home#pane=%251" });
   assert.equal(home.paneLink({ pane: "%1", socket: "s" }), "/explore#pane=%251&socket=s");
+});
+
+test("Steer this Work sends the next instruction to every agent of the Work, operator-only", async () => {
+  const agent = (host, local, pane) => ({ host, local, kind: "codex", pane, socket: "s", state: "working", session_id: `${host}${pane}`, owner: `codex · ${host}` });
+  const work = (agents) => ({
+    type: "unit", id: "work:tend/fix-login", source: { kind: "work", workspace: "tend", work: "fix-login" },
+    lane: "running", title: "fix-login", repo: "tend", headline: "Reading the diff",
+    stages: [{ name: "Implement", state: "running", kind: "codex" }], shown_time: recent, host_aliases: ["mba"], agent_kinds: ["codex"],
+    agents, helpers: [], recent: true, focus: agents[0],
+  });
+  const boardWith = (unit, decisionHosts = []) => ({
+    hosts: [{ alias: "mba", local: true, state: "online" }, { alias: "mini", local: false, state: "online" }],
+    decision_hosts: decisionHosts, backlog: [],
+    lanes: { needs_you: { groups: [] }, running: { count: 1, groups: [{ project: "tend", items: [unit] }] }, finished: { groups: [] } },
+  });
+  const inspector = () => document.getElementById("inspector");
+  const steerArea = () => find(inspector(), (n) => n.tag === "textarea" && n.dataset?.key === "steer:work:tend/fix-login");
+  const steerSend = () => find(inspector(), (n) => n.tag === "button" && /Send to \d/.test(n.text));
+  try {
+    serverBoard = boardWith(work([agent("mba", true, "%4"), agent("mba", true, "%5")]));
+    status.home = 200;
+    await home.refresh();
+    find(lanes(), (n) => n.dataset?.id === "work:tend/fix-login").click();
+    assert.match(inspector().text, /Steer this Work/);
+    assert.match(steerSend().text, /Send to 2/, "the Mac's count: the Work's agents");
+    assert.equal(steerSend().disabled, true, "nothing to send yet");
+    steerArea().value = "  rebase on main, then rerun the tests  ";
+    steerArea().fire("input");
+    let release;
+    postGate = new Promise((resolve) => (release = resolve));
+    posts.length = 0;
+    steerSend().click();
+    await settle();
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].path, "/api/work-control/prompt");
+    assert.equal(posts[0].init.headers["X-Tend-Operator"], "1");
+    assert.deepEqual(JSON.parse(posts[0].init.body), {
+      identity: { workspace_id: "tend", work_id: "fix-login" }, text: "rebase on main, then rerun the tests", submit: true,
+    });
+    assert.equal(steerArea().disabled, true, "frozen while sending");
+    release();
+    postGate = null;
+    await settle();
+    assert.equal(steerArea().value, "", "the sent draft clears");
+    assert.match(inspector().text, /Sent to/, "the result line");
+
+    // A host in observe mode is never steered, as on the Mac.
+    serverBoard = boardWith(work([agent("mba", true, "%4"), agent("mini", false, "%2")]), [
+      { alias: "mba", local: true, control: true }, { alias: "mini", local: false, control: false },
+    ]);
+    await home.refresh();
+    assert.match(inspector().text, /registered in observe mode/);
+    steerArea().value = "go";
+    steerArea().fire("input");
+    assert.equal(steerSend().disabled, true);
+
+    // A Work whose agents are all on another host: the route reaches only
+    // this host's panes, so nothing can be sent from here.
+    serverBoard = boardWith(work([agent("mini", false, "%2"), agent("mini", false, "%3")]), [
+      { alias: "mba", local: true, control: true }, { alias: "mini", local: false, control: true },
+    ]);
+    await home.refresh();
+    assert.match(steerSend().text, /Send to 0/);
+    steerArea().value = "go";
+    steerArea().fire("input");
+    assert.equal(steerSend().disabled, true, "no agent here to send to");
+    assert.match(inspector().text, /steer the 2 on other hosts from there/);
+    posts.length = 0;
+    steerSend().click();
+    await settle();
+    assert.equal(posts.length, 0, "nothing posted");
+
+    // A mixed Work, this host and a control-mode host: the count is this
+    // host's agents, the notice names the others, and the send goes through
+    // this host's Work control (which reaches only its own panes).
+    serverBoard = boardWith(work([agent("mba", true, "%4"), agent("mini", false, "%2")]), [
+      { alias: "mba", local: true, control: true }, { alias: "mini", local: false, control: true },
+    ]);
+    await home.refresh();
+    assert.match(steerSend().text, /Send to 1/, "this host's agents only");
+    assert.match(inspector().text, /This reaches the agents on this host; steer the 1 on other hosts from there\./);
+    assert.doesNotMatch(inspector().text, /observe mode/);
+    steerArea().value = "ship it";
+    steerArea().fire("input");
+    assert.equal(steerSend().disabled, false);
+    posts.length = 0;
+    steerSend().click();
+    await settle();
+    assert.equal(posts.length, 1, "one request, to this host's daemon");
+    assert.equal(posts[0].path, "/api/work-control/prompt");
+    assert.deepEqual(JSON.parse(posts[0].init.body), { identity: { workspace_id: "tend", work_id: "fix-login" }, text: "ship it", submit: true });
+    assert.equal(JSON.parse(posts[0].init.body).host, undefined, "never addressed to the other host");
+
+    // Not an operator: no composer.
+    status.access = 403;
+    await home.refresh();
+    assert.equal(steerArea(), null, "Steer is operator-only");
+  } finally {
+    postGate = null;
+    status.access = 200;
+    status.home = 404;
+    serverBoard = null;
+    posts.length = 0;
+    await home.refresh();
+  }
 });
 
 test("sign-in returns to Home, and to the linked card", () => {

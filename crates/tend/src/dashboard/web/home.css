@@ -753,3 +753,70 @@ dialog.share-dialog ul { margin: 0; padding-left: 18px; }
   .mx-filters { grid-template-columns: 1fr 1fr; }
   .mx-row { min-height: 44px; }
 }
+
+/* Explore's tree: a session or window row folds on its chevron and opens
+   its detail on the rest. */
+.ex-session, .ex-window { padding-right: 12px; }
+.ex-session { padding-left: 14px; }
+.ex-window { padding-left: 26px; cursor: default; }
+.ex-window:hover { background: transparent; }
+.ex-session.selected, .ex-window.selected { background: var(--selection, color-mix(in srgb, var(--accent) 16%, transparent)); }
+.ex-fold { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; flex: none; padding: 0; border: 0; border-radius: var(--control-radius); background: transparent; color: var(--text-secondary); cursor: pointer; }
+.ex-fold:hover { background: var(--hover); }
+.ex-session.closed .ex-fold .i-chevron, .ex-window.closed .ex-fold .i-chevron { transform: rotate(-90deg); }
+.ex-pick { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; height: 100%; padding: 0 4px; border: 0; border-radius: var(--control-radius); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.ex-pick:hover { background: var(--hover); }
+.ex-pick .icon { width: 12px; height: 12px; color: var(--text-secondary); }
+.ex-scope { display: flex; align-items: center; gap: 6px; padding: 3px 4px 3px 8px; border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border)); border-radius: var(--panel-radius); background: color-mix(in srgb, var(--accent) 10%, transparent); font-size: var(--size-meta); color: var(--text-secondary); }
+.ex-scope .icon { width: 11px; height: 11px; color: var(--accent); }
+.ex-scope-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+
+/* Explore's session and window detail (FleetSessionDetailView,
+   FleetWindowDetailView). */
+.ex-detail-head { align-items: center; }
+.ex-detail-icon { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; flex: none; border-radius: var(--panel-radius); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.ex-detail-icon .icon { width: 22px; height: 22px; }
+.ex-work { padding: 1px 7px; border-radius: 999px; font-weight: 600; color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); white-space: nowrap; }
+.ex-facts-menu .popover { min-width: 300px; }
+.ex-facts-list { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; font-size: var(--size-detail); }
+.ex-facts-list dt { color: var(--text-secondary); }
+.ex-facts-list dd { margin: 0; font-family: var(--font-mono); overflow-wrap: anywhere; }
+.ex-detail { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 20px 28px; display: grid; align-content: start; gap: 18px; background: var(--editor); }
+.ex-detail > .flag { margin: 0; }
+.ex-detail-heading h3 { margin: 0; font-size: var(--size-body); font-weight: 600; }
+.ex-detail-heading p { margin: 3px 0 0; font-size: var(--size-detail); color: var(--text-secondary); }
+.ex-metrics { display: grid; grid-template-columns: repeat(auto-fill, minmax(108px, 1fr)); gap: 12px 18px; padding: 14px; border-radius: var(--lane-radius); background: var(--panel); }
+.ex-metric { display: grid; gap: 2px; }
+.ex-metric-value { font-size: var(--size-title); font-weight: 600; font-variant-numeric: tabular-nums; }
+.ex-metric-label { font-size: var(--size-meta); color: var(--text-secondary); }
+.ex-detail-window { display: grid; gap: 8px; }
+.ex-window-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; border-radius: var(--control-radius); background: transparent; color: var(--text); font: inherit; font-size: var(--size-body); font-weight: 600; text-align: left; cursor: pointer; }
+.ex-window-head:hover { background: var(--hover); }
+.ex-window-head > .icon { width: 13px; height: 13px; color: var(--text-secondary); }
+.ex-window-name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
+.ex-window-name .ex-work { font-size: var(--size-meta); }
+.ex-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 12px; }
+.ex-card { display: grid; gap: 8px; align-content: start; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--card-radius); background: var(--panel); min-width: 0; }
+.ex-card.attention { border-color: color-mix(in srgb, var(--orange) 55%, var(--border)); }
+.ex-card-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 0; border: 0; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; min-width: 0; }
+.ex-card-head .logo, .ex-card-head > .icon { width: 14px; height: 14px; flex: none; }
+.ex-card-title { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ex-card-head:hover .ex-card-title { color: var(--accent); }
+.ex-card-pane { font: var(--size-meta) var(--font-mono); color: var(--text-secondary); }
+.ex-card-go { width: 9px; height: 9px; color: var(--text-tertiary); transform: rotate(-90deg); }
+.ex-card-text { margin: 0; font-size: var(--size-detail); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 6; overflow: hidden; }
+.ex-card-text.none { color: var(--text-secondary); }
+.ex-card-meta { font-size: var(--size-meta); color: var(--text-tertiary); }
+
+/* Home's inspector: Steer this Work (WorkPromptComposer). */
+.steer { display: grid; gap: 8px; }
+.steer .section-label { margin-bottom: 0; }
+.steer .help, .steer .flag { margin: 0; font-size: var(--size-meta); }
+.steer .help { color: var(--text-secondary); }
+@media (max-width: 760px) {
+  .ex-detail { padding: 14px 14px 24px; }
+  .ex-detail-head { flex-wrap: wrap; }
+  .ex-detail-head .titles { flex-basis: calc(100% - 52px); }
+  .ex-detail-icon { width: 32px; height: 32px; }
+  .ex-session, .ex-window { min-height: 40px; }
+}

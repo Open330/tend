@@ -41,6 +41,11 @@ const deps = {
       exploreSorts: { topology: "Topology", recent: "Latest activity", myPrompt: "My latest prompt", agentActivity: "Agent latest update" },
       exploreMenuHelp: (group, order) => `by ${group}, ordered by ${order}`,
       showAllCount: (n) => `Show all ${n}`,
+      sessionMeta: (v) => `${v.host} · ${v.windows} windows · ${v.panes} panes`,
+      windowMeta: (v) => `${v.host} · ${v.panes} panes`,
+      windowCardMeta: (v) => `#${v.index} · ${v.panes} panes`,
+      workspaceFilter: (v) => `Workspace ${v.workspace}`,
+      noWorkspaceMatch: (v) => `No live session matches workspace ${v.workspace}.`,
     },
     { get: (t, k) => (k in t ? t[k] : String(k)) },
   ),
@@ -228,4 +233,79 @@ test("the empty states: nothing detected, nothing matching, and the count", () =
   search.value = "";
   search.fire("input");
   assert.equal(find(box, (n) => n.className === "ex-count").textContent, "3");
+});
+
+test("a session or window row opens its detail; the chevron only folds it", () => {
+  const box = new Node("div");
+  const two = { hosts: [
+    { alias: "mba", local: true, state: "online", remote: { agents: [
+      { agent_session_id: "a", kind: "codex", pane: "%1", tmux_socket: "s", state: "working", last_response: "Halfway there." },
+    ], panes: [
+      { pane_id: "%1", socket: "s", session: "a", window_id: "@1", window_index: "0", window_name: "one", current_command: "codex" },
+      { pane_id: "%2", socket: "s", session: "a", window_id: "@2", window_index: "1", window_name: "two", current_command: "zsh" },
+    ] } },
+  ] };
+  const replaced = [];
+  globalThis.history = { replaceState: (_s, _t, url) => replaced.push(url) };
+  const explore = mountExplore(box, deps);
+  explore.update(two);
+  const list = () => find(box, (n) => n.className === "ex-list");
+  const viewer = () => box.children[1];
+  const sessionRow = () => find(list(), (n) => n.className.startsWith("ex-session"));
+  // The chevron folds the session's windows away, and opens nothing.
+  find(sessionRow(), (n) => n.className === "ex-fold").click();
+  assert.equal(find(list(), (n) => n.className.startsWith("ex-window")), null, "folded");
+  assert.match(viewer().text, /selectPane/, "nothing opened");
+  find(sessionRow(), (n) => n.className === "ex-fold").click();
+  // The row opens the session's detail, with its address.
+  find(sessionRow(), (n) => n.className === "ex-pick").click();
+  assert.equal(replaced.at(-1), "/explore#session=a&socket=s");
+  assert.match(viewer().text, /mba · 2 windows · 2 panes/);
+  assert.match(viewer().text, /Halfway there\./, "a pane card with its latest activity");
+  assert.match(sessionRow().className, /selected/);
+  // A window card's header opens that window's detail; a pane card opens the pane.
+  find(viewer(), (n) => n.className === "ex-window-head").click();
+  assert.equal(replaced.at(-1), "/explore#window=%401&session=a&socket=s");
+  assert.match(viewer().text, /mba · 1 panes/);
+  find(viewer(), (n) => n.className === "ex-card-head").click();
+  assert.equal(replaced.at(-1), "/explore#pane=%251&socket=s");
+  assert.ok(find(viewer(), (n) => n.tag === "pre"), "the pane's output");
+  explore.destroy();
+  globalThis.history = { replaceState() {} };
+});
+
+test("a full-path pane link opens that server's pane, not one whose socket shares the file name", () => {
+  const box = new Node("div");
+  const twins = { hosts: [{ alias: "mba", local: true, state: "online", remote: { agents: [], panes: [
+    { pane_id: "%1", socket: "/tmp/a/default", session: "tend", window_index: "0", window_name: "on-a", current_command: "zsh" },
+    { pane_id: "%1", socket: "/tmp/b/default", session: "tend", window_index: "0", window_name: "on-b", current_command: "zsh" },
+  ] } }] };
+  for (const [socket, name] of [["/tmp/b/default", "on-b"], ["/tmp/a/default", "on-a"]]) {
+    window.location.hash = `#pane=%251&socket=${encodeURIComponent(socket)}`;
+    const explore = mountExplore(box, deps);
+    explore.update(twins);
+    const head = find(box.children[1], (n) => n.className === "ex-pane-head");
+    assert.ok(head, "the pane opened");
+    assert.match(head.text, new RegExp(`0:${name}`), `the pane on ${socket}`);
+    explore.destroy();
+  }
+  window.location.hash = "";
+});
+
+test("a deep link opens a window, falls back to its session, and a workspace filters", () => {
+  const box = new Node("div");
+  window.location.hash = "#window=%409&session=a&socket=s";
+  const explore = mountExplore(box, deps);
+  explore.update(fleet);
+  assert.match(box.children[1].text, /windowFellBack/, "the window is gone: its session");
+  assert.match(box.children[1].text, /mba · 2 windows · 2 panes/);
+  window.location.hash = "#workspace=nope&wsocket=s";
+  explore.update(fleet);
+  assert.match(find(box, (n) => n.className === "ex-list").text, /No live session matches workspace nope\./);
+  assert.match(find(box, (n) => n.className === "ex-scope").text, /Workspace nope/);
+  window.location.hash = "#workspace=a&wsocket=s";
+  explore.update(fleet);
+  assert.ok(find(box, (n) => n.dataset?.id === "mba:s:%1"), "the workspace's panes");
+  window.location.hash = "";
+  explore.destroy();
 });

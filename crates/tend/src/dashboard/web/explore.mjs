@@ -9,7 +9,21 @@
 // it. The page wires DOM helpers in (`deps`) so this module stays
 // testable.
 
-import { EXPLORE_SORTS, PINNED_ATTENTION_LIMIT, exploreSections, exploreSortOf, paneFromHash, paneHash } from "./explore-model.mjs";
+import {
+  EXPLORE_SORTS,
+  PINNED_ATTENTION_LIMIT,
+  exploreDetail,
+  exploreHash,
+  exploreSections,
+  exploreSortOf,
+  paneSelection,
+  sameSocket,
+  selectionFromHash,
+  sessionSelection,
+  treeKey,
+  windowSelection,
+  workspaceFromHash,
+} from "./explore-model.mjs";
 import { mountMessages } from "./explore-messages.mjs";
 import { MESSAGES_PATH, messagesLink, paneMessagesState, sessionMessagesState } from "./messages-model.mjs";
 import { openPaneStream } from "./pane-stream.mjs";
@@ -37,7 +51,7 @@ function storeSort(sort) {
 
 export function mountExplore(root, deps) {
   const { S, el, icon, button, logo, hostBadge, when, read, write, authHeaders, canWrite } = deps;
-  const view = { attention: null, show: "all", query: "", grouping: "host", sort: storedSort(), fleet: null, open: null, stream: null, poll: null, sending: new Set(), drafts: new Map(), collapsed: new Set(), closed: false, syncComposer: null, hash: null, mode: null, messages: null };
+  const view = { attention: null, show: "all", query: "", grouping: "host", sort: storedSort(), fleet: null, open: null, stream: null, poll: null, sending: new Set(), drafts: new Map(), collapsed: new Set(), closed: false, syncComposer: null, hash: null, mode: null, messages: null, detail: null, detailKey: null, facts: null, workspace: null };
 
   const sidebar = el("aside", "ex-side");
   const viewer = el("section", "ex-view");
@@ -157,7 +171,10 @@ export function mountExplore(root, deps) {
   const controls = el("div", "ex-controls");
   const field = el("div", "ex-field");
   field.append(icon("search"), search, menu);
-  controls.append(field);
+  // The workspace a `#workspace=` link narrowed Explore to, with a way out.
+  const scope = el("div", "ex-scope");
+  scope.hidden = true;
+  controls.append(field, scope);
   const list = el("div", "ex-list");
   list.setAttribute("role", "tree");
   sidebar.append(head, controls, list);
@@ -178,20 +195,63 @@ export function mountExplore(root, deps) {
     return node;
   }
 
+  /// A session or window row: the chevron folds it, the rest opens its
+  /// detail (the Mac's sidebar selects a session or window the same way).
+  function treeRow(kind, key, closed, glyph, name, n, open) {
+    const node = el("div", `${kind}${closed ? " closed" : ""}${view.detailKey === key ? " selected" : ""}`);
+    node.setAttribute("role", "treeitem");
+    node.setAttribute("aria-expanded", String(!closed));
+    const fold = el("button", "ex-fold");
+    fold.type = "button";
+    fold.setAttribute("aria-label", S.toggleFold);
+    fold.append(icon("chevron"));
+    fold.addEventListener("click", (event) => {
+      event?.stopPropagation?.();
+      if (closed) view.collapsed.delete(key);
+      else view.collapsed.add(key);
+      drawList();
+    });
+    const pick = el("button", "ex-pick");
+    pick.type = "button";
+    pick.append(icon(glyph), el("span", "ex-name", name), el("span", "ex-n", n));
+    pick.addEventListener("click", open);
+    node.append(fold, pick);
+    return node;
+  }
+
+  function drawScope() {
+    const ws = view.workspace;
+    scope.hidden = !ws;
+    if (!ws) {
+      scope.replaceChildren();
+      return;
+    }
+    const text = el("span", "ex-scope-text", S.workspaceFilter(ws));
+    const clear = button(S.clearScope, () => {
+      view.workspace = null;
+      writeHash(view.open ? paneSelection(view.open) : view.detail);
+      drawList();
+    }, "btn ghost small");
+    scope.replaceChildren(icon("filter"), text, clear);
+  }
+
   function drawList() {
     for (const option of shows.children) option.setAttribute("aria-checked", String(option.dataset.value === view.show));
+    drawScope();
     if (!view.fleet) {
       list.replaceChildren(el("div", "ex-empty", S.loading));
       return;
     }
     grouping.value = view.grouping;
     summary.title = S.exploreMenuHelp(grouping.value === "status" ? S.groupStatus : S.groupHost, S.exploreSorts[view.sort]);
-    const model = exploreSections(view.fleet, { show: view.show, query: view.query, grouping: view.grouping, sort: view.sort, attention: view.attention });
+    const model = exploreSections(view.fleet, { show: view.show, query: view.query, grouping: view.grouping, sort: view.sort, attention: view.attention, workspace: view.workspace });
     // "shown/all" while a filter is on, as the Mac's count.
     count.textContent = model.filtering ? `${model.total}/${model.all}` : String(model.all);
     if (model.empty) {
       const empty = el("div", "ex-empty");
-      if (model.empty === "none") {
+      if (model.empty === "noWorkspace") {
+        empty.textContent = S.noWorkspaceMatch(view.workspace);
+      } else if (model.empty === "none") {
         empty.append(el("div", "ex-empty-title", S.noPanesDetected), el("div", "ex-empty-detail", S.noPanesDetectedDetail));
       } else {
         empty.textContent = S.noMatchingPanes;
@@ -222,8 +282,11 @@ export function mountExplore(root, deps) {
         header.title = [section.error, section.latency != null ? `${section.latency} ms` : ""].filter(Boolean).join(" · ");
         nodes.push(header);
         for (const session of section.sessions) {
-          const sessionRow = el("div", "ex-session");
-          sessionRow.append(icon("chevron"), icon("layers"), el("span", "ex-name", session.name || "—"), el("span", "ex-n", String(session.rows.length)));
+          const sessionKey = treeKey(section, session);
+          // A filter opens everything it matched in (the Mac's
+          // `forceExpanded`).
+          const sessionClosed = !model.filtering && view.collapsed.has(sessionKey);
+          const sessionRow = treeRow("ex-session", sessionKey, sessionClosed, "layers", session.name || "—", String(session.rows.length), () => openDetail(sessionSelection(section, session)));
           // This host's sessions open Messages scoped to them (another
           // host's messages are on that host's daemon).
           if (section.local && session.name) {
@@ -233,21 +296,11 @@ export function mountExplore(root, deps) {
             sessionRow.append(messages);
           }
           nodes.push(sessionRow);
+          if (sessionClosed) continue;
           for (const window of session.windows) {
-            const key = `${section.title}\u0000${window.key}`;
-            // A filter opens every window it matched in (the Mac's
-            // `forceExpanded`).
+            const key = treeKey(section, window);
             const closed = !model.filtering && view.collapsed.has(key);
-            const windowRow = el("button", `ex-window${closed ? " closed" : ""}`);
-            windowRow.type = "button";
-            windowRow.setAttribute("aria-expanded", String(!closed));
-            windowRow.append(icon("chevron"), icon("window"), el("span", "ex-name", window.name || window.index), el("span", "ex-n", `#${window.index} · ${window.rows.length}`));
-            windowRow.addEventListener("click", () => {
-              if (closed) view.collapsed.delete(key);
-              else view.collapsed.add(key);
-              drawList();
-            });
-            nodes.push(windowRow);
+            nodes.push(treeRow("ex-window", key, closed, "window", window.name || window.index, `#${window.index} · ${window.rows.length}`, () => openDetail(windowSelection(section, session, window))));
             if (!closed) nodes.push(...window.rows.map(row));
           }
         }
@@ -268,16 +321,158 @@ export function mountExplore(root, deps) {
     view.poll = null;
   }
 
+  /// The address names what is open, and keeps the workspace filter.
+  function writeHash(selection) {
+    const hash = exploreHash(selection, view.workspace);
+    view.hash = hash;
+    history.replaceState(null, "", `${window.location.pathname}${hash}`);
+  }
+
   function openPane(item, { push = true } = {}) {
     closeStream();
     view.open = item;
-    if (push) history.replaceState(null, "", `${window.location.pathname}${paneHash(item)}`);
+    view.detail = null;
+    view.detailKey = null;
+    if (push) writeHash(paneSelection(item));
     drawList();
     drawViewer();
   }
 
+  /// A session's or a window's detail in the main area.
+  function openDetail(selection, { push = true } = {}) {
+    closeStream();
+    view.open = null;
+    view.detail = selection;
+    view.facts = null;
+    if (push) writeHash(selection);
+    drawViewer();
+    drawList();
+  }
+
+  function fact(list, label, value) {
+    if (!value) return;
+    list.append(el("dt", null, label), el("dd", null, value));
+  }
+
+  function card(item) {
+    const box = el("article", `ex-card ${item.group}`);
+    const head = el("button", "ex-card-head");
+    head.type = "button";
+    head.append(el("span", `ex-dot ${item.group}`));
+    const mark = item.product ? logo(item.product) : null;
+    head.append(mark || icon(item.state ? "people" : "terminal"));
+    head.append(el("span", "ex-card-title", item.title));
+    if (item.state) head.append(el("span", `ex-state ${item.group}`, S.stateLabels[item.state] || item.state));
+    head.append(el("span", "ex-card-pane", item.pane), icon("chevron", "ex-card-go"));
+    head.addEventListener("click", () => openPane(item.row));
+    box.append(head);
+    const text = item.latest || (item.state ? S.noSummary : item.command);
+    if (text) box.append(el("p", `ex-card-text${item.latest ? "" : " none"}`, text));
+    if (item.activityAt) box.append(el("div", "ex-card-meta", `${S.exploreSorts.recent} · ${when(item.activityAt)}`));
+    return box;
+  }
+
+  function cardGrid(cards) {
+    const grid = el("div", "ex-cards");
+    grid.append(...cards.map(card));
+    if (!cards.length) grid.append(el("div", "ex-empty", S.noPanes));
+    return grid;
+  }
+
+  function drawDetail() {
+    if (!view.fleet) {
+      viewer.replaceChildren(el("div", "ex-placeholder", S.loading));
+      return;
+    }
+    // A redraw would close the facts someone is reading.
+    if (view.facts?.open) return;
+    const detail = exploreDetail(view.fleet, view.detail, { sort: view.sort, attention: view.attention });
+    const before = viewer.querySelector?.(".ex-detail");
+    const scroll = before ? before.scrollTop : 0;
+    if (!detail || detail.kind === "gone") {
+      view.detailKey = null;
+      const empty = el("div", "ex-placeholder");
+      empty.append(icon("explore", "big"), el("p", null, S.detailGone));
+      viewer.replaceChildren(empty);
+      return;
+    }
+    view.detailKey = detail.key;
+    const windowView = detail.kind === "window";
+    const top = el("header", "ex-pane-head ex-detail-head");
+    const badge = el("span", "ex-detail-icon");
+    badge.append(icon(windowView ? "window" : "layers"));
+    top.append(badge);
+    const titles = el("div", "titles");
+    titles.append(el("h2", null, detail.name || (windowView ? detail.id : detail.sessionId) || "—"));
+    const meta = el("div", "sub");
+    meta.append(el("span", null, windowView ? S.windowMeta({ host: detail.host, panes: detail.paneCount }) : S.sessionMeta({ host: detail.host, windows: detail.windowCount, panes: detail.paneCount })));
+    if (windowView && detail.work) meta.append(el("span", "ex-work", detail.work));
+    titles.append(meta);
+    top.append(titles);
+    if (detail.local && (windowView ? detail.session : detail.name)) {
+      top.append(button(S.paneMessages, () => go(messagesLink(sessionMessagesState({ host: detail.host, local: true, session: windowView ? detail.session : detail.name, socket: detail.socket }))), "btn small", "people"));
+    }
+    // Details: the runtime identity, as the Mac's popover.
+    const facts = el("details", "menu ex-facts-menu");
+    const factsButton = el("summary", "btn small");
+    factsButton.append(el("span", null, windowView ? S.runtimeDetails : S.details));
+    const pop = el("div", "popover");
+    const list = el("dl", "ex-facts-list");
+    fact(list, S.factHost, detail.host);
+    fact(list, S.factSocket, detail.socket);
+    fact(list, S.factSession, windowView ? detail.session : detail.sessionId || detail.name);
+    if (windowView) {
+      fact(list, S.factWindow, detail.id);
+      fact(list, S.factIndex, detail.index);
+    }
+    pop.append(list);
+    facts.append(factsButton, pop);
+    view.facts = facts;
+    top.append(facts);
+
+    const body = el("div", "ex-detail");
+    if (detail.fallback) body.append(el("p", "flag warn", S.windowFellBack));
+    if (windowView) {
+      const metrics = el("div", "ex-metrics");
+      for (const [label, value] of [
+        [S.metricAgents, detail.metrics.agents],
+        [S.metricWorking, detail.metrics.working],
+        [S.metricAttention, detail.metrics.attention],
+        [S.metricSubagents, detail.metrics.subagents],
+        [S.metricProcesses, detail.metrics.processes],
+      ]) {
+        const metric = el("div", "ex-metric");
+        metric.append(el("span", "ex-metric-value", String(value)), el("span", "ex-metric-label", label));
+        metrics.append(metric);
+      }
+      body.append(metrics);
+      const heading = el("div", "ex-detail-heading");
+      heading.append(el("h3", null, S.agentReports), el("p", null, S.agentReportsHelp));
+      body.append(heading, cardGrid(detail.cards));
+    } else {
+      const heading = el("div", "ex-detail-heading");
+      heading.append(el("h3", null, S.windowsHeading), el("p", null, S.windowsHelp));
+      body.append(heading);
+      for (const window of detail.windows) {
+        const section = el("section", "ex-detail-window");
+        const head = el("button", "ex-window-head");
+        head.type = "button";
+        const name = el("span", "ex-window-name");
+        name.append(el("span", "ex-name", window.name || window.id));
+        if (window.work) name.append(el("span", "ex-work", window.work));
+        head.append(icon("window"), name, el("span", "ex-n", S.windowCardMeta({ index: window.index, panes: window.paneCount })), icon("chevron", "ex-card-go"));
+        head.addEventListener("click", () => openDetail(window.selection));
+        section.append(head, cardGrid(window.cards));
+        body.append(section);
+      }
+    }
+    viewer.replaceChildren(top, body);
+    body.scrollTop = scroll;
+  }
+
   function drawViewer() {
     const item = view.open;
+    if (!item && view.detail) return drawDetail();
     if (!item) {
       const empty = el("div", "ex-placeholder");
       empty.append(icon("explore", "big"), el("p", null, S.selectPane));
@@ -429,23 +624,33 @@ export function mountExplore(root, deps) {
   /// A pane link: on mount, and again whenever the link itself changes.
   function showLinkedPane() {
     const fleet = view.fleet;
-    // Do not redraw the list under someone typing in the filter.
-    if (document.activeElement !== search) drawList();
     const hash = window.location.hash;
-    const wanted = paneFromHash(hash);
+    const selection = selectionFromHash(hash);
     const changed = hash !== view.hash;
     view.hash = hash;
+    // The workspace a link names narrows the tree until it is cleared.
+    if (changed) view.workspace = workspaceFromHash(hash);
+    // Do not redraw the list under someone typing in the filter.
+    if (document.activeElement !== search) drawList();
     if (view.suspended && view.open) {
       view.suspended = false;
       drawViewer();
     }
-    if ((changed || !view.open) && wanted && fleet) {
-      const rows = exploreSections(fleet, { show: "all" }).sections.flatMap((s) => s.rows);
-      // A link without a host names this host's pane (paneHash).
-      const found = rows.find(
-        (r) => r.pane === wanted.pane && (!wanted.socket || r.socket === wanted.socket) && (wanted.host ? r.host === wanted.host : r.local),
-      );
-      if (found && found.id !== view.open?.id) openPane(found, { push: false });
+    if (selection?.kind === "pane") {
+      if ((changed || !view.open) && fleet) {
+        const rows = exploreSections(fleet, { show: "all" }).sections.flatMap((s) => s.rows);
+        // A link without a host names this host's pane (paneHash).
+        const found = rows.find(
+          (r) => r.pane === selection.pane && sameSocket(r.socket, selection.socket) && (selection.host ? r.host === selection.host : r.local),
+        );
+        if (found && found.id !== view.open?.id) openPane(found, { push: false });
+      }
+    } else if (selection && changed) {
+      openDetail(selection, { push: false });
+    } else if (view.detail && !view.open) {
+      // A session or window detail follows the Fleet as it changes.
+      drawDetail();
+      if (document.activeElement !== search) drawList();
     }
   }
 
@@ -476,6 +681,7 @@ export function mountExplore(root, deps) {
       view.messages = null;
       view.drafts.clear();
       view.open = null;
+      view.detail = null;
       view.fleet = null;
       root.replaceChildren();
     },

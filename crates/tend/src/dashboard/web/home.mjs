@@ -10,6 +10,7 @@ import { languageOf, relativeTime, stringsFor, textOf } from "./home-strings.mjs
 import { itemHash, linkedHostOf, linkedItemOf } from "./needs-model.mjs";
 import { mountExplore } from "./explore.mjs";
 import { MESSAGES_PATH, messagesReturnPath } from "./messages-model.mjs";
+import { legacyLink } from "./legacy-link.mjs";
 import { openAccessManager } from "./operators-admin.mjs";
 import { openShareManager } from "./sharing-admin.mjs";
 
@@ -64,20 +65,21 @@ const state = {
 
 // ---- Credentials -------------------------------------------------------
 
-/// `#token=…` from a link (never sent to the server) moves into storage and
-/// out of the address bar, the same bootstrap the main page does.
+/// A link's credential (`#token=…`, or the old `?token=…`) moves into
+/// storage and out of the address bar before anything else reads it, and a
+/// link the old workbench made becomes the address it now opens
+/// (legacy-link.mjs): the credential is never carried into it.
 export function bootstrapToken() {
-  const params = new URLSearchParams(String(window.location.hash || "").replace(/^#/, ""));
-  const token = params.get("token");
-  if (!token) return;
-  try {
-    localStorage.setItem(TOKEN_KEY, token);
-  } catch {
-    // Storage blocked: the session cookie or a proxy may still authorize.
+  const { pathname, search, hash } = window.location;
+  const { token, href } = legacyLink(pathname, search, hash);
+  if (token) {
+    try {
+      localStorage.setItem(TOKEN_KEY, token);
+    } catch {
+      // Storage blocked: the session cookie or a proxy may still authorize.
+    }
   }
-  params.delete("token");
-  const rest = params.toString();
-  history.replaceState(null, "", `${window.location.pathname}${window.location.search}${rest ? `#${rest}` : ""}`);
+  if (href !== `${pathname}${search || ""}${hash || ""}`) history.replaceState(null, "", href);
 }
 
 function authHeaders() {
@@ -1358,6 +1360,88 @@ function replyComposer(unit, key, target) {
   return null;
 }
 
+/// The Work a unit's source names, as tendd's Work control takes it.
+function workIdentity(unit) {
+  const source = unit.type === "work" ? unit.source : null;
+  return source?.kind === "work" && source.workspace && source.work ? { workspace_id: String(source.workspace), work_id: String(source.work) } : null;
+}
+
+/// Steer this Work (the Mac's WorkPromptComposer, WorkConsoleViews.swift):
+/// the next instruction to every live agent of a Work at once, through
+/// `POST /api/work-control/prompt`. Operator-only. The route reaches this
+/// host's agents; as on the Mac, nothing is sent while one of the Work's
+/// hosts is registered in observe mode.
+function steerComposer(unit) {
+  const identity = workIdentity(unit);
+  if (!identity || !canWrite()) return null;
+  const key = `steer:${unit.id}`;
+  const agents = unit.agents || [];
+  const here = agents.filter((agent) => !agent.remote);
+  const observe = agents.some((agent) => agent.remote && state.board?.observeHosts?.includes(agent.host));
+  const elsewhere = agents.length - here.length;
+  const box = el("section", "steer");
+  box.append(el("div", "section-label", S.steerWork));
+  const composerBox = el("div", "composer steer-composer");
+  const area = el("textarea", "field");
+  area.rows = 2;
+  area.dataset.key = key;
+  area.maxLength = 16384;
+  area.placeholder = S.steerPlaceholder;
+  area.value = state.drafts.get(key) || "";
+  // Frozen while sending, so nothing typed now is lost when it clears.
+  area.disabled = state.busy.has(key);
+  // The Mac's `canSend`: words, not already sending, an agent this host's
+  // Work control reaches, and no host of the Work in observe mode.
+  const canSend = () => Boolean(area.value.trim()) && !state.busy.has(key) && here.length > 0 && !observe;
+  const send = button(S.sendToCount(here.length), () => {
+    if (canSend()) steerWork(identity, area.value, key);
+  }, "btn primary");
+  const sync = () => (send.disabled = !canSend());
+  area.addEventListener("input", () => {
+    if (area.value) state.drafts.set(key, area.value);
+    else state.drafts.delete(key);
+    sync();
+  });
+  area.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !send.disabled) {
+      event.preventDefault();
+      send.click();
+    }
+  });
+  sync();
+  const row = el("div", "row end");
+  row.append(send);
+  composerBox.append(area, row);
+  box.append(composerBox);
+  if (observe) box.append(el("p", "flag warn", S.steerObserveHost));
+  else if (elsewhere) box.append(el("p", "help", S.steerThisHost(elsewhere)));
+  const result = resultLine(key);
+  if (result) box.append(result);
+  return box;
+}
+
+async function steerWork(identity, text, key) {
+  if (!text.trim() || state.busy.has(key)) return;
+  state.busy.add(key);
+  state.results.delete(key);
+  render();
+  try {
+    const answer = await write("/api/work-control/prompt", { identity, text: text.trim(), submit: true });
+    // Clear only what was sent: a newer text typed since stays.
+    if (state.drafts.get(key) === text) state.drafts.delete(key);
+    const sent = Number(answer?.succeeded) || 0;
+    const tried = Number(answer?.attempted) || sent;
+    state.results.set(key, sent < tried ? { ok: false, text: S.steerPartial(sent, tried) } : { ok: true, text: S.steerSent(sent) });
+    setTimeout(refresh, 600);
+  } catch (error) {
+    if (error.auth && error.status === 401) return lostAccess(error);
+    state.results.set(key, { ok: false, text: error.message });
+  } finally {
+    state.busy.delete(key);
+    render();
+  }
+}
+
 function renderInspector() {
   const box = $("inspector");
   const unit = findSelected(state.selected);
@@ -1408,6 +1492,8 @@ function renderInspector() {
     if (line) now.append(line);
   }
   body.append(now);
+  const steer = steerComposer(unit);
+  if (steer) body.append(steer);
 
   const stages = el("section");
   stages.append(el("div", "section-label", S.stages));
@@ -1688,15 +1774,7 @@ const ROUTES = {
   "/settings": "settings",
 };
 
-/// Links the old workbench made (`/#pane=…`, `/#workspace=…`, …) still
-/// open what they named there.
-export function legacyTarget(pathname, hash) {
-  if (pathname !== "/") return null;
-  const params = new URLSearchParams(String(hash || "").replace(/^#/, ""));
-  return ["pane", "workspace", "session", "window", "message", "wsocket"].some((key) => params.has(key))
-    ? `/workbench${hash}`
-    : null;
-}
+export { legacyLink };
 
 function go(route, { push = true } = {}) {
   state.route = route;
@@ -2032,11 +2110,6 @@ function translate() {
 
 export function start() {
   bootstrapToken();
-  const legacy = legacyTarget(window.location.pathname, window.location.hash);
-  if (legacy) {
-    window.location.replace(legacy);
-    return;
-  }
   state.route = ROUTES[window.location.pathname] || "home";
   for (const item of document.querySelectorAll(".rail-item[data-route]")) {
     item.addEventListener("click", (event) => {
