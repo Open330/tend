@@ -146,6 +146,7 @@ fn test_key() -> SigningKey {
     SigningKey::from_slice(&[0x42; 32]).unwrap()
 }
 
+#[cfg(unix)]
 fn key_pem() -> String {
     use p256::pkcs8::{EncodePrivateKey, LineEnding};
     test_key().to_pkcs8_pem(LineEnding::LF).unwrap().to_string()
@@ -1158,6 +1159,7 @@ fn write_key(dir: &std::path::Path, name: &str, contents: &str, mode: u32) -> st
     path
 }
 
+#[cfg(unix)]
 fn push_toml(key_path: &std::path::Path) -> toml::Value {
     toml::Value::try_from(json!({
         "enabled": true, "key_path": key_path.display().to_string(),
