@@ -1,6 +1,7 @@
 # Keep and Close all across the Fleet
 
-Status: proposal. Not built. Follow-up to
+Status: approved 2026-11-19; being built in three PRs (1: relay and
+manager). Follow-up to
 [STALE_QUESTIONS.md](STALE_QUESTIONS.md).
 
 ## Today

@@ -3324,18 +3324,18 @@ async fn hello_names_the_dashboard_only_when_there_is_one() {
     assert!(without.get("dashboard_url").is_none(), "{without}");
 }
 
-#[tokio::test]
-#[allow(clippy::too_many_lines)] // one switch, both settings
-async fn keep_and_close_unanswerable_are_operator_actions_and_close_follows_its_switch() {
-    use crate::collaboration::subject_check::{
-        CloseItem, GoneCause, CLOSE_UNANSWERABLE_CAPABILITY, CLOSE_UNANSWERABLE_OFF,
-        SUBJECT_CHECK_CAPABILITY,
-    };
+/// Two questions from `gone`, folded, and a registry that shows `gone`
+/// bound to %42 on server A with %42 gone from a fresh scan: what Close all
+/// reads again in its transaction.
+async fn unanswerable_fixture() -> (
+    std::sync::Arc<crate::collaboration::CollaborationStore>,
+    Vec<crate::collaboration::subject_check::CloseItem>,
+    crate::state::SharedStore,
+) {
+    use crate::collaboration::subject_check::{CloseItem, GoneCause};
     use crate::collaboration::{
         CollaborationOptions, CollaborationStore, HumanAction, NewRequest, Participant, RequestKind,
     };
-    let dir = tempdir().unwrap();
-    let sock = dir.path().join("tend-unanswerable.sock");
     let mailbox = CollaborationStore::in_memory(CollaborationOptions::default());
     let asker: Participant = serde_json::from_value(serde_json::json!({
         "launch_purpose": "worker", "agent_kind": "claude_code", "agent_session_id": "gone",
@@ -3403,6 +3403,18 @@ async fn keep_and_close_unanswerable_are_operator_actions_and_close_follows_its_
             }],
         });
     }
+    (mailbox, pairs, registry)
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)] // one switch, both settings
+async fn keep_and_close_unanswerable_are_operator_actions_and_close_follows_its_switch() {
+    use crate::collaboration::subject_check::{
+        CLOSE_UNANSWERABLE_CAPABILITY, CLOSE_UNANSWERABLE_OFF, SUBJECT_CHECK_CAPABILITY,
+    };
+    let dir = tempdir().unwrap();
+    let sock = dir.path().join("tend-unanswerable.sock");
+    let (mailbox, pairs, registry) = unanswerable_fixture().await;
     let server = Server::new(sock.clone(), registry).with_collaboration(mailbox.clone());
     let (tx, rx) = broadcast::channel(1);
     let handle = tokio::spawn(async move { server.run(rx).await.unwrap() });
@@ -3480,6 +3492,84 @@ async fn keep_and_close_unanswerable_are_operator_actions_and_close_follows_its_
         .await
         .unwrap();
     assert_eq!(queue.unanswerable_count, 0);
+    tx.send(()).unwrap();
+    handle.await.unwrap();
+}
+
+/// A Keep and a Close all sent over Fleet run as the holding host's own:
+/// each closure records the person's real surface and actor, and the
+/// collaboration audit records the controller they came through.
+#[tokio::test]
+async fn fleet_keep_and_close_record_the_person_and_their_controller() {
+    use crate::collaboration::subject_check::ClosureReason;
+    use crate::collaboration_audit::{CollaborationAuditOperation, FleetVia};
+    use crate::fleet::{FleetCloseUnanswerable, FleetDecisionKeep};
+    let dir = tempdir().unwrap();
+    let sock = dir.path().join("tend-fleet-unanswerable.sock");
+    let (mailbox, pairs, registry) = unanswerable_fixture().await;
+    mailbox.set_close_unanswerable(true);
+    let audit = CollaborationAuditLog::in_memory();
+    let server = Server::new(sock.clone(), registry)
+        .with_collaboration(mailbox.clone())
+        .with_collaboration_audit(audit.clone());
+    let (tx, rx) = broadcast::channel(1);
+    let handle = tokio::spawn(async move { server.run(rx).await.unwrap() });
+    wait_for_socket(&sock).await;
+    let client = Client::new(sock.clone());
+
+    let kept = client
+        .decision_keep_from_fleet(&FleetDecisionKeep {
+            id: pairs[0].request_id.clone(),
+            episode: pairs[0].episode.clone(),
+            actor: "device:phone-1".into(),
+            surface: "ios".into(),
+            controller: "jiun-mbp".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(kept.request_id, pairs[0].request_id);
+    let outcome = client
+        .decision_close_unanswerable_from_fleet(&FleetCloseUnanswerable {
+            items: pairs.clone(),
+            actor: "web:owner@example.com".into(),
+            surface: "web".into(),
+            controller: "jiun-mbp".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(outcome.closed, [pairs[1].request_id.clone()]);
+    assert_eq!(outcome.skipped[0].reason, "kept");
+
+    let closed = mailbox.row_for_test(&pairs[1].request_id).await.unwrap();
+    let closure = closed.closure.expect("closure recorded");
+    assert_eq!(closure.reason, ClosureReason::SubjectGone);
+    assert_eq!(closure.by, "person");
+    assert_eq!(closure.surface, "web");
+    assert_eq!(closure.actor.as_deref(), Some("web:owner@example.com"));
+
+    let entries = audit.entries().await;
+    let via = |operation| {
+        entries
+            .iter()
+            .find(|entry| entry.operation == operation)
+            .and_then(|entry| entry.via_fleet.clone())
+    };
+    assert_eq!(
+        via(CollaborationAuditOperation::DecisionKeep),
+        Some(FleetVia {
+            controller: "jiun-mbp".into(),
+            actor: "device:phone-1".into(),
+            surface: "ios".into(),
+        })
+    );
+    assert_eq!(
+        via(CollaborationAuditOperation::DecisionCloseUnanswerable),
+        Some(FleetVia {
+            controller: "jiun-mbp".into(),
+            actor: "web:owner@example.com".into(),
+            surface: "web".into(),
+        })
+    );
     tx.send(()).unwrap();
     handle.await.unwrap();
 }

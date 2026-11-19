@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fleet relays apply Keep and Close all for questions nobody can answer on
+  their own host (`fleet_decision_unanswerable_v1`, and
+  `fleet_close_unanswerable_v1` while that host's `[review]
+  close_unanswerable` is on). The holding host revalidates every item under
+  its own locks; each closure keeps the person's real surface and actor,
+  and the collaboration audit records the controller it came through
+  (`via_fleet`). The relay sends them as `fleet_decision_keep` and
+  `fleet_decision_close_unanswerable`, which a daemon without
+  `decision_via_fleet_v1` refuses, so an updated relay over an older
+  daemon fails closed. Only the dashboard's decision routes will send them; the
+  raw Fleet command route and the IPC socket refuse them.
+  (`docs/proposals/FLEET_UNANSWERABLE.md`, step 1 of 3.)
 - iOS: notifications from the dashboard's host (design: docs/proposals/
   IOS_APP.md, "Push"). Settings has a switch, and Your turn offers it once
   when the host sends notifications; iOS asks for permission only then. A

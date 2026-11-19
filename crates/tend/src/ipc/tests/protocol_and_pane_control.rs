@@ -1511,6 +1511,32 @@ async fn fleet_snapshot_selector_and_command_round_trip_over_ipc() {
         .await
         .expect_err("refused before it reaches the host");
     assert!(refused.to_string().contains("Needs you"), "{refused}");
+    // Nor a Keep or a Close all on another host's questions.
+    for operation in [
+        FleetOperation::DecisionKeep {
+            keep: crate::fleet::FleetDecisionKeep {
+                id: "rq_1".into(),
+                episode: "ep_1".into(),
+                actor: "web:someone".into(),
+                surface: "web".into(),
+                controller: "here".into(),
+            },
+        },
+        FleetOperation::DecisionCloseUnanswerable {
+            close: crate::fleet::FleetCloseUnanswerable {
+                items: Vec::new(),
+                actor: "web:someone".into(),
+                surface: "web".into(),
+                controller: "here".into(),
+            },
+        },
+    ] {
+        let refused = client
+            .fleet_execute("dev", &operation)
+            .await
+            .expect_err("refused before it reaches the host");
+        assert!(refused.to_string().contains("Needs you"), "{refused}");
+    }
 
     command_task.await.unwrap();
     drop(updates);

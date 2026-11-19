@@ -44,6 +44,13 @@ pub(super) async fn handle(
                     "review decisions over Fleet are taken from the dashboard's Needs you page"
                         .into(),
                 ),
+                // Likewise a person's Keep or Close all on another host's
+                // questions: over this socket an agent could close them.
+                FleetOperation::DecisionKeep { .. }
+                | FleetOperation::DecisionCloseUnanswerable { .. } => Some(
+                    "Keep and Close all over Fleet are taken from the dashboard's Needs you page"
+                        .into(),
+                ),
                 _ => None,
             };
             if let Some(error) = invalid {
