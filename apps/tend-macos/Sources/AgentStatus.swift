@@ -131,6 +131,20 @@ enum TendAgentStatus: Hashable, Sendable {
         }
     }
 
+    /// The hue whose ink this status's word wears (4.5:1 or more); nil for
+    /// states whose hue has no readable text form (idle's mint, others):
+    /// their word is secondary ink, their dot keeps the colour.
+    var stateHue: TendStateHue? {
+        switch self {
+        case .error: .red
+        case .needsInput, .asked: .orange
+        case .limited: .purple
+        case .working: .blue
+        case .done: .green
+        case .idle, .other: nil
+        }
+    }
+
     var symbol: String {
         switch self {
         case .error: "exclamationmark.octagon.fill"
@@ -165,6 +179,15 @@ struct AgentStatusTag: View {
     let status: TendAgentStatus
     var showsLabel = true
     var detailed = false
+    /// On a selected or tinted row the word is label ink; the dot keeps the
+    /// colour (docs/proposals/MAC_DESIGN.md).
+    var onTint = false
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var wordInk: Color {
+        if onTint { return TendInk.label(colorScheme) }
+        return status.stateHue.map { TendInk.state($0, colorScheme) } ?? TendInk.secondary(colorScheme)
+    }
 
     var body: some View {
         HStack(spacing: 5) {
@@ -174,7 +197,7 @@ struct AgentStatusTag: View {
             if showsLabel {
                 Text(detailed ? status.label() : status.shortLabel)
                     .font(TendType.meta.weight(.medium))
-                    .foregroundStyle(status.color)
+                    .foregroundStyle(wordInk)
                     .lineLimit(1)
             }
         }

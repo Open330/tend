@@ -500,7 +500,7 @@ private struct WatchPaneRow: View {
                         .layoutPriority(1)
                     TendUnreadDot(pane: pane.id) // WS-A
                     Spacer(minLength: 3)
-                    WatchPaneRowTrailing(pane: pane)
+                    WatchPaneRowTrailing(pane: pane, onTint: highlight == .selected)
                 }
                 .padding(.trailing, 8)
             }
@@ -531,13 +531,15 @@ private struct WatchPaneRow: View {
 /// dot so the column stays quiet. A plain shell shows its command.
 private struct WatchPaneRowTrailing: View {
     let pane: TendWatchPane
+    /// The row is selected: the status word sits on the accent tint.
+    var onTint = false
 
     var body: some View {
         if let status = pane.agentStatus {
             // In a narrow sidebar the status keeps its dot and gives up its
             // word before the pane's name does (the row's help says it).
             ViewThatFits(in: .horizontal) {
-                AgentStatusTag(status: status, showsLabel: status.priority <= 3)
+                AgentStatusTag(status: status, showsLabel: status.priority <= 3, onTint: onTint)
                 AgentStatusTag(status: status, showsLabel: false)
             }
         } else if let command = pane.pane.currentCommand.nonEmpty {
@@ -630,7 +632,7 @@ struct WatchFlatPaneRow: View {
                             .layoutPriority(1)
                         TendUnreadDot(pane: pane.id) // WS-A
                         Spacer(minLength: 3)
-                        WatchPaneRowTrailing(pane: pane)
+                        WatchPaneRowTrailing(pane: pane, onTint: highlight == .selected)
                     }
                     if let activity = watchPaneActivity(pane) {
                         Text(activity)
