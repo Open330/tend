@@ -96,6 +96,22 @@ fn stderr_log(path: &Path) -> Stdio {
     Stdio::from(std::fs::File::create(path).expect("create tendd stderr log"))
 }
 
+/// The NDJSON file at `path` once it holds complete lines naming every one
+/// of `needles`, or whatever it holds after a 10 s ceiling. Writers append
+/// asynchronously (the IPC layer answers from memory), so a fixed sleep
+/// before reading it flakes on a slow disk.
+fn wait_for_records(path: &Path, needles: &[&str]) -> String {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let text = std::fs::read_to_string(path).unwrap_or_default();
+        let complete = text.ends_with('\n') && needles.iter().all(|n| text.contains(n));
+        if complete || Instant::now() >= deadline {
+            return text;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 /// Private data/state homes under `dir`, created.
 fn isolated_homes(dir: &Path) -> (PathBuf, PathBuf) {
     let data_home = dir.join("data-home");
@@ -494,11 +510,6 @@ fn recap_surfaces_disk_backed_prompt_history() {
     send("first message");
     send("second message");
 
-    // Give the writer task a moment to flush both appends to disk —
-    // the IPC layer reads from in-memory state so it's already there,
-    // but the disk-roundtrip assertion at the bottom needs the bytes.
-    std::thread::sleep(Duration::from_millis(150));
-
     let out = d
         .cli()
         .args(["recap", "--pane", "%77"])
@@ -521,9 +532,9 @@ fn recap_surfaces_disk_backed_prompt_history() {
 
     // Verify the on-disk file is what we expect — proves we're not just
     // hitting an in-memory cache that lies about persistence.
-    let on_disk = std::fs::read_to_string(&history_path).expect("read history file");
-    assert!(on_disk.contains("first message"));
-    assert!(on_disk.contains("second message"));
+    let on_disk = wait_for_records(&history_path, &["first message", "second message"]);
+    assert!(on_disk.contains("first message"), "{on_disk}");
+    assert!(on_disk.contains("second message"), "{on_disk}");
     assert!(
         on_disk.lines().count() >= 2,
         "expected at least 2 NDJSON lines, got:\n{on_disk}"
@@ -713,6 +724,19 @@ fn curl_available() -> bool {
         .is_ok_and(|s| s.success())
 }
 
+/// The port the dashboard daemon `child` logs. Kills it before panicking:
+/// it is not yet wrapped in `Daemon`, and dropping a `Child` leaves it running.
+fn dashboard_port(rx: &mpsc::Receiver<u16>, child: &mut Child) -> u16 {
+    match rx.recv_timeout(DAEMON_READY_TIMEOUT) {
+        Ok(port) => port,
+        Err(e) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("dashboard never logged its bound port ({e})");
+        }
+    }
+}
+
 fn spawn_dashboard(token: Option<&str>) -> Option<DashboardDaemon> {
     if !curl_available() {
         eprintln!("skipping dashboard test — curl not on PATH");
@@ -811,9 +835,7 @@ path = {}
         }
     });
 
-    let port = rx
-        .recv_timeout(DAEMON_READY_TIMEOUT)
-        .expect("dashboard never logged its bound port");
+    let port = dashboard_port(&rx, &mut child);
     wait_for_daemon(&mut child, &socket, None);
 
     Some(DashboardDaemon {
@@ -887,7 +909,8 @@ fn manual_dashboard_without_token_fails_startup() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("run tendd without dashboard token");
-    let deadline = Instant::now() + Duration::from_secs(2);
+    // A ceiling, not the expected time: the rejection comes at once.
+    let deadline = Instant::now() + DAEMON_READY_TIMEOUT;
     loop {
         if child.try_wait().expect("poll tendd startup").is_some() {
             break;
@@ -895,7 +918,9 @@ fn manual_dashboard_without_token_fails_startup() {
         if Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            panic!("tendd did not reject a missing dashboard token within 2s");
+            panic!(
+                "tendd did not reject a missing dashboard token within {DAEMON_READY_TIMEOUT:?}"
+            );
         }
         std::thread::sleep(Duration::from_millis(20));
     }
