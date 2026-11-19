@@ -322,11 +322,22 @@ pub(crate) trait Engine: Send + Sync + 'static {
     }
     /// Look at a target's pane now, read-only: a reason code.
     fn observe(&self, planned: &PlannedTarget, snapshot: &Snapshot) -> &'static str;
+    /// The account homes a target's run touches (the stopped agent's, the
+    /// relaunch's), taken before it starts ([`crate::home_gate`]). `None`:
+    /// none to gate.
+    fn homes(
+        &self,
+        _request: &SwapRequest,
+        _target: &Self::Target,
+    ) -> Option<(crate::home_gate::HomeKey, crate::home_gate::HomeKey)> {
+        None
+    }
     fn execute(
         &self,
         request: &SwapRequest,
         target: &Self::Target,
         observer: &mut dyn EffectObserver,
+        homes: crate::home_gate::HeldHomes,
     ) -> SwapOutcome;
 }
 
@@ -483,13 +494,22 @@ impl Engine for RealEngine {
         )
     }
 
+    fn homes(
+        &self,
+        request: &SwapRequest,
+        target: &Self::Target,
+    ) -> Option<(crate::home_gate::HomeKey, crate::home_gate::HomeKey)> {
+        target.home_keys(request)
+    }
+
     fn execute(
         &self,
         request: &SwapRequest,
         target: &Self::Target,
         observer: &mut dyn EffectObserver,
+        homes: crate::home_gate::HeldHomes,
     ) -> SwapOutcome {
-        account_swap::execute_target(request, target, observer, self.probe.as_deref())
+        account_swap::execute_target(request, target, observer, self.probe.as_deref(), homes)
     }
 }
 
@@ -616,15 +636,28 @@ impl Engine for DaemonEngine {
         }
     }
 
+    fn homes(
+        &self,
+        request: &SwapRequest,
+        target: &DaemonTarget,
+    ) -> Option<(crate::home_gate::HomeKey, crate::home_gate::HomeKey)> {
+        match (self, target) {
+            (Self::Real(engine), DaemonTarget::Real(target)) => engine.homes(request, target),
+            #[cfg(feature = "test-support")]
+            _ => None,
+        }
+    }
+
     fn execute(
         &self,
         request: &SwapRequest,
         target: &DaemonTarget,
         observer: &mut dyn EffectObserver,
+        homes: crate::home_gate::HeldHomes,
     ) -> SwapOutcome {
         match (self, target) {
             (Self::Real(engine), DaemonTarget::Real(target)) => {
-                engine.execute(request, target, observer)
+                engine.execute(request, target, observer, homes)
             }
             #[cfg(feature = "test-support")]
             (Self::Inert(engine), DaemonTarget::Inert(identity)) => engine.execute(identity),
@@ -968,7 +1001,15 @@ struct Lane<'a> {
 struct Queue<T> {
     pending: Mutex<std::collections::VecDeque<AttemptRun<T>>>,
     adopted: Mutex<Option<Box<dyn TargetGuard>>>,
+    /// Each target's homes, once worked out (by target id).
+    homes: Mutex<HashMap<u32, HomeKeys>>,
 }
+
+type HomeKeys = Option<(crate::home_gate::HomeKey, crate::home_gate::HomeKey)>;
+
+/// How long a target whose home another target holds waits before it is
+/// looked at again.
+const HOME_RETRY: std::time::Duration = std::time::Duration::from_millis(50);
 
 /// A host-wide target slot ([`Service::slot`]).
 struct Slot<'a> {
@@ -1354,7 +1395,12 @@ impl<E: Engine> Service<E> {
                             }
                             skipped_outcome(&identity, note)
                         }
-                        None => self.engine.execute(&resolved, &target, &mut NoObserver),
+                        None => self.engine.execute(
+                            &resolved,
+                            &target,
+                            &mut NoObserver,
+                            crate::home_gate::HeldHomes::none(),
+                        ),
                     }
                 }
             })
@@ -1926,6 +1972,7 @@ impl<E: Engine> Service<E> {
         let queue = Queue {
             pending: Mutex::new(runs.into()),
             adopted: Mutex::new(adopted),
+            homes: Mutex::new(HashMap::new()),
         };
         let lane = Lane {
             job,
@@ -1995,6 +2042,49 @@ impl<E: Engine> Service<E> {
             // holds no pane. Dropped at the end of this target, or when it
             // goes back to wait for idle.
             let slot = self.slot();
+            // Every home the target touches, taken now, before its pane is
+            // held and before anything of it is checked; or, if another
+            // target holds one, back in the queue holding nothing.
+            let known = queue
+                .homes
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get(&target_id)
+                .cloned();
+            let keys = known.unwrap_or_else(|| {
+                let keys = self.engine.homes(request, &target);
+                queue
+                    .homes
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .insert(target_id, keys.clone());
+                keys
+            });
+            let homes = match &keys {
+                None => crate::home_gate::HeldHomes::none(),
+                Some((source, destination)) => {
+                    if let Some(held) =
+                        crate::home_gate::try_acquire_all(source, destination, &identity.pane)
+                    {
+                        held
+                    } else {
+                        drop(slot);
+                        queue
+                            .pending
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .push_back(AttemptRun {
+                                target_id,
+                                attempt,
+                                report_index,
+                                identity,
+                                target,
+                            });
+                        std::thread::sleep(HOME_RETRY);
+                        continue;
+                    }
+                }
+            };
             if self.fault().is_some() {
                 // Halted: later targets are never reached, their pane stays
                 // reserved until the daemon restarts and recovers the job.
@@ -2022,18 +2112,25 @@ impl<E: Engine> Service<E> {
                 continue;
             }
             // An adopted guard protects the one endpoint it was taken for.
-            let taken = queue
-                .adopted
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .take();
-            let held = match taken {
-                Some(guard) if guard.covers(&identity.endpoint) => Ok(guard),
-                other => {
-                    *queue.adopted.lock().unwrap_or_else(PoisonError::into_inner) = other;
-                    self.provider
-                        .acquire_guard(&identity.pane, identity.socket.as_deref())
+            // The adopted guard goes only to the worker whose endpoint it
+            // covers, looked at and taken under one lock; any other worker
+            // leaves it where it is.
+            let adopted = {
+                let mut adopted = queue.adopted.lock().unwrap_or_else(PoisonError::into_inner);
+                if adopted
+                    .as_ref()
+                    .is_some_and(|guard| guard.covers(&identity.endpoint))
+                {
+                    adopted.take()
+                } else {
+                    None
                 }
+            };
+            let held = match adopted {
+                Some(guard) => Ok(guard),
+                None => self
+                    .provider
+                    .acquire_guard(&identity.pane, identity.socket.as_deref()),
             };
             let guard = match held {
                 Ok(guard) => guard,
@@ -2085,6 +2182,7 @@ impl<E: Engine> Service<E> {
                             // the per-endpoint reservation, to reject duplicate swaps;
                             // neither unrelated endpoints nor submissions are held.
                             drop(guard);
+                            drop(homes);
                             drop(slot);
                             let rotated = {
                                 let mut pending =
@@ -2167,7 +2265,7 @@ impl<E: Engine> Service<E> {
                 None => break,
             }
             let mut journal = self.store.journal(&self.lease, job, target_id, attempt);
-            let outcome = self.engine.execute(request, &target, &mut journal);
+            let outcome = self.engine.execute(request, &target, &mut journal, homes);
             let uncertain = journal.uncertain();
             let failed = journal.failed();
             let effects = journal.effects();

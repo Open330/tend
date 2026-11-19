@@ -956,7 +956,12 @@ pub fn run(
         .collect();
     by_endpoint(steps, &endpoints, request.jobs, |step| match step {
         Step::Done(outcome) => outcome,
-        Step::Run(target) => execute_target(&request, &target, &mut effects::NoObserver, None),
+        Step::Run(target) => {
+            // Before anything of the target is looked at: no wait comes
+            // between its checks and its first effect.
+            let homes = target.acquire_homes(&request);
+            execute_target(&request, &target, &mut effects::NoObserver, None, homes)
+        }
     })
 }
 
@@ -1017,21 +1022,49 @@ pub(crate) fn map_bounded<T: Send, R: Send>(
     let total = items.len();
     let queue = std::sync::Mutex::new(items.into_iter().enumerate());
     let results = std::sync::Mutex::new((0..total).map(|_| None).collect::<Vec<Option<R>>>());
+    // A panic in one item stops every worker from taking another, as the
+    // serial run stopped at it; items already started finish, then the
+    // panic goes on.
+    let halted = std::sync::atomic::AtomicBool::new(false);
+    let panic = std::sync::Mutex::new(None);
     std::thread::scope(|scope| {
         for _ in 0..workers {
             scope.spawn(|| loop {
-                let next = queue
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .next();
+                let next = {
+                    let mut queue = queue
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    if halted.load(std::sync::atomic::Ordering::SeqCst) {
+                        break;
+                    }
+                    queue.next()
+                };
                 let Some((index, item)) = next else { break };
-                let result = f(item);
-                results
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)[index] = Some(result);
+                match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(item))) {
+                    Ok(result) => {
+                        results
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)[index] =
+                            Some(result);
+                    }
+                    Err(payload) => {
+                        halted.store(true, std::sync::atomic::Ordering::SeqCst);
+                        panic
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .get_or_insert(payload);
+                        break;
+                    }
+                }
             });
         }
     });
+    if let Some(payload) = panic
+        .into_inner()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+    {
+        std::panic::resume_unwind(payload);
+    }
     results
         .into_inner()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -1074,7 +1107,8 @@ pub fn run_bound(
     by_endpoint(steps, &endpoints, request.jobs, |step| match step {
         BoundStep::Done(outcome) => outcome,
         BoundStep::Run(_, target) => {
-            execute_target(&request, &target, &mut effects::NoObserver, None)
+            let homes = target.acquire_homes(&request);
+            execute_target(&request, &target, &mut effects::NoObserver, None, homes)
         }
     })
 }
@@ -1612,6 +1646,38 @@ impl PreparedTarget {
         self.planned.agent = agent.clone();
     }
 
+    /// The homes this target would touch: the stopped agent's and the
+    /// relaunch's. `None` when nothing will be relaunched (no account, a
+    /// dry run).
+    pub(crate) fn home_keys(
+        &self,
+        request: &SwapRequest,
+    ) -> Option<(crate::home_gate::HomeKey, crate::home_gate::HomeKey)> {
+        if request.dry_run {
+            return None;
+        }
+        let account = self.account.as_ref().ok()?;
+        let kind = self.planned.agent.kind;
+        let profiles = self
+            .profiles
+            .as_deref()
+            .map_or(&[][..], |(profiles, _)| profiles.as_slice());
+        Some((
+            crate::home_gate::source_home(kind, self.planned.launch.agent_pid),
+            crate::home_gate::destination_home(kind, profiles, account, &request.aas),
+        ))
+    }
+
+    /// [`Self::home_keys`], held: waits until neither is held elsewhere.
+    fn acquire_homes(&self, request: &SwapRequest) -> crate::home_gate::HeldHomes {
+        self.home_keys(request).map_or_else(
+            crate::home_gate::HeldHomes::none,
+            |(source, destination)| {
+                crate::home_gate::acquire_all(&source, &destination, &self.planned.pane.pane_id)
+            },
+        )
+    }
+
     pub(crate) fn identity(&self) -> TargetIdentity {
         let planned = &self.planned;
         let pane = planned.agent.pane.clone().unwrap_or_default();
@@ -1699,6 +1765,7 @@ pub(crate) fn execute_target(
     target: &PreparedTarget,
     observer: &mut dyn effects::EffectObserver,
     probe: Option<&dyn TurnProbe>,
+    homes: crate::home_gate::HeldHomes,
 ) -> SwapOutcome {
     let profiles = target
         .profiles
@@ -1712,6 +1779,7 @@ pub(crate) fn execute_target(
         profiles,
         observer,
         probe,
+        homes,
     );
     if target.profiles.is_some() {
         outcome.from.clone_from(&target.profile_from);
@@ -1980,6 +2048,7 @@ fn profile_steps(
 
 /// Carry one planned target through to its outcome.
 #[allow(clippy::too_many_lines)] // one target's whole swap, in the order it happens
+#[allow(clippy::too_many_arguments)] // the planned target, its account, and how its run is held
 fn swap_one(
     request: &SwapRequest,
     planned: &Planned,
@@ -1991,6 +2060,7 @@ fn swap_one(
     )>,
     observer: &mut dyn effects::EffectObserver,
     probe: Option<&dyn TurnProbe>,
+    homes: crate::home_gate::HeldHomes,
 ) -> SwapOutcome {
     let Planned {
         agent,
@@ -2099,14 +2169,8 @@ fn swap_one(
             tend::process_snapshot::process_argv(launch.agent_pid).as_deref(),
             BYPASS_SWITCH,
         ),
-        source_home: crate::home_gate::source_home(agent.kind, launch.agent_pid),
-        destination_home: crate::home_gate::destination_home(
-            agent.kind,
-            profiles.map_or(&[][..], |(profiles, _)| profiles),
-            &account,
-            &request.aas,
-        ),
-        boot: std::cell::RefCell::new(None),
+        homes,
+        stale_prompt: std::cell::Cell::new(false),
     };
     // The relaunch must land on the account it was meant for, checked before
     // any follow-up starts work on the wrong one.
@@ -2128,11 +2192,7 @@ fn swap_one(
     // relaunch does not stop on "Hooks need review".
     let hooks_note = (agent.kind == AgentKind::Codex)
         .then(|| {
-            let _home = crate::home_gate::acquire(
-                &target.destination_home,
-                &target.pane,
-                "codex hook trust",
-            );
+            // Under the destination home's gate, taken with the target.
             carry_codex_hook_trust(
                 request,
                 profiles.map_or(&[][..], |(profiles, _)| profiles),
@@ -2773,23 +2833,22 @@ struct Target {
     ran_with_bypass: bool,
     /// What the relaunch needs, checked before anything is done.
     prerequisites: preflight::Prerequisites,
-    /// The home the stopped agent runs on, gated while it is quit.
-    source_home: crate::home_gate::HomeKey,
-    /// The home the relaunch runs on, gated from the relaunch until it
-    /// first draws its prompt.
-    destination_home: crate::home_gate::HomeKey,
-    /// That gate, while held.
-    boot: std::cell::RefCell<Option<crate::home_gate::Permit>>,
+    /// The homes this target took before it started: the stopped agent's,
+    /// let go once it has exited, and the relaunch's, once it has drawn its
+    /// own prompt ([`crate::home_gate`]).
+    homes: crate::home_gate::HeldHomes,
+    /// The screen already showed an agent prompt when the relaunch was
+    /// typed: a prompt seen later may be that one, so the relaunch's home is
+    /// kept until readiness ends.
+    stale_prompt: std::cell::Cell<bool>,
 }
 
-/// Lets `target`'s destination home go when dropped, if still held.
-struct BootGate<'a>(&'a Target);
+/// Lets `target`'s homes go when dropped: whatever way its run ends.
+struct HomesGo<'a>(&'a Target);
 
-impl Drop for BootGate<'_> {
+impl Drop for HomesGo<'_> {
     fn drop(&mut self) {
-        if let Some(permit) = self.0.boot.borrow_mut().take() {
-            permit.release("the swap of this target ended first");
-        }
+        self.0.homes.booted("this target's run ended");
     }
 }
 
@@ -2905,10 +2964,10 @@ fn execute(
         .capture()
         .and_then(|screen| composer_draft(&screen, target.kind))
         .filter(|_| target.restore_draft);
+    // Both homes were taken before the target started; whatever way this
+    // returns, they go with it.
+    let _homes = HomesGo(target);
     enter(runner, Phase::Stopping)?;
-    // The old agent's exit writes to its home: gated until it has exited,
-    // or the stop has ended either way. Never held with the next one.
-    let quitting = crate::home_gate::acquire(&target.source_home, &target.pane, "stop");
     stop_agent(
         runner,
         target,
@@ -2917,17 +2976,13 @@ fn execute(
         draft.as_deref(),
         &mut answered,
     )?;
-    quitting.release("the agent exited");
+    // The old agent has exited: its home goes (unless the relaunch's is it).
+    target.homes.stopped();
     enter(runner, Phase::Launching)?;
-    // The relaunch boots on its home: gated until it first draws its own
-    // prompt (released in `await_ready`), or readiness ends.
-    *target.boot.borrow_mut() = Some(crate::home_gate::acquire(
-        &target.destination_home,
-        &target.pane,
-        "relaunch",
-    ));
-    // Whatever way this returns from here, the boot gate goes with it.
-    let _boot = BootGate(target);
+    target.stale_prompt.set(
+        io.capture()
+            .is_some_and(|screen| tend::agent_tui::agent_prompt_visible(&screen)),
+    );
     relaunch(runner, target, command)?;
     let started = io.now();
     let relaunched = loop {
@@ -2953,9 +3008,7 @@ fn execute(
         runner.set_remain_on_exit(Purpose::ReleasePane, false);
     }
     let ready = await_ready(runner, target, &mut answered);
-    if let Some(permit) = target.boot.borrow_mut().take() {
-        permit.release("readiness ended");
-    }
+    target.homes.booted("readiness ended");
     ready?;
     let binding = launch_vetoed(
         resume_binding(
@@ -3424,20 +3477,17 @@ fn await_ready(
         io,
         || {
             let screen = io.capture();
-            // The relaunch has booted once it draws its own prompt: the
-            // process bound to this conversation runs, the screen shows the
-            // agent's prompt and no dialog. Its home is let go here; the
-            // full readiness checks below are unchanged.
-            if target.boot.borrow().is_some()
-                && screen.as_deref().is_some_and(|screen| {
-                    tend::agent_tui::agent_prompt_visible(screen)
-                        && tend::agent_tui::open_question(screen).is_none()
-                })
-                && bound_argv(io, target).is_some()
+            // The relaunch has booted once it draws its own prompt: no
+            // prompt was on screen when it was typed, the screen shows the
+            // agent's prompt and no dialog, and the one process bound to
+            // this conversation carries this launch's own id. Its home is
+            // let go here; the full readiness checks below are unchanged.
+            // Without that evidence it is kept until readiness ends.
+            if screen.as_deref().is_some_and(|screen| {
+                boot_evident(screen, target.stale_prompt.get(), target.launch_id.as_deref())
+            }) && this_launch_runs(io, target)
             {
-                if let Some(permit) = target.boot.borrow_mut().take() {
-                    permit.release("its own prompt is on screen");
-                }
+                target.homes.booted("its own prompt is on screen");
             }
             screen
         },
@@ -3521,6 +3571,56 @@ fn await_ready(
         }
     }
     Ok(())
+}
+
+/// Whether `screen` shows the relaunch's own prompt: an agent prompt and no
+/// dialog, and, if a prompt was already on screen when the relaunch was
+/// typed (`stale`), one drawn below the shell's echo of this launch's own
+/// line (found across wrapped lines by its id). Anything less — the echo
+/// gone, no id — cannot tell the new prompt from the old one: `false`.
+fn boot_evident(screen: &str, stale: bool, launch_id: Option<&str>) -> bool {
+    if !tend::agent_tui::agent_prompt_visible(screen)
+        || tend::agent_tui::open_question(screen).is_some()
+    {
+        return false;
+    }
+    if !stale {
+        return true;
+    }
+    let Some(id) = launch_id.filter(|id| !id.is_empty()) else {
+        return false;
+    };
+    let lines: Vec<&str> = screen.lines().collect();
+    let mut joined = String::new();
+    let mut starts = Vec::with_capacity(lines.len());
+    for line in &lines {
+        starts.push(joined.len());
+        joined.push_str(line);
+    }
+    let Some(at) = joined.rfind(id) else {
+        return false;
+    };
+    let echo = starts.iter().rposition(|start| *start <= at).unwrap_or(0);
+    lines[echo + 1..].iter().any(|line| {
+        tend::agent_tui::PROMPT_MARKS.iter().any(|mark| line.contains(mark)) || line.starts_with("› ")
+    })
+}
+
+/// Whether the one process bound to `target`'s conversation is this
+/// launch's: it carries the launch's own id (a target without one never
+/// counts, nor one whose mark cannot be read).
+fn this_launch_runs(io: &dyn io::SwapIo, target: &Target) -> bool {
+    let Some(ours) = target.launch_id.as_deref() else {
+        return false;
+    };
+    let binding = resume_binding(
+        &io.agent_argvs(target.pane_pid.get()),
+        target.kind,
+        &target.session_id,
+    );
+    binding.pid().is_some_and(
+        |pid| matches!(io.launch_id_of(pid), LaunchMark::Carries(theirs) if theirs == ours),
+    )
 }
 
 /// The note prefix of a swap whose relaunched Codex waits on the hook review.
@@ -4030,6 +4130,65 @@ fn stop(runner: &Runner, launch: &PaneLaunch) -> Result<(), String> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn a_prompt_counts_as_the_relaunchs_only_below_its_own_echo_when_one_was_already_there() {
+        let old = "  ? for shortcuts\nBye!\n$ ";
+        let id = "0f8c2a9e-1111-4222-8333-944455556666";
+        // Nothing on screen before: the first prompt is the relaunch's.
+        assert!(boot_evident("? for shortcuts", false, None));
+        // The old prompt, the echo of this launch, nothing new yet.
+        let typed = format!("{old}env TEND_SWAP_LAUNCH_ID={id} aas e b@claude --resume S\n");
+        assert!(!boot_evident(&typed, true, Some(id)));
+        // The new prompt below the echo.
+        assert!(boot_evident(&format!("{typed} ✻ Welcome\n  ? for shortcuts\n"), true, Some(id)));
+        // The echo wrapped across two lines still counts.
+        let wrapped = format!("{old}env TEND_SWAP_LAUNCH_ID={}\n{} aas e b@claude\n  ? for shortcuts\n", &id[..10], &id[10..]);
+        assert!(boot_evident(&wrapped, true, Some(id)));
+        // Another launch's echo, no echo at all, no id: cannot tell.
+        let other = "env TEND_SWAP_LAUNCH_ID=aaaaaaaa-0000-4000-8000-000000000000 x\n  ? for shortcuts\n";
+        assert!(!boot_evident(&format!("{old}{other}"), true, Some(id)));
+        assert!(!boot_evident("  ? for shortcuts\n", true, Some(id)));
+        assert!(!boot_evident(&format!("{typed}  ? for shortcuts\n"), true, None));
+        // A dialog is not a prompt.
+        assert!(!boot_evident(
+            &format!("{typed}Do you trust the files in this folder?\n❯ 1. Yes, proceed\n  2. No, exit\n"),
+            true,
+            Some(id)
+        ));
+    }
+
+    #[test]
+    fn a_panic_in_the_pool_starts_nothing_more_and_goes_on_after_the_started_finish() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let (slow_done, later_started) = (AtomicBool::new(false), AtomicBool::new(false));
+        let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            map_bounded(vec![0, 1, 2, 3], 2, |item| {
+                match item {
+                    // Started first and still running when 1 blows up.
+                    0 => {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        slow_done.store(true, Ordering::SeqCst);
+                    }
+                    1 => {
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                        panic!("item 1 blew up");
+                    }
+                    _ => later_started.store(true, Ordering::SeqCst),
+                }
+                item
+            })
+        }));
+        assert!(ran.is_err(), "the panic goes on");
+        assert!(
+            slow_done.load(Ordering::SeqCst),
+            "the started item finished"
+        );
+        assert!(
+            !later_started.load(Ordering::SeqCst),
+            "nothing started after it"
+        );
+    }
 
     #[test]
     fn items_on_one_endpoint_run_in_order_on_one_worker_and_reports_keep_their_place() {

@@ -305,6 +305,8 @@ pub(crate) async fn run(
     explicit_config: Option<&Path>,
     module_unavailable: Option<String>,
 ) -> Result<()> {
+    // `--json` keeps both streams to the final report.
+    PROGRESS.store(!args.json, std::sync::atomic::Ordering::Relaxed);
     if args.continue_legacy.is_some() {
         eprintln!("{CONTINUE_DEPRECATED}");
     }
@@ -651,9 +653,15 @@ async fn follow_from(
     }
 }
 
+/// Whether to print a line per settled target (not with `--json`).
+static PROGRESS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
 /// One stderr line per target as it settles, while the job runs: several
 /// targets run at once, and the report proper comes at the end.
 fn progress(view: &JobView, shown: &mut std::collections::HashSet<usize>) {
+    if !PROGRESS.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
     let total = view.entries.len();
     let mut entries: Vec<&EntryView> = view.entries.iter().collect();
     entries.sort_by_key(|entry| entry.report_index);

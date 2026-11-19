@@ -61,6 +61,12 @@ impl Gate {
     }
 }
 
+/// The homes a pane's target touches, for the few tests that give it any:
+/// their panes are named for those tests alone (tests run at once).
+static HOMES: std::sync::LazyLock<
+    Mutex<HashMap<String, (crate::home_gate::HomeKey, crate::home_gate::HomeKey)>>,
+> = std::sync::LazyLock::new(Mutex::default);
+
 struct FakeTarget {
     identity: TargetIdentity,
     gate: Option<Arc<Gate>>,
@@ -150,11 +156,20 @@ impl Engine for FakeEngine {
         "observed_unbound"
     }
 
+    fn homes(
+        &self,
+        _request: &SwapRequest,
+        target: &FakeTarget,
+    ) -> Option<(crate::home_gate::HomeKey, crate::home_gate::HomeKey)> {
+        HOMES.lock().unwrap().get(&target.identity.pane).cloned()
+    }
+
     fn execute(
         &self,
         request: &SwapRequest,
         target: &FakeTarget,
         observer: &mut dyn EffectObserver,
+        _homes: crate::home_gate::HeldHomes,
     ) -> SwapOutcome {
         let mut outcome = outcome(&target.identity.pane, SwapStatus::Planned, "");
         if request.dry_run {
@@ -3139,4 +3154,197 @@ fn concurrent_jobs_share_the_hosts_target_budget() {
     assert_eq!(settled(&h.service, &job_a).state, "done");
     assert_eq!(settled(&h.service, &job_b).state, "done");
     assert_eq!(h.executed.lock().unwrap().len(), 20);
+}
+
+/// The guard a job adopted reaches the worker of the endpoint it covers,
+/// however the other workers race for it: they take their own.
+#[test]
+fn an_adopted_guard_reaches_its_own_target_while_other_workers_race() {
+    for _ in 0..30 {
+        let gate = Arc::new(Gate::default());
+        let h = harness(Box::new(Vec::new));
+        let mut plan = resume_fixture(&h, 3);
+        plan.jobs = Some(3);
+        let job = write_fixture(&h, &plan);
+        let request = SwapRequest::new(
+            SwapScope::Targets(vec!["conv-%0".into()]),
+            &SwapConfig::default(),
+        );
+        let runs = ["%1", "%2", "%0"]
+            .iter()
+            .map(|pane| {
+                let id = identity(pane, "/tmp/tmux-1/default");
+                let target_id = pane[1..].parse().unwrap();
+                AttemptRun {
+                    target_id,
+                    attempt: 1,
+                    report_index: usize::try_from(target_id).unwrap(),
+                    identity: id.clone(),
+                    target: FakeTarget {
+                        identity: id,
+                        // The two others hold until the adopted one is done.
+                        gate: (*pane != "%0").then(|| Arc::clone(&gate)),
+                    },
+                }
+            })
+            .collect();
+        let mine = endpoint_key("%0", Some("/tmp/tmux-1/default"));
+        let opener = Arc::clone(&gate);
+        let executed = Arc::clone(&h.executed);
+        let watcher = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !executed.lock().unwrap().contains(&"%0".to_owned()) && Instant::now() < deadline
+            {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            opener.open();
+        });
+        h.service
+            .run(&job, &request, runs, Some(Box::new(FakeGuard(mine))), None);
+        watcher.join().unwrap();
+        let mut acquired: Vec<String> = h.provider.acquired.lock().unwrap().clone();
+        acquired.sort();
+        assert_eq!(
+            acquired,
+            ["%1@default", "%2@default"],
+            "%0 used the adopted guard, the others their own"
+        );
+        let mut executed = h.executed.lock().unwrap().clone();
+        executed.sort();
+        assert_eq!(executed, ["%0", "%1", "%2"]);
+    }
+}
+
+fn home(name: &str) -> crate::home_gate::HomeKey {
+    crate::home_gate::HomeKey::unknown(&format!("service-test-{name}-{}", std::process::id()))
+}
+
+/// A target whose home another target holds waits in the queue holding
+/// nothing — no pane guard, nothing checked or started — while a target on
+/// another home goes ahead; it starts once the home is free.
+#[test]
+fn a_target_waits_for_its_home_in_the_queue_and_other_homes_go_ahead() {
+    let (x, y) = (home("x1"), home("y1"));
+    {
+        let mut homes = HOMES.lock().unwrap();
+        homes.insert("%hx1".into(), (x.clone(), x.clone()));
+        homes.insert("%hx2".into(), (x.clone(), x.clone()));
+        homes.insert("%hy1".into(), (y.clone(), y.clone()));
+    }
+    let gate = Arc::new(Gate::default());
+    let held = Arc::clone(&gate);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let h = harness(Box::new(move || {
+        if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            vec![gated("%hx1", &held)]
+        } else {
+            vec![run("%hx2"), run("%hy1")]
+        }
+    }));
+    let first = Service::submit(
+        &h.service,
+        "one",
+        &overrides(&["%hx1"]),
+        Origin::Public,
+        None,
+    )
+    .unwrap()
+    .job_id;
+    // %hx1 holds home x, held at its gate.
+    gate.until_holding(1);
+    let second = Service::submit(
+        &h.service,
+        "two",
+        &parallel(overrides(&["%hx2", "%hy1"]), 2),
+        Origin::Public,
+        None,
+    )
+    .unwrap()
+    .job_id;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !h.executed.lock().unwrap().contains(&"%hy1".to_owned()) {
+        assert!(
+            Instant::now() < deadline,
+            "the other home's target never ran"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    std::thread::sleep(Duration::from_millis(150));
+    assert!(
+        !h.executed.lock().unwrap().contains(&"%hx2".to_owned()),
+        "its home is held"
+    );
+    assert!(
+        !h.provider
+            .acquired
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|pane| pane.starts_with("%hx2")),
+        "a waiting target holds no pane guard"
+    );
+    gate.open();
+    assert_eq!(settled(&h.service, &first).state, "done");
+    assert_eq!(settled(&h.service, &second).state, "done");
+    let mut executed = h.executed.lock().unwrap().clone();
+    executed.sort();
+    assert_eq!(executed, ["%hx1", "%hx2", "%hy1"]);
+}
+
+/// A cancel that comes while a target waits for its home keeps it from
+/// ever starting.
+#[test]
+fn a_cancel_while_a_target_waits_for_its_home_keeps_it_from_starting() {
+    let x = home("x2");
+    {
+        let mut homes = HOMES.lock().unwrap();
+        homes.insert("%hx3".into(), (x.clone(), x.clone()));
+        homes.insert("%hx4".into(), (x.clone(), x.clone()));
+    }
+    let gate = Arc::new(Gate::default());
+    let held = Arc::clone(&gate);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let h = harness(Box::new(move || {
+        if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            vec![gated("%hx3", &held)]
+        } else {
+            vec![run("%hx4")]
+        }
+    }));
+    let first = Service::submit(
+        &h.service,
+        "one",
+        &overrides(&["%hx3"]),
+        Origin::Public,
+        None,
+    )
+    .unwrap()
+    .job_id;
+    gate.until_holding(1);
+    let second = Service::submit(
+        &h.service,
+        "two",
+        &overrides(&["%hx4"]),
+        Origin::Public,
+        None,
+    )
+    .unwrap()
+    .job_id;
+    std::thread::sleep(Duration::from_millis(100));
+    h.service.cancel(&JobRef::Id(second.clone())).unwrap();
+    gate.open();
+    assert_eq!(settled(&h.service, &first).state, "done");
+    let view = settled(&h.service, &second);
+    assert_eq!(
+        *h.executed.lock().unwrap(),
+        ["%hx3"],
+        "the waiting target never started"
+    );
+    assert!(
+        view.entries[0]
+            .outcome
+            .as_ref()
+            .is_some_and(|o| o.note.contains("cancelled")),
+        "{view:?}"
+    );
 }
