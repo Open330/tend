@@ -47,3 +47,58 @@ test("BrandMark.swift room colours match tokens.json", () => {
     });
   }
 });
+
+// Tend for Mac's own roles (`tokens.mac`, docs/proposals/MAC_DESIGN.md).
+function srgb(value) {
+  const hex = /^#([0-9a-f]{6})$/i.exec(value);
+  if (hex) return { rgb: [0, 2, 4].map((i) => parseInt(hex[1].slice(i, i + 2), 16)), alpha: 1 };
+  const rgba = /^rgba\((\d+),\s*(\d+),\s*(\d+),\s*([0-9.]+)\)$/.exec(value);
+  return { rgb: rgba.slice(1, 4).map(Number), alpha: Number(rgba[4]) };
+}
+const over = (fg, bg) => fg.rgb.map((c, i) => c * fg.alpha + bg[i] * (1 - fg.alpha));
+const luminance = (rgb) => {
+  const [r, g, b] = rgb.map((c) => {
+    const v = c / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+const contrast = (a, b) => {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+};
+
+test("Tend for Mac's roles have no effect on the dashboard's CSS", () => {
+  const { mac, ...shared } = tokens;
+  assert.ok(mac, "tokens.json has a mac section");
+  assert.equal(renderCss(tokens), renderCss(shared));
+  assert.match(renderSwift(tokens), /enum Mac \{/);
+});
+
+test("every Mac text ink reads at 4.5:1 or more on every Mac surface", () => {
+  const texts = [
+    ...Object.entries(tokens.mac.ink).filter(([, v]) => v.text),
+    ...Object.entries(tokens.mac["state-ink"]).map(([name, v]) => [`state-ink-${name}`, v]),
+  ];
+  // The matrix composites text over each background as drawn: that holds
+  // only while the surfaces and the primary fills are opaque.
+  for (const scheme of ["light", "dark"]) {
+    for (const [name, value] of [...Object.entries(tokens.mac.surface), ["accent-fill", tokens.mac["accent-fill"]], ["accent-fill-pressed", tokens.mac["accent-fill-pressed"]]]) {
+      assert.equal(srgb(value[scheme]).alpha, 1, `${name} (${scheme}) must be opaque`);
+    }
+  }
+  for (const scheme of ["light", "dark"]) {
+    for (const [surface, value] of Object.entries(tokens.mac.surface)) {
+      const bg = srgb(value[scheme]).rgb;
+      for (const [name, ink] of texts) {
+        const ratio = contrast(over(srgb(ink[scheme]), bg), bg);
+        assert.ok(ratio >= 4.5, `${name} on ${surface} (${scheme}): ${ratio.toFixed(2)}`);
+      }
+    }
+    // White on the primary button, at rest and pressed.
+    for (const fill of ["accent-fill", "accent-fill-pressed"]) {
+      const ratio = contrast([255, 255, 255], srgb(tokens.mac[fill][scheme]).rgb);
+      assert.ok(ratio >= 4.5, `white on ${fill} (${scheme}): ${ratio.toFixed(2)}`);
+    }
+  }
+});

@@ -107,7 +107,7 @@ enum TendTheme {
 
     /// A token from apps/shared/Design/tokens.json (TendDesignTokens.swift,
     /// generated; the dashboard reads the same file).
-    private static func token(_ token: TendTokenColor, _ scheme: ColorScheme) -> Color {
+    static func token(_ token: TendTokenColor, _ scheme: ColorScheme) -> Color {
         scheme == .dark ? rgb(token.dark).opacity(token.darkAlpha) : rgb(token.light).opacity(token.lightAlpha)
     }
 
