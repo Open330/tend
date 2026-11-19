@@ -1407,11 +1407,19 @@ fn decisions(input: &BoardInput, agents: &[Hosted]) -> Vec<Decision> {
                             .is_some_and(|s| TEND_SERVICES.contains(&s)),
                     local || control,
                 ),
-                Some("review") => (
+                // Review ids are per host: another host's item is keyed by
+                // that host too, so one id on two hosts is two items.
+                Some("review") if local => (
                     format!("review:{}", str_of(&item, "id").unwrap_or("")),
                     parse_time(str_of(&item, "requested_at")),
                     false,
-                    local || (control && decides),
+                    true,
+                ),
+                Some("review") => (
+                    format!("review:{host}:{}", str_of(&item, "id").unwrap_or("")),
+                    parse_time(str_of(&item, "requested_at")),
+                    false,
+                    control && decides,
                 ),
                 // Waiting agents are units already.
                 _ => continue,

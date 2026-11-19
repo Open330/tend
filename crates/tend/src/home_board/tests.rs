@@ -289,6 +289,35 @@ fn your_turn_interleaves_decisions_longest_wait_first_and_tends_own_last() {
 }
 
 #[test]
+fn one_review_id_on_two_hosts_is_two_items() {
+    let section = |alias: &str, local: bool| {
+        json!({
+            "alias": alias, "local": local, "control": true, "decides_reviews": true,
+            "queue": {"items": [{"kind": "review", "id": "rv_same", "summary": alias, "requested_at": at(10)}]},
+        })
+    };
+    let b = board(BoardInput {
+        hosts: vec![host("mba", true, vec![], vec![])],
+        decisions: vec![
+            section("mba", true),
+            section("mini", false),
+            section("pc", false),
+        ],
+        ..Default::default()
+    });
+    let mut ids: Vec<String> = items(&b, "needs_you")
+        .iter()
+        .map(|i| i["id"].as_str().unwrap().to_owned())
+        .collect();
+    ids.sort();
+    // This host's keeps the Mac's key; another host's names that host.
+    assert_eq!(
+        ids,
+        ["review:mini:rv_same", "review:pc:rv_same", "review:rv_same"]
+    );
+}
+
+#[test]
 fn reviewed_marks_use_the_macs_key() {
     // FleetReview.reviewKey: "home:" + hex(SHA-256("<id>\n<revision>")).
     assert_eq!(

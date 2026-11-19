@@ -32,6 +32,9 @@ pub struct Server {
     /// The daemon's `config.toml`, for the requests that read and replace it
     /// whole. `None` when tendd was started without one.
     pub(super) config_path: Option<PathBuf>,
+    /// Where a person opens this host's dashboard, told to clients on
+    /// `hello` ([`crate::dashboard_link`]).
+    pub(super) dashboard_url: crate::dashboard_link::DashboardLink,
     /// Daemon-owned swap jobs; `None` when the daemon could not take its
     /// job store, in which case every swap request is refused.
     pub(super) swap: Option<Arc<dyn crate::swap_api::SwapJobs>>,
@@ -61,6 +64,7 @@ impl Server {
             work_queue: self.work_queue.clone(),
             mux_snapshots: self.mux_snapshots.clone(),
             config_path: self.config_path.clone(),
+            dashboard_url: self.dashboard_url.clone(),
             swap: self.swap.clone(),
         }
     }
@@ -99,6 +103,7 @@ impl Server {
             work_queue_commands: Some(work_queue_commands),
             mux_snapshots,
             config_path: None,
+            dashboard_url: crate::dashboard_link::DashboardLink::default(),
             swap: None,
             handler_limit: MAX_INFLIGHT_HANDLERS,
             endpoint_check: ENDPOINT_CHECK_INTERVAL,
@@ -135,6 +140,14 @@ impl Server {
     #[must_use]
     pub fn with_swap(mut self, swap: Option<Arc<dyn crate::swap_api::SwapJobs>>) -> Self {
         self.swap = swap;
+        self
+    }
+
+    /// Where a person opens this host's dashboard, told to clients on
+    /// `hello`.
+    #[must_use]
+    pub fn with_dashboard_url(mut self, url: crate::dashboard_link::DashboardLink) -> Self {
+        self.dashboard_url = url;
         self
     }
 

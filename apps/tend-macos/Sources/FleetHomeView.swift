@@ -128,6 +128,15 @@ struct FleetHomeView: View {
             }
         }
         .task(id: homeBoard.isVisible) {
+            // Other hosts' review items, on their own loop: a slow host never
+            // holds up this Mac's decisions.
+            guard homeBoard.isVisible else { return }
+            while !Task.isCancelled {
+                await decisionFeed.loadRemote(model.client, hosts: model.fleetHosts)
+                try? await Task.sleep(for: FleetDecisionFeed.remoteEvery)
+            }
+        }
+        .task(id: homeBoard.isVisible) {
             // Work planned with `tend work plan` shows up while Home is open.
             guard homeBoard.isVisible else { return }
             while !Task.isCancelled {
@@ -338,6 +347,7 @@ struct FleetHomeView: View {
             decide: { disposition, note in await feed.decide(decision, disposition, note: note, model: model) },
             openAsker: asker.map { hosted in { open(hosted) } },
             dismiss: decision.isHumanRequest ? { await feed.dismiss(decision, model: model) } : nil,
+            dashboard: feed.dashboard,
             draft: feed.drafts.row(for: decision.id)
         )
     }

@@ -7,7 +7,7 @@
 
 import { boardAttention, buildBoard, byProject, digest, fromServerBoard, hostHue, LANES, productOf, replyTarget, reviewQueue, sameTarget, TEND_PROJECT, withLater } from "./home-board.mjs";
 import { languageOf, relativeTime, stringsFor, textOf } from "./home-strings.mjs";
-import { linkedItemOf } from "./needs-model.mjs";
+import { itemHash, linkedHostOf, linkedItemOf } from "./needs-model.mjs";
 import { mountExplore } from "./explore.mjs";
 import { MESSAGES_PATH, messagesReturnPath } from "./messages-model.mjs";
 import { openAccessManager } from "./operators-admin.mjs";
@@ -537,11 +537,13 @@ function workCard(unit) {
 /// long ago (FleetCompactRow). Selecting it opens its details.
 function compactRow(unit) {
   const lane = unit.type === "decision" ? "needsYou" : unit.lane;
-  const row = el("button", `row-c ${lane}${state.selected === unit.id ? " selected" : ""}`);
+  const key = selectionKey(unit);
+  const row = el("button", `row-c ${lane}${state.selected === key ? " selected" : ""}`);
   row.type = "button";
   row.dataset.id = unit.id;
-  row.setAttribute("aria-expanded", String(state.selected === unit.id));
-  row.addEventListener("click", () => select(state.selected === unit.id ? null : unit.id));
+  if (unit.type === "decision") row.dataset.host = unit.host;
+  row.setAttribute("aria-expanded", String(state.selected === key));
+  row.addEventListener("click", () => select(state.selected === key ? null : key));
   row.append(el("span", "dot-c"));
   if (unit.type === "decision") row.append(icon("question", "kind-icon"));
   row.append(el("span", "title", tx(unit.title)), el("span", "host", unit.host), el("span", "when", when(unit.since)));
@@ -1212,17 +1214,35 @@ function wireReview() {
 
 // ---- Inspector ---------------------------------------------------------
 
-function findUnit(id) {
-  return findIn(state.board, id);
+function findUnit(id, host = null) {
+  return findIn(state.board, id, host);
 }
 
-function findIn(board, id) {
-  if (!id || !board) return null;
+/// What selects a unit on the page: its id, and for a decision its kind and
+/// host too. A request or review id is per host, so two hosts can hold the
+/// same one; the API calls still take the plain id and the unit's host.
+export function selectionKey(unit) {
+  return unit.type === "decision" ? `${unit.decision}\n${unit.host}\n${unit.id}` : unit.id;
+}
+
+/// The unit `state.selected` names.
+function findSelected(key) {
+  return key ? findWhere(state.board, (unit) => selectionKey(unit) === key) : null;
+}
+
+/// The unit with `id`; with `host`, only that host's.
+function findIn(board, id, host = null) {
+  if (!id) return null;
+  return findWhere(board, (unit) => unit.id === id && (!host || unit.host === host));
+}
+
+function findWhere(board, match) {
+  if (!board) return null;
   for (const lane of LANES) {
     const data = board.lanes[lane];
-    for (const group of data.groups) for (const unit of group.units) if (unit.id === id) return unit;
-    for (const unit of data.older) if (unit.id === id) return unit;
-    for (const list of Object.values(data.folds || {})) for (const unit of list) if (unit.id === id) return unit;
+    for (const group of data.groups) for (const unit of group.units) if (match(unit)) return unit;
+    for (const unit of data.older) if (match(unit)) return unit;
+    for (const list of Object.values(data.folds || {})) for (const unit of list) if (match(unit)) return unit;
   }
   return null;
 }
@@ -1340,7 +1360,7 @@ function replyComposer(unit, key, target) {
 
 function renderInspector() {
   const box = $("inspector");
-  const unit = findUnit(state.selected);
+  const unit = findSelected(state.selected);
   if (!unit) {
     state.selected = null;
     box.hidden = true;
@@ -1507,7 +1527,7 @@ function setLayout(layout) {
     // A preference only.
   }
   // A decision opens beside the board only from the compact list.
-  if (state.layout === "emphasis" && findUnit(state.selected)?.type !== "work") state.selected = null;
+  if (state.layout === "emphasis" && findSelected(state.selected)?.type !== "work") state.selected = null;
   render();
 }
 
@@ -1769,23 +1789,26 @@ async function adminFetch(path, options = {}) {
   return payload;
 }
 
-/// Brings the card a link names (`#item=<id>`) into view once per link:
-/// on the phone's Your turn segment, and opened beside the board in the
-/// compact list, whose rows answer nothing in place.
+/// Brings the card a link names (`#item=<id>`, with `&host=<alias>` from
+/// Tend for Mac) into view once per link: on the phone's Your turn segment,
+/// and opened beside the board in the compact list, whose rows answer
+/// nothing in place.
 function revealLinkedItem() {
   const id = linkedItemOf(window.location.hash);
-  if (!id || state.revealed === id || !state.board) return;
-  const unit = findUnit(id);
+  const host = linkedHostOf(window.location.hash);
+  const link = itemHash(id || "", host);
+  if (!id || state.revealed === link || !state.board) return;
+  const unit = findUnit(id, host);
   if (!unit || unit.lane !== "needsYou") return;
-  state.revealed = id;
+  state.revealed = link;
   state.lane = "needsYou";
   $("board").dataset.lane = "needsYou";
   for (const tab of document.querySelectorAll("#segments button")) tab.setAttribute("aria-selected", String(tab.dataset.lane === "needsYou"));
   if (state.layout === "compact") {
-    state.selected = id;
+    state.selected = selectionKey(unit);
     render();
   }
-  const node = [...document.querySelectorAll(".lane.needsYou [data-id]")].find((n) => n.dataset.id === id);
+  const node = [...document.querySelectorAll(".lane.needsYou [data-id]")].find((n) => n.dataset.id === id && (!host || n.dataset.host === host));
   node?.classList.add("linked");
   node?.scrollIntoView?.({ block: "center" });
 }
@@ -1795,7 +1818,7 @@ function revealLinkedItem() {
 export function homeReturnPath(hash, pathname = "/home") {
   if (pathname === MESSAGES_PATH) return messagesReturnPath(hash);
   const item = linkedItemOf(hash);
-  return item ? `/home#item=${encodeURIComponent(item)}` : "/home";
+  return item ? `/home${itemHash(item, linkedHostOf(hash))}` : "/home";
 }
 
 /// Signed out, expired or downgraded: nothing private stays on the page,

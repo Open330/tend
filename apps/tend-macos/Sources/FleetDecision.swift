@@ -59,12 +59,21 @@ struct FleetDecision: Identifiable, Hashable, Sendable {
     var id: String {
         switch source {
         case .humanRequest(let requestID): "human:\(host.alias):\(requestID)"
-        case .review(let item): "review:\(item.id)"
+        // Review ids are per host: another host's item is keyed by it too.
+        case .review(let item): host.local ? "review:\(item.id)" : "review:\(host.alias):\(item.id)"
         }
     }
 
     var isHumanRequest: Bool {
         if case .humanRequest = source { return true }
+        return false
+    }
+
+    /// A review item on another Fleet host. This app shows it but does not
+    /// decide it: the person decides it on the dashboard, under its sign-in
+    /// (an agent on this Mac can reach tendd's socket, not that sign-in).
+    var decidedOnDashboard: Bool {
+        if case .review = source { return !host.local }
         return false
     }
 
@@ -142,6 +151,30 @@ struct FleetDecision: Identifiable, Hashable, Sendable {
 }
 
 enum FleetDecisions {
+    /// How many entries of another host's queue the dashboard reads by
+    /// default; Home reads no more, so it never links to an item the
+    /// dashboard does not show.
+    static let dashboardQueueLimit = 100
+
+    /// Fleet hosts whose open review items Home lists, to decide on the
+    /// dashboard: connected, control mode, and a relay that sends its queue
+    /// and takes a decision from the dashboard.
+    static func decidesReviews(_ host: TendFleetHost) -> Bool {
+        let capabilities = host.capabilities ?? []
+        return !host.local && host.mode == "control" && (host.state == "online" || host.state == "degraded")
+            && capabilities.contains("fleet_decision_queue_v1") && capabilities.contains("fleet_review_dispose_v1")
+    }
+
+    /// Other hosts' open review items, in each host's queue order.
+    static func remoteReviews(_ queues: [(host: TendFleetHostIdentity, queue: TendPendingQueue)]) -> [FleetDecision] {
+        queues.flatMap { entry in
+            entry.queue.items.compactMap { item -> FleetDecision? in
+                guard case .review(let review) = item, review.disposition == nil else { return nil }
+                return FleetDecision(review: review, host: entry.host)
+            }
+        }
+    }
+
     /// The queue Home shows. With the daemon's queue: its human requests and
     /// review items in its order (waiting agents are already Work cards),
     /// then the console mailbox's human requests it does not hold: other
@@ -186,4 +219,35 @@ enum FleetDecisions {
 
 private extension String {
     var nilIfEmpty: String? { isEmpty ? nil : self }
+}
+
+// MARK: - The dashboard
+
+/// Where the person decides what this app does not: the dashboard tendd
+/// names on `hello` (`dashboard_url`).
+enum TendDashboardLink {
+    /// The origin of an http(s) address, without path, query or credentials;
+    /// nil for anything else.
+    static func origin(_ string: String?) -> URL? {
+        guard let string, let components = URLComponents(string: string.trimmingCharacters(in: .whitespaces)),
+              let scheme = components.scheme?.lowercased(), scheme == "https" || scheme == "http",
+              let host = components.host, !host.isEmpty else { return nil }
+        var origin = URLComponents()
+        origin.scheme = scheme
+        origin.percentEncodedHost = components.percentEncodedHost
+        origin.port = components.port
+        return origin.url
+    }
+
+    /// The item's card on the dashboard's Needs you page:
+    /// `<origin>/needs#item=<id>&host=<alias>` (a review id is per host).
+    static func item(_ id: String, host: String, on origin: URL) -> URL? {
+        URL(string: "\(origin.absoluteString)/needs#item=\(encoded(id))&host=\(encoded(host))")
+    }
+
+    private static func encoded(_ value: String) -> String {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
+    }
 }

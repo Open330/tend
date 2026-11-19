@@ -1297,6 +1297,10 @@ pub struct Response {
     /// external stop/start.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub boot_id: Option<&'static str>,
+    /// On `hello`: where a person opens this host's dashboard
+    /// ([`crate::dashboard_link::origin`]), when it has one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dashboard_url: Option<String>,
     /// With `turn_evidence`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub turn_evidence: Option<Box<crate::agent_records::evidence::TurnEvidence>>,
@@ -1508,6 +1512,7 @@ impl Response {
             collaboration_byte_budget: None,
             generation: None,
             boot_id: None,
+            dashboard_url: None,
             turn_evidence: None,
             prompt_token: None,
             sessions: None,

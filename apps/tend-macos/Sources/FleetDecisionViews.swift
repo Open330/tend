@@ -10,12 +10,21 @@ import SwiftUI
 
 /// Reads this Mac's decision queue, or the review list from a daemon
 /// without it, and records what the person decides. Other hosts' human
-/// requests come from the console mailbox the app already reads.
+/// requests come from the console mailbox the app already reads; their open
+/// review items from their Fleet queues, decided on the dashboard.
 @MainActor
 final class FleetDecisionFeed: ObservableObject {
     @Published private(set) var queue: TendPendingQueue? { didSet { sourceRevision &+= 1 } }
     @Published private(set) var reviews: [TendReviewItem] = [] { didSet { sourceRevision &+= 1 } }
-    /// Bumped with every change of `queue` or `reviews`.
+    /// Other Fleet hosts' queues, for their review items; read at most every
+    /// `remoteEvery` seconds, kept between reads.
+    @Published private(set) var remoteQueues: [(host: TendFleetHostIdentity, queue: TendPendingQueue)] = [] {
+        didSet { sourceRevision &+= 1 }
+    }
+    /// The dashboard tendd named, where another host's review is decided.
+    @Published private(set) var dashboard: URL?
+    static let remoteEvery: Duration = .seconds(15)
+    /// Bumped with every change of `queue`, `reviews` or `remoteQueues`.
     private var sourceRevision: UInt64 = 0
     /// The last merged decisions and what they were built from: Home asks
     /// on every redraw, and they change only when one of these does.
@@ -66,6 +75,32 @@ final class FleetDecisionFeed: ObservableObject {
 
     init() {
         perfSubscription = TendPerf.observe(self, "decision.publish")
+    }
+
+    /// Reads the open review items of every Fleet host Home lists them for
+    /// (`FleetDecisions.decidesReviews`), all at once, and the dashboard to
+    /// decide them on. Home runs it on its own loop, apart from this Mac's
+    /// decisions.
+    func loadRemote(_ client: TendIPCClient, hosts: [TendFleetHost]) async {
+        let link = await client.dashboardURL
+        if dashboard != link { dashboard = link }
+        let read = hosts.filter(FleetDecisions.decidesReviews).map(\.identity)
+        let found = await withTaskGroup(of: (Int, TendPendingQueue?).self) { group in
+            for (index, host) in read.enumerated() {
+                // A host that cannot be read now shows nothing to act on.
+                group.addTask { (index, try? await client.remoteDecisionQueue(host: host)) }
+            }
+            var found: [Int: TendPendingQueue] = [:]
+            for await (index, queue) in group {
+                if let queue { found[index] = queue }
+            }
+            return found
+        }
+        let queues = read.enumerated().compactMap { index, host in
+            found[index].map { (host: host, queue: $0) }
+        }
+        // Nothing before or after: no publish, no rebuilt queue.
+        if !(queues.isEmpty && remoteQueues.isEmpty) { remoteQueues = queues }
     }
 
     func load(_ client: TendIPCClient, works: [FleetWork] = []) async {
@@ -237,6 +272,7 @@ final class FleetDecisionFeed: ObservableObject {
         decisionBuilds += 1
         TendPerf.count("decision.merge")
         let merged = FleetDecisions.merge(queue: queue, reviews: reviews, messages: model.operatorMessages, localHost: local)
+            + FleetDecisions.remoteReviews(remoteQueues)
         let value = FleetDecisions.attachAskers(merged, index: model.hostedAgentIndex)
         cachedDecisions = (key, value)
         drafts.prune(keeping: Set(value.map(\.id)))
@@ -284,8 +320,13 @@ final class FleetDecisionFeed: ObservableObject {
     }
 
     /// Accepts, returns or withdraws a review item on this Mac's daemon.
+    /// Another host's is decided on the dashboard, never from here.
     func decide(_ decision: FleetDecision, _ disposition: TendReviewDisposition, note: String?, model: AppModel) async -> Bool {
         guard case .review(let item) = decision.source else { return false }
+        guard !decision.decidedOnDashboard else {
+            failures[decision.id] = String(localized: "Decide this result on the dashboard.")
+            return false
+        }
         return await record(decision, model: model) {
             try await model.client.decideReview(id: item.id, disposition: disposition, note: note)
         }
@@ -624,6 +665,9 @@ struct FleetDecisionCard: View {
     var openAsker: (() -> Void)?
     /// Declines a human request without an answer; true when it was recorded.
     var dismiss: (() async -> Bool)?
+    /// The dashboard tendd named: another host's review item is decided
+    /// there (`FleetDecision.decidedOnDashboard`).
+    var dashboard: URL?
     /// Opens with the answer field showing, for previews and tests.
     var initialAnswer: String?
     /// The open answer, shared by every card so only one composer (and one
@@ -641,6 +685,7 @@ struct FleetDecisionCard: View {
         decide: @escaping (TendReviewDisposition, String?) async -> Bool,
         openAsker: (() -> Void)? = nil,
         dismiss: (() async -> Bool)? = nil,
+        dashboard: URL? = nil,
         initialAnswer: String? = nil,
         draft: FleetDecisionDraft? = nil
     ) {
@@ -652,6 +697,7 @@ struct FleetDecisionCard: View {
         self.decide = decide
         self.openAsker = openAsker
         self.dismiss = dismiss
+        self.dashboard = dashboard
         self.initialAnswer = initialAnswer
         _draft = ObservedObject(wrappedValue: draft ?? .detached)
         sharesDraft = draft != nil
@@ -683,7 +729,9 @@ struct FleetDecisionCard: View {
             if let openAsker {
                 Button("Open Agent", action: openAsker)
             }
-            if case .review = decision.source {
+            if let link = dashboardLink {
+                Button("Decide on the Dashboard") { NSWorkspace.shared.open(link) }
+            } else if case .review = decision.source, !decision.decidedOnDashboard {
                 Button("Withdraw") { Task { _ = await decide(.withdrawn, nil) } }
             }
             if let dismiss {
@@ -855,7 +903,39 @@ struct FleetDecisionCard: View {
         .foregroundStyle(.secondary)
     }
 
+    /// This card on the dashboard's Needs you page, for another host's
+    /// review item.
+    private var dashboardLink: URL? {
+        guard decision.decidedOnDashboard, case .review(let item) = decision.source, let dashboard else { return nil }
+        return TendDashboardLink.item(item.id, host: decision.host.alias, on: dashboard)
+    }
+
+    /// Another host's review item: the person decides it on the dashboard,
+    /// under its sign-in. This app never decides it itself.
+    @ViewBuilder
+    private var dashboardAction: some View {
+        if let link = dashboardLink {
+            Button("Decide on the Dashboard") { NSWorkspace.shared.open(link) }
+                .buttonStyle(.tendSecondary)
+                .help(String(localized: "Open this result on the dashboard's Needs you page, and decide it there"))
+        } else {
+            Text("tendd names no dashboard, so this result is decided on \(decision.host.alias). Turn on tend's dashboard to decide it from here.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    @ViewBuilder
     private var actions: some View {
+        if decision.decidedOnDashboard {
+            dashboardAction
+        } else {
+            localActions
+        }
+    }
+
+    private var localActions: some View {
         VStack(alignment: .leading, spacing: 6) {
             if !decision.options.isEmpty {
                 // One full-width row per option: a long or multi-line option

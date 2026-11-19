@@ -250,6 +250,21 @@ async fn run() -> Result<()> {
     // task. Invalid auth bootstrap should fail without briefly starting
     // writers, scanners, or notifiers that the runtime would then abort.
     let dash_cfg = resolve_dashboard_config(&cfg, &args)?;
+    // Where the Mac app sends the person to decide what it may not: an
+    // address the person configured, else this dashboard's own once it is
+    // listening, and only when it takes decisions (it has a token).
+    let configured_dashboard = tend::dashboard_link::origin(
+        cfg.sinks.webhook.dashboard_url.as_deref(),
+        cfg.dashboard
+            .login
+            .as_ref()
+            .map(|login| login.public_origin())
+            .as_deref(),
+        None,
+    );
+    let local_dashboard =
+        configured_dashboard.is_none() && dash_cfg.enabled && dash_cfg.token.is_some();
+    let dashboard_url = tend::dashboard_link::DashboardLink::new(configured_dashboard);
 
     let socket = args
         .socket
@@ -615,6 +630,7 @@ async fn run() -> Result<()> {
                 Some(swap_jobs.clone()),
                 Some(work_store.clone()),
             )),
+            bound_link: local_dashboard.then(|| dashboard_url.clone()),
         };
         tokio::spawn(async move {
             if let Err(e) = tend::dashboard::serve(
@@ -668,6 +684,7 @@ async fn run() -> Result<()> {
         .with_agent_directory(agent_directory)
         .with_automation(automation)
         .with_config_path(config_path.clone())
+        .with_dashboard_url(dashboard_url)
         .with_fleet(fleet_runtime)
         .with_pipeline_runs(pipeline_runs.clone())
         .with_reviews(reviews)

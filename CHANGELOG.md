@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Tend for Mac's Home lists open review items on other Fleet hosts, each
+  with **Decide on the Dashboard**. That opens the item on the dashboard's
+  Needs you page (`/needs#item=<id>&host=<alias>`), and the person decides it
+  there under the dashboard's sign-in; the app adds no way to decide it over
+  IPC. tendd names the dashboard on `hello` (`dashboard_url`). The daemon's
+  board keys another host's review as `review:<alias>:<id>`, so one id on two
+  hosts is two items.
 - Web dashboard Explore: the Mac's four orders (Topology, Latest activity, My latest prompt, Agent latest update; kept per browser under `tend.explore.sort`) and its filter, matching host, session, window name, pane id, command, path, agent alias, agent title and session id in any case, with "No matching panes" and "No panes detected" states and a shown/all count.
 - The web Review sheet has the Mac's three modes: Digest (by project, the
   default), Cards (one result at a time) and Inbox (a list and the selected

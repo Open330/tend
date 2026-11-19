@@ -738,6 +738,8 @@ struct TendFleetHost: Decodable, Hashable, Identifiable, Sendable {
     let labels: [String: String]?
     let annotations: [String: String]?
     let remote: TendRemoteSnapshot?
+    /// What the host's relay says it serves (`fleet_review_dispose_v1`, …).
+    var capabilities: [String]? = nil
 
     var nodeID: String? = nil
 
@@ -747,7 +749,7 @@ struct TendFleetHost: Decodable, Hashable, Identifiable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case alias, local, mode, state, error, labels, annotations, remote
+        case alias, local, mode, state, error, labels, annotations, remote, capabilities
         case nodeID = "node_id"
         case sshTarget = "ssh_target"
         case latencyMS = "latency_ms"
@@ -975,9 +977,12 @@ struct TendFleetCommandResult: Decodable, Sendable {
     let worktreesNode: String?
     let worktreeChanges: [TendWorktreeChangeOutcome]?
     let servers: TendServerInventory?
+    /// A Fleet host's decision queue (`fleet_decision_queue_v1`).
+    var decisionQueue: TendLenient<TendPendingQueue>? = nil
 
     enum CodingKeys: String, CodingKey {
         case accepted, message, capture, worktrees, servers
+        case decisionQueue = "decision_queue"
         case worktreesTotal = "worktrees_total"
         case worktreesNode = "worktrees_node"
         case worktreeChanges = "worktree_changes"
@@ -1003,6 +1008,8 @@ struct TendIPCResponse: Decodable, Sendable {
     let bootID: String?
     /// `hello`'s self-reexec count, present with the `restart` capability.
     let generation: UInt64?
+    /// `hello`: where the person opens this host's dashboard, when it has one.
+    let dashboardURL: String?
     let agents: [TendAgent]?
     let sessions: [TendSession]?
     let session: TendSession?
@@ -1037,6 +1044,7 @@ struct TendIPCResponse: Decodable, Sendable {
         case minProtocol = "min_protocol"
         case maxProtocol = "max_protocol"
         case bootID = "boot_id"
+        case dashboardURL = "dashboard_url"
         case fleetResult = "fleet_result"
         case pipelineRuns = "pipeline_runs"
         case workCommand = "work_command"
@@ -1219,6 +1227,9 @@ actor TendIPCClient {
 
     let socketPath: String
     private(set) var capabilities: Set<String> = []
+    /// The dashboard tendd named on `hello` (an http(s) origin), where the
+    /// person decides what this app does not decide itself.
+    private(set) var dashboardURL: URL?
     /// The boot id from the last successful `hello`; nil before one, or
     /// when the daemon predates `daemon_boot_id_v1`.
     private(set) var daemonBootID: String?
@@ -1297,6 +1308,7 @@ actor TendIPCClient {
             )
         }
         capabilities = Set(response.capabilities ?? [])
+        dashboardURL = TendDashboardLink.origin(response.dashboardURL)
         let identity = TendDaemonHello(response)
         daemonBootID = identity.bootID
         try requireNativeSessionCapabilities()
@@ -1580,6 +1592,23 @@ actor TendIPCClient {
     }
 
     /// Accept, return or withdraw a review item, as the person.
+    /// A Fleet host's decision queue, read there as its operator console
+    /// (`fleet_decision_queue_v1`). Read only: this app decides another
+    /// host's review items on the dashboard, never over IPC.
+    /// `limit` is the dashboard's own (`DEFAULT_LIMIT` in dashboard/home.rs
+    /// and decisions.rs), so every item listed here is on the page the
+    /// person is sent to. Reads go through the Fleet read pool, apart from
+    /// the transport this Mac's own decisions use, so a slow host never holds
+    /// those up (two hosts can share a lane of the pool).
+    func remoteDecisionQueue(host: TendFleetHostIdentity) async throws -> TendPendingQueue? {
+        try await fleetCommand(
+            host: host,
+            operation: ["kind": "decision_queue", "limit": FleetDecisions.dashboardQueueLimit],
+            requestTransport: fleetReadTransport(for: host.alias),
+            timeout: 8
+        ).decisionQueue?.value
+    }
+
     func decideReview(id: String, disposition: TendReviewDisposition, note: String?) async throws {
         var request: [String: Any] = [
             "protocol": Self.protocolVersion,

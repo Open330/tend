@@ -289,8 +289,19 @@ export function linkedItemOf(hash) {
   return new URLSearchParams(String(hash || "").replace(/^#/, "")).get("item");
 }
 
+/// The host a link names beside its card (`&host=<alias>`): a review id
+/// is per host, so Tend for Mac names the host that holds the item.
+export function linkedHostOf(hash) {
+  return new URLSearchParams(String(hash || "").replace(/^#/, "")).get("host");
+}
+
+/// The `#item=<id>[&host=<alias>]` part of a link to a card.
+export function itemHash(item, host = null) {
+  return `#item=${encodeURIComponent(item)}${host ? `&host=${encodeURIComponent(host)}` : ""}`;
+}
+
 /// Where sign-in should come back to: this page, and the linked card.
 export function needsReturnPath(hash) {
   const item = linkedItemOf(hash);
-  return item ? `/needs#item=${encodeURIComponent(item)}` : "/needs";
+  return item ? `/needs${itemHash(item, linkedHostOf(hash))}` : "/needs";
 }
