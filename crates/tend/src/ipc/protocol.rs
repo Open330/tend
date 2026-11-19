@@ -1166,6 +1166,9 @@ pub(super) const CAPABILITIES: &[&str] = &[
     collaboration::USER_AUTHORIZED_DELIVERY_CAPABILITY,
     "pipeline_runs_v1",
     crate::review::REVIEW_CAPABILITY,
+    // Only macOS can tell the Tend app from another caller; elsewhere the
+    // request is refused, so it is not offered.
+    #[cfg(target_os = "macos")]
     crate::review::REVIEW_DISPOSE_REMOTE_CAPABILITY,
     "turn_evidence_v1",
     crate::review::REVIEW_RECORD_CAPABILITY,

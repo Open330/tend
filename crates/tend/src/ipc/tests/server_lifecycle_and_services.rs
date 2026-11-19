@@ -3184,13 +3184,17 @@ async fn only_the_tend_app_may_decide_a_result_on_another_host() {
     let handle = tokio::spawn(async move { server.run(rx).await.unwrap() });
     wait_for_socket(&sock).await;
     let client = Client::new(sock);
-    assert!(client
-        .hello(Duration::from_secs(3))
-        .await
-        .unwrap()
-        .capabilities
-        .iter()
-        .any(|c| c == crate::review::REVIEW_DISPOSE_REMOTE_CAPABILITY));
+    // Offered only where tendd can tell the Tend app from another caller.
+    assert_eq!(
+        client
+            .hello(Duration::from_secs(3))
+            .await
+            .unwrap()
+            .capabilities
+            .iter()
+            .any(|c| c == crate::review::REVIEW_DISPOSE_REMOTE_CAPABILITY),
+        cfg!(target_os = "macos")
+    );
 
     // This test binary is not the signed app: refused, and nothing reaches
     // the host.
