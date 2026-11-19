@@ -2250,6 +2250,17 @@ fn unrelated_output_or_an_unreadable_screen_is_not_a_key_read() {
         AgentKind::ClaudeCode
     ));
     assert!(!super::interrupt_read(None, CLAUDE_IDLE));
+    // A partial redraw without the prompt's rules is not the draft gone.
+    assert!(!super::clear_read(
+        Some(CLAUDE_WITH_DRAFT),
+        "❯ half typed\n──────────\n  ⏵⏵ auto mode on\n",
+        AgentKind::ClaudeCode
+    ));
+    assert!(!super::clear_read(
+        Some(CLAUDE_WITH_DRAFT),
+        "──────────\n  ⏵⏵ auto mode on\n",
+        AgentKind::ClaudeCode
+    ));
     // A draft that was there and is gone is the key read.
     assert!(super::clear_read(
         Some(CLAUDE_WITH_DRAFT),

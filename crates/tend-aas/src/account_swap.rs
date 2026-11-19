@@ -3133,10 +3133,33 @@ fn clear_read(before: Option<&str>, now: &str, kind: AgentKind) -> bool {
         return false;
     }
     if composer_draft(before, kind).is_some() {
-        return composer_draft(now, kind).is_none();
+        // Gone means an empty prompt seen, not one that cannot be read (a
+        // partial redraw without its rules shows no draft either).
+        return kind == AgentKind::ClaudeCode && claude_prompt_empty(now);
     }
     let tail = |screen: &str| screen_tail(screen, DIALOG_TAIL_LINES).contains(ANSWER);
     !tail(before) && tail(now)
+}
+
+/// Whether Claude's prompt is on `screen` and empty: its last two
+/// horizontal rules are there with nothing but `❯` between them.
+fn claude_prompt_empty(screen: &str) -> bool {
+    let lines: Vec<&str> = screen.lines().collect();
+    let rules: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| {
+            let line = line.trim();
+            line.chars().count() >= 5 && line.chars().all(|c| c == '─')
+        })
+        .map(|(i, _)| i)
+        .collect();
+    let [.., top, bottom] = rules[..] else {
+        return false;
+    };
+    lines[top + 1..bottom]
+        .iter()
+        .all(|line| line.trim().trim_start_matches('❯').trim().is_empty())
 }
 
 /// Whether `now` shows that Esc, pressed on `before`, stopped the turn:
