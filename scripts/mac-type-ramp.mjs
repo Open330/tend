@@ -12,7 +12,9 @@
 // guarantee: a file's count of any one call signature never rises, so a new
 // size fails, a changed size at an old site included. A removed size must
 // leave the baseline too (`--write`), so the ceiling follows removals down.
-// It cannot tell an identical signature moved within its file.
+// It cannot tell an identical signature moved within its file, and the
+// guarantee holds against the checked-in baseline: a PR that regenerates it
+// with --write could raise a count, so review increases in its diff.
 //
 // Not checked: TendDesignSystem.swift (the ramp's own implementation), and a
 // call whose first or last line ends in the line comment
@@ -29,11 +31,12 @@ export const BASELINE_PATH = join(ROOT, "apps/tend-macos/type-ramp-baseline.json
 export const EXEMPT_FILES = new Set(["TendDesignSystem.swift"]);
 export const EXEMPT_MARK = "type-ramp: exempt";
 
-/// Swift source with comments and string literals blanked to spaces
+/// Swift source with comments and string-literal text blanked to spaces
 /// (newlines kept, so offsets and lines still match the original), and the
 /// line comments found, by line. Handles nested block comments, escapes,
-/// multiline (`"""`) and raw (`#"…"#`) strings. A string's interpolations
-/// are blanked with it.
+/// multiline (`"""`) and raw (`#"…"#`, escape `\#`) strings. A string's
+/// interpolations (`\( … )`, `\#( … )` in a raw string) stay code: a call
+/// there is a call.
 export function lex(text) {
   const out = text.split("");
   const lineComments = [];
@@ -41,42 +44,72 @@ export function lex(text) {
     for (let k = from; k < to; k++) if (out[k] !== "\n") out[k] = " ";
   };
   const lineOf = (index) => text.slice(0, index).split("\n").length;
-  let i = 0;
-  while (i < text.length) {
-    if (text.startsWith("//", i)) {
-      const end = text.indexOf("\n", i) === -1 ? text.length : text.indexOf("\n", i);
-      lineComments.push({ line: lineOf(i), text: text.slice(i + 2, end).trim() });
-      blank(i, end);
-      i = end;
-    } else if (text.startsWith("/*", i)) {
-      let depth = 0;
-      let j = i;
-      while (j < text.length) {
-        if (text.startsWith("/*", j)) { depth++; j += 2; }
-        else if (text.startsWith("*/", j)) { depth--; j += 2; if (depth === 0) break; }
-        else j++;
+
+  // Code from `i`. Inside an interpolation (`nested`), `i` is at its "(",
+  // and the scan returns just past the matching ")".
+  const code = (i, nested) => {
+    let depth = 0;
+    while (i < text.length) {
+      if (text.startsWith("//", i)) {
+        const newline = text.indexOf("\n", i);
+        const end = newline === -1 ? text.length : newline;
+        lineComments.push({ line: lineOf(i), text: text.slice(i + 2, end).trim() });
+        blank(i, end);
+        i = end;
+      } else if (text.startsWith("/*", i)) {
+        let level = 0;
+        let j = i;
+        while (j < text.length) {
+          if (text.startsWith("/*", j)) { level++; j += 2; }
+          else if (text.startsWith("*/", j)) { level--; j += 2; if (level === 0) break; }
+          else j++;
+        }
+        blank(i, j);
+        i = j;
+      } else if (text[i] === '"' || (text[i] === "#" && /^#+"/.test(text.slice(i)))) {
+        i = string(i);
+      } else {
+        if (nested && text[i] === "(") depth++;
+        if (nested && text[i] === ")" && --depth === 0) return i + 1;
+        i++;
       }
-      blank(i, j);
-      i = j;
-    } else if (text[i] === '"' || (text[i] === "#" && /^#+"/.test(text.slice(i)))) {
-      const hashes = /^#*/.exec(text.slice(i))[0];
-      const start = i;
-      let j = i + hashes.length;
-      const multiline = text.startsWith('"""', j);
-      const close = (multiline ? '"""' : '"') + hashes;
-      j += multiline ? 3 : 1;
-      while (j < text.length) {
-        if (!hashes && text[j] === "\\") { j += 2; continue; }
-        if (text.startsWith(close, j)) { j += close.length; break; }
-        if (!multiline && text[j] === "\n") break;
+    }
+    return i;
+  };
+
+  // A string literal from its opening delimiter; returns just past its end.
+  const string = (start) => {
+    const hashes = /^#*/.exec(text.slice(start))[0];
+    let j = start + hashes.length;
+    const multiline = text.startsWith('"""', j);
+    const close = (multiline ? '"""' : '"') + hashes;
+    const escape = "\\" + hashes;
+    j += multiline ? 3 : 1;
+    blank(start, j);
+    while (j < text.length) {
+      if (text.startsWith(escape, j)) {
+        const after = j + escape.length;
+        if (text[after] === "(") {
+          blank(j, after);
+          j = code(after, true);
+        } else {
+          blank(j, after + 1);
+          j = after + 1;
+        }
+      } else if (text.startsWith(close, j)) {
+        blank(j, j + close.length);
+        return j + close.length;
+      } else if (!multiline && text[j] === "\n") {
+        return j;
+      } else {
+        blank(j, j + 1);
         j++;
       }
-      blank(start, j);
-      i = j;
-    } else {
-      i++;
     }
-  }
+    return j;
+  };
+
+  code(0, false);
   return { code: out.join(""), lineComments };
 }
 

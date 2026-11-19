@@ -29,6 +29,12 @@ test("every spelling of a fixed size counts", () => {
   assert.deepEqual(sizeCalls('let s = ".system(size: 13)"'), []);
   assert.deepEqual(sizeCalls('let s = """\n.system(size: 13)\n"""'), []);
   assert.deepEqual(sizeCalls('let s = #"a "quoted" .system(size: 13)"#'), []);
+  // A raw string's escaped quote does not end it.
+  assert.deepEqual(sizeCalls('let s = #"Quoted \\#"# escaped .system(size: 13)"#'), []);
+  // An interpolation is code; a string inside it is text.
+  assert.deepEqual(sizeCalls('Text("Answer: \\(Text(verbatim: String(42)).font(.system(size: 13)))")'), [".system(size: 13)"]);
+  assert.deepEqual(sizeCalls('let s = "The help says \\("example .system(size: 13)")"'), []);
+  assert.deepEqual(sizeCalls('let s = #"raw \\#(Text("x").font(.system(size: 11)))"#'), [".system(size: 11)"]);
 });
 
 test("only a real trailing comment exempts a call, on its first or last line", () => {
