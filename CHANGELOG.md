@@ -50,6 +50,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of 3–5 s on a scratch bench, so a large swap starts its first
   agent at once. Every agent is still checked again, live, right before it
   is stopped.
+- `tend swap` waits on what the pane shows instead of fixed pauses where
+  the screen can say so: `/exit` follows Ctrl-C once the draft is gone or
+  Claude answers the key, the next key follows Esc once the turn is seen
+  to stop, the agent's exit is checked every 100 ms, and the relaunch is
+  typed once the shell is the pane's foreground process and its screen
+  has held still for 200 ms. Without that evidence each wait is the old
+  pause, which stays as its ceiling. Readiness is unchanged.
 
 ### Fixed
 

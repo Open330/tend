@@ -50,8 +50,23 @@ const STOP_GRACE: Duration = Duration::from_secs(5);
 const LAUNCH_TIMEOUT: Duration = Duration::from_secs(15);
 /// How long a resumed TUI gets to finish drawing before the follow-up prompt.
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
-/// Time for the shell to redraw its prompt after the agent exits.
+/// The most a typed relaunch waits for the shell after the agent exits. A
+/// ceiling: the wait ends once the pane's foreground process is a shell
+/// and its screen has held still for [`SHELL_QUIET`].
 const SHELL_SETTLE: Duration = Duration::from_millis(700);
+/// How long the shell's screen must hold still, once the shell is the
+/// pane's foreground process, for its prompt to count as drawn.
+const SHELL_QUIET: Duration = Duration::from_millis(200);
+/// The poll interval of the waits on the pane's screen and processes.
+const POLL: Duration = Duration::from_millis(100);
+/// How often the screen is read for exit dialogs while `/exit` runs.
+const EXIT_SCREEN_EVERY: Duration = Duration::from_millis(400);
+/// The most Ctrl-C is waited on before `/exit` is typed: the wait ends once
+/// the screen shows the key read (see [`clear_read`]).
+const CLEAR_SETTLE: Duration = Duration::from_millis(300);
+/// The most Esc is waited on before the next key: the wait ends once the
+/// screen shows the turn stopped (see [`interrupt_read`]).
+const INTERRUPT_SETTLE: Duration = Duration::from_millis(1500);
 /// How long `aas candidates` gets before a swap gives up on it.
 const QUERY_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -3106,7 +3121,7 @@ fn relaunch(runner: &Runner, target: &Target, command: &str) -> Result<(), Refus
     if target.respawns() {
         relaunch_in_place(runner, target, command)?;
     } else {
-        runner.io.sleep(SHELL_SETTLE);
+        await_shell(runner.io);
         let group = runner.group();
         let command = with_launch_id(command, target.launch_id.as_deref());
         if !runner.send_text(group, Purpose::Relaunch, &command)
@@ -3116,6 +3131,115 @@ fn relaunch(runner: &Runner, target: &Target, command: &str) -> Result<(), Refus
         }
     }
     Ok(())
+}
+
+/// Wait for the pane's shell once the agent and its wrapper have exited:
+/// until a shell is the pane's foreground process and the screen has held
+/// still for [`SHELL_QUIET`] since then, at most [`SHELL_SETTLE`]. A screen
+/// that holds still alone is not enough (the old agent's last screen can),
+/// nor is a foreground that cannot be read: those wait the whole ceiling.
+fn await_shell(io: &dyn io::SwapIo) {
+    let started = io.now();
+    let mut last = io.capture();
+    let mut since: Option<Instant> = None;
+    loop {
+        let now = io.now();
+        if now.saturating_duration_since(started) >= SHELL_SETTLE {
+            return;
+        }
+        let shell = io
+            .foreground_command()
+            .is_some_and(|command| tend::pane_process::is_shell(&command));
+        if !shell {
+            since = None;
+        } else if let Some(since) = since {
+            if last.is_some() && now.saturating_duration_since(since) >= SHELL_QUIET {
+                return;
+            }
+        } else {
+            since = Some(now);
+        }
+        io.sleep(POLL);
+        let screen = io.capture();
+        if screen != last {
+            last = screen;
+            if since.is_some() {
+                since = Some(io.now());
+            }
+        }
+    }
+}
+
+/// Whether `now` shows that Ctrl-C, pressed on `before`, was read: the
+/// half-typed draft `before` showed is gone from the agent's prompt, or, on
+/// an empty prompt, Claude's own answer to it is there now and was not
+/// then. Other changes (a timer, a status line) are not evidence, nor is
+/// anything when `before` could not be read.
+fn clear_read(before: Option<&str>, now: &str, kind: AgentKind) -> bool {
+    const ANSWER: &str = "again to exit";
+    let Some(before) = before else {
+        return false;
+    };
+    if !tend::agent_tui::agent_prompt_visible(now) {
+        return false;
+    }
+    if composer_draft(before, kind).is_some() {
+        // Gone means an empty prompt seen, not one that cannot be read (a
+        // partial redraw without its rules shows no draft either).
+        return kind == AgentKind::ClaudeCode && claude_prompt_empty(now);
+    }
+    let tail = |screen: &str| screen_tail(screen, DIALOG_TAIL_LINES).contains(ANSWER);
+    !tail(before) && tail(now)
+}
+
+/// Whether Claude's prompt is on `screen` and empty: its last two
+/// horizontal rules are there with its `❯` line between them and no text.
+fn claude_prompt_empty(screen: &str) -> bool {
+    let lines: Vec<&str> = screen.lines().collect();
+    let rules: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| {
+            let line = line.trim();
+            line.chars().count() >= 5 && line.chars().all(|c| c == '─')
+        })
+        .map(|(i, _)| i)
+        .collect();
+    let [.., top, bottom] = rules[..] else {
+        return false;
+    };
+    let between = &lines[top + 1..bottom];
+    // The prompt's own `❯` line, and no text anywhere between the rules.
+    between
+        .iter()
+        .any(|line| line.trim_start().starts_with('❯'))
+        && between
+            .iter()
+            .all(|line| line.trim().trim_start_matches('❯').trim().is_empty())
+}
+
+/// Whether `now` shows that Esc, pressed on `before`, stopped the turn:
+/// `before` showed a turn running and `now` shows none, at the agent's
+/// prompt. Anything else, an unreadable `before` included, is not evidence.
+fn interrupt_read(before: Option<&str>, now: &str) -> bool {
+    before.is_some_and(turn_running)
+        && !turn_running(now)
+        && tend::agent_tui::agent_prompt_visible(now)
+}
+
+/// Wait at most `ceiling` for the screen to show what `read` accepts as a
+/// key read. Whether it did; otherwise the whole ceiling has passed.
+fn await_read(io: &dyn io::SwapIo, ceiling: Duration, read: impl Fn(&str) -> bool) -> bool {
+    let started = io.now();
+    loop {
+        io.sleep(POLL);
+        if io.capture().as_deref().is_some_and(&read) {
+            return true;
+        }
+        if io.now().saturating_duration_since(started) >= ceiling {
+            return false;
+        }
+    }
 }
 
 /// Checks which account the relaunched agent (the process bound to the
@@ -4090,21 +4214,40 @@ fn exit_claude(
         Err(Refusal::Kept(note.to_owned()))
     };
     if target.busy {
-        // Interrupt the turn first; `/exit` is only read at the prompt.
+        // Interrupt the turn first; `/exit` is only read at the prompt. The
+        // next key waits until the screen shows the turn stopped: a key
+        // right behind Esc can be read with it as one Alt-key.
+        let before = io.capture();
         send(Purpose::Interrupt, "\x1b");
-        io.sleep(Duration::from_millis(1500));
+        await_read(io, INTERRUPT_SETTLE, |now| {
+            interrupt_read(before.as_deref(), now)
+        });
     }
-    // Ctrl-C clears a half-typed draft so `/exit` is not appended to it.
+    // Ctrl-C clears a half-typed draft so `/exit` is not appended to it;
+    // `/exit` follows once the screen shows the key read.
+    let before = io.capture();
     if !(send(Purpose::ClearPrompt, "\x03") && {
-        io.sleep(Duration::from_millis(300));
+        await_read(io, CLEAR_SETTLE, |now| {
+            clear_read(before.as_deref(), now, target.kind)
+        });
         send_follow_up(runner, Purpose::Exit, "/exit")
     }) {
         return Err("could not type /exit into the pane".into());
     }
     let started = io.now();
     let elapsed = || io.now().saturating_duration_since(started);
+    // The processes are checked every tick, the screen (for exit dialogs)
+    // as often as before.
+    let mut looked = started;
     while alive() && elapsed() < EXIT_TIMEOUT {
-        io.sleep(Duration::from_millis(400));
+        io.sleep(POLL);
+        if !alive() {
+            break;
+        }
+        if io.now().saturating_duration_since(looked) < EXIT_SCREEN_EVERY {
+            continue;
+        }
+        looked = io.now();
         let screen = io.capture().unwrap_or_default();
         if owns_scheduled_tasks(&screen) {
             // Esc cancels the exit, whatever rows the dialog lists.

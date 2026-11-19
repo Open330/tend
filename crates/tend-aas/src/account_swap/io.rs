@@ -30,6 +30,11 @@ pub(super) trait SwapIo: Clock {
     fn respawn(&self, cwd: &str, line: &str) -> bool;
     /// The pane's root process now, found by its own id and server.
     fn pane_pid_now(&self) -> Option<u32>;
+    /// The name of the pane's foreground process now, as the multiplexer
+    /// reports it (`None`: unknown).
+    fn foreground_command(&self) -> Option<String> {
+        None
+    }
     /// Whether the relaunched agent, on this conversation, runs under
     /// `pane_pid`. Presence only: it is not evidence of which conversation
     /// the agent resumed ([`Self::agent_argvs`] is).
@@ -292,6 +297,20 @@ impl SwapIo for LiveIo<'_> {
                         .is_none_or(|socket| pane.socket.as_deref().is_none_or(|s| s == socket))
             })
             .map(|pane| pane.pane_pid)
+    }
+
+    fn foreground_command(&self) -> Option<String> {
+        let socket = self.target.socket.as_deref();
+        self.backend
+            .list_panes()
+            .into_iter()
+            .find(|pane| {
+                pane.pane_id == self.target.pane
+                    && socket
+                        .is_none_or(|socket| pane.socket.as_deref().is_none_or(|s| s == socket))
+            })
+            .map(|pane| pane.current_command)
+            .filter(|command| !command.is_empty())
     }
 
     fn agent_running(&self, pane_pid: u32) -> bool {

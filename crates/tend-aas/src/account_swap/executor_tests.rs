@@ -65,6 +65,9 @@ struct FakeIo {
     held_at_capture: RefCell<Vec<bool>>,
     /// The next captures that fail.
     blind: Cell<usize>,
+    /// The pane's foreground process, and from when (virtual time) it is
+    /// that; before then, or with none, it cannot be read.
+    foreground: RefCell<Option<(String, Duration)>>,
 }
 
 impl FakeIo {
@@ -102,6 +105,7 @@ impl FakeIo {
             watched: RefCell::new(None),
             held_at_capture: RefCell::new(Vec::new()),
             blind: Cell::new(0),
+            foreground: RefCell::new(None),
         }
     }
 
@@ -200,6 +204,14 @@ impl SwapIo for FakeIo {
 
     fn pane_pid_now(&self) -> Option<u32> {
         self.pane_pid.get()
+    }
+
+    fn foreground_command(&self) -> Option<String> {
+        self.foreground
+            .borrow()
+            .as_ref()
+            .filter(|(_, from)| self.now.get() >= *from)
+            .map(|(command, _)| command.clone())
     }
 
     fn agent_running(&self, _pane_pid: u32) -> bool {
@@ -2106,4 +2118,220 @@ fn an_unreadable_screen_before_the_relaunch_keeps_the_home_until_readiness_ends(
         "held at every capture: {seen:?}"
     );
     assert!(!homes.holding());
+}
+
+/// When (virtual time) each line was typed, for tests of the waits between
+/// keys.
+type Typed = std::rc::Rc<RefCell<Vec<(String, Duration)>>>;
+
+fn typed_at(typed: &Typed, key: &str) -> Duration {
+    typed
+        .borrow()
+        .iter()
+        .find(|(line, _)| line == key)
+        .map_or_else(
+            || panic!("{key} never typed: {:?}", typed.borrow()),
+            |(_, at)| *at,
+        )
+}
+
+const ESC: &str = "text \"\\u{1b}\"";
+const CTRL_C: &str = "text \"\\u{3}\"";
+const EXIT: &str = "prompt \"/exit\"";
+const CLAUDE_BUSY: &str = "✻ Thinking… (3s · esc to interrupt)\n❯ \n  ⏵⏵ auto mode on\n";
+const CLAUDE_IDLE: &str = "❯ \n  ⏵⏵ auto mode on\n";
+
+/// A busy Claude that answers Esc and Ctrl-C on screen as the real one does
+/// (or, with `answers` false, shows nothing for them), and exits on `/exit`.
+fn keyed_claude(typed: &Typed, answers: bool) -> FakeIo {
+    let seen = typed.clone();
+    FakeIo::new(
+        CLAUDE_BUSY,
+        Box::new(move |io: &FakeIo, line: &str| {
+            seen.borrow_mut().push((line.to_owned(), io.now.get()));
+            match line {
+                ESC if answers => io.show(&format!("Interrupted by user\n{CLAUDE_IDLE}")),
+                CTRL_C if answers => io.show(
+                    "Interrupted by user\n❯ \n  Press Ctrl-C again to exit\n  ⏵⏵ auto mode on\n",
+                ),
+                "text \"\\r\"" if io.previous().as_deref() == Some(EXIT) => {
+                    io.kill(AGENT);
+                    io.kill(WRAPPER);
+                    io.show("$ ");
+                }
+                _ => {}
+            }
+        }),
+    )
+}
+
+/// Each key that must be read before the next goes once the screen shows it
+/// read: the turn stopped after Esc, Claude's answer to Ctrl-C.
+#[test]
+fn claude_keys_follow_each_other_once_the_screen_shows_them_read() {
+    let typed = Typed::default();
+    let io = keyed_claude(&typed, true);
+    let _ = run(
+        &io,
+        &target(AgentKind::ClaudeCode, false, true),
+        &claude_launch(),
+        None,
+        &mut NoObserver,
+    );
+    let (esc, ctrl_c, exit) = (
+        typed_at(&typed, ESC),
+        typed_at(&typed, CTRL_C),
+        typed_at(&typed, EXIT),
+    );
+    assert!(ctrl_c > esc && ctrl_c.saturating_sub(esc) < super::INTERRUPT_SETTLE);
+    assert!(exit > ctrl_c && exit.saturating_sub(ctrl_c) < super::CLEAR_SETTLE);
+}
+
+/// A screen that never shows the keys read waits the old full pauses.
+#[test]
+fn keys_the_screen_never_shows_read_wait_the_full_ceilings() {
+    let typed = Typed::default();
+    let io = keyed_claude(&typed, false);
+    let _ = run(
+        &io,
+        &target(AgentKind::ClaudeCode, false, true),
+        &claude_launch(),
+        None,
+        &mut NoObserver,
+    );
+    let (esc, ctrl_c, exit) = (
+        typed_at(&typed, ESC),
+        typed_at(&typed, CTRL_C),
+        typed_at(&typed, EXIT),
+    );
+    assert!(ctrl_c.saturating_sub(esc) >= super::INTERRUPT_SETTLE);
+    assert!(exit.saturating_sub(ctrl_c) >= super::CLEAR_SETTLE);
+}
+
+/// Unrelated output (a timer, a status line) is not the key read; nor is
+/// any screen when the one before the key could not be read.
+#[test]
+fn unrelated_output_or_an_unreadable_screen_is_not_a_key_read() {
+    let typed = Typed::default();
+    let seen = typed.clone();
+    let io = FakeIo::new(
+        CLAUDE_BUSY,
+        Box::new(move |io: &FakeIo, line: &str| {
+            seen.borrow_mut().push((line.to_owned(), io.now.get()));
+            match line {
+                // The spinner ticks on; the key has not been read yet.
+                ESC => io.show("✻ Thinking… (4s · esc to interrupt)\n❯ \n  ⏵⏵ auto mode on\n"),
+                CTRL_C => io.show("✻ Thinking… (5s · esc to interrupt)\n❯ \n"),
+                "text \"\\r\"" if io.previous().as_deref() == Some(EXIT) => {
+                    io.kill(AGENT);
+                    io.kill(WRAPPER);
+                }
+                _ => {}
+            }
+        }),
+    );
+    let _ = run(
+        &io,
+        &target(AgentKind::ClaudeCode, false, true),
+        &claude_launch(),
+        None,
+        &mut NoObserver,
+    );
+    assert!(
+        typed_at(&typed, CTRL_C).saturating_sub(typed_at(&typed, ESC)) >= super::INTERRUPT_SETTLE
+    );
+    assert!(typed_at(&typed, EXIT).saturating_sub(typed_at(&typed, CTRL_C)) >= super::CLEAR_SETTLE);
+
+    // The screen before Ctrl-C cannot be read: Claude's answer, when it
+    // comes, cannot be told from what was there.
+    assert!(!super::clear_read(
+        None,
+        "❯ \n  Press Ctrl-C again to exit\n  ⏵⏵ auto mode on\n",
+        AgentKind::ClaudeCode
+    ));
+    assert!(!super::interrupt_read(None, CLAUDE_IDLE));
+    // A partial redraw without the prompt's rules is not the draft gone.
+    assert!(!super::clear_read(
+        Some(CLAUDE_WITH_DRAFT),
+        "❯ half typed\n──────────\n  ⏵⏵ auto mode on\n",
+        AgentKind::ClaudeCode
+    ));
+    assert!(!super::clear_read(
+        Some(CLAUDE_WITH_DRAFT),
+        "──────────\n  ⏵⏵ auto mode on\n",
+        AgentKind::ClaudeCode
+    ));
+    // Rules with nothing, or only blanks, between them: no prompt seen.
+    for blank in [
+        "──────────\n──────────\n  ⏵⏵ auto mode on\n",
+        "──────────\n   \n──────────\n  ⏵⏵ auto mode on\n",
+    ] {
+        assert!(
+            !super::clear_read(Some(CLAUDE_WITH_DRAFT), blank, AgentKind::ClaudeCode),
+            "{blank:?}"
+        );
+    }
+    // A draft that was there and is gone is the key read.
+    assert!(super::clear_read(
+        Some(CLAUDE_WITH_DRAFT),
+        "──────────\n❯ \n──────────\n  ⏵⏵ auto mode on\n",
+        AgentKind::ClaudeCode
+    ));
+}
+
+/// How long (virtual time) a Codex swap typed into its shell takes from
+/// the agent's exit to the relaunch, with the pane's foreground process
+/// `foreground` from `from` after the start.
+fn relaunch_delay(foreground: Option<(&str, Duration)>, screen_moves: bool) -> Duration {
+    let typed = Typed::default();
+    let seen = typed.clone();
+    let io = FakeIo::new(
+        CODEX_IDLE,
+        Box::new(move |io: &FakeIo, line: &str| {
+            seen.borrow_mut().push((line.to_owned(), io.now.get()));
+            if line.starts_with("signal TERM") {
+                io.kill(AGENT);
+                if screen_moves {
+                    io.show("$ ");
+                }
+            }
+            if line == "text \"\\r\""
+                && io
+                    .previous()
+                    .is_some_and(|typed| typed.contains("RELAUNCH"))
+            {
+                io.agent_appears_in(Duration::from_secs(1));
+            }
+        }),
+    );
+    *io.foreground.borrow_mut() = foreground.map(|(command, from)| (command.to_owned(), from));
+    let _ = run(
+        &io,
+        &target(AgentKind::Codex, false, false),
+        &launch(),
+        None,
+        &mut NoObserver,
+    );
+    typed_at(&typed, "text \"RELAUNCH\"").saturating_sub(typed_at(&typed, "signal TERM [10]"))
+}
+
+/// The relaunch is typed once the shell is the pane's foreground process
+/// and its screen has held still; never on a still screen alone.
+#[test]
+fn the_relaunch_waits_for_the_shell_in_the_foreground() {
+    let ready = relaunch_delay(Some(("zsh", Duration::ZERO)), true);
+    assert!(
+        ready >= super::SHELL_QUIET && ready < super::SHELL_SETTLE,
+        "a shell in front: {ready:?}"
+    );
+    // The old screen stays still, but the shell is not in front yet: the
+    // relaunch waits for it.
+    let late = relaunch_delay(Some(("zsh", Duration::from_millis(450))), false);
+    assert!(
+        late >= Duration::from_millis(450) + super::SHELL_QUIET,
+        "{late:?}"
+    );
+    // The agent still in front, or nothing readable: the whole ceiling.
+    assert!(relaunch_delay(Some(("node", Duration::ZERO)), true) >= super::SHELL_SETTLE);
+    assert!(relaunch_delay(None, true) >= super::SHELL_SETTLE);
 }
