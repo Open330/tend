@@ -250,6 +250,16 @@ async fn run() -> Result<()> {
     // task. Invalid auth bootstrap should fail without briefly starting
     // writers, scanners, or notifiers that the runtime would then abort.
     let dash_cfg = resolve_dashboard_config(&cfg, &args)?;
+    // Where the Mac app sends the person to decide what it may not.
+    let dashboard_url = tend::dashboard_link::origin(
+        cfg.sinks.webhook.dashboard_url.as_deref(),
+        cfg.dashboard
+            .login
+            .as_ref()
+            .map(|login| login.public_origin())
+            .as_deref(),
+        dash_cfg.enabled.then_some(dash_cfg.bind),
+    );
 
     let socket = args
         .socket
@@ -668,6 +678,7 @@ async fn run() -> Result<()> {
         .with_agent_directory(agent_directory)
         .with_automation(automation)
         .with_config_path(config_path.clone())
+        .with_dashboard_url(dashboard_url)
         .with_fleet(fleet_runtime)
         .with_pipeline_runs(pipeline_runs.clone())
         .with_reviews(reviews)

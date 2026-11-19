@@ -124,6 +124,7 @@ struct FleetHomeView: View {
             guard homeBoard.isVisible else { return }
             while !Task.isCancelled {
                 await decisionFeed.load(model.client, works: allWorks)
+                await decisionFeed.loadRemote(model.client, hosts: model.fleetHosts)
                 try? await Task.sleep(for: FleetDecisionFeed.refreshEvery)
             }
         }
@@ -338,6 +339,7 @@ struct FleetHomeView: View {
             decide: { disposition, note in await feed.decide(decision, disposition, note: note, model: model) },
             openAsker: asker.map { hosted in { open(hosted) } },
             dismiss: decision.isHumanRequest ? { await feed.dismiss(decision, model: model) } : nil,
+            dashboard: feed.dashboard,
             draft: feed.drafts.row(for: decision.id)
         )
     }

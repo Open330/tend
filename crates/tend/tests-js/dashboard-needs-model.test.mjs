@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { ago, checksOf, decidedCard, draftKey, historySections, evidenceLine, hostSections, isSystemAsk, pendingCard, safeHref, linkedItemOf, needsReturnPath } from "../src/dashboard/web/needs-model.mjs";
+import { ago, checksOf, decidedCard, draftKey, historySections, evidenceLine, hostSections, isSystemAsk, pendingCard, safeHref, linkedItemOf, linkedHostOf, itemHash, needsReturnPath } from "../src/dashboard/web/needs-model.mjs";
 
 const now = Date.parse("2026-11-12T12:00:00Z");
 
@@ -133,6 +133,12 @@ test("a notification's card survives sign-in", () => {
   assert.equal(needsReturnPath("#item=s%201%2Fx"), "/needs#item=s%201%2Fx");
   assert.equal(needsReturnPath(""), "/needs");
   assert.equal(needsReturnPath("#pane=%251"), "/needs");
+  // Tend for Mac names the host that holds a review: an id is per host.
+  assert.equal(linkedHostOf("#item=rv_1&host=mini"), "mini");
+  assert.equal(linkedHostOf("#item=rv_1"), null);
+  assert.equal(itemHash("rv 1", "my host"), "#item=rv%201&host=my%20host");
+  assert.equal(itemHash("rv_1"), "#item=rv_1");
+  assert.equal(needsReturnPath("#item=rv_1&host=mini&token=t"), "/needs#item=rv_1&host=mini");
 });
 
 test("a remote result is decided here only where that host takes decisions over Fleet", () => {
