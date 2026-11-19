@@ -331,9 +331,11 @@ exited and the relaunch has drawn its own prompt (or readiness has ended):
 
 - a Claude home takes up to four targets at once. Claude writes its config
   all through a session, so no gate can keep two sessions' writes apart;
-  measured with real Claude on a disposable home, eight simultaneous starts
-  and exits lost nothing, sixteen lost some of Claude's own counters. Four
-  keeps a swap well inside that.
+  with real Claude on a disposable, unauthenticated home, no counter or
+  sentinel loss was observed in ten eight-way trials of simultaneous starts
+  and exits, while sixteen-way ones lost some of Claude's own counters. Four
+  keeps a swap well inside that; it is a conservative limit, not a proven
+  safe one.
 - a Codex home takes one at a time: Tend itself prepares hook trust there
   (see below), and Codex's own behaviour on a shared home has not been
   measured.
