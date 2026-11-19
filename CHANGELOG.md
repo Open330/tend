@@ -73,10 +73,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `tend swap` moving many agents onto one Claude account is about three
-  times faster: up to four of them are stopped and started on that account
-  home at once (Codex homes stay one at a time). 20 idle agents took ~27 s
-  instead of ~89 s on a scratch bench; `--jobs 1` keeps the old order.
+- `tend swap` works on up to 4 agents at once (`[swap] jobs`, `--jobs N`,
+  1–16; `--jobs 1` keeps the old order), each still stopped, relaunched and
+  checked in its own pane with every guarantee it had alone. Up to four of
+  them are stopped and started on one Claude account home at once; a Codex
+  home still takes one at a time. A host has at
+  most 16 agents in progress across its swap jobs, and a daemon job prints a
+  line as each agent settles. 20 idle agents moving onto one Claude account
+  took ~27 s instead of ~89 s on a scratch bench. Jobs accepted by an older
+  daemon resume one at a time.
 - Web: links the old workbench made (`/#pane=…`, `#window=…`,
   `#session=…`, `#workspace=…&wsocket=…`, `#message=…`, `#thread=…`) now
   open in Explore or Messages instead of the workbench. A pane wins over a
@@ -94,6 +99,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   back to the bundled Nerd Font symbols, as the workbench's did, and
   Settings has *Forget token* for a token this browser keeps (the
   workbench's *lock edit*).
+- Close all for questions nobody can answer is on by default, by the
+  owner's decision: its confirmation says each asking agent gets a reply
+  that you dismissed it and that this cannot be undone. `[review]
+  close_unanswerable = false` turns it off (docs/CONFIGURATION.md, Review).
+- iOS: the app is in Korean as well as English, with Tend for Mac's
+  wording wherever the two share a sentence.
+- iOS: readability on real phones. Quieter text (meta rows, hints, times,
+  empty lanes) now measures at least 4.5:1 on a card in light and dark;
+  it was about 4:1 and 1.9:1. At large text sizes the lane strip wraps
+  into two rows instead of cutting the lanes' names, a card's meta row
+  wraps instead of dropping the host and project, and titles and results
+  get one more line. A running Work no longer repeats "Working" in a box
+  above its "Working" state. Version 0.2.0.
 
 ### Removed
 
@@ -134,30 +152,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - iOS: the app now declares `NSFaceIDUsageDescription`. Start Work asks
   for Face ID, and without the key iOS can refuse the request on a phone
   with Face ID.
-
-### Changed
-
-- Close all for questions nobody can answer is on by default, by the
-  owner's decision: its confirmation says each asking agent gets a reply
-  that you dismissed it and that this cannot be undone. `[review]
-  close_unanswerable = false` turns it off (docs/CONFIGURATION.md, Review).
-- `tend swap` works on up to 4 agents at once (`[swap] jobs`, `--jobs N`,
-  1–16; `--jobs 1` keeps the old order), each still stopped, relaunched and
-  checked in its own pane with every guarantee it had alone. Tend's own
-  activity on one account home (Codex hook trust, quitting an agent,
-  starting a relaunch until its prompt shows) still goes one at a time, and
-  a host has at most 16 agents in progress across its swap jobs. A daemon
-  job prints a line as each agent settles. Jobs accepted by an older daemon
-  resume one at a time.
-- iOS: the app is in Korean as well as English, with Tend for Mac's
-  wording wherever the two share a sentence.
-- iOS: readability on real phones. Quieter text (meta rows, hints, times,
-  empty lanes) now measures at least 4.5:1 on a card in light and dark;
-  it was about 4:1 and 1.9:1. At large text sizes the lane strip wraps
-  into two rows instead of cutting the lanes' names, a card's meta row
-  wraps instead of dropping the host and project, and titles and results
-  get one more line. A running Work no longer repeats "Working" in a box
-  above its "Working" state. Version 0.2.0.
 
 ## [0.10.25] - 2026-11-19
 
