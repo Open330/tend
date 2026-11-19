@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // Tend for Mac's design system (docs/proposals/MAC_DESIGN.md): type roles,
@@ -94,6 +95,24 @@ enum TendInk {
     /// and keep the hue for the dot.
     static func state(_ hue: TendStateHue, _ scheme: ColorScheme) -> Color {
         TendTheme.token(hue.ink, scheme)
+    }
+}
+
+extension TendInk {
+    /// A token that resolves against the view's own appearance (NSAppearance)
+    /// rather than an explicit scheme: for surfaces such as the menu bar
+    /// popover, which can follow its own appearance setting.
+    static func adaptive(_ token: TendTokenColor) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            let hex = dark ? token.dark : token.light
+            return NSColor(
+                srgbRed: CGFloat((hex >> 16) & 0xFF) / 255,
+                green: CGFloat((hex >> 8) & 0xFF) / 255,
+                blue: CGFloat(hex & 0xFF) / 255,
+                alpha: CGFloat(dark ? token.darkAlpha : token.lightAlpha)
+            )
+        })
     }
 }
 

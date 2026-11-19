@@ -87,7 +87,7 @@ struct TendMenuBarContent: View {
                         model.select(.inbox)
                         present()
                     } label: {
-                        Label(line, systemImage: "exclamationmark.circle.fill").foregroundStyle(.orange)
+                        Label(line, systemImage: "exclamationmark.circle.fill").foregroundStyle(TendMenuBarInk.attention)
                     }
                     .buttonStyle(.plain).help("Open the Inbox")
                 }
@@ -106,7 +106,7 @@ struct TendMenuBarContent: View {
                 }
                 if registry.isEnabled("aas"), !model.swaps.accountModuleOff {
                     Button { state.showingUsage = true } label: { Label("Accounts and usage", systemImage: "gauge.medium") }
-                        .buttonStyle(.plain).foregroundStyle(Color.accentColor)
+                        .buttonStyle(.plain).foregroundStyle(TendMenuBarInk.accent)
                 }
                 Divider()
                 HStack {
@@ -189,7 +189,7 @@ private struct TendMenuBarAgentCard: View {
                 Label(item.menuStatusLabel, systemImage: item.menuStatusSymbol)
                     .font(TendType.detail.weight(.medium)).foregroundStyle(item.menuStatusColor)
                 Spacer()
-                if item.unread { Text("Unread").font(TendType.meta).foregroundStyle(Color.accentColor) }
+                if item.unread { Text("Unread").font(TendType.meta).foregroundStyle(TendMenuBarInk.accent) }
             }
             Text(verbatim: item.location).font(TendType.meta).foregroundStyle(.secondary)
             if target == nil, draft.needsRecovery {
@@ -219,7 +219,7 @@ private struct TendMenuBarAgentCard: View {
                         .disabled(!replyAllowed || draft.sending || draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
-            if let failure = draft.failure { Text(verbatim: failure).font(TendType.detail).foregroundStyle(.red) }
+            if let failure = draft.failure { Text(verbatim: failure).font(TendType.detail).foregroundStyle(TendMenuBarInk.failure) }
             HStack {
                 Button("Open Agent", action: open)
                     .disabled(!model.executionSnapshot.hostedAgents.contains { $0.id == item.id })
@@ -271,7 +271,7 @@ private struct TendMenuBarAgentRow: View {
                         .lineLimit(1).truncationMode(.middle)
                     if replyFailure != nil {
                         Label("Your reply was not sent", systemImage: "exclamationmark.circle.fill")
-                            .font(TendType.meta).foregroundStyle(.red)
+                            .font(TendType.meta).foregroundStyle(TendMenuBarInk.failure)
                     } else {
                         Label(item.menuStatusLabel, systemImage: item.menuStatusSymbol)
                             .font(TendType.meta).foregroundStyle(item.menuStatusColor)
@@ -291,4 +291,13 @@ private struct TendMenuBarAgentRow: View {
         .onHover { hovered = $0 }
         .accessibilityElement(children: .combine)
     }
+}
+
+/// Text inks for the popover's material, which is not one of the Mac
+/// surfaces: the same deeper inks its status words use, 5:1 or more on the
+/// popover in both appearances (system orange, red and blue are 1.9 to 4:1).
+private enum TendMenuBarInk {
+    static let attention = TendMenuBarAgentAppearance.statusColor(.needsInput(""), finished: false)
+    static let failure = TendMenuBarAgentAppearance.statusColor(.error, finished: false)
+    static let accent = TendInk.adaptive(TendTokenColor(light: 0x0058B8, lightAlpha: 1, dark: 0x7AB8FF, darkAlpha: 1))
 }
