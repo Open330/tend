@@ -229,3 +229,53 @@ private extension FleetDecision {
         return FleetDecision(humanRequest: entry, host: local)
     }
 }
+
+/// Your turn with its Can't be answered group, open: the live question in
+/// the lane, the folded ones under it with why, since when and Keep.
+@MainActor
+@Test func theCantBeAnsweredGroupRendersInYourTurn() throws {
+    func question(_ id: String, _ body: String, alias: String, unanswerable: [String: Any]?) throws -> FleetDecision {
+        var object: [String: Any] = [
+            "request_id": id, "body": body, "from_session_id": "s-\(id)", "from_pane": "%3", "from_alias": alias,
+            "created_at": ISO8601DateFormatter().string(from: Date().addingTimeInterval(-4 * 86_400)),
+        ]
+        if let unanswerable { object["unanswerable"] = unanswerable }
+        let entry = try JSONDecoder().decode(TendHumanRequestEntry.self, from: JSONSerialization.data(withJSONObject: object))
+        return FleetDecision(humanRequest: entry, host: local)
+    }
+    let since = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-2 * 86_400))
+    let live = try question("rq_live", "Merge #12 now, or wait for the perf run?", alias: "impl", unanswerable: nil)
+    let folded = [
+        try question("rq_a", "Deploy the storage migration to jiun-mini?", alias: "deploy",
+                     unanswerable: ["cause": "pane_gone", "episode": "ep_a", "since": since]),
+        try question("rq_b", "Rotate the fleet keys before the release?", alias: "keys",
+                     unanswerable: ["cause": "replaced", "episode": "ep_b", "since": since]),
+    ]
+    for scheme in [ColorScheme.light, .dark] {
+        let column = FleetLaneColumn(
+            lane: .needsYou,
+            works: [],
+            decisions: [live],
+            decisionCard: { FleetDecisionCard(decision: $0, openRevision: { _ in }, answer: { _ in true }, decide: { _, _ in true }) },
+            cantAnswer: FleetCantAnswerGroup(decisions: folded, count: 3, canKeep: true, canCloseAll: true, initiallyExpanded: true),
+            selectedID: nil,
+            select: { _ in },
+            open: { _ in },
+            showsReviewed: .constant(false)
+        )
+        .environment(\.fleetCardEmphasis, true)
+        _ = try snapshot(column.padding(16), name: "home-cant-answer", scheme: scheme, size: CGSize(width: 420, height: 720))
+    }
+}
+
+/// After Close all emptied the group, its report stays, every skipped
+/// question in full.
+@MainActor
+@Test func theCloseAllReportOutlivesAnEmptiedGroup() throws {
+    let skipped = (1...8).map { TendCloseOutcome.Skipped(requestID: "rq_\($0)", reason: "no longer unanswerable") }
+    let text = FleetDecisions.closeAllText(TendCloseOutcome(closed: ["rq_0"], skipped: skipped))
+    for scheme in [ColorScheme.light, .dark] {
+        _ = try render(FleetCantAnswerGroup(decisions: [], count: 0, result: (false, text)),
+                       name: "home-cant-answer-report", scheme: scheme)
+    }
+}

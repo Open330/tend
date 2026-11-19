@@ -107,7 +107,12 @@ globalThis.fetch = async (path, init = {}) => {
   if (init.method === "POST") {
     posts.push({ path, init });
     if (postGate) await postGate;
-    return { ok: true, status: 200, json: async () => ({ request_id: "req_9", status: "completed" }) };
+    const reply = path.includes("close-unanswerable")
+      ? { closed: ["rq_a"], skipped: [{ request_id: "rq_b", reason: "no longer unanswerable" }] }
+      : path.includes("/keep")
+        ? { request_id: "rq_a", episode: "ep_a" }
+        : { request_id: "req_9", status: "completed" };
+    return { ok: true, status: 200, json: async () => reply };
   }
   const name = path.includes("/api/home") ? "home" : path.includes("history") ? "history" : path.includes("decisions") ? "decisions" : path.includes("fleet") ? "fleet" : "access";
   const code = status[name];
@@ -494,12 +499,116 @@ test("Review goes through results three ways, with Later and Send Back", async (
   await home.refresh();
 });
 
-test("the workbench's old links still open the workbench; Home's own do not", () => {
-  assert.equal(home.legacyTarget("/", "#pane=%251&socket=s"), "/workbench#pane=%251&socket=s");
-  assert.equal(home.legacyTarget("/", "#workspace=tend"), "/workbench#workspace=tend");
-  assert.equal(home.legacyTarget("/", "#item=req_9"), null);
-  assert.equal(home.legacyTarget("/home", "#pane=%251"), null);
+test("the workbench's old links open Explore; Home's own stay (legacy-link.mjs has every case)", () => {
+  assert.deepEqual(home.legacyLink("/", "", "#pane=%251&socket=s"), { token: null, href: "/explore#pane=%251&socket=s" });
+  assert.deepEqual(home.legacyLink("/", "", "#item=req_9"), { token: null, href: "/#item=req_9" });
+  assert.deepEqual(home.legacyLink("/home", "", "#pane=%251"), { token: null, href: "/home#pane=%251" });
   assert.equal(home.paneLink({ pane: "%1", socket: "s" }), "/explore#pane=%251&socket=s");
+});
+
+test("Steer this Work sends the next instruction to every agent of the Work, operator-only", async () => {
+  const agent = (host, local, pane) => ({ host, local, kind: "codex", pane, socket: "s", state: "working", session_id: `${host}${pane}`, owner: `codex · ${host}` });
+  const work = (agents) => ({
+    type: "unit", id: "work:tend/fix-login", source: { kind: "work", workspace: "tend", work: "fix-login" },
+    lane: "running", title: "fix-login", repo: "tend", headline: "Reading the diff",
+    stages: [{ name: "Implement", state: "running", kind: "codex" }], shown_time: recent, host_aliases: ["mba"], agent_kinds: ["codex"],
+    agents, helpers: [], recent: true, focus: agents[0],
+  });
+  const boardWith = (unit, decisionHosts = []) => ({
+    hosts: [{ alias: "mba", local: true, state: "online" }, { alias: "mini", local: false, state: "online" }],
+    decision_hosts: decisionHosts, backlog: [],
+    lanes: { needs_you: { groups: [] }, running: { count: 1, groups: [{ project: "tend", items: [unit] }] }, finished: { groups: [] } },
+  });
+  const inspector = () => document.getElementById("inspector");
+  const steerArea = () => find(inspector(), (n) => n.tag === "textarea" && n.dataset?.key === "steer:work:tend/fix-login");
+  const steerSend = () => find(inspector(), (n) => n.tag === "button" && /Send to \d/.test(n.text));
+  try {
+    serverBoard = boardWith(work([agent("mba", true, "%4"), agent("mba", true, "%5")]));
+    status.home = 200;
+    await home.refresh();
+    find(lanes(), (n) => n.dataset?.id === "work:tend/fix-login").click();
+    assert.match(inspector().text, /Steer this Work/);
+    assert.match(steerSend().text, /Send to 2/, "the Mac's count: the Work's agents");
+    assert.equal(steerSend().disabled, true, "nothing to send yet");
+    steerArea().value = "  rebase on main, then rerun the tests  ";
+    steerArea().fire("input");
+    let release;
+    postGate = new Promise((resolve) => (release = resolve));
+    posts.length = 0;
+    steerSend().click();
+    await settle();
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].path, "/api/work-control/prompt");
+    assert.equal(posts[0].init.headers["X-Tend-Operator"], "1");
+    assert.deepEqual(JSON.parse(posts[0].init.body), {
+      identity: { workspace_id: "tend", work_id: "fix-login" }, text: "rebase on main, then rerun the tests", submit: true,
+    });
+    assert.equal(steerArea().disabled, true, "frozen while sending");
+    release();
+    postGate = null;
+    await settle();
+    assert.equal(steerArea().value, "", "the sent draft clears");
+    assert.match(inspector().text, /Sent to/, "the result line");
+
+    // A host in observe mode is never steered, as on the Mac.
+    serverBoard = boardWith(work([agent("mba", true, "%4"), agent("mini", false, "%2")]), [
+      { alias: "mba", local: true, control: true }, { alias: "mini", local: false, control: false },
+    ]);
+    await home.refresh();
+    assert.match(inspector().text, /registered in observe mode/);
+    steerArea().value = "go";
+    steerArea().fire("input");
+    assert.equal(steerSend().disabled, true);
+
+    // A Work whose agents are all on another host: the route reaches only
+    // this host's panes, so nothing can be sent from here.
+    serverBoard = boardWith(work([agent("mini", false, "%2"), agent("mini", false, "%3")]), [
+      { alias: "mba", local: true, control: true }, { alias: "mini", local: false, control: true },
+    ]);
+    await home.refresh();
+    assert.match(steerSend().text, /Send to 0/);
+    steerArea().value = "go";
+    steerArea().fire("input");
+    assert.equal(steerSend().disabled, true, "no agent here to send to");
+    assert.match(inspector().text, /steer the 2 on other hosts from there/);
+    posts.length = 0;
+    steerSend().click();
+    await settle();
+    assert.equal(posts.length, 0, "nothing posted");
+
+    // A mixed Work, this host and a control-mode host: the count is this
+    // host's agents, the notice names the others, and the send goes through
+    // this host's Work control (which reaches only its own panes).
+    serverBoard = boardWith(work([agent("mba", true, "%4"), agent("mini", false, "%2")]), [
+      { alias: "mba", local: true, control: true }, { alias: "mini", local: false, control: true },
+    ]);
+    await home.refresh();
+    assert.match(steerSend().text, /Send to 1/, "this host's agents only");
+    assert.match(inspector().text, /This reaches the agents on this host; steer the 1 on other hosts from there\./);
+    assert.doesNotMatch(inspector().text, /observe mode/);
+    steerArea().value = "ship it";
+    steerArea().fire("input");
+    assert.equal(steerSend().disabled, false);
+    posts.length = 0;
+    steerSend().click();
+    await settle();
+    assert.equal(posts.length, 1, "one request, to this host's daemon");
+    assert.equal(posts[0].path, "/api/work-control/prompt");
+    assert.deepEqual(JSON.parse(posts[0].init.body), { identity: { workspace_id: "tend", work_id: "fix-login" }, text: "ship it", submit: true });
+    assert.equal(JSON.parse(posts[0].init.body).host, undefined, "never addressed to the other host");
+
+    // Not an operator: no composer.
+    status.access = 403;
+    await home.refresh();
+    assert.equal(steerArea(), null, "Steer is operator-only");
+  } finally {
+    postGate = null;
+    status.access = 200;
+    status.home = 404;
+    serverBoard = null;
+    posts.length = 0;
+    await home.refresh();
+  }
 });
 
 test("sign-in returns to Home, and to the linked card", () => {
@@ -536,4 +645,86 @@ test("consecutive list items share one list, as a browser's elements see it", ()
   } finally {
     document.createElement = make;
   }
+});
+
+test("questions nobody can answer fold out of Your turn; Keep and Close all send the listed pairs", async () => {
+  const old = new Date(Date.now() - 4 * 86400_000).toISOString();
+  const since = new Date(Date.now() - 2 * 86400_000).toISOString();
+  const gone = (id, cause, episode) => ({
+    type: "decision", id: `human:mba:${id}`, host: "mba", local: true, actionable: true, since: old,
+    entry: { kind: "human_request", request_id: id, body: `Deploy ${id}?`, created_at: old, from_session_id: "s",
+      unanswerable: { cause, episode, since } },
+  });
+  const board = (closeUnanswerable) => ({
+    hosts: [{ alias: "mba", local: true, state: "online" }],
+    agent_count: 0,
+    projects: [],
+    decision_hosts: [{ alias: "mba", local: true, control: true, decides_reviews: true, subject_check: true,
+      close_unanswerable: closeUnanswerable, truncated: true, unanswerable_count: 3 }],
+    backlog: [],
+    lanes: {
+      needs_you: { count: 3, groups: [{ project: null, system: false, items: [
+        { type: "decision", id: "human:mba:req_9", host: "mba", local: true, actionable: true, since: recent,
+          entry: { kind: "human_request", request_id: "req_9", body: "Ship it?", created_at: recent } },
+        gone("rq_a", "pane_gone", "ep_a"),
+        gone("rq_b", "replaced", "ep_b"),
+      ] }] },
+      running: { count: 0, groups: [] },
+      finished: { count: 0, groups: [] },
+    },
+  });
+  const yourTurn = () => lanes().children.find((n) => n.className.includes("needsYou"));
+  serverBoard = board(false);
+  status.home = 200;
+  await home.refresh();
+  let section = yourTurn();
+  assert.match(section.text, /Your turn 1 Decide or review/, "the count leaves them out");
+  assert.equal(document.getElementById("rail-badge").textContent, "1");
+  assert.match(section.text, /Can't be answered \(3\)/, "the exact count, not just the listed two");
+  assert.doesNotMatch(section.text, /Deploy rq_a/, "collapsed by default");
+  find(section, (n) => n.tag === "button" && n.text.includes("Can't be answered")).click();
+  section = yourTurn();
+  assert.match(section.text, /Deploy rq_a\?/);
+  assert.match(section.text, /Pane gone · since/);
+  assert.match(section.text, /Replaced by another agent/);
+  assert.match(section.text, /1 more not listed/);
+  assert.equal(find(section, (n) => n.tag === "button" && n.text.includes("Close all")), null, "hidden while the switch is off");
+  const row = find(section, (n) => n.dataset?.id === "rq_a");
+  find(row, (n) => n.tag === "button" && n.text.includes("Keep")).click();
+  await settle();
+  assert.equal(posts.at(-1).path, "/api/decisions/keep");
+  assert.deepEqual(JSON.parse(posts.at(-1).init.body), { request_id: "rq_a", episode: "ep_a" });
+
+  serverBoard = board(true);
+  await home.refresh();
+  section = yourTurn();
+  find(section, (n) => n.tag === "button" && n.text.includes("Close all")).click();
+  section = yourTurn();
+  assert.match(section.text, /Close 2 questions\? Each asking agent gets a reply that you dismissed it\. This can't be undone\./);
+  // That it is final is said in the dialog itself, on its own line, and
+  // the button that closes says how many, styled as destructive.
+  assert.ok(find(section, (n) => n.tag === "p" && n.className === "undo" && n.text.includes("This can't be undone.")));
+  assert.match(find(section, (n) => n.tag === "button" && n.text.includes("Close 2")).className, /danger/);
+  const sent = posts.length;
+  find(section, (n) => n.tag === "button" && n.text.includes("Close 2")).click();
+  await settle();
+  assert.equal(posts.length, sent + 1, "one request after one confirmation");
+  assert.equal(posts.at(-1).path, "/api/decisions/close-unanswerable");
+  assert.deepEqual(JSON.parse(posts.at(-1).init.body), {
+    items: [{ request_id: "rq_a", episode: "ep_a" }, { request_id: "rq_b", episode: "ep_b" }],
+    by_label: "web",
+  });
+  assert.match(yourTurn().text, /Closed 1 question\. Skipped 1: rq_b \(no longer unanswerable\)/);
+  // Both rows now leave the fold: rq_a was closed; rq_b is live again.
+  serverBoard.lanes.needs_you.groups = [];
+  serverBoard.decision_hosts[0].unanswerable_count = 0;
+  await home.refresh();
+  assert.doesNotMatch(yourTurn().text, /Can't be answered/, "the empty group is gone");
+  assert.match(yourTurn().text, /Skipped 1: rq_b \(no longer unanswerable\)/,
+    "the result must remain visible when the refreshed fold is empty");
+  find(yourTurn(), (n) => n.tag === "button" && n.text.includes("Dismiss")).click();
+  assert.doesNotMatch(yourTurn().text, /Skipped 1/, "Dismiss clears it");
+  status.home = 404;
+  serverBoard = null;
+  await home.refresh();
 });

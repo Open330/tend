@@ -99,6 +99,7 @@ struct BoardYourTurn: View {
                 ForEach(group.items) { BoardItemView(item: $0) }
             }
         }
+        CantAnswerGroup()
     }
 }
 

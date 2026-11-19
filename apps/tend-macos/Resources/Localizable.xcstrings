@@ -91,6 +91,16 @@
         }
       }
     },
+    "%lld more not listed" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "목록에 없는 질문이 %lld개 더 있습니다"
+          }
+        }
+      }
+    },
     "%lld older" : {
       "localizations" : {
         "ko" : {
@@ -187,6 +197,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "승인 규칙 추가…"
+          }
+        }
+      }
+    },
+    "Agent exited" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트 종료"
           }
         }
       }
@@ -2499,12 +2519,32 @@
         }
       }
     },
+    "Asker gone" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "질문한 에이전트 없음"
+          }
+        }
+      }
+    },
     "Brings Tend forward with the agents palette, those waiting on you first." : {
       "localizations" : {
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Tend를 앞으로 가져와 에이전트 목록을 엽니다. 답을 기다리는 에이전트가 먼저 나옵니다."
+          }
+        }
+      }
+    },
+    "Can't be answered (%lld)" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "답할 수 없는 질문 (%lld)"
           }
         }
       }
@@ -2525,6 +2565,176 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "다시 확인"
+          }
+        }
+      }
+    },
+    "Close %lld" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld개 닫기"
+          }
+        }
+      }
+    },
+    "Close %lld questions?" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "질문 %lld개를 닫을까요?"
+          }
+        }
+      }
+    },
+    "Close 1 question?" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "질문 1개를 닫을까요?"
+          }
+        }
+      }
+    },
+    "Close All…" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모두 닫기…"
+          }
+        }
+      }
+    },
+    "Close every question listed here; each asker gets a reply that you dismissed it" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "여기 있는 질문을 모두 닫습니다. 질문한 에이전트는 각각 사용자가 질문을 닫았다는 회신을 받습니다"
+          }
+        }
+      }
+    },
+    "Closed" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "닫음"
+          }
+        }
+      }
+    },
+    "Closed %lld questions." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "질문 %lld개를 닫았습니다."
+          }
+        }
+      }
+    },
+    "Closed 1 question." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "질문 1개를 닫았습니다."
+          }
+        }
+      }
+    },
+    "Closed by tend" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "tend가 닫음"
+          }
+        }
+      }
+    },
+    "Closed by tend: %@" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "tend가 닫음: %@"
+          }
+        }
+      }
+    },
+    "Closed by tend: merged into another item" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "tend가 닫음: 다른 항목에 합쳐졌습니다"
+          }
+        }
+      }
+    },
+    "Closed by tend: nobody is left to act on it" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "tend가 닫음: 처리할 주체가 남아 있지 않습니다"
+          }
+        }
+      }
+    },
+    "Closed by tend: the original request is gone" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "tend가 닫음: 원래 요청이 없어졌습니다"
+          }
+        }
+      }
+    },
+    "Closed by tend: the original request no longer waits" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "tend가 닫음: 원래 요청이 더 이상 기다리지 않습니다"
+          }
+        }
+      }
+    },
+    "Closed, asker gone: %@" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "질문한 에이전트가 없어 닫음: %@"
+          }
+        }
+      }
+    },
+    "Closing these questions is turned off on this Mac's tendd" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 Mac의 tendd에서 이 질문들을 닫는 기능이 꺼져 있습니다."
+          }
+        }
+      }
+    },
+    "Collapsed" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "접힘"
           }
         }
       }
@@ -2609,6 +2819,16 @@
         }
       }
     },
+    "Each asking agent gets a reply that you dismissed it. This can't be undone." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "질문한 에이전트는 각각 사용자가 질문을 닫았다는 회신을 받습니다. 되돌릴 수 없습니다."
+          }
+        }
+      }
+    },
     "Each folder moves into .tend-set-aside next to it, with its files and git data. Nothing is deleted; Restore moves the preserved folder back. Branches stay." : {
       "localizations" : {
         "ko" : {
@@ -2639,6 +2859,16 @@
         }
       }
     },
+    "Expanded" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "펼쳐짐"
+          }
+        }
+      }
+    },
     "From %@" : {
       "localizations" : {
         "ko" : {
@@ -2665,6 +2895,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Work 완료됨"
+          }
+        }
+      }
+    },
+    "Keeping a question needs an updated tendd; update tend and restart tendd" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "질문을 유지하려면 tendd를 업데이트해야 합니다. tend를 업데이트하고 tendd를 다시 시작하세요."
           }
         }
       }
@@ -2799,6 +3039,16 @@
         }
       }
     },
+    "Pane gone" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "패인 없음"
+          }
+        }
+      }
+    },
     "Part of this call or result is not shown here; the command below prints it all" : {
       "localizations" : {
         "ko" : {
@@ -2815,6 +3065,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "호출과 결과 전체를 출력합니다"
+          }
+        }
+      }
+    },
+    "Put it back in Your turn" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "내 차례로 되돌립니다"
           }
         }
       }
@@ -2845,6 +3105,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "기록된 명령"
+          }
+        }
+      }
+    },
+    "Replaced by another agent" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다른 에이전트로 교체"
           }
         }
       }
@@ -2969,6 +3239,26 @@
         }
       }
     },
+    "Showing the first decisions on this Mac; more are waiting." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 Mac의 결정 중 앞부분만 보여 줍니다. 더 기다리는 결정이 있습니다."
+          }
+        }
+      }
+    },
+    "Skipped %lld: %@" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld개는 건너뛰었습니다: %@"
+          }
+        }
+      }
+    },
     "Some records could not be read; other commands may be missing." : {
       "localizations" : {
         "ko" : {
@@ -3075,6 +3365,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%2$lld개 중 %1$lld개만 보여 줍니다(디스크에 남아 있는 것 먼저). 전체는 %3$@에서 tend worktrees를 실행하세요."
+          }
+        }
+      }
+    },
+    "The agent that asked is not listed on its host; it may have exited. Tend folds the question once it is sure the asker is gone." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "질문한 에이전트가 그 호스트의 목록에 없습니다. 종료되었을 수 있습니다. 질문한 에이전트가 사라진 것이 확실해지면 Tend가 이 질문을 따로 접어 둡니다."
+          }
+        }
+      }
+    },
+    "The agents that asked these are gone, so nobody will read an answer. They stay open until you close them." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "질문한 에이전트가 사라져서 답을 읽을 에이전트가 없습니다. 직접 닫기 전까지는 열려 있습니다."
           }
         }
       }
@@ -22623,52 +22933,52 @@
         }
       }
     },
-    "Send selections": {
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "선택한 항목 보내기"
+    "Send selections" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "선택한 항목 보내기"
           }
         }
       }
     },
-    "Sent %lld selected options.": {
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld개 선택 항목을 보냈습니다."
+    "Sent %lld selected options." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld개 선택 항목을 보냈습니다."
           }
         }
       }
     },
-    "Multiple selections need an updated tendd; update tend and restart tendd": {
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "다중 선택을 보내려면 Tend를 업데이트하고 데몬을 다시 시작해 주세요."
+    "Multiple selections need an updated tendd; update tend and restart tendd" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다중 선택을 보내려면 Tend를 업데이트하고 데몬을 다시 시작해 주세요."
           }
         }
       }
     },
-    "Tend could not prepare these selections. Open the pane to answer.": {
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "선택 항목을 준비하지 못했습니다. 패널을 열어 응답해 주세요."
+    "Tend could not prepare these selections. Open the pane to answer." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "선택 항목을 준비하지 못했습니다. 패널을 열어 응답해 주세요."
           }
         }
       }
     },
-    "What it's asking about": {
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "질문의 맥락"
+    "What it's asking about" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "질문의 맥락"
           }
         }
       }
@@ -23739,16 +24049,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "답하지 않고 이 질문을 닫습니다"
-          }
-        }
-      }
-    },
-    "The agent that asked is not listed on its host; it may have exited. Dismiss the question if it no longer matters." : {
-      "localizations" : {
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "질문한 에이전트가 그 호스트의 목록에 없습니다. 종료되었을 수 있습니다. 더 필요 없는 질문이면 닫으세요."
           }
         }
       }

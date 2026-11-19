@@ -663,15 +663,25 @@ pub const DEFAULT_TICKET_TIMEOUT_SECS: u64 = 180;
 /// entries nothing is ever spawned, and `tend work up` runs on the work id
 /// alone.
 /// `[review]`: what the person's review surfaces may do.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ReviewConfig {
     /// Let a person close, in one go, the questions nobody can answer any
     /// more (their asker gone for a day): `decision_close_unanswerable`,
     /// Close all and `tend review cleanup --questions --apply`. Each gets
-    /// the reply Dismiss sends, which is final. Off by default; folding the
-    /// questions into their own group and Keep work either way.
+    /// the reply Dismiss sends, which is final; every surface says so in
+    /// its confirmation. On by default (the owner's decision, 2026-11-19);
+    /// `false` hides Close all. Folding the questions into their own group
+    /// and Keep work either way.
     pub close_unanswerable: bool,
+}
+
+impl Default for ReviewConfig {
+    fn default() -> Self {
+        Self {
+            close_unanswerable: true,
+        }
+    }
 }
 
 impl ReviewConfig {
@@ -2775,6 +2785,15 @@ fn parse_width_string(raw: &str) -> WidthSpec {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn close_all_is_on_unless_review_turns_it_off() {
+        assert!(Config::default().review.close_unanswerable);
+        let off: Config = toml::from_str("[review]\nclose_unanswerable = false\n").unwrap();
+        assert!(!off.review.close_unanswerable);
+        let empty: Config = toml::from_str("[review]\n").unwrap();
+        assert!(empty.review.close_unanswerable);
+    }
+
     use super::*;
 
     #[test]

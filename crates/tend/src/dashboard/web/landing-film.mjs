@@ -9,6 +9,7 @@
 // autoplay and rests on the attend scene.
 
 import { FILM_FRAMES, FILM_SIZE } from "./landing-frames.mjs";
+import { applyStyles } from "./landing-shared.mjs";
 
 // [frame, duration ms, step, zoom, focus, how]. Steps are what the controls
 // show. A whole terminal is small at hero size, so a scene either zooms in
@@ -45,7 +46,7 @@ function decorate(name, html) {
 function markup(t) {
   const layers = SCENES.map(([name], i) => name === "board"
     ? `<div class="film-layer film-shot" data-scene="${i}"><img src="${esc(t.boardSrc)}" alt="" decoding="async"></div>`
-    : `<div class="film-layer" data-scene="${i}"><pre class="film-term">${decorate(name, FILM_FRAMES[name])}</pre></div>`
+    : `<div class="film-layer" data-scene="${i}"><pre class="film-term">${decorate(name, FILM_FRAMES[name]).replaceAll(' style="', ' data-style="')}</pre></div>`
   ).join("");
   const steps = t.steps.map((label, i) => `
     <button type="button" class="film-step" data-film-step="${i}" aria-label="${esc(label)}">
@@ -57,7 +58,7 @@ function markup(t) {
       <span class="film-title">~/acme — tmux</span>
       <span class="film-live"><i></i>tend</span>
     </div>
-    <div class="film-stage" aria-hidden="true" style="--cols:${FILM_SIZE.cols};--rows:${FILM_SIZE.rows}">
+    <div class="film-stage" aria-hidden="true" data-style="--cols:${FILM_SIZE.cols};--rows:${FILM_SIZE.rows}">
       ${layers}
       <div class="film-spot"></div>
       <div class="film-callout"></div>
@@ -131,6 +132,8 @@ const PAUSE_ICON = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 3h
 export function mountFilm(root, t) {
   root.classList.add("film");
   root.innerHTML = markup(t);
+  // The frames' colours and the stage size (see applyStyles).
+  applyStyles(root);
   const $ = (sel) => root.querySelector(sel);
   const $$ = (sel) => [...root.querySelectorAll(sel)];
   const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;

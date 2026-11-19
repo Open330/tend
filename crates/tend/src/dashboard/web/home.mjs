@@ -5,15 +5,15 @@
 // Windows app, in which case the page never sees it) or the OIDC operator
 // session cookie. Everything an agent wrote is set with textContent only.
 
-import { boardAttention, buildBoard, byProject, digest, fromServerBoard, hostHue, LANES, productOf, replyTarget, reviewQueue, sameTarget, TEND_PROJECT, withLater } from "./home-board.mjs";
+import { boardAttention, buildBoard, byProject, digest, fromServerBoard, hostHue, keepPayload, LANES, productOf, replyTarget, reviewQueue, sameTarget, TEND_PROJECT, withLater } from "./home-board.mjs";
 import { languageOf, relativeTime, stringsFor, textOf } from "./home-strings.mjs";
 import { itemHash, linkedHostOf, linkedItemOf } from "./needs-model.mjs";
 import { mountExplore } from "./explore.mjs";
 import { MESSAGES_PATH, messagesReturnPath } from "./messages-model.mjs";
+import { legacyLink } from "./legacy-link.mjs";
 import { openAccessManager } from "./operators-admin.mjs";
 import { openShareManager } from "./sharing-admin.mjs";
-
-const TOKEN_KEY = "tend.token";
+import { normalizeLogin, signInHref, signOut, TOKEN_KEY } from "./sign-in.mjs";
 /// The card layout, a per-browser preference like the Mac's
 /// `tend.home.cardLayout`: "emphasis" (the default) or "compact".
 const LAYOUT_KEY = "tend.home.cardLayout";
@@ -32,6 +32,9 @@ const state = {
   connection: "connecting",
   generation: 0,
   lost: false,
+  /// May read but not operate (`public_read`, auth off, a signed-in
+  /// viewer): Explore and Messages read-only, Home's operator notice.
+  readOnly: false,
   selected: null,
   lane: "needsYou",
   layout: "emphasis",
@@ -46,6 +49,8 @@ const state = {
   /// Per lane, which of the Mac's folds are open (helpers, empty,
   /// reviewed); `showOlder` is the older fold.
   folds: { needsYou: {}, running: {}, finished: {}, reviewed: false },
+  /// Can't be answered: Close all asked for its one confirmation.
+  confirmCloseAll: false,
   reviewScope: "day",
   /// The review sheet's own state: the mode, what was put off with Later
   /// while it is open, the selection, and whether Send Back is open.
@@ -64,20 +69,21 @@ const state = {
 
 // ---- Credentials -------------------------------------------------------
 
-/// `#token=…` from a link (never sent to the server) moves into storage and
-/// out of the address bar, the same bootstrap the main page does.
+/// A link's credential (`#token=…`, or the old `?token=…`) moves into
+/// storage and out of the address bar before anything else reads it, and a
+/// link the old workbench made becomes the address it now opens
+/// (legacy-link.mjs): the credential is never carried into it.
 export function bootstrapToken() {
-  const params = new URLSearchParams(String(window.location.hash || "").replace(/^#/, ""));
-  const token = params.get("token");
-  if (!token) return;
-  try {
-    localStorage.setItem(TOKEN_KEY, token);
-  } catch {
-    // Storage blocked: the session cookie or a proxy may still authorize.
+  const { pathname, search, hash } = window.location;
+  const { token, href } = legacyLink(pathname, search, hash);
+  if (token) {
+    try {
+      localStorage.setItem(TOKEN_KEY, token);
+    } catch {
+      // Storage blocked: the session cookie or a proxy may still authorize.
+    }
   }
-  params.delete("token");
-  const rest = params.toString();
-  history.replaceState(null, "", `${window.location.pathname}${window.location.search}${rest ? `#${rest}` : ""}`);
+  if (href !== `${pathname}${search || ""}${hash || ""}`) history.replaceState(null, "", href);
 }
 
 function authHeaders() {
@@ -190,9 +196,13 @@ function localHost(alias) {
   return Boolean(state.board?.hosts.find((h) => h.alias === alias)?.local) || !state.board?.hosts.length;
 }
 
-function canWrite() {
-  const access = state.data.access;
+/// Whether an `/api/access` answer is an operator's.
+function operatorAccess(access) {
   return Boolean(access && access.write_authorized !== false && access.mode !== "read_only");
+}
+
+function canWrite() {
+  return operatorAccess(state.data.access);
 }
 
 // Looks Good marks a finished unit of the daemon's board. Where /api/access
@@ -550,6 +560,14 @@ function compactRow(unit) {
   return row;
 }
 
+/// The outcome in words: what was decided, and for a closure why.
+function outcomeText(unit) {
+  if (unit.outcome === "closedByTend") return `${S.closedByTend}: ${S.closeReasons[unit.reason] || unit.reasonText}`;
+  if (unit.closure) return S.closedAskerGone(S.causes[unit.closure.cause] || S.causes.other);
+  const word = S[unit.outcome] || unit.outcome;
+  return unit.note ? `${word}: ${unit.note}` : word;
+}
+
 /// What was decided, in Finished: the decision, the outcome in the inset,
 /// who decided it on the meta line.
 function decidedCard(unit) {
@@ -558,8 +576,7 @@ function decidedCard(unit) {
   card.append(el("div", "e-title", tx(unit.title)));
   const inset = el("div", "inset");
   const outcome = el("div", "outcome");
-  const word = S[unit.outcome] || unit.outcome;
-  outcome.append(icon(unit.outcome === "accepted" || unit.outcome === "answered" ? "check" : "turn"), el("span", null, unit.note ? `${word}: ${unit.note}` : word));
+  outcome.append(icon(unit.outcome === "accepted" || unit.outcome === "answered" ? "check" : "turn"), el("span", null, outcomeText(unit)));
   inset.append(outcome);
   card.append(inset);
   card.append(metaLine("finished", [
@@ -623,6 +640,10 @@ function renderLane(lane, data) {
     for (const unit of group.units) body.append(unitCard(unit));
   }
   if (!data.count && !error) body.append(el("div", "lane-empty", S[empty]));
+  // The group, or only what the last Close all did once it emptied the
+  // group: that report stays until the person dismisses it.
+  if (data.cantAnswer?.count) body.append(cantAnswerSection(data.cantAnswer));
+  else if (state.results.has(CANT_ANSWER_KEY)) body.append(cantAnswerReport());
   const fold = (list, open, show, hide, toggle) => {
     if (!list?.length) return;
     body.append(button(open ? hide : show(list.length), () => {
@@ -649,6 +670,123 @@ function renderLane(lane, data) {
   }
   section.append(head, body);
   return section;
+}
+
+// ---- Can't be answered (docs/proposals/STALE_QUESTIONS.md) ---------------
+
+const CANT_ANSWER_KEY = "cant-answer";
+
+/// Your turn's folded group: questions whose asker is gone, collapsed by
+/// default, each with why and since when; Keep puts one back in Your turn,
+/// Close all (where the host allows it) declines exactly the listed ones
+/// after one confirmation.
+function cantAnswerSection(group) {
+  const open = Boolean(state.folds.needsYou.cantAnswer);
+  const box = el("div", `cant-answer${open ? " open" : ""}`);
+  const toggle = button(S.cantAnswer(group.count), () => {
+    state.folds.needsYou.cantAnswer = !open;
+    if (open) state.confirmCloseAll = false;
+    render();
+  }, "btn ghost small fold cant-answer-toggle", "chevron");
+  toggle.setAttribute("aria-expanded", String(open));
+  toggle.title = S.cantAnswerHelp;
+  box.append(toggle);
+  if (!open) return box;
+  box.append(el("p", "cant-answer-help", S.cantAnswerHelp));
+  if (group.closeAll && canDecide()) {
+    const n = group.closeAll.items.length;
+    if (state.confirmCloseAll) {
+      const confirm = el("div", "confirm-close");
+      confirm.setAttribute("role", "alertdialog");
+      // What happens, then, on its own line, that it is final.
+      confirm.append(el("p", null, S.closeAllConfirm(n)), el("p", "undo", S.closeAllUndo));
+      const row = el("div", "row end");
+      row.append(
+        button(S.cancel, () => {
+          state.confirmCloseAll = false;
+          render();
+        }, "btn ghost"),
+        button(S.closeN(n), () => closeAll(group.closeAll), "btn primary danger"),
+      );
+      confirm.append(row);
+      box.append(confirm);
+    } else {
+      const row = el("div", "row");
+      row.append(button(S.closeAll, () => {
+        state.confirmCloseAll = true;
+        render();
+      }, "btn ghost small"));
+      box.append(row);
+    }
+  }
+  const report = cantAnswerReport();
+  if (report) box.append(report);
+  for (const unit of group.units) box.append(cantAnswerRow(unit));
+  if (group.count > group.units.length) box.append(el("div", "lane-note quiet", S.cantAnswerMore(group.count - group.units.length)));
+  if (group.remote) box.append(el("div", "lane-note quiet", S.cantAnswerThere));
+  return box;
+}
+
+/// What the last Close all closed and skipped, with Dismiss. Kept apart
+/// from the group's count: the refresh after a close may empty it.
+function cantAnswerReport() {
+  const result = resultLine(CANT_ANSWER_KEY);
+  if (!result) return null;
+  const box = el("div", "cant-answer-report");
+  box.append(result, button(S.dismissReport, () => {
+    state.results.delete(CANT_ANSWER_KEY);
+    render();
+  }, "btn ghost small"));
+  return box;
+}
+
+function cantAnswerRow(unit) {
+  const key = cardKey(unit);
+  const busy = state.busy.has(key);
+  const card = el("article", `card cant-answer-item${busy ? " busy" : ""}`);
+  card.dataset.id = unit.id;
+  card.dataset.host = unit.host;
+  card.append(el("div", "d-title", tx(unit.title)));
+  const why = el("div", "why");
+  const cause = S.causes[unit.unanswerable.cause] || S.causes.other;
+  why.append(icon("exclaim"), el("span", null, unit.unanswerable.since ? `${cause} · ${S.since(when(unit.unanswerable.since))}` : cause));
+  card.append(why);
+  const meta = [unit.asker ? el("span", "who", unit.asker) : null, el("span", null, unit.host), el("span", "when", when(unit.since))];
+  const row = metaLine(null, meta);
+  if (unit.keepable && unit.actionable !== false && canDecide()) {
+    const keep = button(S.keep, () => decide(unit, "/api/decisions/keep", keepPayload(unit), S.kept), "btn ghost small");
+    keep.title = S.keepHelp;
+    keep.disabled = busy;
+    row.append(keep);
+  }
+  card.append(row);
+  const result = resultLine(key);
+  if (result) card.append(result);
+  return card;
+}
+
+/// Close all: exactly the listed pairs; what was skipped is said.
+async function closeAll(payload) {
+  state.confirmCloseAll = false;
+  state.busy.add(CANT_ANSWER_KEY);
+  state.results.delete(CANT_ANSWER_KEY);
+  render();
+  try {
+    const outcome = await write("/api/decisions/close-unanswerable", payload);
+    const closed = Array.isArray(outcome?.closed) ? outcome.closed.length : 0;
+    const skipped = Array.isArray(outcome?.skipped) ? outcome.skipped : [];
+    const text = skipped.length
+      ? `${S.closedCount(closed)} ${S.skippedCount(skipped.length)}: ${skipped.map((s) => `${s.request_id} (${s.reason})`).join("; ")}`
+      : S.closedCount(closed);
+    state.results.set(CANT_ANSWER_KEY, { ok: !skipped.length, text });
+    setTimeout(refresh, 400);
+  } catch (error) {
+    if (error.auth) return lostAccess(error);
+    state.results.set(CANT_ANSWER_KEY, { ok: false, text: error.message });
+  } finally {
+    state.busy.delete(CANT_ANSWER_KEY);
+    render();
+  }
 }
 
 // ---- Backlog (FleetBacklog.swift) -----------------------------------------
@@ -1358,6 +1496,88 @@ function replyComposer(unit, key, target) {
   return null;
 }
 
+/// The Work a unit's source names, as tendd's Work control takes it.
+function workIdentity(unit) {
+  const source = unit.type === "work" ? unit.source : null;
+  return source?.kind === "work" && source.workspace && source.work ? { workspace_id: String(source.workspace), work_id: String(source.work) } : null;
+}
+
+/// Steer this Work (the Mac's WorkPromptComposer, WorkConsoleViews.swift):
+/// the next instruction to every live agent of a Work at once, through
+/// `POST /api/work-control/prompt`. Operator-only. The route reaches this
+/// host's agents; as on the Mac, nothing is sent while one of the Work's
+/// hosts is registered in observe mode.
+function steerComposer(unit) {
+  const identity = workIdentity(unit);
+  if (!identity || !canWrite()) return null;
+  const key = `steer:${unit.id}`;
+  const agents = unit.agents || [];
+  const here = agents.filter((agent) => !agent.remote);
+  const observe = agents.some((agent) => agent.remote && state.board?.observeHosts?.includes(agent.host));
+  const elsewhere = agents.length - here.length;
+  const box = el("section", "steer");
+  box.append(el("div", "section-label", S.steerWork));
+  const composerBox = el("div", "composer steer-composer");
+  const area = el("textarea", "field");
+  area.rows = 2;
+  area.dataset.key = key;
+  area.maxLength = 16384;
+  area.placeholder = S.steerPlaceholder;
+  area.value = state.drafts.get(key) || "";
+  // Frozen while sending, so nothing typed now is lost when it clears.
+  area.disabled = state.busy.has(key);
+  // The Mac's `canSend`: words, not already sending, an agent this host's
+  // Work control reaches, and no host of the Work in observe mode.
+  const canSend = () => Boolean(area.value.trim()) && !state.busy.has(key) && here.length > 0 && !observe;
+  const send = button(S.sendToCount(here.length), () => {
+    if (canSend()) steerWork(identity, area.value, key);
+  }, "btn primary");
+  const sync = () => (send.disabled = !canSend());
+  area.addEventListener("input", () => {
+    if (area.value) state.drafts.set(key, area.value);
+    else state.drafts.delete(key);
+    sync();
+  });
+  area.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !send.disabled) {
+      event.preventDefault();
+      send.click();
+    }
+  });
+  sync();
+  const row = el("div", "row end");
+  row.append(send);
+  composerBox.append(area, row);
+  box.append(composerBox);
+  if (observe) box.append(el("p", "flag warn", S.steerObserveHost));
+  else if (elsewhere) box.append(el("p", "help", S.steerThisHost(elsewhere)));
+  const result = resultLine(key);
+  if (result) box.append(result);
+  return box;
+}
+
+async function steerWork(identity, text, key) {
+  if (!text.trim() || state.busy.has(key)) return;
+  state.busy.add(key);
+  state.results.delete(key);
+  render();
+  try {
+    const answer = await write("/api/work-control/prompt", { identity, text: text.trim(), submit: true });
+    // Clear only what was sent: a newer text typed since stays.
+    if (state.drafts.get(key) === text) state.drafts.delete(key);
+    const sent = Number(answer?.succeeded) || 0;
+    const tried = Number(answer?.attempted) || sent;
+    state.results.set(key, sent < tried ? { ok: false, text: S.steerPartial(sent, tried) } : { ok: true, text: S.steerSent(sent) });
+    setTimeout(refresh, 600);
+  } catch (error) {
+    if (error.auth && error.status === 401) return lostAccess(error);
+    state.results.set(key, { ok: false, text: error.message });
+  } finally {
+    state.busy.delete(key);
+    render();
+  }
+}
+
 function renderInspector() {
   const box = $("inspector");
   const unit = findSelected(state.selected);
@@ -1408,6 +1628,8 @@ function renderInspector() {
     if (line) now.append(line);
   }
   body.append(now);
+  const steer = steerComposer(unit);
+  if (steer) body.append(steer);
 
   const stages = el("section");
   stages.append(el("div", "section-label", S.stages));
@@ -1483,8 +1705,7 @@ function renderDecidedDetail(box, unit) {
   head.append(titles, close);
   const body = el("div", "ins-body");
   const now = el("section", "nowbox finished");
-  const word = S[unit.outcome] || unit.outcome;
-  now.append(el("div", "label", S.lastResult), el("div", "text", unit.note ? `${word}: ${unit.note}` : word));
+  now.append(el("div", "label", S.lastResult), el("div", "text", outcomeText(unit)));
   if (unit.by) now.append(el("div", "sub", S.by(unit.by)));
   body.append(now);
   box.replaceChildren(head, body);
@@ -1626,6 +1847,12 @@ export function composing() {
 function render() {
   if (state.lost) return;
   renderRoute();
+  const readOnly = state.readOnly;
+  for (const id of ["segments", "layout-toggle", "filter-menu"]) $(id).hidden = readOnly;
+  $("operator-notice").hidden = !readOnly;
+  if (readOnly) return renderReadOnlyHome();
+  $("operator-notice").replaceChildren();
+  delete $("operator-notice").dataset.signature;
   const board = currentBoard();
   state.board = board;
   renderHeader(board);
@@ -1651,13 +1878,169 @@ function render() {
     option.setAttribute("aria-checked", String(option.dataset.layout === state.layout));
   }
   for (const tab of document.querySelectorAll("#segments button")) tab.setAttribute("aria-selected", String(tab.dataset.lane === state.lane));
-  // Explore and pane links lead to the workbench, which only the full
-  // dashboard serves: hidden where /api/access is not answered (a paired
-  // device, the Windows app's scoped proxy).
+  // Explore and Settings read what only the full dashboard serves: hidden
+  // where /api/access is not answered (a paired device, the Windows app's
+  // scoped proxy).
   $("rail-explore").hidden = !state.data.access;
   $("rail-settings").hidden = !state.data.access;
   renderInspector();
   revealLinkedItem();
+}
+
+// ---- Read-only: may read, may not operate --------------------------------
+
+/// Home for someone who may read but not operate: no board (it is the
+/// operator's), the hosts and the status bar from the Fleet snapshot, and
+/// what would make this browser an operator.
+function renderReadOnlyHome() {
+  const board = buildBoard({ fleet: state.data.fleet, now: Date.now() });
+  state.board = null;
+  state.selected = null;
+  renderHeader(board);
+  renderStatus(board);
+  $("review-button").hidden = true;
+  $("empty-board").hidden = true;
+  $("lanes").replaceChildren();
+  $("lanes").hidden = true;
+  $("inspector").replaceChildren();
+  $("inspector").hidden = true;
+  $("seg-backlog-tab").hidden = true;
+  $("rail-explore").hidden = !state.data.access;
+  $("rail-settings").hidden = !state.data.access;
+  renderOperatorNotice();
+}
+
+/// What this access may become, in words: auth off has no token to
+/// upgrade with; a signed-in viewer enrolls its account; a browser without
+/// an account keeps the token.
+function readOnlyReason(access) {
+  const login = access?.login || {};
+  if (!access?.write_available) return S.roNoToken;
+  if (login.signed_in) return login.enrollment ? S.roViewer(login.email || "—") : S.roViewerNoEnroll(login.email || "—");
+  return S.roAnonymous;
+}
+
+/// Whether Upgrade with token can work here: a token to check, and for a
+/// signed-in account, enrollment allowed (else `/auth/enroll` refuses it).
+function canUpgrade(access) {
+  const login = access?.login || {};
+  return Boolean(access?.write_available && !operatorAccess(access) && (!login.signed_in || login.enrollment));
+}
+
+/// Changes only when what the notice says does, so a poll never redraws a
+/// field someone is typing a token into.
+function accessSignature(access) {
+  const login = access?.login || {};
+  return JSON.stringify([access?.mode, Boolean(access?.write_available), operatorAccess(access), Boolean(login.available), Boolean(login.signed_in), Boolean(login.enrollment), login.email || "", login.role || ""]);
+}
+
+function renderOperatorNotice() {
+  const box = $("operator-notice");
+  const access = state.data.access;
+  const signature = accessSignature(access);
+  if (box.dataset.signature === signature) return;
+  box.dataset.signature = signature;
+  box.replaceChildren(icon("hand", "big"), el("h2", null, S.roTitle), el("p", null, readOnlyReason(access)), ...accessActions(access));
+}
+
+/// Sign in, sign out and Upgrade with token, as this access allows: on
+/// Home's operator notice and in Settings.
+function accessActions(access) {
+  const login = access?.login || {};
+  const nodes = [];
+  const row = el("div", "row");
+  if (login.available && !login.signed_in) {
+    const link = el("a", "btn primary", S.signIn);
+    link.href = signInHref(normalizeLogin(login), shellReturnPath(window.location.pathname, window.location.hash));
+    row.append(link);
+  }
+  if (login.signed_in) row.append(button(S.signOut, () => signOut(), "btn"));
+  if (row.children.length) nodes.push(row);
+  if (canUpgrade(access)) nodes.push(upgradeForm(Boolean(login.signed_in)));
+  return nodes;
+}
+
+/// Upgrade with token, in the page (the workbench asked in a prompt).
+function upgradeForm(signedIn) {
+  const form = el("form", "upgrade");
+  const label = el("label", "upgrade-label");
+  const input = el("input", "field");
+  input.type = "password";
+  input.autocomplete = "off";
+  input.maxLength = 1024;
+  input.required = true;
+  input.placeholder = S.upgradePlaceholder;
+  label.append(el("span", null, S.upgradeLabel), input);
+  const submit = el("button", "btn primary", S.upgrade);
+  submit.type = "submit";
+  const status = el("p", "upgrade-status");
+  status.setAttribute("role", "status");
+  status.setAttribute("aria-live", "polite");
+  const fields = el("div", "row");
+  fields.append(label, submit);
+  form.append(fields, el("p", "set-help", signedIn ? S.upgradeHelpAccount : S.upgradeHelpBrowser), status);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const token = input.value.trim();
+    if (!token || submit.disabled) return;
+    submit.disabled = true;
+    status.className = "upgrade-status";
+    status.textContent = S.upgradeChecking;
+    const result = await upgradeWithToken(token, signedIn);
+    input.value = "";
+    submit.disabled = false;
+    status.className = `upgrade-status ${result.ok ? "ok" : "error"}`;
+    status.textContent = result.ok ? S.upgradeDone : result.error;
+  });
+  return form;
+}
+
+/// A signed-in viewer enrolls its own account with the token
+/// (`POST /auth/enroll`): the server checks it once and replaces the
+/// viewer session with an operator's; nothing is stored here. A browser
+/// without an account keeps the token as its credential instead, as the
+/// workbench's unlock did, and only if it makes this browser an operator.
+export async function upgradeWithToken(token, signedIn) {
+  if (signedIn) {
+    try {
+      const resp = await fetch("/auth/enroll", {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json", "X-Tend-Operator": "1" },
+        body: JSON.stringify({ token }),
+      });
+      const payload = await resp.json().catch(() => null);
+      if (resp.ok || payload?.restart) {
+        window.location.reload();
+        return { ok: true };
+      }
+      return { ok: false, error: payload?.error || S.upgradeFailed };
+    } catch {
+      return { ok: false, error: S.upgradeFailed };
+    }
+  }
+  try {
+    localStorage.setItem(TOKEN_KEY, token);
+  } catch {
+    return { ok: false, error: S.upgradeFailed };
+  }
+  let access = null;
+  try {
+    access = await read("/api/access");
+  } catch {
+    // Reported below.
+  }
+  if (operatorAccess(access)) {
+    refresh();
+    return { ok: true };
+  }
+  try {
+    localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // ignore
+  }
+  return { ok: false, error: S.upgradeInvalid };
 }
 
 // ---- Shell routes: Home, Explore, Settings ------------------------------
@@ -1669,6 +2052,9 @@ function dropShellPages() {
   state.explore = null;
   $("view-explore").replaceChildren();
   $("view-settings").replaceChildren();
+  delete $("view-settings").dataset.signature;
+  $("operator-notice").replaceChildren();
+  delete $("operator-notice").dataset.signature;
   for (const dialog of document.querySelectorAll("dialog.share-dialog")) {
     dialog.close?.();
     dialog.remove?.();
@@ -1688,15 +2074,7 @@ const ROUTES = {
   "/settings": "settings",
 };
 
-/// Links the old workbench made (`/#pane=…`, `/#workspace=…`, …) still
-/// open what they named there.
-export function legacyTarget(pathname, hash) {
-  if (pathname !== "/") return null;
-  const params = new URLSearchParams(String(hash || "").replace(/^#/, ""));
-  return ["pane", "workspace", "session", "window", "message", "wsocket"].some((key) => params.has(key))
-    ? `/workbench${hash}`
-    : null;
-}
+export { legacyLink };
 
 function go(route, { push = true } = {}) {
   state.route = route;
@@ -1737,22 +2115,30 @@ function settingsRow(label, value) {
 }
 
 /// Settings, the web's part of the Mac's Settings: who is signed in and
-/// what this dashboard allows, access and sharing administration, and the
-/// classic workbench for what has not moved into the shell yet.
+/// what this dashboard allows, sign-in, sign-out and Upgrade with token,
+/// access and sharing administration, and the classic workbench for what
+/// has not moved into the shell yet.
 function renderSettings() {
   const box = $("view-settings");
   const access = state.data.access;
+  // Redrawn only when what it says changes: a poll must not clear a token
+  // being typed.
+  const signature = JSON.stringify([accessSignature(access), Boolean(access?.capabilities?.work_start), Boolean(access?.capabilities?.pane_sharing), Boolean(access?.capabilities?.device_pairing)]);
+  if (box.dataset.signature === signature && box.children.length) return;
+  box.dataset.signature = signature;
   const page = el("div", "set-page");
   page.append(el("h1", null, S.settings));
   const general = el("section", "set-section");
   general.append(el("h2", null, S.settingsAccount));
   const login = access?.login || {};
   general.append(
-    settingsRow(S.settingsSignedIn, login.signed_in ? `${login.email || "—"} (${login.role || "—"})` : access ? S.settingsToken : "—"),
+    settingsRow(S.settingsSignedIn, login.signed_in ? `${login.email || "—"} (${login.role || "—"})` : operatorAccess(access) ? S.settingsToken : S.settingsNobody),
     settingsRow(S.settingsMode, access?.mode || "—"),
     settingsRow(S.settingsWrites, access?.write_authorized ? S.yes : S.no),
     settingsRow(S.settingsWorkStart, access?.capabilities?.work_start ? S.yes : S.no),
   );
+  if (!operatorAccess(access)) general.append(el("p", "set-help", readOnlyReason(access)));
+  general.append(...accessActions(access));
   page.append(general);
   if (canWrite()) {
     const admin = el("section", "set-section");
@@ -1821,18 +2207,75 @@ export function homeReturnPath(hash, pathname = "/home") {
   return item ? `/home${itemHash(item, linkedHostOf(hash))}` : "/home";
 }
 
+/// Where sign-in from any page of the shell comes back to, rebuilt from
+/// what the address names (so never with a credential): Home and its card,
+/// Explore and its pane, Messages and its message, or Settings.
+const EXPLORE_LINK_KEYS = new Set(["pane", "session", "window", "socket", "host", "workspace", "wsocket"]);
+
+export function shellReturnPath(pathname, hash) {
+  if (pathname === "/explore") {
+    // The whole selection Explore reads (pane, session, window and the
+    // workspace filter, with their sockets and host), in the link's order;
+    // anything else, a token included, stays behind.
+    const params = new URLSearchParams(String(hash || "").replace(/^#/, ""));
+    const kept = new URLSearchParams([...params].filter(([key]) => EXPLORE_LINK_KEYS.has(key)));
+    const rest = kept.toString();
+    return rest ? `/explore#${rest}` : "/explore";
+  }
+  if (pathname === "/settings") return "/settings";
+  return homeReturnPath(hash, pathname);
+}
+
+/// /welcome, for a visitor whose reads answer 401, keeping where they were.
+export function welcomeHref(pathname, hash) {
+  return `/welcome?return_to=${encodeURIComponent(shellReturnPath(pathname, hash))}`;
+}
+
+/// Asked to authenticate (the reads answer 401): nothing private stays,
+/// and the visitor goes to /welcome, to come back here after sign-in.
+function toWelcome(error) {
+  const target = welcomeHref(window.location.pathname, window.location.hash);
+  dropPrivate();
+  $("status").textContent = error.message;
+  window.location.replace(target);
+}
+
+/// May read, may not operate: the shell read-only. Coming down from an
+/// operator's view, everything private goes first (as on a lost sign-in)
+/// and Home shows; arriving read-only, the page asked for stays.
+function showReadOnly(access, fleet) {
+  const hadPrivate = !state.readOnly && Boolean(state.data.server || state.data.decisions || state.data.history || operatorAccess(state.data.access));
+  if (hadPrivate) dropPrivate();
+  state.lost = false;
+  state.readOnly = true;
+  state.data = { decisions: null, history: null, fleet: fleet?.status === "fulfilled" ? fleet.value : null, access, server: null };
+  state.errors = { decisions: null, history: null, fleet: fleet?.status === "rejected" && !fleet.reason?.auth ? fleet.reason.message : null };
+  state.fleetSettled = true;
+  state.connection = "connected";
+  $("login").hidden = true;
+  $("status").textContent = "";
+  render();
+}
+
 /// Signed out, expired or downgraded: nothing private stays on the page,
 /// drafts, host names, filters and an open sheet included, and no older
 /// read may bring it back.
 function lostAccess(error) {
-  // Someone who is not an operator opening the dashboard's address gets
-  // the classic page: its landing, its sign-in, its public read view.
-  if (window.location.pathname === "/") {
-    window.location.replace(`/workbench${window.location.hash}`);
-    return;
-  }
   // Before the shell pages go (and the address with them).
   const back = homeReturnPath(window.location.hash, window.location.pathname);
+  dropPrivate();
+  state.readOnly = false;
+  $("status").textContent = error.message;
+  const login = $("login");
+  login.href = `/auth/login?return_to=${encodeURIComponent(back)}`;
+  login.hidden = false;
+  state.connection = "connected";
+  renderStatus(null);
+}
+
+/// Everything private off the page and out of state; no older read may
+/// bring it back (`state.lost` until a poll says otherwise).
+function dropPrivate() {
   state.generation += 1;
   state.lost = true;
   state.drafts.clear();
@@ -1845,7 +2288,7 @@ function lostAccess(error) {
   state.composer = null;
   state.selected = null;
   state.filter = { host: "", project: "" };
-  state.data = { decisions: null, history: null, fleet: null, access: null };
+  state.data = { decisions: null, history: null, fleet: null, access: null, server: null };
   state.board = null;
   $("lanes").replaceChildren();
   $("inspector").replaceChildren();
@@ -1871,12 +2314,7 @@ function lostAccess(error) {
   $("view-home").hidden = false;
   $("view-explore").hidden = true;
   $("view-settings").hidden = true;
-  $("status").textContent = error.message;
-  const login = $("login");
-  login.href = `/auth/login?return_to=${encodeURIComponent(back)}`;
-  login.hidden = false;
-  state.connection = "connected";
-  renderStatus(null);
+  $("operator-notice").hidden = true;
 }
 
 /// One poll at a time: a slow host makes the next one wait rather than
@@ -1902,13 +2340,30 @@ export function refresh() {
 async function poll() {
   const generation = ++state.generation;
   const current = () => generation === state.generation;
+  // Read-only, the operator's reads (board, queue, history) would only be
+  // refused: ask what a reader may, and whether this browser became an
+  // operator (a token entered here), which the full poll below then reads.
+  if (state.readOnly && state.data.access && !operatorAccess(state.data.access)) {
+    const [access, fleet] = await Promise.allSettled([read("/api/access"), read("/api/fleet")]);
+    if (!current()) return;
+    if (access.status === "fulfilled" && !operatorAccess(access.value)) return showReadOnly(access.value, fleet);
+    if (access.status === "rejected") {
+      if (access.reason.status === 401) return toWelcome(access.reason);
+      if (access.reason.auth) return lostAccess(access.reason);
+      // A blip: the page stays as it is.
+      state.connection = access.reason.status > 0 ? "connected" : "failed";
+      $("status").textContent = state.connection === "failed" ? S.disconnected : "";
+      return;
+    }
+  }
   // The daemon's board (GET /api/home) when it has one; otherwise, or
   // where a proxy does not forward it (the Windows app) or a credential
   // may only decide (a paired device), the queue and the Fleet snapshot,
   // laid out here.
   const [home, history, access] = await Promise.allSettled([
     read("/api/home"),
-    read("/api/decisions/history"),
+    // tend's own closures too, with why (`decision_history_closures_v1`).
+    read("/api/decisions/history?closures=true"),
     read("/api/access"),
   ]);
   if (!current()) return;
@@ -1927,9 +2382,22 @@ async function poll() {
   // The other reads may be refused to a credential that may only decide (a
   // paired device gets 401 there, the Windows app's proxy 403) while the
   // queue still reads: that leaves those parts empty, not the page. A
-  // session that ended fails the queue read too.
-  if (home.status === "rejected" && decisions.status === "rejected" && decisions.reason.auth) return lostAccess(decisions.reason);
+  // session that ended fails the queue read too. Then /api/access tells
+  // the rest: a reader who may not operate gets the shell read-only; a
+  // visitor asked to authenticate (401) goes to /welcome; anything else
+  // (a proxy's refusal) keeps the sign-in offer here.
+  if (home.status === "rejected" && decisions.status === "rejected" && decisions.reason.auth) {
+    if (access.status === "fulfilled" && !operatorAccess(access.value)) return showReadOnly(access.value, fleet);
+    if (access.status === "rejected" && access.reason.status === 401) return toWelcome(decisions.reason);
+    return lostAccess(decisions.reason);
+  }
   state.lost = false;
+  if (state.readOnly) {
+    // Now an operator: Explore mounts again, with output and composer.
+    state.readOnly = false;
+    state.explore?.destroy();
+    state.explore = null;
+  }
   $("login").hidden = true;
   const reached = [home, decisions, fleet, history].some((r) => r.status === "fulfilled" || r.reason?.status > 0);
   state.connection = reached ? "connected" : "failed";
@@ -2032,11 +2500,6 @@ function translate() {
 
 export function start() {
   bootstrapToken();
-  const legacy = legacyTarget(window.location.pathname, window.location.hash);
-  if (legacy) {
-    window.location.replace(legacy);
-    return;
-  }
   state.route = ROUTES[window.location.pathname] || "home";
   for (const item of document.querySelectorAll(".rail-item[data-route]")) {
     item.addEventListener("click", (event) => {

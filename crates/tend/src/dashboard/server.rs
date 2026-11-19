@@ -5394,35 +5394,58 @@ mod tests {
     }
 
     /// The pages hold no data: everyone gets them, under the same headers.
-    /// Home's names serve `home.html` under the strict policy; the
-    /// workbench keeps the framing-only one. Both revalidate (`no-cache`).
+    /// Home's names serve `home.html` under the strict policy, and so does
+    /// `/welcome` (`welcome.html`, the landing without the workbench); the
+    /// workbench keeps the framing-only one. All revalidate (`no-cache`),
+    /// for every principal: anonymous in `public_read` and with auth off
+    /// included, since a page holds no data.
     #[tokio::test]
     async fn home_pages_route_matrix() {
+        use http_body_util::BodyExt as _;
         let pages = [
-            ("/", assets::HOME_POLICY),
-            ("/home", assets::HOME_POLICY),
-            ("/needs", assets::HOME_POLICY),
-            ("/explore", assets::HOME_POLICY),
-            ("/explore/messages", assets::HOME_POLICY),
-            ("/settings", assets::HOME_POLICY),
-            ("/workbench", assets::FRAME_POLICY),
+            ("/", assets::HOME_POLICY, "home.mjs"),
+            ("/home", assets::HOME_POLICY, "home.mjs"),
+            ("/needs", assets::HOME_POLICY, "home.mjs"),
+            ("/explore", assets::HOME_POLICY, "home.mjs"),
+            ("/explore/messages", assets::HOME_POLICY, "home.mjs"),
+            ("/settings", assets::HOME_POLICY, "home.mjs"),
+            ("/welcome", assets::HOME_POLICY, "welcome.mjs"),
+            ("/workbench", assets::FRAME_POLICY, "main.js"),
         ];
+        let mut apps = Vec::new();
         for auth in [DashboardAuthMode::Token, DashboardAuthMode::PublicRead] {
             let matrix = home_matrix(auth).await;
-            for (principal, headers) in &matrix.credentials {
-                for (uri, policy) in pages {
-                    let response = matrix_call(&matrix.app, "GET", uri, headers, None).await;
-                    let at = format!("{auth:?} {principal:?} {uri}");
-                    assert_eq!(response.status(), StatusCode::OK, "{at}");
-                    let headers = response.headers();
-                    assert_eq!(headers[header::CONTENT_SECURITY_POLICY], policy, "{at}");
-                    assert_eq!(headers[header::X_FRAME_OPTIONS], "DENY", "{at}");
-                    assert_eq!(headers[header::CACHE_CONTROL], "no-cache", "{at}");
-                    assert_eq!(
-                        headers[header::CONTENT_TYPE],
-                        "text/html; charset=utf-8",
-                        "{at}"
-                    );
+            for (principal, headers) in matrix.credentials {
+                apps.push((
+                    format!("{auth:?} {principal:?}"),
+                    matrix.app.clone(),
+                    headers,
+                ));
+            }
+        }
+        // auth = "none" on loopback: no token, nobody to authenticate.
+        apps.push(("None Anonymous".into(), router(fresh_state()), Vec::new()));
+        for (who, app, headers) in &apps {
+            for (uri, policy, script) in pages {
+                let response = matrix_call(app, "GET", uri, headers, None).await;
+                let at = format!("{who} {uri}");
+                assert_eq!(response.status(), StatusCode::OK, "{at}");
+                let headers = response.headers();
+                assert_eq!(headers[header::CONTENT_SECURITY_POLICY], policy, "{at}");
+                assert_eq!(headers[header::X_FRAME_OPTIONS], "DENY", "{at}");
+                assert_eq!(headers[header::CACHE_CONTROL], "no-cache", "{at}");
+                assert_eq!(
+                    headers[header::CONTENT_TYPE],
+                    "text/html; charset=utf-8",
+                    "{at}"
+                );
+                let body = response.into_body().collect().await.unwrap().to_bytes();
+                let html = String::from_utf8(body.to_vec()).unwrap();
+                assert!(html.contains(&format!("/{script}\"")), "{at}");
+                if uri == "/welcome" {
+                    assert!(!html.contains("main.js"), "{at}");
+                    assert!(!html.contains("style.css"), "{at}");
+                    assert!(html.contains("landing.css"), "{at}");
                 }
             }
         }
@@ -5439,7 +5462,16 @@ mod tests {
             ("POST", "/api/home/instruction", StatusCode::FORBIDDEN),
             ("GET", "/api/device/home", StatusCode::UNAUTHORIZED),
             ("GET", "/home", StatusCode::OK),
+            ("GET", "/", StatusCode::OK),
+            ("GET", "/explore", StatusCode::OK),
+            ("GET", "/welcome", StatusCode::OK),
             ("GET", "/workbench", StatusCode::OK),
+            // What tells the shell to stay read-only (this browser may
+            // read, not operate) rather than send it to /welcome.
+            ("GET", "/api/access", StatusCode::OK),
+            // Operator-only, so the read-only shell never asks.
+            ("GET", "/api/panes/%251/output", StatusCode::FORBIDDEN),
+            ("GET", "/api/decisions", StatusCode::FORBIDDEN),
         ] {
             let body = (method == "POST").then(|| {
                 json!({"id": "x", "review_key": "home:00", "session_id": "s", "kind": "answer", "text": "t"})

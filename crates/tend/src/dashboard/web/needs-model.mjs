@@ -133,6 +133,18 @@ export function isSystemAsk(item) {
 export function pendingCard(item, now = Date.now()) {
   switch (item?.kind) {
     case "human_request":
+      // Nobody can answer it (`subject_check_v1`): listed last, marked.
+      if (item.unanswerable?.episode) {
+        return {
+          id: item.request_id,
+          kind: "ask",
+          label: "can't be answered",
+          title: item.body,
+          meta: `${asker(item)} · ${ago(item.created_at, now)}`,
+          unanswerable: { cause: String(item.unanswerable.cause || ""), episode: String(item.unanswerable.episode), since: item.unanswerable.since || null },
+          ...decisionParts(item.decision),
+        };
+      }
       if (isSystemAsk(item)) {
         return {
           id: item.request_id,
@@ -204,6 +216,18 @@ export function decidedCard(item, now = Date.now()) {
       ...decisionParts(item.decision),
     };
   }
+  // tend closed one of its own items (`?closures=true`), with why.
+  if (item?.kind === "closed_by_tend") {
+    return {
+      id: item.request_id,
+      kind: "ask",
+      label: "closed by tend",
+      title: item.body,
+      meta: `${asker(item)} · ${ago(item.closed_at, now)}`,
+      outcome: String(item.reason_text || item.reason || ""),
+      ...decisionParts(item.decision),
+    };
+  }
   return null;
 }
 
@@ -222,9 +246,10 @@ export function hostSections(data, now = Date.now()) {
       .map((item) => pendingCard(item, now))
       .filter(Boolean)
       // Agents' questions and results first, tend's own items after, even
-      // from an older host that still lists them first. Stable otherwise.
+      // from an older host that still lists them first; questions nobody
+      // can answer last. Stable otherwise.
       .map((card, index) => ({ card, index }))
-      .sort((a, b) => (a.card.system === true) - (b.card.system === true) || a.index - b.index)
+      .sort((a, b) => Boolean(a.card.unanswerable) - Boolean(b.card.unanswerable) || (a.card.system === true) - (b.card.system === true) || a.index - b.index)
       .map(({ card }) => card)
       .map((card) => ({
         ...card,

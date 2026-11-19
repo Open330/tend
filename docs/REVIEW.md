@@ -226,9 +226,10 @@ ignore both and list the item as before.
   "subject_gone"`, the cause, the episode, `by: "person"` and the surface).
   Closing a recovery item records the dismissal in the original request's
   interruption decision, as any answer does; the request's status and
-  authority are unchanged and nothing is restarted. A close is final.
-  **Close all is off by default**: set `[review] close_unanswerable = true`.
-  While it is off the IPC and HTTP routes refuse ("closing unanswerable
+  authority are unchanged and nothing is restarted. A close is final, and
+  every surface's confirmation says so before it sends anything.
+  **Close all is on by default.** `[review] close_unanswerable = false`
+  turns it off: the IPC and HTTP routes then refuse ("closing unanswerable
   questions is turned off; set [review] close_unanswerable = true") and
   `hello` does not advertise `close_unanswerable_v1`, so surfaces show no
   button. Folding and Keep work either way.
@@ -241,6 +242,18 @@ age, action, cause and since, and never closes one without `--questions
 `tend review queue` shows them last, marked `✕ gone`. Each Fleet host judges
 its own questions; Keep and Close all act on this host only (a Fleet relay
 for them is not built yet).
+
+Tend for Mac, the web Home and Tend for iPhone and iPad list them in a
+collapsed **Can't be answered (N)** group at the end of Your turn (N is
+`unanswerable_count`), out of Your turn's count, the badges and the Mac's
+menu bar and Dock counts. Each row says why and since when and offers
+**Keep** on this host. **Close all** shows only while the host advertises
+`close_unanswerable_v1` (the dashboard's `close_unanswerable` flag), asks
+once ("Close N questions? Each asking agent gets a reply that you dismissed
+it. This can't be undone."), sends exactly the listed pairs and says which
+were skipped. Their history reads ask for closures (`include_closures`,
+`?closures=true`) and show tend's own with their reason. Older daemons send
+none of this, and the surfaces behave as before.
 
 Tend for Mac draws this queue in Home's **Your turn** and at the top of the
 Review sheet; see [MACOS](MACOS.md#workspace-information-architecture). It

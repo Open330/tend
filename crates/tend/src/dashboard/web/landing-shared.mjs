@@ -19,3 +19,13 @@ export function languageControls(lang) {
 export function publicHeader({lang="en",homeHref="#",iconSrc="icon.svg",section="",context="",links=""}={}) {
   return `<header class="l-nav"><div class="l-wrap"><a class="l-brand" href="${escape(homeHref)}"><img src="${escape(iconSrc)}" width="24" height="24" alt="">tend${section?`<span class="l-brand-section">/ ${escape(section)}</span>`:""}</a>${context}<nav class="l-nav-actions" aria-label="${lang==="ko"?"주 메뉴":"Main navigation"}">${languageControls(lang)}${links}</nav></div></header>`;
 }
+
+/// Pages under a strict policy (style-src 'self', as /welcome) refuse inline
+/// `style` attributes, so markup carries them as `data-style` and this
+/// applies them through the CSSOM, which the policy allows.
+export function applyStyles(root) {
+  for (const node of root.querySelectorAll("[data-style]")) {
+    node.style.cssText = node.getAttribute("data-style");
+    node.removeAttribute("data-style");
+  }
+}

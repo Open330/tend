@@ -138,6 +138,7 @@ mod tests {
             reset_at: None,
             action_request_id: Some(format!("action-{}", parent.id)),
             decision: None,
+            healthy_since: None,
         });
         let mut action = parent.clone();
         action.id = parent

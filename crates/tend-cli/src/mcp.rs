@@ -970,7 +970,7 @@ fn tool_definitions(config: &tend::config::Config) -> Vec<Value> {
         }),
         json!({
             "name": "tend_request_attention",
-            "description": "Ask the person for a required approval, choice or missing information, including when you would otherwise end your turn on a question only they can answer. One durable request, shown in every Fleet client and the Mac app. body says what and why; options, recommendation and evidence carry the choices, your pick and what to check. Keep the id; its answer arrives as a wake (tend_wait(id)). Timeout or delivery is never approval. Not for progress or peer work.",
+            "description": "Ask the person for a required approval, choice or missing information, including when you would otherwise end your turn on a question only they can answer. One durable request, shown in every Fleet client and the Mac app. body says what and why; options, recommendation and evidence carry the choices, your pick and what to check. Keep the id; its answer arrives as a wake (tend_wait(id)). Timeout or delivery is never approval. Not for progress or peer work. Ask once: put every decision you need now in one request, and while it is unanswered do not ask the same thing again.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

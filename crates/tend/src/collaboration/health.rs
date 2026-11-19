@@ -306,6 +306,7 @@ mod tests {
                 reset_at: None,
                 action_request_id: Some(format!("action-{index}")),
                 decision: None,
+                healthy_since: None,
             });
             let mut action = parent.clone();
             action.id = format!("action-{index}");
@@ -477,6 +478,7 @@ mod tests {
                 reset_at: None,
                 action_request_id: None,
                 decision: None,
+                healthy_since: None,
             };
             requests.get_mut(&ids[0]).unwrap().reply =
                 Some(crate::collaboration::CollaborationReply {

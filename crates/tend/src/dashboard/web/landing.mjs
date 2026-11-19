@@ -9,7 +9,7 @@
 // scripts/landing-shots/capture.mjs from made-up data.
 
 import { mountFilm } from "./landing-film.mjs";
-import { LANDING_LANG_KEY, pickLanguage, publicHeader } from "./landing-shared.mjs";
+import { applyStyles, LANDING_LANG_KEY, pickLanguage, publicHeader } from "./landing-shared.mjs";
 export { LANDING_LANGUAGES, pickLanguage } from "./landing-shared.mjs";
 
 const LANG_KEY = LANDING_LANG_KEY;
@@ -314,7 +314,7 @@ function markup(t, access, { host, email, shot }) {
     access.tokenRejected ? `<p class="l-notice">${t.tokenRejected}</p>` : "",
   ].join("");
   const flow = t.flow.map(([heading, body], i) =>
-    `<li class="l-step" style="--i:${i}"><b><span>${i + 1}</span>${escapeText(heading)}</b><p>${body}</p></li>`
+    `<li class="l-step" data-style="--i:${i}"><b><span>${i + 1}</span>${escapeText(heading)}</b><p>${body}</p></li>`
   ).join("");
   const site = view.mode === "site";
   const shots = shotsFor(t);
@@ -476,6 +476,7 @@ function draw() {
   view.reveal?.disconnect();
   document.documentElement.lang = view.lang;
   view.root.innerHTML = markup(t, view.access, { host: view.host, email: view.email, shot: view.shot });
+  applyStyles(view.root);
   const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
   view.film = mountFilm(view.root.querySelector("[data-landing-film]"), {
     ...t.film,

@@ -7,14 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Web: Explore opens a session's or a window's detail, as Tend for Mac's
+  session and window views do. Selecting a session or window in the tree
+  (its chevron still folds it) shows its name, host, window and pane
+  counts, and its panes as cards with their agent, status and latest
+  activity; a card opens the pane. A window also shows the Mac's metrics
+  (agents, working, need attention, subagents, child processes). They are
+  linkable: `/explore#session=…&socket=…` and
+  `/explore#window=…&session=…&socket=…` (the window as `@id` or
+  `session:index`), with `&host=` for another Fleet host, so the same
+  names on two tmux servers or hosts never collide. A window that is gone
+  opens its session.
+- Web: *Steer this Work* in Home's inspector for a Work, the Mac's Work
+  prompt composer: the next instruction goes to every live agent of the
+  Work at once (`POST /api/work-control/prompt`). Operator-only; as on the
+  Mac, nothing is sent while one of the Work's hosts is in observe mode.
+- Dashboard: `/welcome`, the landing for visitors (what tend is, the
+  docs, sign-in) as a page of its own, without the workbench and under
+  Home's strict content policy. A visitor whose reads answer 401 at `/`,
+  `/home`, `/explore` or `/settings` is sent there and comes back to the
+  same address after sign-in. That address is rebuilt from what the page
+  names, so it never carries a credential: a `#token=` or legacy `?token=`
+  is stored and scrubbed first.
+- Dashboard: someone who may read but not operate (anonymous with
+  `auth = "public_read"`, anyone with `auth = "none"`, a signed-in viewer)
+  gets the shell read-only. Explore lists every host's panes and their
+  state without asking for output, Messages shows the collaboration with
+  details redacted, and Home says it needs an operator and offers
+  *Upgrade with token* in the page, also in Settings with sign-in and
+  sign-out. This is phase 1 of retiring `/workbench`
+  (docs/proposals/WEB_HOME.md, wave 9).
+
+### Changed
+
+- Web: links the old workbench made (`/#pane=…`, `#window=…`,
+  `#session=…`, `#workspace=…&wsocket=…`, `#message=…`, `#thread=…`) now
+  open in Explore or Messages instead of the workbench. A pane wins over a
+  session or window in the same link; `workspace` narrows Explore to that
+  workspace and says so when no live session matches. A `#token=` or
+  `?token=` credential is stored and scrubbed first, never carried into
+  the new address. The same adapter is ready for `/workbench#…`, which
+  still serves the workbench for now.
+- Dashboard: a visitor who is not an operator opening `/` is no longer
+  sent to `/workbench`, but to `/welcome` or the read-only shell (above).
+  `/workbench` itself still works, until phase 3.
+
 ### Fixed
 
+- Fewer items for the person, at the source. A recipient interrupted by a
+  usage limit or an error now counts as resumed only after ten minutes of
+  work or idle: a capped agent that the `resume-after-limit` rule sends back
+  to work for a moment, and that hits its limit again, keeps one recovery
+  item instead of a new one every cycle. One capped session on one host had
+  990 items in four days this way, none answered. A reply that is already a
+  week old when its sender is found gone opens no reply-wake item (an
+  upgrade opened one for every such reply, up to 73 days old, on three hosts
+  in the same minute). `tend_request_attention` asks agents to put the
+  decisions they need in one request and not to ask the same thing twice.
 - iOS: the app now declares `NSFaceIDUsageDescription`. Start Work asks
   for Face ID, and without the key iOS can refuse the request on a phone
   with Face ID.
 
 ### Changed
 
+- Close all for questions nobody can answer is on by default, by the
+  owner's decision: its confirmation says each asking agent gets a reply
+  that you dismissed it and that this cannot be undone. `[review]
+  close_unanswerable = false` turns it off (docs/CONFIGURATION.md, Review).
 - `tend swap` works on up to 4 agents at once (`[swap] jobs`, `--jobs N`,
   1–16; `--jobs 1` keeps the old order), each still stopped, relaunched and
   checked in its own pane with every guarantee it had alone. Tend's own
@@ -68,6 +129,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`POST /api/decisions/close-unanswerable`) declines exactly the listed
   ones with the reply Dismiss sends, only with `[review] close_unanswerable
   = true` (off by default; `close_unanswerable_v1`). See docs/REVIEW.md.
+- Tend for Mac, the web Home and Tend for iPhone and iPad draw these
+  questions in a collapsed **Can't be answered (N)** group at the end of
+  Your turn, each with why ("Pane gone", "Session ended", …) and since
+  when. They are left out of Your turn's count, the badges and the Mac's
+  menu bar and Dock counts. **Keep** puts one back in Your turn; **Close
+  all** appears only where the host turned it on, asks once, and closes
+  exactly the listed questions, saying which it skipped. Each surface's
+  history now lists tend's own closures with their reason, and a close
+  with its cause. Mac's "Asker not listed" hint stays for questions not
+  yet folded.
 
 ### Changed
 
