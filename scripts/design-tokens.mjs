@@ -111,9 +111,10 @@ function renderMacSwift(mac) {
   lines.push("", "        // A state's word: 4.5:1 or more on every surface above");
   for (const [name, value] of Object.entries(mac["state-ink"])) lines.push(colour(`state-ink-${name}`, value));
   lines.push("", "        // Primary button fills: white on each is 4.5:1 or more");
-  for (const fill of ["accent-fill", "accent-fill-pressed", "danger-fill", "danger-fill-pressed"]) {
+  for (const fill of ["accent-fill", "accent-fill-hover", "accent-fill-pressed", "danger-fill", "danger-fill-hover", "danger-fill-pressed"]) {
     if (mac[fill]) lines.push(colour(fill, mac[fill]));
   }
+  if (mac["danger-text"]) lines.push("", "        // A destructive secondary label, on its own rest, hover and pressed fills", colour("danger-text", mac["danger-text"]));
   lines.push("    }");
   return lines;
 }

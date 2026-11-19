@@ -154,6 +154,7 @@ enum TendDesignTokens {
         static let inkControl = TendTokenColor(light: 0x000000, lightAlpha: 0.05, dark: 0xFFFFFF, darkAlpha: 0.08)
         static let inkTrack = TendTokenColor(light: 0x000000, lightAlpha: 0.16, dark: 0xFFFFFF, darkAlpha: 0.2)
         static let inkSelection = TendTokenColor(light: 0x000000, lightAlpha: 0.08, dark: 0xFFFFFF, darkAlpha: 0.11)
+        static let inkControlPressed = TendTokenColor(light: 0x000000, lightAlpha: 0.14, dark: 0xFFFFFF, darkAlpha: 0.16)
         static let inkAccentText = TendTokenColor(light: 0x0066D6, lightAlpha: 1, dark: 0x4DA3FF, darkAlpha: 1)
 
         // A state's word: 4.5:1 or more on every surface above
@@ -165,8 +166,13 @@ enum TendDesignTokens {
 
         // Primary button fills: white on each is 4.5:1 or more
         static let accentFill = TendTokenColor(light: 0x0066D6, lightAlpha: 1, dark: 0x0A6CDA, darkAlpha: 1)
+        static let accentFillHover = TendTokenColor(light: 0x005FC8, lightAlpha: 1, dark: 0x0A63C9, darkAlpha: 1)
         static let accentFillPressed = TendTokenColor(light: 0x0055B3, lightAlpha: 1, dark: 0x0959B8, darkAlpha: 1)
         static let dangerFill = TendTokenColor(light: 0xC8302E, lightAlpha: 1, dark: 0xD13A36, darkAlpha: 1)
+        static let dangerFillHover = TendTokenColor(light: 0xB32B29, lightAlpha: 1, dark: 0xC2332F, darkAlpha: 1)
         static let dangerFillPressed = TendTokenColor(light: 0xA82824, lightAlpha: 1, dark: 0xB8302D, darkAlpha: 1)
+
+        // A destructive secondary label, on its own rest, hover and pressed fills
+        static let dangerText = TendTokenColor(light: 0x9E2420, lightAlpha: 1, dark: 0xFFADAF, darkAlpha: 1)
     }
 }

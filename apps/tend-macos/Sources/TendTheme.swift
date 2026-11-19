@@ -245,11 +245,13 @@ private struct TendButtonBody: View {
         case .primary:
             // Opaque at rest and pressed: white text keeps its contrast.
             if destructive {
-                return configuration.isPressed ? TendInk.dangerFillPressed(colorScheme) : TendInk.dangerFill(colorScheme)
+                if configuration.isPressed { return TendInk.dangerFillPressed(colorScheme) }
+                return hovering ? TendInk.dangerFillHover(colorScheme) : TendInk.dangerFill(colorScheme)
             }
-            return configuration.isPressed ? TendInk.accentFillPressed(colorScheme) : TendInk.accentFill(colorScheme)
+            if configuration.isPressed { return TendInk.accentFillPressed(colorScheme) }
+            return hovering ? TendInk.accentFillHover(colorScheme) : TendInk.accentFill(colorScheme)
         case .secondary:
-            if configuration.isPressed { return TendTheme.pressed(colorScheme) }
+            if configuration.isPressed { return TendInk.controlPressed(colorScheme) }
             return hovering ? TendInk.selection(colorScheme) : TendInk.control(colorScheme)
         case .ghost:
             if configuration.isPressed { return TendTheme.pressed(colorScheme) }
@@ -269,8 +271,11 @@ private struct TendButtonBody: View {
     private var foreground: Color {
         switch kind {
         case .primary: .white
-        case .secondary, .ghost:
-            destructive ? TendInk.state(.red, colorScheme) : TendInk.label(colorScheme)
+        case .secondary:
+            destructive ? TendInk.dangerText(colorScheme) : TendInk.label(colorScheme)
+        case .ghost:
+            // Unchanged in this pass.
+            destructive ? .red : Color.primary.opacity(0.85)
         }
     }
 }
