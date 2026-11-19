@@ -897,20 +897,22 @@ struct FleetStageBar: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
+        let current = work.currentStageIndex
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .center, spacing: 3) {
                 ForEach(Array(work.stages.enumerated()), id: \.offset) { index, stage in
                     Capsule()
                         .fill(stage.state == .waiting ? TendInk.track(colorScheme) : stage.state.color)
-                        .frame(height: index == work.currentStageIndex ? 6 : 4)
+                        .frame(height: index == current ? 6 : 4)
                 }
             }
             .frame(height: 6)
-            if let index = work.currentStageIndex {
+            if let index = current {
                 HStack {
+                    // Inherits the row's secondary ink: a second .secondary
+                    // here would dim it to 2:1.
                     Text(work.stages[index].name)
                         .fontWeight(.medium)
-                        .foregroundStyle(.secondary)
                     Spacer()
                     if work.stages.count > 1 {
                         Text("\(work.doneStageCount)/\(work.stages.count)")

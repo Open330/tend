@@ -160,12 +160,19 @@ struct FleetWorkCard: View {
                     .lineLimit(3)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if let movedFrom {
-                    Label(String(localized: "From \(movedFrom.title)"), systemImage: "arrow.turn.down.right")
+                    // Label ink on the tinted capsule; the arrow keeps the
+                    // lane's colour.
+                    Label {
+                        Text(String(localized: "From \(movedFrom.title)"))
+                            .foregroundStyle(TendInk.label(colorScheme))
+                    } icon: {
+                        Image(systemName: "arrow.turn.down.right")
+                            .foregroundStyle(work.lane.tint)
+                    }
                         .font(.system(size: 10, weight: .semibold))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(TendInk.control(colorScheme), in: Capsule())
-                        .foregroundStyle(TendInk.state(work.lane.stateHue, colorScheme))
                         .fixedSize()
                         .transition(.opacity)
                 }
@@ -175,15 +182,11 @@ struct FleetWorkCard: View {
                 FleetStageBar(work: work)
             }
             FleetInsetBox {
-                // The headline only when it says more than the state the
-                // meta line already names ("Working", "Idle").
-                if !headlineRepeatsState {
-                    Text(work.headline)
-                        .font(work.lane == .needsYou ? TendType.body.weight(.medium) : TendType.body)
-                        .foregroundStyle(work.lane == .needsYou ? TendInk.label(colorScheme) : TendInk.secondary(colorScheme))
-                        .lineLimit(work.lane == .needsYou ? 4 : 2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
+                Text(work.headline)
+                    .font(work.lane == .needsYou ? TendType.body.weight(.medium) : TendType.body)
+                    .foregroundStyle(work.lane == .needsYou ? TendInk.label(colorScheme) : TendInk.secondary(colorScheme))
+                    .lineLimit(work.lane == .needsYou ? 4 : 2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 if work.handledLimit {
                     Label("Rate limited · the limit policy will resume it", systemImage: "arrow.triangle.2.circlepath")
                         .font(TendType.meta)
@@ -211,14 +214,6 @@ struct FleetWorkCard: View {
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityAction(named: Text("Inspect"), select)
-    }
-
-    /// The headline is only the focus agent's state label: the meta line
-    /// says that already.
-    private var headlineRepeatsState: Bool {
-        guard let focus = work.focus else { return false }
-        let now = Date()
-        return work.headline == focus.agent.status(at: now).label(now: now)
     }
 
     /// The state, then who and where, then when, on one subdued line.
