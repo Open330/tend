@@ -739,7 +739,8 @@ fn a_swap_reports_what_it_saw_in_order() {
                 phase: Phase::Readiness
             },
             Observation::Readiness {
-                result: Readiness::Ready
+                result: Readiness::Ready,
+                why: None,
             },
             Observation::Phase {
                 phase: Phase::Verifying
@@ -2334,4 +2335,59 @@ fn the_relaunch_waits_for_the_shell_in_the_foreground() {
     // The agent still in front, or nothing readable: the whole ceiling.
     assert!(relaunch_delay(Some(("node", Duration::ZERO)), true) >= super::SHELL_SETTLE);
     assert!(relaunch_delay(None, true) >= super::SHELL_SETTLE);
+}
+
+/// The journal keeps a readiness's why in tend's own words: an open
+/// question's screen line is kept as its kind only.
+#[test]
+fn a_readiness_why_never_quotes_the_screen() {
+    assert_eq!(
+        super::blocked_why("a dialog is waiting for an answer (Delete ~/secret? y/n)"),
+        "open_question"
+    );
+    assert_eq!(
+        super::blocked_why("another app still owns this conversation"),
+        "another app still owns this conversation"
+    );
+    assert_eq!(super::unsettled_why(None), "screen_unreadable");
+    assert_eq!(super::unsettled_why(Some("  \n")), "screen_empty");
+    assert_eq!(super::unsettled_why(Some("loading…\n")), "no_agent_prompt");
+    assert_eq!(super::unsettled_why(Some(CODEX_IDLE)), "never_quiet");
+}
+
+/// An unsettled readiness is explained by the last screen the wait judged
+/// (here one that never showed the agent's prompt), not by a capture taken
+/// after the wait.
+#[test]
+fn an_unsettled_readiness_is_explained_by_the_screen_it_judged() {
+    let io = FakeIo::new(
+        CODEX_IDLE,
+        Box::new(|io: &FakeIo, line: &str| {
+            if line.starts_with("signal TERM") {
+                io.kill(AGENT);
+            }
+            if line == "text \"\\r\"" {
+                io.agent_appears_in(Duration::from_secs(1));
+                io.show("loading…\n");
+            }
+        }),
+    );
+    let mut observer = NoObserver;
+    let runner = Runner::new(&io, &mut observer);
+    let verified = |_: &Target, _: Option<u32>| -> Result<AccountVerdict, AccountVerdict> {
+        unreachable!("never verified: readiness fails first")
+    };
+    let _ = execute(
+        &runner,
+        &target(AgentKind::Codex, false, false),
+        &launch(),
+        "RELAUNCH",
+        None,
+        &verified,
+    );
+    let why = runner.observations().into_iter().find_map(|o| match o {
+        Observation::Readiness { why, .. } => Some(why),
+        _ => None,
+    });
+    assert_eq!(why, Some(Some("no_agent_prompt".to_owned())));
 }

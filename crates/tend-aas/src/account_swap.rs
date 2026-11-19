@@ -2216,7 +2216,8 @@ fn swap_one(
     // relaunch does not stop on "Hooks need review".
     let hooks_note = (agent.kind == AgentKind::Codex)
         .then(|| {
-            // Under the destination home's gate, taken with the target.
+            // Under the destination home's gate, taken with the target,
+            // and its own writer lock.
             carry_codex_hook_trust(
                 request,
                 profiles.map_or(&[][..], |(profiles, _)| profiles),
@@ -2263,6 +2264,12 @@ fn carry_codex_hook_trust(
         );
     };
     let homes = trust::known_homes(&codex_profiles);
+    // Several targets may hold this home at once; Tend's own write into it
+    // goes one at a time.
+    let writer = crate::home_gate::exclusive(&crate::home_gate::HomeKey::known("codex", &home));
+    let _one = writer
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     match trust::prepare(&codex, &home, &homes, trust::BUDGET) {
         Ok(prepared) => prepared.note(),
         Err(error) => Some(format!("Codex hook trust was not checked ({error})")),
@@ -3650,10 +3657,14 @@ fn await_ready(
     // showing that another app owns the conversation, or a startup error.
     // Every swap, with or without a follow-up, waits for a usable screen.
     enter(runner, Phase::Readiness)?;
+    // The last screen the wait judged, kept for the journal's why: never a
+    // capture taken after it.
+    let judged: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
     let readiness = wait_for_resume_answering(
         io,
         || {
             let screen = io.capture();
+            judged.borrow_mut().clone_from(&screen);
             // The relaunch has booted once it draws its own prompt: no
             // prompt was on screen when it was typed, the screen shows the
             // agent's prompt and no dialog, and the one process bound to
@@ -3700,13 +3711,16 @@ fn await_ready(
         Duration::from_millis(250),
         answered,
     );
-    let seen = match &readiness {
-        Resume::Ready => Readiness::Ready,
-        Resume::Blocked(_) => Readiness::Blocked,
-        Resume::Exited => Readiness::Exited,
-        Resume::Unsettled => Readiness::Unsettled,
+    let (seen, why) = match &readiness {
+        Resume::Ready => (Readiness::Ready, None),
+        Resume::Blocked(reason) => (Readiness::Blocked, Some(blocked_why(reason))),
+        Resume::Exited => (Readiness::Exited, None),
+        Resume::Unsettled => (
+            Readiness::Unsettled,
+            Some(unsettled_why(judged.borrow().as_deref()).to_owned()),
+        ),
     };
-    if !runner.observe(Observation::Readiness { result: seen }) {
+    if !runner.observe(Observation::Readiness { result: seen, why }) {
         return Err(halt(runner));
     }
     // Codex asks to review new or changed hooks before it starts. Accepting
@@ -3752,6 +3766,28 @@ fn await_ready(
         }
     }
     Ok(())
+}
+
+/// A blocked readiness's reason as the journal keeps it. Every reason is
+/// tend's own words from its lists of blockers and dialogs, except an open
+/// question, which quotes the screen: that one is kept as its kind only.
+fn blocked_why(reason: &str) -> String {
+    const QUESTION: &str = "a dialog is waiting for an answer";
+    if reason.starts_with(QUESTION) {
+        return "open_question".into();
+    }
+    reason.to_owned()
+}
+
+/// What an unsettled readiness's last screen lacked, for the journal.
+fn unsettled_why(screen: Option<&str>) -> &'static str {
+    match screen {
+        None => "screen_unreadable",
+        Some(screen) if screen.trim().is_empty() => "screen_empty",
+        // The prompt drew, but the screen never held still long enough.
+        Some(screen) if tend::agent_tui::agent_prompt_visible(screen) => "never_quiet",
+        Some(_) => "no_agent_prompt",
+    }
 }
 
 /// Whether `screen` shows the relaunch's own prompt: an agent prompt and no

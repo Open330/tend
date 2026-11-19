@@ -177,16 +177,42 @@ fn next_token() -> u64 {
 /// well inside what was measured exact.
 pub(crate) const CLAUDE_HOME_HOLDERS: usize = 4;
 
+/// How many targets may hold one Codex home at once. With real codex
+/// 0.170.0 on a disposable, unauthenticated home (no real resume), 8- and
+/// 16-way simultaneous starts stopped by `SIGTERM` as a swap stops them,
+/// 65 trials on new and settled homes, 20 of them held 8 s first, always
+/// left `config.toml` valid with the checked entries kept and every sqlite
+/// store passing `integrity_check`. Codex writes the file about 4 s after a
+/// start and re-reads it first; only its own start counter lost increments
+/// when all of them wrote in the same instant. Tend's own write into the
+/// home, the hook trust a relaunch needs, still goes one target at a time
+/// ([`exclusive`]).
+pub(crate) const CODEX_HOME_HOLDERS: usize = 4;
+
 /// How many targets may hold `key` at once: [`CLAUDE_HOME_HOLDERS`] for a
-/// Claude home (known or not), one for any other — Codex, whose hook
-/// trust Tend itself prepares in the home, and whose own behaviour on a
-/// shared home has not been measured.
+/// Claude home (known or not), [`CODEX_HOME_HOLDERS`] for a Codex one, one
+/// for any other.
 fn capacity(key: &HomeKey) -> usize {
     if key.0.starts_with("claude:") {
         CLAUDE_HOME_HOLDERS
+    } else if key.0.starts_with("codex:") {
+        CODEX_HOME_HOLDERS
     } else {
         1
     }
+}
+
+/// One target at a time for what Tend itself writes into a home (a Codex
+/// home's hook trust): held for the write, not the target. Keyed like the
+/// gate, by the home's canonical identity, so two names for one home are
+/// one lock (and every home that cannot be told shares one).
+pub(crate) fn exclusive(home: &HomeKey) -> Arc<Mutex<()>> {
+    static WRITERS: OnceLock<Mutex<HashMap<HomeKey, Arc<Mutex<()>>>>> = OnceLock::new();
+    let mut writers = WRITERS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    writers.entry(home.clone()).or_default().clone()
 }
 
 /// Whether `pane` may take `keys` (distinct) now.
@@ -397,7 +423,7 @@ mod tests {
     }
 
     #[test]
-    fn a_claude_home_takes_up_to_four_holders_and_any_other_one() {
+    fn claude_and_codex_homes_take_up_to_four_holders_and_any_other_one() {
         let claude = HomeKey(format!("claude:/tmp/gate-test-{}", std::process::id()));
         let codex = HomeKey(format!("codex:/tmp/gate-test-{}", std::process::id()));
         let held: Vec<HeldHomes> = (0..CLAUDE_HOME_HOLDERS)
@@ -411,12 +437,50 @@ mod tests {
         assert!(try_acquire_all(&claude, &claude, "%0").is_none());
         drop(again);
         drop(held);
-        let one = try_acquire_all(&codex, &codex, "%1").expect("free");
+        let codex_held: Vec<HeldHomes> = (0..CODEX_HOME_HOLDERS)
+            .map(|i| try_acquire_all(&codex, &codex, &format!("%{i}")).expect("room"))
+            .collect();
         assert!(
-            try_acquire_all(&codex, &codex, "%2").is_none(),
-            "codex: one at a time"
+            try_acquire_all(&codex, &codex, "%9").is_none(),
+            "codex full"
+        );
+        drop(codex_held);
+        let other = HomeKey(format!("other:/tmp/gate-test-{}", std::process::id()));
+        let one = try_acquire_all(&other, &other, "%1").expect("free");
+        assert!(
+            try_acquire_all(&other, &other, "%2").is_none(),
+            "any other provider: one at a time"
         );
         drop(one);
+    }
+
+    /// Tend's own write into a home is one at a time per home, whoever
+    /// holds the home, and two names for one home are one lock.
+    #[cfg(unix)]
+    #[test]
+    fn tend_s_own_writes_into_a_home_go_one_at_a_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        let alias = dir.path().join("alias");
+        std::os::unix::fs::symlink(&real, &alias).unwrap();
+        let first = exclusive(&HomeKey::known("codex", &real));
+        let held = first.lock().unwrap();
+        assert!(
+            exclusive(&HomeKey::known("codex", &alias))
+                .try_lock()
+                .is_err(),
+            "the same home under another name: the same lock"
+        );
+        let other = dir.path().join("other");
+        std::fs::create_dir(&other).unwrap();
+        assert!(
+            exclusive(&HomeKey::known("codex", &other))
+                .try_lock()
+                .is_ok(),
+            "another home's is free"
+        );
+        drop(held);
     }
 
     #[test]
