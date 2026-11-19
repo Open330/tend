@@ -916,6 +916,20 @@ HTTPS address and recipient login before distributing links, and omit callback
 query strings from proxy access logs. See [sharing and deployment](DASHBOARD.md#invite-someone-to-a-pane)
 for limits, API details, recovery and the browser smoke test.
 
+## Review
+
+```toml
+[review]
+close_unanswerable = true   # default
+```
+
+`close_unanswerable` lets a person close, in one go, the questions nobody
+can answer any more (their asker established gone for a day; see
+[REVIEW.md](REVIEW.md)): Close all on Mac, web and iOS, and `tend review
+cleanup --questions --apply`. Each question gets the reply Dismiss sends,
+which is final, and the confirmation says so. `false` hides Close all;
+folding those questions into their own group, and Keep, work either way.
+
 ## External Sinks
 
 Sinks are opt-in fan-out targets. The current documented sink forwards

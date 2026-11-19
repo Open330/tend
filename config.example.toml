@@ -433,6 +433,12 @@
 #     expose this beyond your machine.
 #
 # Generate a token with `openssl rand -hex 32` (or any 32+ random bytes).
+# Questions nobody can answer any more (their asker gone for a day) fold
+# into "Can't be answered"; Close all declines them, which is final.
+# `false` hides Close all. See docs/REVIEW.md.
+[review]
+# close_unanswerable = true
+
 # CLI flags / env vars override these values per-field:
 #   --dashboard / --no-dashboard
 #   --dashboard-bind   / TEND_DASHBOARD_BIND

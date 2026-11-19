@@ -226,9 +226,10 @@ ignore both and list the item as before.
   "subject_gone"`, the cause, the episode, `by: "person"` and the surface).
   Closing a recovery item records the dismissal in the original request's
   interruption decision, as any answer does; the request's status and
-  authority are unchanged and nothing is restarted. A close is final.
-  **Close all is off by default**: set `[review] close_unanswerable = true`.
-  While it is off the IPC and HTTP routes refuse ("closing unanswerable
+  authority are unchanged and nothing is restarted. A close is final, and
+  every surface's confirmation says so before it sends anything.
+  **Close all is on by default.** `[review] close_unanswerable = false`
+  turns it off: the IPC and HTTP routes then refuse ("closing unanswerable
   questions is turned off; set [review] close_unanswerable = true") and
   `hello` does not advertise `close_unanswerable_v1`, so surfaces show no
   button. Folding and Keep work either way.
