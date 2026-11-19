@@ -56,7 +56,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is configured, the invitation dialog the workbench's pane drawer had
   (this pane or its window, view or prompt). Settings keeps *Manage
   shares…* for the list and revoking. Explore's pane output also falls
-  back to the bundled Nerd Font symbols, as the workbench's did.
+  back to the bundled Nerd Font symbols, as the workbench's did, and
+  Settings has *Forget token* for a token this browser keeps (the
+  workbench's *lock edit*).
 
 ### Removed
 
