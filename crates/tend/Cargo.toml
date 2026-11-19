@@ -19,6 +19,9 @@ dashboard = [
     "dep:rust-embed",
     "dep:openidconnect",
     "dep:hmac",
+    "dep:p256",
+    # APNs (iOS push) speaks HTTP/2 only.
+    "reqwest/http2",
 ]
 
 [dependencies]
@@ -55,6 +58,9 @@ base64 = { workspace = true }
 sha2 = "0.10"
 # The dashboard's server proof (`/api/proof`): HMAC-SHA256 under the token.
 hmac = { version = "0.12", optional = true }
+# The APNs provider token (ES256) for iOS push. The same 0.14 openidconnect
+# already pulls in.
+p256 = { version = "0.14", default-features = false, features = ["ecdsa", "pkcs8", "pem"], optional = true }
 # Operator sign-in and viewer accounts for a published dashboard.
 openidconnect = { version = "4.1.0", default-features = false, features = ["reqwest", "rustls-tls"], optional = true }
 
@@ -82,6 +88,9 @@ tempfile = "3"
 tower = { workspace = true, features = ["util"] }
 http-body-util = "0.1"
 wiremock = "0.6"
+# The fake APNs endpoint in the push tests: HTTP/2 cleartext, prior knowledge.
+hyper = { version = "1", features = ["server", "http2"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
 tracing-subscriber = { workspace = true }
 
 [[bench]]

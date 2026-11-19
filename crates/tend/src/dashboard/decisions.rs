@@ -519,6 +519,26 @@ pub(super) struct ReviewDecision {
     host: Option<String>,
 }
 
+/// `X-Tend-Via: notification`, sent by the iOS app when a notification's
+/// button decides, is recorded in that decision's audit line as `"via":
+/// "notification"`. A header, because the decision bodies refuse unknown
+/// fields; any other value is ignored.
+trait Via {
+    fn via(self, headers: &HeaderMap) -> Self;
+}
+
+impl Via for serde_json::Value {
+    fn via(mut self, headers: &HeaderMap) -> Self {
+        if headers
+            .get("x-tend-via")
+            .is_some_and(|value| value.as_bytes() == b"notification")
+        {
+            self["via"] = json!("notification");
+        }
+        self
+    }
+}
+
 /// `POST /api/decisions/reviews/{id}`: accept, return or withdraw a review
 /// item as the operator, here or on the Fleet host that holds it.
 pub(super) async fn review_handler(
@@ -556,7 +576,7 @@ pub(super) async fn review_handler(
             "by": by, "account": account, "action": "review", "host": remote, "id": id,
             "disposition": decision.disposition, "option": decision.option,
             "outcome": outcome, "status": status.as_u16(),
-        }),
+        }).via(&headers),
     )
     .await;
     match item {
@@ -785,7 +805,7 @@ pub(super) async fn answer_handler(
                 "at": time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).ok(),
                 "by": by, "account": account, "action": "answer", "host": remote, "id": id, "declined": answer.declined,
                 "outcome": outcome, "status": code.as_u16(),
-            }),
+            }).via(&headers),
         )
         .await;
         return if code == StatusCode::OK {
@@ -821,7 +841,7 @@ pub(super) async fn answer_handler(
             "at": time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).ok(),
             "by": by, "account": account, "action": "answer", "id": id, "declined": answer.declined,
             "outcome": outcome, "status": code.as_u16(),
-        }),
+        }).via(&headers),
     )
     .await;
     match result {

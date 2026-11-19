@@ -63,6 +63,7 @@ bound to loopback and configure the public origin as described below.
 | `POST /auth/devices/request`, `POST /auth/devices/token` | A device asks to be paired and collects its token. See [Paired devices](#paired-devices). |
 | `GET /api/devices`, `POST /api/devices/approve`, `POST /api/devices/{id}/remove`, `POST /api/devices/remove-all` | Operator only: list, approve, unpair devices. |
 | `GET /api/device`, `POST /api/device/forget` | A paired device: who it is, unpair itself. |
+| `POST /api/device/push`, `POST /api/device/push/remove` | A paired device (either scope): register or drop its APNs token. See [Push notifications](#push-notifications-ios). |
 
 `auth = "token"` protects all API endpoints. `auth = "public_read"` leaves
 GET/SSE endpoints public but always requires the bearer token for write/control
@@ -765,6 +766,71 @@ Paired devices are stored in SQLite at
 the device id, name, platform, who approved it, the times, and the SHA-256
 of its token, never the token. The file is created when the first device
 pairs. `/api/access` reports `capabilities.device_pairing`.
+
+### Push notifications (iOS)
+
+A paired phone can be told when something new needs the person. The host
+that serves the dashboard sends straight to Apple (APNs) with the key of
+the Apple developer team that publishes the app; tend ships no key and
+there is no relay. The design, reviewed as a security design, is
+[docs/proposals/IOS_APP.md](proposals/IOS_APP.md#push-phase-2-wave-7).
+
+```toml
+[dashboard.push]
+enabled = true                  # default false: no sender, no registrations
+key_path = "~/.config/tend/apns/AuthKey_ABC123DEFG.p8"
+key_id = "ABC123DEFG"           # 10 characters, from the key's page
+team_id = "728FW73BS8"          # 10 characters
+topic = "dev.tend.ios"          # the default; a self-built app sets its own
+environments = ["production"]   # the default; add "development" for Debug builds
+allow_content = false           # default false
+```
+
+- The key file must be a regular file (not a symlink, FIFO or device),
+  owned by tendd's user, mode `0600` or `0400`, at most 4 KiB, PKCS#8 PEM
+  on P-256. It is opened without blocking and checked on the open
+  descriptor. A bad `[dashboard.push]` (a missing or unsafe key, a key
+  that does not parse, a malformed id, an unknown environment or field)
+  never stops tendd: push stays off, the reason is logged once at start
+  and shown under **access ▸ Devices** (`GET /api/devices` →
+  `push.reason`). Push is unsupported off unix.
+- The endpoints are fixed (`api.push.apple.com` for `production`,
+  `api.sandbox.push.apple.com` for `development`); no redirect is
+  followed.
+- `POST /api/device/push` `{"token": "<hex>", "environment": "production" |
+  "development", "content": false}` (at most 1 KiB, else 413; unknown
+  fields 400; the token is 16–100 bytes of hex, lower-cased). Push off, or
+  an environment not in `environments`, answers `200 {"enabled": false,
+  "reason": "off" | "environment"}` and stores nothing. Otherwise `200
+  {"enabled": true, "content": <the request AND allow_content>, "channel":
+  "ch_…", "ref_key": "<base64>"}`. The channel (128 random bits) and the ref
+  key (256) are kept only when the same device registers the same token and
+  environment again; a token registered by another device moves to it with
+  new ones. `POST /api/device/push/remove` drops the registration
+  (`{"removed": bool}`). Removing a device (Remove, Remove all, Sign out,
+  expiry) drops its registration; Limit does not.
+- `GET /api/device` gains `"push": {"enabled", "content_allowed",
+  "environments"}`.
+- Every 15 s, while push is on and a phone is registered, tendd reads the
+  same queue Your turn shows (500 entries per host) and alerts each phone
+  about what is new: at most one alert every 30 s, one per host, saying
+  "Tend: <host> needs you" and how many are new, with the total as the
+  badge, the registration's `channel`, the host, and `ref` (the first 16
+  bytes of HMAC-SHA256(ref_key, host NUL kind NUL id), hex). The item's
+  text (its canonical line, with the asking agent as subtitle, and a
+  category with buttons) is sent only when `allow_content` is on and the
+  phone registered with `"content": true`. What is there when tendd starts,
+  or when a host is first read, is not announced. When the total falls, a
+  badge-only update follows (at most once a minute, never stored by Apple).
+- Apple's `410`, `BadDeviceToken` and `DeviceTokenNotForTopic` drop the
+  registration (only the one the send used) and are audited as
+  `push_dropped`; registrations are audited as `push_register` and
+  `push_remove`. No log line, audit line or error holds a device token or
+  the key.
+- A decision sent with the header `X-Tend-Via: notification` (the app's
+  notification buttons) is audited with `"via": "notification"`.
+- Registrations are in the device store's `device_push` table (schema
+  version 2 still; an older tendd ignores the table).
 
 ## Collaboration graph and history API
 

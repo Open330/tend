@@ -180,6 +180,9 @@ pub struct AppState {
     pub(in crate::dashboard) home_sources: crate::home_board::HomeSources,
     /// Tests stand in for `work up` here; `None` runs the real one.
     pub(in crate::dashboard) device_work_up: Option<super::devices::WorkUpRunner>,
+    /// Push notifications to paired iOS devices (`[dashboard.push]`); off
+    /// unless configured.
+    pub(in crate::dashboard) push: Arc<super::push::Push>,
 }
 
 #[derive(Clone, Default)]
@@ -238,6 +241,7 @@ impl AppState {
             devices: super::devices::Devices::memory(),
             home_sources: crate::home_board::HomeSources::default(),
             device_work_up: None,
+            push: super::push::Push::off(None),
             reviews: crate::review::ReviewStore::unavailable("review items are served by tendd"),
             work_store: Arc::new(tokio::sync::Mutex::new(WorkStore::memory())),
             agents_by_state_cache: Arc::new(tokio::sync::Mutex::new(AgentsByStateCache::default())),
@@ -285,6 +289,13 @@ impl AppState {
         devices: Arc<super::devices::Devices>,
     ) -> Self {
         self.devices = devices;
+        self
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub(in crate::dashboard) fn with_push(mut self, push: Arc<super::push::Push>) -> Self {
+        self.push = push;
         self
     }
 
@@ -585,6 +596,8 @@ pub async fn serve(
     state.sharing = sharing;
     state.operator = operator;
     state.devices = devices;
+    state.push = super::push::Push::start(config.push.as_ref());
+    let pusher = super::push::spawn(state.clone());
     let app = router(state);
     let listener = TcpListener::bind(config.bind).await?;
     let local = listener.local_addr()?;
@@ -598,6 +611,9 @@ pub async fn serve(
             let _ = shutdown.recv().await;
         })
         .await;
+    if let Some(pusher) = pusher {
+        pusher.abort();
+    }
     if let Some(link) = &bound_link {
         link.set(None);
     }

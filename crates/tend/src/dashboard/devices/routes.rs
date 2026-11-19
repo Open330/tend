@@ -12,6 +12,8 @@
 //! | `POST /api/devices/{id}/limit` | operator | limit a device to deciding, keeping it paired |
 //! | `GET /api/device` | that device | who it is |
 //! | `POST /api/device/forget` | that device | unpair itself (sign out) |
+//! | `POST /api/device/push` | that device | register its APNs token for notifications |
+//! | `POST /api/device/push/remove` | that device | drop that registration |
 //! | `GET /api/device/fleet` | that device, `operate` | the Fleet snapshot, cut down |
 //! | `POST /api/device/capture` | that device, `operate` | one agent's recent output |
 //! | `GET /api/device/work-options` | that device, `operate` | a host's pipelines and projects |
@@ -46,7 +48,7 @@ async fn no_store(mut response: Response) -> Response {
     response
 }
 
-pub(super) async fn audit_entry(state: &AppState, entry: serde_json::Value) {
+pub(in crate::dashboard) async fn audit_entry(state: &AppState, entry: serde_json::Value) {
     audit(state, entry).await;
 }
 
@@ -96,6 +98,14 @@ pub(in crate::dashboard) fn device_routes(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/api/device", get(whoami))
         .route("/api/device/forget", post(forget))
+        .route(
+            "/api/device/push",
+            post(push_register).layer(DefaultBodyLimit::max(1024)),
+        )
+        .route(
+            "/api/device/push/remove",
+            post(push_remove).layer(DefaultBodyLimit::max(1024)),
+        )
         .layer(middleware::from_fn_with_state(state, device_only))
         .layer(middleware::map_response(no_store))
 }
@@ -354,7 +364,8 @@ async fn approve(State(state): State<AppState>, headers: HeaderMap, body: Bytes)
 }
 
 async fn list(State(state): State<AppState>) -> Response {
-    Json(json!({ "devices": state.devices.list() })).into_response()
+    Json(json!({ "devices": state.devices.list(), "push": state.push.operator_view() }))
+        .into_response()
 }
 
 async fn unpair(state: &AppState, id: &str, by: serde_json::Value) -> Response {
@@ -429,8 +440,136 @@ async fn whoami(
         "approved_by": device.approved_by,
         "scope": device.scope.names(),
         "features": features,
+        "push": state.push.device_view(),
     }))
     .into_response()
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PushBody {
+    token: String,
+    environment: String,
+    #[serde(default)]
+    content: bool,
+}
+
+/// An APNs device token: hex, 16 to 100 bytes, lower-cased.
+fn push_token(token: &str) -> Option<String> {
+    let valid = token.len().is_multiple_of(2)
+        && (32..=200).contains(&token.len())
+        && token.bytes().all(|b| b.is_ascii_hexdigit());
+    valid.then(|| token.to_ascii_lowercase())
+}
+
+/// `POST /api/device/push`: register this device's APNs token. Push off,
+/// or an environment the key is not for, stores nothing.
+async fn push_register(
+    State(state): State<AppState>,
+    Extension(device): Extension<DeviceAuth>,
+    body: Bytes,
+) -> Response {
+    let Ok(body) = serde_json::from_slice::<PushBody>(&body) else {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "expected {\"token\": \"<hex>\", \"environment\": \"production\" | \"development\", \"content\": false}",
+        );
+    };
+    let Some(token) = push_token(&body.token) else {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "token must be the APNs device token as hex, 16 to 100 bytes",
+        );
+    };
+    let Some(environment) = crate::dashboard::push::Environment::parse(&body.environment) else {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "environment must be \"production\" or \"development\"",
+        );
+    };
+    if !state.push.enabled() {
+        return Json(json!({ "enabled": false, "reason": "off" })).into_response();
+    }
+    if !state.push.allows(environment) {
+        return Json(json!({ "enabled": false, "reason": "environment" })).into_response();
+    }
+    let effective = body.content && state.push.allow_content();
+    match state
+        .devices
+        .register_push(&device.id, &token, environment.as_str(), body.content)
+    {
+        Ok(super::PushRegistered::Stored(row)) => {
+            audit(
+                &state,
+                json!({
+                    "by": super::Device::label(&device.name, &device.id),
+                    "action": "push_register", "id": device.id,
+                    "environment": row.environment, "content": row.content,
+                    "content_effective": effective, "status": 200,
+                }),
+            )
+            .await;
+            Json(json!({
+                "enabled": true,
+                "content": effective,
+                "channel": row.channel,
+                "ref_key": base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    &row.ref_key,
+                ),
+            }))
+            .into_response()
+        }
+        Ok(super::PushRegistered::NoDevice) => StatusCode::UNAUTHORIZED.into_response(),
+        Ok(super::PushRegistered::Full) => error(
+            StatusCode::CONFLICT,
+            "this dashboard has as many push registrations as it allows",
+        ),
+        Err(e) => {
+            tracing::warn!(error = %e, "dashboard device store failed");
+            error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "the device store is unavailable",
+            )
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EmptyBody {}
+
+/// `POST /api/device/push/remove`: drop this device's registration.
+async fn push_remove(
+    State(state): State<AppState>,
+    Extension(device): Extension<DeviceAuth>,
+    body: Bytes,
+) -> Response {
+    if !body.is_empty() && serde_json::from_slice::<EmptyBody>(&body).is_err() {
+        return error(StatusCode::BAD_REQUEST, "expected no body, or {}");
+    }
+    match state.devices.remove_push(&device.id) {
+        Ok(removed) => {
+            if removed {
+                audit(
+                    &state,
+                    json!({
+                        "by": super::Device::label(&device.name, &device.id),
+                        "action": "push_remove", "id": device.id, "status": 200,
+                    }),
+                )
+                .await;
+            }
+            Json(json!({ "removed": removed })).into_response()
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "dashboard device store failed");
+            error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "the device store is unavailable",
+            )
+        }
+    }
 }
 
 async fn limit(
