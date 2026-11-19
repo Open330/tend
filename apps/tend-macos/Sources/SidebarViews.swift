@@ -1019,8 +1019,9 @@ private struct SidebarActivityRail: View {
     }
 }
 
-/// One activity bar icon: dimmed at rest, full strength with a 2pt accent bar
-/// on the leading edge when its view is showing, a count badge in the corner.
+/// One activity bar icon: secondary ink at rest, label ink on a soft
+/// rounded pill when its view is showing (no coloured rule), a count badge
+/// on the accent fill in the corner (docs/proposals/MAC_DESIGN.md).
 private struct ActivityRailItem: View {
     let systemImage: String
     let title: String
@@ -1028,35 +1029,37 @@ private struct ActivityRailItem: View {
     let badge: Int
     let select: () -> Void
     @State private var hovering = false
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         Button(action: select) {
             Image(systemName: systemImage)
-                .font(.system(size: 17, weight: .regular))
-                .frame(width: TendTheme.activityBarWidth, height: 44)
-                .contentShape(Rectangle())
-                .overlay(alignment: .leading) {
-                    Rectangle()
-                        .fill(active ? Color.accentColor : Color.clear)
-                        .frame(width: 2)
-                }
-                .overlay(alignment: .bottomTrailing) {
+                .font(.system(size: 16, weight: .regular))
+                .frame(width: 34, height: 32)
+                .background(
+                    RoundedRectangle(cornerRadius: TendRadius.group, style: .continuous)
+                        .fill(active ? TendInk.selection(colorScheme) : hovering ? TendTheme.hover(colorScheme) : .clear)
+                )
+                .overlay(alignment: .topTrailing) {
                     if badge > 0 {
                         Text(verbatim: badge > 99 ? "99+" : "\(badge)")
                             .font(.system(size: 9, weight: .semibold).monospacedDigit())
                             .foregroundStyle(.white)
                             .padding(.horizontal, badge > 9 ? 4 : 0)
                             .frame(minWidth: 15, minHeight: 15)
-                            .background(Color.accentColor, in: Capsule())
-                            .offset(x: -7, y: -8)
+                            .background(TendInk.accentFill(colorScheme), in: Capsule())
+                            .offset(x: 5, y: -4)
                     }
                 }
+                .frame(width: TendTheme.activityBarWidth, height: 42)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(Color.primary.opacity(active || hovering ? 0.92 : 0.45))
+        .foregroundStyle(active ? TendInk.label(colorScheme) : TendInk.secondary(colorScheme))
         .onHover { hovering = $0 }
         .help(title)
         .accessibilityLabel(title)
+        .accessibilityAddTraits(active ? .isSelected : [])
     }
 }
 
