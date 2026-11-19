@@ -47,7 +47,7 @@ struct CantAnswerGroup: View {
                             .monospacedDigit()
                         Spacer(minLength: 0)
                     }
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(TendInk.secondary)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -76,7 +76,7 @@ struct CantAnswerGroup: View {
     private func content(count: Int) -> some View {
         Text("The agents that asked these are gone, so nobody will read an answer. They stay open until you close them.")
             .font(TendType.meta)
-            .foregroundStyle(.tertiary)
+            .foregroundStyle(TendInk.tertiary)
             .fixedSize(horizontal: false, vertical: true)
         if !model.closable.isEmpty {
             Button("Close All…") { confirming = true }
@@ -89,7 +89,7 @@ struct CantAnswerGroup: View {
         if count > listed.count {
             Text("\(count - listed.count) more not listed")
                 .font(TendType.meta)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(TendInk.tertiary)
         }
     }
 }
@@ -133,7 +133,7 @@ struct CantAnswerRow: View {
             if let unanswerable = decision.unanswerable {
                 Label(unanswerable.reasonLine(), systemImage: "person.crop.circle.badge.xmark")
                     .font(TendType.meta)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(TendInk.secondary)
             }
             HStack(spacing: 6) {
                 if let asker = decision.asker {
@@ -156,7 +156,7 @@ struct CantAnswerRow: View {
                 }
             }
             .font(TendType.meta)
-            .foregroundStyle(.tertiary)
+            .foregroundStyle(TendInk.tertiary)
             if let failure = model.failures[decision.id] {
                 Label(failure, systemImage: "exclamationmark.circle")
                     .font(TendType.meta)

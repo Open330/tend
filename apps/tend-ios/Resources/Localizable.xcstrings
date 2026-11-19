@@ -141,6 +141,16 @@
         }
       }
     },
+    "%lld more not listed": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "목록에 없는 질문이 %lld개 더 있습니다"
+          }
+        }
+      }
+    },
     "%lld need you": {
       "localizations": {
         "ko": {
@@ -311,6 +321,16 @@
         }
       }
     },
+    "Agent exited": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "에이전트 종료"
+          }
+        }
+      }
+    },
     "Agents": {
       "localizations": {
         "ko": {
@@ -461,6 +481,16 @@
         }
       }
     },
+    "Asker gone": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "질문한 에이전트 없음"
+          }
+        }
+      }
+    },
     "Asking": {
       "localizations": {
         "ko": {
@@ -481,12 +511,32 @@
         }
       }
     },
+    "Back in Your turn.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "내 차례로 되돌렸습니다."
+          }
+        }
+      }
+    },
     "Backlog": {
       "localizations": {
         "ko": {
           "stringUnit": {
             "state": "translated",
             "value": "백로그"
+          }
+        }
+      }
+    },
+    "Can't be answered (%lld)": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "답할 수 없는 질문 (%lld)"
           }
         }
       }
@@ -507,6 +557,156 @@
           "stringUnit": {
             "state": "translated",
             "value": "승인하기 전에 대시보드에 이 휴대폰의 이름이 보이는지 확인하세요."
+          }
+        }
+      }
+    },
+    "Close %lld": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld개 닫기"
+          }
+        }
+      }
+    },
+    "Close %lld questions?": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "질문 %lld개를 닫을까요?"
+          }
+        }
+      }
+    },
+    "Close 1 question?": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "질문 1개를 닫을까요?"
+          }
+        }
+      }
+    },
+    "Close All…": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "모두 닫기…"
+          }
+        }
+      }
+    },
+    "Closed": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "닫음"
+          }
+        }
+      }
+    },
+    "Closed %lld questions.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "질문 %lld개를 닫았습니다."
+          }
+        }
+      }
+    },
+    "Closed 1 question.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "질문 1개를 닫았습니다."
+          }
+        }
+      }
+    },
+    "Closed by tend": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "tend가 닫음"
+          }
+        }
+      }
+    },
+    "Closed by tend: %@": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "tend가 닫음: %@"
+          }
+        }
+      }
+    },
+    "Closed by tend: merged into another item": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "tend가 닫음: 다른 항목에 합쳐졌습니다"
+          }
+        }
+      }
+    },
+    "Closed by tend: nobody is left to act on it": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "tend가 닫음: 처리할 주체가 남아 있지 않습니다"
+          }
+        }
+      }
+    },
+    "Closed by tend: the original request is gone": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "tend가 닫음: 원래 요청이 없어졌습니다"
+          }
+        }
+      }
+    },
+    "Closed by tend: the original request no longer waits": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "tend가 닫음: 원래 요청이 더 이상 기다리지 않습니다"
+          }
+        }
+      }
+    },
+    "Closed, asker gone: %@": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "질문한 에이전트가 없어 닫음: %@"
+          }
+        }
+      }
+    },
+    "Collapsed": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "접힘"
           }
         }
       }
@@ -721,12 +921,32 @@
         }
       }
     },
+    "Dismiss": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "닫기"
+          }
+        }
+      }
+    },
     "Done": {
       "localizations": {
         "ko": {
           "stringUnit": {
             "state": "translated",
             "value": "완료"
+          }
+        }
+      }
+    },
+    "Each asking agent gets a reply that you dismissed it. This can't be undone.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "질문한 에이전트는 각각 사용자가 질문을 닫았다는 회신을 받습니다. 되돌릴 수 없습니다."
           }
         }
       }
@@ -767,6 +987,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "오류"
+          }
+        }
+      }
+    },
+    "Expanded": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "펼쳐짐"
           }
         }
       }
@@ -967,6 +1197,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "시작되었을 수도 있습니다. 호스트를 확인하세요."
+          }
+        }
+      }
+    },
+    "Keep": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "유지"
           }
         }
       }
@@ -1417,6 +1657,16 @@
         }
       }
     },
+    "Pane gone": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "페인 없음"
+          }
+        }
+      }
+    },
     "Pipeline": {
       "localizations": {
         "ko": {
@@ -1467,6 +1717,16 @@
         }
       }
     },
+    "Put it back in Your turn": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "내 차례로 되돌립니다"
+          }
+        }
+      }
+    },
     "Question": {
       "localizations": {
         "ko": {
@@ -1513,6 +1773,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "최근 출력"
+          }
+        }
+      }
+    },
+    "Replaced by another agent": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "다른 에이전트로 교체"
           }
         }
       }
@@ -1617,6 +1887,16 @@
         }
       }
     },
+    "Session ended": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "세션이 종료되었습니다"
+          }
+        }
+      }
+    },
     "Sessions other agents started to help with this work.": {
       "localizations": {
         "ko": {
@@ -1683,6 +1963,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "로그인 실패"
+          }
+        }
+      }
+    },
+    "Skipped %lld: %@": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$lld개는 건너뛰었습니다: %2$@"
           }
         }
       }
@@ -1843,6 +2133,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "그 항목은 이미 결정되었거나 더 이상 기다리지 않습니다."
+          }
+        }
+      }
+    },
+    "The agents that asked these are gone, so nobody will read an answer. They stay open until you close them.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "질문한 에이전트가 사라져서 답을 읽을 에이전트가 없습니다. 직접 닫기 전까지는 열려 있습니다."
           }
         }
       }
@@ -2513,6 +2813,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "통과"
+          }
+        }
+      }
+    },
+    "since %@": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@부터"
           }
         }
       }
