@@ -70,8 +70,48 @@ export function renderSwift(tokens) {
   for (const [name, value] of Object.entries(tokens.size)) lines.push(`        static let ${camel(name)}: Double = ${number(value)}`);
   lines.push("    }", "", "    /// Metrics in points.", "    enum Metric {");
   for (const [name, value] of Object.entries(tokens.metric)) lines.push(`        static let ${camel(name)}: Double = ${number(value)}`);
-  lines.push("    }", "}", "");
+  lines.push("    }");
+  if (tokens.mac) lines.push("", ...renderMacSwift(tokens.mac));
+  lines.push("}", "");
   return lines.join("\n");
+}
+
+/// Tend for Mac's own roles (`tokens.mac`): Swift only, never CSS, so the
+/// web and iOS keep the shared values.
+function renderMacSwift(mac) {
+  const colour = (name, value) => {
+    const light = swiftColor(value.light);
+    const dark = swiftColor(value.dark);
+    return `        static let ${camel(name)} = TendTokenColor(light: ${light.rgb}, lightAlpha: ${light.alpha}, dark: ${dark.rgb}, darkAlpha: ${dark.alpha})`;
+  };
+  const lines = [
+    "    /// Tend for Mac's type roles, spacing, radii, surfaces and inks",
+    "    /// (docs/proposals/MAC_DESIGN.md). Not in tokens.css.",
+    "    enum Mac {",
+    "        /// One type role: points, weight name, and the variant.",
+    "        struct TypeRole: Sendable, Equatable {",
+    "            let size: Double",
+    "            let weight: String",
+    "            let tabularDigits: Bool",
+    "            let monospaced: Bool",
+    "        }",
+    "",
+  ];
+  for (const [name, role] of Object.entries(mac.type)) {
+    lines.push(`        static let ${camel(name)} = TypeRole(size: ${role.size}, weight: "${role.weight}", tabularDigits: ${role.digits === "tabular"}, monospaced: ${role.design === "monospaced"})`);
+  }
+  lines.push("", "        /// The 4-point spacing scale.", "        enum Space {");
+  for (const [name, value] of Object.entries(mac.space)) lines.push(`            static let ${name}: Double = ${value}`);
+  lines.push("        }", "", "        enum Radius {");
+  for (const [name, value] of Object.entries(mac.radius)) lines.push(`            static let ${camel(name)}: Double = ${value}`);
+  lines.push("        }", "", "        // Surfaces");
+  for (const [name, value] of Object.entries(mac.surface)) lines.push(colour(`surface-${name}`, value));
+  lines.push("", "        // Inks");
+  for (const [name, value] of Object.entries(mac.ink)) lines.push(colour(`ink-${name}`, value));
+  lines.push("", "        // A state's word: 4.5:1 or more on every surface above");
+  for (const [name, value] of Object.entries(mac["state-ink"])) lines.push(colour(`state-ink-${name}`, value));
+  lines.push("", colour("accent-fill", mac["accent-fill"]), colour("accent-fill-pressed", mac["accent-fill-pressed"]), "    }");
+  return lines;
 }
 
 export function renderCss(tokens) {

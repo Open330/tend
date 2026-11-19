@@ -100,4 +100,70 @@ enum TendDesignTokens {
         static let inspectorWidth: Double = 400
         static let inspectorDockMin: Double = 1040
     }
+
+    /// Tend for Mac's type roles, spacing, radii, surfaces and inks
+    /// (docs/proposals/MAC_DESIGN.md). Not in tokens.css.
+    enum Mac {
+        /// One type role: points, weight name, and the variant.
+        struct TypeRole: Sendable, Equatable {
+            let size: Double
+            let weight: String
+            let tabularDigits: Bool
+            let monospaced: Bool
+        }
+
+        static let page = TypeRole(size: 20, weight: "semibold", tabularDigits: false, monospaced: false)
+        static let cardTitle = TypeRole(size: 14, weight: "semibold", tabularDigits: false, monospaced: false)
+        static let section = TypeRole(size: 13, weight: "semibold", tabularDigits: false, monospaced: false)
+        static let body = TypeRole(size: 13, weight: "regular", tabularDigits: false, monospaced: false)
+        static let secondary = TypeRole(size: 12, weight: "regular", tabularDigits: false, monospaced: false)
+        static let label = TypeRole(size: 11, weight: "medium", tabularDigits: false, monospaced: false)
+        static let meta = TypeRole(size: 11, weight: "regular", tabularDigits: true, monospaced: false)
+        static let mono = TypeRole(size: 12, weight: "regular", tabularDigits: false, monospaced: true)
+
+        /// The 4-point spacing scale.
+        enum Space {
+            static let xxs: Double = 2
+            static let xs: Double = 4
+            static let s: Double = 8
+            static let m: Double = 12
+            static let l: Double = 16
+            static let xl: Double = 20
+            static let xxl: Double = 24
+            static let xxxl: Double = 32
+        }
+
+        enum Radius {
+            static let control: Double = 6
+            static let group: Double = 8
+            static let card: Double = 10
+            static let lane: Double = 12
+        }
+
+        // Surfaces
+        static let surfaceSidebar = TendTokenColor(light: 0xEFEFF2, lightAlpha: 1, dark: 0x232326, darkAlpha: 1)
+        static let surfaceContent = TendTokenColor(light: 0xFFFFFF, lightAlpha: 1, dark: 0x1C1C1E, darkAlpha: 1)
+        static let surfaceLane = TendTokenColor(light: 0xF4F4F6, lightAlpha: 1, dark: 0x232325, darkAlpha: 1)
+        static let surfaceCard = TendTokenColor(light: 0xFFFFFF, lightAlpha: 1, dark: 0x2C2C2F, darkAlpha: 1)
+
+        // Inks
+        static let inkLabel = TendTokenColor(light: 0x000000, lightAlpha: 0.86, dark: 0xFFFFFF, darkAlpha: 0.88)
+        static let inkSecondary = TendTokenColor(light: 0x000000, lightAlpha: 0.55, dark: 0xFFFFFF, darkAlpha: 0.58)
+        static let inkTertiary = TendTokenColor(light: 0x000000, lightAlpha: 0.45, dark: 0xFFFFFF, darkAlpha: 0.42)
+        static let inkHairline = TendTokenColor(light: 0x000000, lightAlpha: 0.08, dark: 0xFFFFFF, darkAlpha: 0.08)
+        static let inkControl = TendTokenColor(light: 0x000000, lightAlpha: 0.05, dark: 0xFFFFFF, darkAlpha: 0.08)
+        static let inkTrack = TendTokenColor(light: 0x000000, lightAlpha: 0.16, dark: 0xFFFFFF, darkAlpha: 0.2)
+        static let inkSelection = TendTokenColor(light: 0x000000, lightAlpha: 0.08, dark: 0xFFFFFF, darkAlpha: 0.11)
+        static let inkAccentText = TendTokenColor(light: 0x0066D6, lightAlpha: 1, dark: 0x4DA3FF, darkAlpha: 1)
+
+        // A state's word: 4.5:1 or more on every surface above
+        static let stateInkOrange = TendTokenColor(light: 0xA85400, lightAlpha: 1, dark: 0xFF9F2E, darkAlpha: 1)
+        static let stateInkGreen = TendTokenColor(light: 0x16743A, lightAlpha: 1, dark: 0x32D35F, darkAlpha: 1)
+        static let stateInkBlue = TendTokenColor(light: 0x0066D6, lightAlpha: 1, dark: 0x409CFF, darkAlpha: 1)
+        static let stateInkRed = TendTokenColor(light: 0xC8302E, lightAlpha: 1, dark: 0xFF5A5F, darkAlpha: 1)
+        static let stateInkPurple = TendTokenColor(light: 0x8E3FC0, lightAlpha: 1, dark: 0xC77DFF, darkAlpha: 1)
+
+        static let accentFill = TendTokenColor(light: 0x0066D6, lightAlpha: 1, dark: 0x0A6CDA, darkAlpha: 1)
+        static let accentFillPressed = TendTokenColor(light: 0x0055B3, lightAlpha: 1, dark: 0x0959B8, darkAlpha: 1)
+    }
 }
