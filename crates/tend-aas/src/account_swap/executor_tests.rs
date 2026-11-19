@@ -58,6 +58,13 @@ struct FakeIo {
     registers: Cell<bool>,
     forgotten: RefCell<Vec<u64>>,
     hook_is_registered: Cell<bool>,
+    /// The launch id the relaunched agent carries (`None`: unreadable).
+    launch_mark: RefCell<Option<String>>,
+    /// The homes a test watches, and whether they were held at each capture.
+    watched: RefCell<Option<crate::home_gate::HeldHomes>>,
+    held_at_capture: RefCell<Vec<bool>>,
+    /// The next captures that fail.
+    blind: Cell<usize>,
 }
 
 impl FakeIo {
@@ -91,6 +98,10 @@ impl FakeIo {
             registers: Cell::new(false),
             forgotten: RefCell::new(Vec::new()),
             hook_is_registered: Cell::new(false),
+            launch_mark: RefCell::new(None),
+            watched: RefCell::new(None),
+            held_at_capture: RefCell::new(Vec::new()),
+            blind: Cell::new(0),
         }
     }
 
@@ -148,7 +159,21 @@ impl SwapIo for FakeIo {
         self.shell_cwd.borrow().clone()
     }
 
+    fn launch_id_of(&self, _pid: u32) -> super::LaunchMark {
+        self.launch_mark
+            .borrow()
+            .clone()
+            .map_or(super::LaunchMark::Unreadable, super::LaunchMark::Carries)
+    }
+
     fn capture(&self) -> Option<String> {
+        if let Some(homes) = self.watched.borrow().as_ref() {
+            self.held_at_capture.borrow_mut().push(homes.holding());
+        }
+        if self.blind.get() > 0 {
+            self.blind.set(self.blind.get() - 1);
+            return None;
+        }
         Some(self.screen.borrow().clone())
     }
 
@@ -264,6 +289,8 @@ fn target(kind: AgentKind, direct: bool, busy: bool) -> Target {
             respawn_shell: Some("/bin/sh".into()),
             ..super::preflight::Prerequisites::default()
         },
+        homes: crate::home_gate::HeldHomes::none(),
+        stale_prompt: std::cell::Cell::new(false),
     }
 }
 
@@ -536,7 +563,11 @@ fn a_follow_up_whose_enter_fails_is_reported_and_recorded_apart() {
             if line.starts_with("signal TERM") {
                 io.kill(AGENT);
             }
-            if line == "text \"\\r\"" && io.previous().as_deref() == Some("text \"RELAUNCH\"") {
+            if line == "text \"\\r\""
+                && io
+                    .previous()
+                    .is_some_and(|typed| typed.contains("RELAUNCH"))
+            {
                 io.agent_appears_in(Duration::from_secs(1));
             }
             if line == "prompt \"continue\"" {
@@ -1394,7 +1425,11 @@ fn a_startup_dialog_of_an_unbound_relaunch_is_not_answered() {
             if line.starts_with("signal TERM") {
                 io.kill(AGENT);
             }
-            if line == "text \"\\r\"" && io.previous().as_deref() == Some("text \"RELAUNCH\"") {
+            if line == "text \"\\r\""
+                && io
+                    .previous()
+                    .is_some_and(|typed| typed.contains("RELAUNCH"))
+            {
                 io.agent_appears_in(Duration::from_secs(1));
                 io.show(TRUST);
             }
@@ -1428,7 +1463,11 @@ fn bypass_mode_is_accepted_only_when_both_processes_run_with_it() {
                 if line.starts_with("signal TERM") {
                     io.kill(AGENT);
                 }
-                if line == "text \"\\r\"" && io.previous().as_deref() == Some("text \"RELAUNCH\"") {
+                if line == "text \"\\r\""
+                    && io
+                        .previous()
+                        .is_some_and(|typed| typed.contains("RELAUNCH"))
+                {
                     io.agent_appears_in(Duration::from_secs(1));
                     io.show(BYPASS);
                 }
@@ -1804,7 +1843,11 @@ fn an_unsubmitted_registered_follow_up_is_forgotten() {
             if line.starts_with("signal TERM") {
                 io.kill(AGENT);
             }
-            if line == "text \"\\r\"" && io.previous().as_deref() == Some("text \"RELAUNCH\"") {
+            if line == "text \"\\r\""
+                && io
+                    .previous()
+                    .is_some_and(|typed| typed.contains("RELAUNCH"))
+            {
                 io.agent_appears_in(Duration::from_secs(1));
             }
             // The relaunch's Enter lands; the follow-up's is refused.
@@ -1891,7 +1934,11 @@ fn a_relaunch_waiting_on_the_hook_review_ends_with_a_named_outcome() {
             if line.starts_with("signal TERM") {
                 io.kill(AGENT);
             }
-            if line == "text \"\\r\"" && io.previous().as_deref() == Some("text \"RELAUNCH\"") {
+            if line == "text \"\\r\""
+                && io
+                    .previous()
+                    .is_some_and(|typed| typed.contains("RELAUNCH"))
+            {
                 io.agent_appears_in(Duration::from_secs(1));
                 io.show(REVIEW);
             }
@@ -1913,4 +1960,150 @@ fn a_relaunch_waiting_on_the_hook_review_ends_with_a_named_outcome() {
         io.sent(),
         ["signal TERM [10]", "text \"RELAUNCH\"", "text \"\\r\""]
     );
+}
+
+fn held_homes(name: &str) -> crate::home_gate::HeldHomes {
+    let key =
+        crate::home_gate::HomeKey::unknown(&format!("executor-{name}-{}", std::process::id()));
+    crate::home_gate::try_acquire_all(&key, &key, "%1").expect("a home of this test's own")
+}
+
+/// A prompt already on screen when the relaunch is typed may be the old
+/// agent's: the relaunch's home is kept through readiness, never let go on
+/// it, and goes when the run ends.
+#[test]
+fn an_old_prompt_on_screen_keeps_the_home_until_readiness_ends() {
+    // The old prompt stays on screen until the relaunch draws its own.
+    let io = FakeIo::new(
+        CODEX_IDLE,
+        Box::new(|io: &FakeIo, line: &str| {
+            if line.starts_with("signal TERM") {
+                io.kill(AGENT);
+            }
+            if line == "text \"\\r\""
+                && io
+                    .previous()
+                    .is_some_and(|typed| typed.contains("RELAUNCH"))
+            {
+                io.agent_appears_in(Duration::from_secs(1));
+            }
+        }),
+    );
+    *io.launch_mark.borrow_mut() = Some("L1".into());
+    let homes = held_homes("stale");
+    *io.watched.borrow_mut() = Some(homes.clone());
+    let mut target = target(AgentKind::Codex, false, false);
+    target.launch_id = Some("L1".into());
+    target.homes = homes.clone();
+    let (result, _, _) = run(&io, &target, &launch(), None, &mut NoObserver);
+    assert!(result.is_ok(), "{result:?}");
+    let seen = io.held_at_capture.borrow().clone();
+    let after_relaunch = seen.iter().skip_while(|held| **held).count();
+    assert_eq!(after_relaunch, 0, "held at every capture: {seen:?}");
+    assert!(!homes.holding(), "and let go when the run ended");
+}
+
+/// A relaunch that draws its own prompt on a cleared screen, bound to this
+/// launch's id, lets its home go there, before readiness has ended.
+#[test]
+fn a_fresh_prompt_of_this_launch_lets_the_home_go_before_readiness_ends() {
+    let io = FakeIo::new(
+        CODEX_IDLE,
+        Box::new(|io: &FakeIo, line: &str| {
+            if line.starts_with("signal TERM") {
+                io.kill(AGENT);
+                // The old agent is gone: its screen with it.
+                io.show("$ ");
+            }
+            if line == "text \"\\r\""
+                && io
+                    .previous()
+                    .is_some_and(|typed| typed.contains("RELAUNCH"))
+            {
+                io.agent_appears_in(Duration::from_secs(1));
+                io.show(CODEX_IDLE);
+            }
+        }),
+    );
+    *io.launch_mark.borrow_mut() = Some("L1".into());
+    let homes = held_homes("fresh");
+    *io.watched.borrow_mut() = Some(homes.clone());
+    let mut first = target(AgentKind::Codex, false, false);
+    first.launch_id = Some("L1".into());
+    first.homes = homes.clone();
+    let (result, _, _) = run(&io, &first, &launch(), None, &mut NoObserver);
+    assert!(result.is_ok(), "{result:?}");
+    let seen = io.held_at_capture.borrow().clone();
+    assert!(
+        seen.iter().any(|held| !held) && seen.last() == Some(&false),
+        "let go during readiness: {seen:?}"
+    );
+    // A second launch's id on the process is not this one's.
+    let other = FakeIo::new(
+        CODEX_IDLE,
+        Box::new(|io: &FakeIo, line: &str| {
+            if line.starts_with("signal TERM") {
+                io.kill(AGENT);
+                io.show("$ ");
+            }
+            if line == "text \"\\r\""
+                && io
+                    .previous()
+                    .is_some_and(|typed| typed.contains("RELAUNCH"))
+            {
+                io.agent_appears_in(Duration::from_secs(1));
+                io.show(CODEX_IDLE);
+            }
+        }),
+    );
+    *other.launch_mark.borrow_mut() = Some("someone-else".into());
+    let homes = held_homes("other-launch");
+    *other.watched.borrow_mut() = Some(homes.clone());
+    let mut second = target(AgentKind::Codex, false, false);
+    second.launch_id = Some("L1".into());
+    second.homes = homes;
+    let _ = run(&other, &second, &launch(), None, &mut NoObserver);
+    let seen = other.held_at_capture.borrow().clone();
+    assert!(
+        seen.iter().rev().skip(1).all(|held| *held),
+        "another launch never lets it go early: {seen:?}"
+    );
+}
+
+/// A screen that could not be read when the relaunch was typed may have
+/// shown the old prompt: the home is kept, even for a correctly marked
+/// relaunch, until readiness ends.
+#[test]
+fn an_unreadable_screen_before_the_relaunch_keeps_the_home_until_readiness_ends() {
+    let io = FakeIo::new(
+        CODEX_IDLE,
+        Box::new(|io: &FakeIo, line: &str| {
+            if line.starts_with("signal TERM") {
+                io.kill(AGENT);
+                // The capture taken before the relaunch fails; the old prompt stays.
+                io.blind.set(1);
+            }
+            if line == "text \"\\r\""
+                && io
+                    .previous()
+                    .is_some_and(|typed| typed.contains("RELAUNCH"))
+            {
+                io.agent_appears_in(Duration::from_secs(1));
+            }
+        }),
+    );
+    *io.launch_mark.borrow_mut() = Some("L1".into());
+    let homes = held_homes("blind");
+    *io.watched.borrow_mut() = Some(homes.clone());
+    let mut blind = target(AgentKind::Codex, false, false);
+    blind.launch_id = Some("L1".into());
+    blind.homes = homes.clone();
+    let (result, _, _) = run(&io, &blind, &launch(), None, &mut NoObserver);
+    assert!(result.is_ok(), "{result:?}");
+    let seen = io.held_at_capture.borrow().clone();
+    assert!(
+        seen.iter().all(|held| *held),
+        "held at every capture: {seen:?}"
+    );
+    assert!(!homes.holding());
 }

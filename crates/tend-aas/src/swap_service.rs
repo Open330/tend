@@ -31,7 +31,7 @@ use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use tend::backend::SharedBackend;
 use tend::event::AgentKind;
 use tend::state::Agent;
@@ -105,6 +105,9 @@ impl ResolveOverrides for SwapOverrides {
             Some(other) => return Err(format!("unknown continue evidence {other:?}")),
         };
         request.exclude.clone_from(&self.exclude);
+        if let Some(jobs) = self.jobs {
+            request.jobs = usize::from(jobs).clamp(1, tend::swap_api::MAX_SWAP_JOBS);
+        }
         request.dry_run = false;
         Ok(request)
     }
@@ -319,11 +322,22 @@ pub(crate) trait Engine: Send + Sync + 'static {
     }
     /// Look at a target's pane now, read-only: a reason code.
     fn observe(&self, planned: &PlannedTarget, snapshot: &Snapshot) -> &'static str;
+    /// The account homes a target's run touches (the stopped agent's, the
+    /// relaunch's), taken before it starts ([`crate::home_gate`]). `None`:
+    /// none to gate.
+    fn homes(
+        &self,
+        _request: &SwapRequest,
+        _target: &Self::Target,
+    ) -> Option<(crate::home_gate::HomeKey, crate::home_gate::HomeKey)> {
+        None
+    }
     fn execute(
         &self,
         request: &SwapRequest,
         target: &Self::Target,
         observer: &mut dyn EffectObserver,
+        homes: crate::home_gate::HeldHomes,
     ) -> SwapOutcome;
 }
 
@@ -480,13 +494,22 @@ impl Engine for RealEngine {
         )
     }
 
+    fn homes(
+        &self,
+        request: &SwapRequest,
+        target: &Self::Target,
+    ) -> Option<(crate::home_gate::HomeKey, crate::home_gate::HomeKey)> {
+        target.home_keys(request)
+    }
+
     fn execute(
         &self,
         request: &SwapRequest,
         target: &Self::Target,
         observer: &mut dyn EffectObserver,
+        homes: crate::home_gate::HeldHomes,
     ) -> SwapOutcome {
-        account_swap::execute_target(request, target, observer, self.probe.as_deref())
+        account_swap::execute_target(request, target, observer, self.probe.as_deref(), homes)
     }
 }
 
@@ -613,15 +636,28 @@ impl Engine for DaemonEngine {
         }
     }
 
+    fn homes(
+        &self,
+        request: &SwapRequest,
+        target: &DaemonTarget,
+    ) -> Option<(crate::home_gate::HomeKey, crate::home_gate::HomeKey)> {
+        match (self, target) {
+            (Self::Real(engine), DaemonTarget::Real(target)) => engine.homes(request, target),
+            #[cfg(feature = "test-support")]
+            _ => None,
+        }
+    }
+
     fn execute(
         &self,
         request: &SwapRequest,
         target: &DaemonTarget,
         observer: &mut dyn EffectObserver,
+        homes: crate::home_gate::HeldHomes,
     ) -> SwapOutcome {
         match (self, target) {
             (Self::Real(engine), DaemonTarget::Real(target)) => {
-                engine.execute(request, target, observer)
+                engine.execute(request, target, observer, homes)
             }
             #[cfg(feature = "test-support")]
             (Self::Inert(engine), DaemonTarget::Inert(identity)) => engine.execute(identity),
@@ -903,6 +939,12 @@ pub(crate) struct Service<E: Engine> {
     /// Why the last pruning failed, if it did.
     maintenance: Mutex<Option<String>>,
     fault: Mutex<Option<String>>,
+    /// Held while a target's start is recorded and while a fault is set, so
+    /// a start either happened before the fault or sees it.
+    admission: Mutex<()>,
+    /// Targets in flight on this host, across every job; at most
+    /// [`tend::swap_api::MAX_SWAP_JOBS`].
+    inflight: Mutex<usize>,
     spawner: Spawner,
     /// The ownership lock ([`ownership_lock`]). Owned here, where every
     /// running job holds a reference, so it is released only once the
@@ -925,6 +967,59 @@ struct AttemptRun<T> {
     report_index: usize,
     identity: TargetIdentity,
     target: T,
+}
+
+/// How many workers one job's run has: the count accepted with it (none
+/// recorded: a journal from before parallel swaps, run one at a time),
+/// never more than its targets or [`tend::swap_api::MAX_SWAP_JOBS`]; an
+/// automation firing, which re-checks its trigger before each start, one.
+fn workers_for(accepted: Option<usize>, automation: bool, targets: usize) -> usize {
+    if automation {
+        return 1;
+    }
+    accepted
+        .unwrap_or(1)
+        .clamp(1, tend::swap_api::MAX_SWAP_JOBS)
+        .min(targets)
+        .max(1)
+}
+
+/// What every worker of one job's run reads.
+#[derive(Clone, Copy)]
+struct Lane<'a> {
+    job: &'a str,
+    request: &'a SwapRequest,
+    accepted: &'a crate::swap_job::AcceptedPlan,
+    deadline: Option<i64>,
+    began: std::time::Instant,
+}
+
+/// The targets one job's workers share: those not started yet, and the
+/// guard adopted from the job that handed this one over, until the worker
+/// that reaches its endpoint takes it.
+struct Queue<T> {
+    pending: Mutex<std::collections::VecDeque<AttemptRun<T>>>,
+    adopted: Mutex<Option<Box<dyn TargetGuard>>>,
+    /// Each target's homes, once worked out (by target id).
+    homes: Mutex<HashMap<u32, HomeKeys>>,
+}
+
+type HomeKeys = Option<(crate::home_gate::HomeKey, crate::home_gate::HomeKey)>;
+
+/// How long a target whose home another target holds waits before it is
+/// looked at again.
+const HOME_RETRY: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// A host-wide target slot ([`Service::try_slot`]).
+struct Slot<'a> {
+    inflight: &'a Mutex<usize>,
+}
+
+impl Drop for Slot<'_> {
+    fn drop(&mut self) {
+        let mut inflight = self.inflight.lock().unwrap_or_else(PoisonError::into_inner);
+        *inflight = inflight.saturating_sub(1);
+    }
 }
 
 impl<E: Engine> Service<E> {
@@ -950,6 +1045,8 @@ impl<E: Engine> Service<E> {
             pruned_at: Mutex::new(Some(std::time::Instant::now())),
             maintenance: Mutex::new(None),
             fault: Mutex::new(None),
+            admission: Mutex::new(()),
+            inflight: Mutex::new(0),
             spawner: thread_spawner(),
             ownership: None,
             done: Mutex::new(HashMap::new()),
@@ -1177,9 +1274,53 @@ impl<E: Engine> Service<E> {
     }
 
     fn set_fault(&self, why: String) {
+        // Never called while `admission` is held (see `admit`).
+        let _admission = self
+            .admission
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         if let Ok(mut fault) = self.fault.lock() {
             fault.get_or_insert(why);
         }
+    }
+
+    /// Record that a target starts, unless the service faulted first or a
+    /// cancel came: checked and recorded as one step against [`Self::set_fault`].
+    /// `None`: the worker stops (faulted, or the boundary could not be recorded).
+    fn admit(&self, job: &str, target_id: u32, attempt: u32) -> Option<Boundary> {
+        let recorded = {
+            let _admission = self
+                .admission
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if self.fault().is_some() {
+                return None;
+            }
+            self.store
+                .start_or_cancel(&self.lease, job, target_id, attempt, true)
+        };
+        match recorded {
+            Ok(boundary) => Some(boundary),
+            Err(error) => {
+                self.set_fault(format!(
+                    "job {job}: could not record the boundary of target {target_id}: {error}"
+                ));
+                None
+            }
+        }
+    }
+
+    /// One of this host's [`tend::swap_api::MAX_SWAP_JOBS`] target slots if
+    /// one is free, never waited for; freed when dropped.
+    fn try_slot(&self) -> Option<Slot<'_>> {
+        let mut inflight = self.inflight.lock().unwrap_or_else(PoisonError::into_inner);
+        if *inflight >= tend::swap_api::MAX_SWAP_JOBS {
+            return None;
+        }
+        *inflight += 1;
+        Some(Slot {
+            inflight: &self.inflight,
+        })
     }
 
     /// A snapshot planned against the configuration the caller loaded.
@@ -1246,7 +1387,12 @@ impl<E: Engine> Service<E> {
                             }
                             skipped_outcome(&identity, note)
                         }
-                        None => self.engine.execute(&resolved, &target, &mut NoObserver),
+                        None => self.engine.execute(
+                            &resolved,
+                            &target,
+                            &mut NoObserver,
+                            crate::home_gate::HeldHomes::none(),
+                        ),
                     }
                 }
             })
@@ -1350,6 +1496,7 @@ impl<E: Engine> Service<E> {
                 .map(|(report_index, identity, _)| planned_target(*report_index, identity))
                 .collect(),
             settled,
+            jobs: Some(resolved.jobs),
         };
         let created = match this
             .store
@@ -1612,6 +1759,8 @@ impl<E: Engine> Service<E> {
                 .map(|(report_index, identity, _)| planned_target(*report_index, identity))
                 .collect(),
             settled,
+            // A retry runs as its parent did.
+            jobs: plan.jobs,
         };
         let created = match this.store.create_retry_job(
             &this.lease,
@@ -1784,9 +1933,10 @@ impl<E: Engine> Service<E> {
         Ok(())
     }
 
-    /// Run targets in report order, rotating busy targets while waiting for idle.
-    /// Halt the whole job on the first failure to record.
-    #[allow(clippy::too_many_lines)] // boundaries, idle waiting, execution and journalling in order
+    /// Run targets in report order, up to `request.jobs` at once, rotating
+    /// busy targets while waiting for idle. Halt the whole job on the first
+    /// failure to record: from then on no worker starts a further target,
+    /// and the ones already started run to their end.
     fn run(
         &self,
         job: &str,
@@ -1795,9 +1945,7 @@ impl<E: Engine> Service<E> {
         adopted: Option<Box<dyn TargetGuard>>,
         still_due: Option<&StillDue>,
     ) {
-        let mut adopted = adopted;
         let began = std::time::Instant::now();
-        let mut pending: std::collections::VecDeque<_> = runs.into();
         let accepted = match self.store.plan(job) {
             Ok(plan) => plan,
             Err(error) => {
@@ -1808,15 +1956,80 @@ impl<E: Engine> Service<E> {
             }
         };
         let deadline = accepted.resume.as_ref().map(|policy| policy.idle_deadline);
+        // An automation firing (`still_due`) re-checks its trigger at the
+        // last moment before each start; it covers one agent and runs on
+        // this thread, one target at a time, as it always has. Otherwise the
+        // count accepted with the job: a resumed or retried job keeps it.
+        let workers = workers_for(accepted.jobs, still_due.is_some(), runs.len());
+        let queue = Queue {
+            pending: Mutex::new(runs.into()),
+            adopted: Mutex::new(adopted),
+            homes: Mutex::new(HashMap::new()),
+        };
+        let lane = Lane {
+            job,
+            request,
+            accepted: &accepted,
+            deadline,
+            began,
+        };
+        // A worker that panics faults the service at once, so no other
+        // worker starts a further target; its own target keeps its pane
+        // reserved and unfinished, for recovery to reconcile.
+        let guarded = |still_due: Option<&StillDue>| {
+            let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.work(&lane, &queue, still_due);
+            }));
+            if ran.is_err() {
+                self.set_fault(format!(
+                    "job {job}: the swap executor panicked; no further target is started"
+                ));
+            }
+        };
+        if workers == 1 {
+            guarded(still_due);
+        } else {
+            std::thread::scope(|scope| {
+                for _ in 0..workers {
+                    scope.spawn(|| guarded(None));
+                }
+            });
+        }
+        if self.fault().is_none() {
+            if let Err(error) = self.store.finish(&self.lease, job) {
+                self.set_fault(format!("job {job}: could not record its end: {error}"));
+            }
+        }
+    }
+
+    /// One worker of [`Self::run`]: take the next target from `queue` and
+    /// carry it through, until the queue is empty or the service faults.
+    #[allow(clippy::too_many_lines)] // boundaries, idle waiting, execution and journalling in order
+    fn work(&self, lane: &Lane<'_>, queue: &Queue<E::Target>, still_due: Option<&StillDue>) {
+        let Lane {
+            job,
+            request,
+            accepted,
+            deadline,
+            began,
+        } = *lane;
         let mut next_poll = std::time::Instant::now();
-        while let Some(AttemptRun {
-            target_id,
-            attempt,
-            report_index,
-            identity,
-            mut target,
-        }) = pending.pop_front()
-        {
+        loop {
+            let next = queue
+                .pending
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .pop_front();
+            let Some(AttemptRun {
+                target_id,
+                attempt,
+                report_index,
+                identity,
+                mut target,
+            }) = next
+            else {
+                break;
+            };
             if self.fault().is_some() {
                 // Halted: later targets are never reached, their pane stays
                 // reserved until the daemon restarts and recovers the job.
@@ -1843,14 +2056,91 @@ impl<E: Engine> Service<E> {
                 self.timed_out(job, target_id, attempt, report_index, &identity);
                 continue;
             }
-            // An adopted guard protects the one endpoint it was taken for.
-            let held = match adopted.take() {
-                Some(guard) if guard.covers(&identity.endpoint) => Ok(guard),
-                other => {
-                    adopted = other;
-                    self.provider
-                        .acquire_guard(&identity.pane, identity.socket.as_deref())
+            // Before the pane is held: a worker waiting for a host slot
+            // holds no pane. Dropped at the end of this target, or when it
+            // goes back to wait for idle.
+            let Some(slot) = self.try_slot() else {
+                // The host is full: back in the queue holding nothing, to
+                // be looked at again — fault, cancel, deadline first.
+                queue
+                    .pending
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push_back(AttemptRun {
+                        target_id,
+                        attempt,
+                        report_index,
+                        identity,
+                        target,
+                    });
+                std::thread::sleep(HOME_RETRY);
+                continue;
+            };
+            // Every home the target touches, taken now, before its pane is
+            // held and before anything of it is checked; or, if another
+            // target holds one, back in the queue holding nothing, to be
+            // looked at again — fault, cancel and idle deadline first — on
+            // its next pass.
+            let known = queue
+                .homes
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get(&target_id)
+                .cloned();
+            let keys = known.unwrap_or_else(|| {
+                let keys = self.engine.homes(request, &target);
+                queue
+                    .homes
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .insert(target_id, keys.clone());
+                keys
+            });
+            let homes = match &keys {
+                None => crate::home_gate::HeldHomes::none(),
+                Some((source, destination)) => {
+                    if let Some(held) =
+                        crate::home_gate::try_acquire_all(source, destination, &identity.pane)
+                    {
+                        held
+                    } else {
+                        drop(slot);
+                        queue
+                            .pending
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .push_back(AttemptRun {
+                                target_id,
+                                attempt,
+                                report_index,
+                                identity,
+                                target,
+                            });
+                        std::thread::sleep(HOME_RETRY);
+                        continue;
+                    }
                 }
+            };
+            // An adopted guard protects the one endpoint it was taken for.
+            // The adopted guard goes only to the worker whose endpoint it
+            // covers, looked at and taken under one lock; any other worker
+            // leaves it where it is.
+            let adopted = {
+                let mut adopted = queue.adopted.lock().unwrap_or_else(PoisonError::into_inner);
+                if adopted
+                    .as_ref()
+                    .is_some_and(|guard| guard.covers(&identity.endpoint))
+                {
+                    adopted.take()
+                } else {
+                    None
+                }
+            };
+            let held = match adopted {
+                Some(guard) => Ok(guard),
+                None => self
+                    .provider
+                    .acquire_guard(&identity.pane, identity.socket.as_deref()),
             };
             let guard = match held {
                 Ok(guard) => guard,
@@ -1902,19 +2192,25 @@ impl<E: Engine> Service<E> {
                             // the per-endpoint reservation, to reject duplicate swaps;
                             // neither unrelated endpoints nor submissions are held.
                             drop(guard);
-                            pending.push_back(AttemptRun {
-                                target_id,
-                                attempt,
-                                report_index,
-                                identity,
-                                target,
-                            });
+                            drop(homes);
+                            drop(slot);
+                            let rotated = {
+                                let mut pending =
+                                    queue.pending.lock().unwrap_or_else(PoisonError::into_inner);
+                                pending.push_back(AttemptRun {
+                                    target_id,
+                                    attempt,
+                                    report_index,
+                                    identity,
+                                    target,
+                                });
+                                pending
+                                    .front()
+                                    .is_some_and(|run| run.target_id <= target_id)
+                            };
                             // Rotate the queue, so a busy target never blocks ready targets.
                             // Bound CPU use and cancellation latency to one second per round.
-                            if pending
-                                .front()
-                                .is_some_and(|run| run.target_id <= target_id)
-                            {
+                            if rotated {
                                 let now = std::time::Instant::now();
                                 if now < next_poll {
                                     std::thread::sleep(next_poll - now);
@@ -1964,9 +2260,20 @@ impl<E: Engine> Service<E> {
                 );
                 continue;
             }
-            // The pane is held: start it, unless a cancel came first. From
-            // here on it runs to its end.
-            match self.boundary(job, target_id, attempt, true) {
+            // The accepted idle deadline holds to the very start, however
+            // long the target waited for its slot, home or pane.
+            if request.when_idle
+                && !request.force
+                && deadline
+                    .is_some_and(|until| time::OffsetDateTime::now_utc().unix_timestamp() >= until)
+            {
+                drop(guard);
+                self.timed_out(job, target_id, attempt, report_index, &identity);
+                continue;
+            }
+            // The pane is held: start it, unless a cancel or a fault came
+            // first. From here on it runs to its end.
+            match self.admit(job, target_id, attempt) {
                 Some(Boundary::Started) => {}
                 Some(Boundary::Deferred) => {
                     self.release(&identity.endpoint);
@@ -1979,7 +2286,7 @@ impl<E: Engine> Service<E> {
                 None => break,
             }
             let mut journal = self.store.journal(&self.lease, job, target_id, attempt);
-            let outcome = self.engine.execute(request, &target, &mut journal);
+            let outcome = self.engine.execute(request, &target, &mut journal, homes);
             let uncertain = journal.uncertain();
             let failed = journal.failed();
             let effects = journal.effects();
@@ -2014,11 +2321,7 @@ impl<E: Engine> Service<E> {
             if recorded.is_ok() && !uncertain && !failed {
                 self.release(&identity.endpoint);
             }
-        }
-        if self.fault().is_none() {
-            if let Err(error) = self.store.finish(&self.lease, job) {
-                self.set_fault(format!("job {job}: could not record its end: {error}"));
-            }
+            drop(slot);
         }
     }
 

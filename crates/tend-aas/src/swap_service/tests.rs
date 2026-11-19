@@ -15,6 +15,9 @@ struct Gate {
     open: Mutex<bool>,
     changed: Condvar,
     reached: std::sync::atomic::AtomicBool,
+    /// Targets held here right now, and the most held at once.
+    waiting: AtomicUsize,
+    most: AtomicUsize,
 }
 
 impl Gate {
@@ -24,10 +27,26 @@ impl Gate {
     }
 
     fn wait(&self) {
+        let now = self.waiting.fetch_add(1, Ordering::SeqCst) + 1;
+        self.most.fetch_max(now, Ordering::SeqCst);
         self.reached.store(true, Ordering::SeqCst);
         let mut open = self.open.lock().unwrap();
         while !*open {
             open = self.changed.wait(open).unwrap();
+        }
+        drop(open);
+        self.waiting.fetch_sub(1, Ordering::SeqCst);
+    }
+
+    /// Wait until `count` targets are held here at once.
+    fn until_holding(&self, count: usize) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while self.waiting.load(Ordering::SeqCst) < count {
+            assert!(
+                Instant::now() < deadline,
+                "fewer than {count} targets reached the gate"
+            );
+            std::thread::sleep(Duration::from_millis(2));
         }
     }
 
@@ -41,6 +60,12 @@ impl Gate {
         }
     }
 }
+
+/// The homes a pane's target touches, for the few tests that give it any:
+/// their panes are named for those tests alone (tests run at once).
+static HOMES: std::sync::LazyLock<
+    Mutex<HashMap<String, (crate::home_gate::HomeKey, crate::home_gate::HomeKey)>>,
+> = std::sync::LazyLock::new(Mutex::default);
 
 struct FakeTarget {
     identity: TargetIdentity,
@@ -131,11 +156,20 @@ impl Engine for FakeEngine {
         "observed_unbound"
     }
 
+    fn homes(
+        &self,
+        _request: &SwapRequest,
+        target: &FakeTarget,
+    ) -> Option<(crate::home_gate::HomeKey, crate::home_gate::HomeKey)> {
+        HOMES.lock().unwrap().get(&target.identity.pane).cloned()
+    }
+
     fn execute(
         &self,
         request: &SwapRequest,
         target: &FakeTarget,
         observer: &mut dyn EffectObserver,
+        _homes: crate::home_gate::HeldHomes,
     ) -> SwapOutcome {
         let mut outcome = outcome(&target.identity.pane, SwapStatus::Planned, "");
         if request.dry_run {
@@ -387,6 +421,15 @@ fn harness(script: Script) -> Harness {
     }
 }
 
+/// `request`, one target at a time (`--jobs 1`): what "the next target"
+/// means in a serial job.
+fn serial(request: SwapOverrides) -> SwapOverrides {
+    SwapOverrides {
+        jobs: Some(1),
+        ..request
+    }
+}
+
 fn overrides(targets: &[&str]) -> SwapOverrides {
     SwapOverrides {
         targets: targets.iter().map(|t| (*t).to_owned()).collect(),
@@ -445,7 +488,10 @@ fn a_job_runs_its_targets_and_reports_in_the_requested_order() {
             (2, "%3".into(), "swapped".into()),
         ]
     );
-    assert_eq!(*h.executed.lock().unwrap(), ["%1", "%3"]);
+    // Run at once, they may end in either order; the report keeps the plan's.
+    let mut executed = h.executed.lock().unwrap().clone();
+    executed.sort();
+    assert_eq!(executed, ["%1", "%3"]);
     assert_eq!(view.entries[0].outcome.as_ref().unwrap().note, "resumed");
 }
 
@@ -590,7 +636,7 @@ fn a_journal_failure_halts_the_job_and_the_service() {
     let accepted = Service::submit(
         &h.service,
         "key",
-        &overrides(&["%1", "%2"]),
+        &serial(overrides(&["%1", "%2"])),
         Origin::Public,
         None,
     )
@@ -973,7 +1019,7 @@ fn a_panicking_executor_faults_the_service() {
     let accepted = Service::submit(
         &h.service,
         "key",
-        &overrides(&["%panic", "%2"]),
+        &serial(overrides(&["%panic", "%2"])),
         Origin::Public,
         None,
     )
@@ -1657,7 +1703,7 @@ fn a_cancel_stops_at_the_next_target() {
     let job = Service::submit(
         &h.service,
         "k",
-        &overrides(&["%1", "%2", "%3"]),
+        &serial(overrides(&["%1", "%2", "%3"])),
         Origin::Public,
         None,
     )
@@ -1734,7 +1780,7 @@ fn a_cancel_is_taken_while_draining() {
     let job = Service::submit(
         &h.service,
         "k",
-        &overrides(&["%1", "%2"]),
+        &serial(overrides(&["%1", "%2"])),
         Origin::Public,
         None,
     )
@@ -2286,6 +2332,7 @@ fn resume_fixture(h: &Harness, count: usize) -> AcceptedPlan {
             .map(|id| planned_target(id, &identity(&format!("%{id}"), "/tmp/tmux-1/default")))
             .collect(),
         settled: Vec::new(),
+        jobs: None,
         resume: Some(ResumePolicy {
             public: true,
             when_idle: false,
@@ -2489,7 +2536,7 @@ fn draining_defers_idle_targets_and_pending_siblings_of_a_stuck_executor() {
     let accepted = Service::submit(
         &h.service,
         "mixed-drain",
-        &overrides(&["%0", "%1"]),
+        &serial(overrides(&["%0", "%1"])),
         Origin::Public,
         None,
     )
@@ -2842,4 +2889,582 @@ fn a_worker_deferral_restarts_admission_after_the_dispatcher_stopped() {
         std::thread::sleep(Duration::from_millis(5));
     }
     assert_eq!(*h.executed.lock().unwrap(), ["%0"]);
+}
+
+/// `request` with `jobs` targets at once.
+fn parallel(request: SwapOverrides, jobs: u8) -> SwapOverrides {
+    SwapOverrides {
+        jobs: Some(jobs),
+        ..request
+    }
+}
+
+#[test]
+fn at_most_jobs_targets_run_at_once_and_all_of_them_run() {
+    let gate = Arc::new(Gate::default());
+    let held = Arc::clone(&gate);
+    let panes = ["%1", "%2", "%3", "%4", "%5", "%6"];
+    let h = harness(Box::new(move || {
+        panes.iter().map(|pane| gated(pane, &held)).collect()
+    }));
+    let job = Service::submit(
+        &h.service,
+        "key",
+        &parallel(overrides(&panes), 3),
+        Origin::Public,
+        None,
+    )
+    .unwrap()
+    .job_id;
+    gate.until_holding(3);
+    // Held long enough for a fourth to have arrived, if one could.
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(
+        gate.waiting.load(Ordering::SeqCst),
+        3,
+        "three at once, no more"
+    );
+    gate.open();
+    let view = settled(&h.service, &job);
+    assert_eq!(view.state, "done", "{view:?}");
+    assert_eq!(gate.most.load(Ordering::SeqCst), 3);
+    let mut executed = h.executed.lock().unwrap().clone();
+    executed.sort();
+    assert_eq!(executed, panes);
+}
+
+#[test]
+fn a_target_that_finishes_first_still_reports_in_its_planned_place() {
+    let gate = Arc::new(Gate::default());
+    let held = Arc::clone(&gate);
+    let h = harness(Box::new(move || vec![gated("%1", &held), run("%2")]));
+    let job = Service::submit(
+        &h.service,
+        "key",
+        &parallel(overrides(&["%1", "%2"]), 2),
+        Origin::Public,
+        None,
+    )
+    .unwrap()
+    .job_id;
+    gate.until_holding(1);
+    // %2 ends while %1 is still held.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !h.executed.lock().unwrap().contains(&"%2".to_owned()) {
+        assert!(Instant::now() < deadline, "%2 never ran");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    gate.open();
+    let view = settled(&h.service, &job);
+    let order: Vec<_> = view
+        .entries
+        .iter()
+        .map(|e| (e.report_index, e.pane.clone()))
+        .collect();
+    assert_eq!(
+        order,
+        [(0, Some("%1".into())), (1, Some("%2".into()))],
+        "{view:?}"
+    );
+    assert_eq!(
+        *h.executed.lock().unwrap(),
+        ["%2", "%1"],
+        "ran out of order"
+    );
+}
+
+/// A worker that panics faults the service at once: the target another
+/// worker already started finishes, and no later target starts.
+#[test]
+fn a_panicking_target_stops_every_other_worker_from_starting_more() {
+    let first = Arc::new(Gate::default());
+    let blowup = Arc::new(Gate::default());
+    let (held, boom) = (Arc::clone(&first), Arc::clone(&blowup));
+    let h = harness(Box::new(move || {
+        vec![gated("%1", &held), gated("%panic", &boom), run("%3")]
+    }));
+    let job = Service::submit(
+        &h.service,
+        "key",
+        &parallel(overrides(&["%1", "%panic", "%3"]), 2),
+        Origin::Public,
+        None,
+    )
+    .unwrap()
+    .job_id;
+    first.until_holding(1);
+    blowup.until_holding(1);
+    blowup.open();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while h.service.fault().is_none() {
+        assert!(
+            Instant::now() < deadline,
+            "the panic did not fault the service"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    first.open();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !h.executed.lock().unwrap().contains(&"%1".to_owned()) {
+        assert!(Instant::now() < deadline, "%1 never finished");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // %1's worker is free again; give it the chance it must not take.
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(
+        *h.executed.lock().unwrap(),
+        ["%1"],
+        "%3 must not start after the fault"
+    );
+    let view = h.service.status(&JobRef::Id(job)).unwrap();
+    assert!(view.fault.is_some(), "{view:?}");
+}
+
+/// A cancel while two targets run lets both finish and starts no other.
+#[test]
+fn a_cancel_while_targets_run_lets_them_finish_and_starts_no_other() {
+    let gate = Arc::new(Gate::default());
+    let held = Arc::clone(&gate);
+    let h = harness(Box::new(move || {
+        vec![gated("%1", &held), gated("%2", &held), run("%3")]
+    }));
+    let job = Service::submit(
+        &h.service,
+        "key",
+        &parallel(overrides(&["%1", "%2", "%3"]), 2),
+        Origin::Public,
+        None,
+    )
+    .unwrap()
+    .job_id;
+    gate.until_holding(2);
+    h.service.cancel(&JobRef::Id(job.clone())).unwrap();
+    gate.open();
+    let view = settled(&h.service, &job);
+    let mut executed = h.executed.lock().unwrap().clone();
+    executed.sort();
+    assert_eq!(executed, ["%1", "%2"], "{view:?}");
+    let third = view.entries.iter().find(|e| e.report_index == 2).unwrap();
+    assert!(
+        third
+            .outcome
+            .as_ref()
+            .is_some_and(|o| o.note.contains("cancelled")),
+        "{third:?}"
+    );
+}
+
+#[test]
+fn workers_follow_the_accepted_count_and_old_journals_run_one_at_a_time() {
+    assert_eq!(
+        workers_for(None, false, 10),
+        1,
+        "a journal from before --jobs"
+    );
+    assert_eq!(workers_for(Some(4), false, 10), 4);
+    assert_eq!(
+        workers_for(Some(4), false, 2),
+        2,
+        "never more than its targets"
+    );
+    assert_eq!(
+        workers_for(Some(64), false, 40),
+        tend::swap_api::MAX_SWAP_JOBS
+    );
+    assert_eq!(workers_for(Some(0), false, 3), 1);
+    assert_eq!(
+        workers_for(Some(8), true, 3),
+        1,
+        "an automation firing re-checks one at a time"
+    );
+}
+
+#[test]
+fn jobs_out_of_range_are_refused_and_an_untyped_count_keeps_the_old_digest() {
+    for jobs in [0, 17, 255] {
+        assert!(
+            parallel(overrides(&["%1"]), jobs).validate().is_err(),
+            "{jobs}"
+        );
+    }
+    assert!(parallel(overrides(&["%1"]), 16).validate().is_ok());
+    let old = serde_json::to_value(overrides(&["%1"])).unwrap();
+    assert!(
+        old.get("jobs").is_none(),
+        "left out of the digest when not typed"
+    );
+    // A daemon reads the field it was sent.
+    let sent: SwapOverrides =
+        serde_json::from_value(serde_json::to_value(parallel(overrides(&["%1"]), 6)).unwrap())
+            .unwrap();
+    assert_eq!(sent.jobs, Some(6));
+}
+
+fn names(panes: &[String]) -> Vec<&str> {
+    panes.iter().map(String::as_str).collect()
+}
+
+/// Two jobs of ten at once share the host's sixteen target slots.
+#[test]
+fn concurrent_jobs_share_the_hosts_target_budget() {
+    let first = Arc::new(Gate::default());
+    let second = Arc::new(Gate::default());
+    let panes_a: Vec<String> = (0..10).map(|i| format!("%a{i}")).collect();
+    let panes_b: Vec<String> = (0..10).map(|i| format!("%b{i}")).collect();
+    let (held_a, held_b) = (Arc::clone(&first), Arc::clone(&second));
+    let (script_a, script_b) = (panes_a.clone(), panes_b.clone());
+    let calls = Arc::new(AtomicUsize::new(0));
+    let h = harness(Box::new(move || {
+        // The first submit plans job A, the second job B.
+        if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            script_a.iter().map(|pane| gated(pane, &held_a)).collect()
+        } else {
+            script_b.iter().map(|pane| gated(pane, &held_b)).collect()
+        }
+    }));
+    let job_a = Service::submit(
+        &h.service,
+        "a",
+        &parallel(overrides(&names(&panes_a)), 10),
+        Origin::Public,
+        None,
+    )
+    .unwrap()
+    .job_id;
+    first.until_holding(10);
+    let job_b = Service::submit(
+        &h.service,
+        "b",
+        &parallel(overrides(&names(&panes_b)), 10),
+        Origin::Public,
+        None,
+    )
+    .unwrap()
+    .job_id;
+    second.until_holding(tend::swap_api::MAX_SWAP_JOBS - 10);
+    std::thread::sleep(Duration::from_millis(100));
+    let held = first.waiting.load(Ordering::SeqCst) + second.waiting.load(Ordering::SeqCst);
+    assert_eq!(
+        held,
+        tend::swap_api::MAX_SWAP_JOBS,
+        "the host's budget, no more"
+    );
+    first.open();
+    second.open();
+    assert_eq!(settled(&h.service, &job_a).state, "done");
+    assert_eq!(settled(&h.service, &job_b).state, "done");
+    assert_eq!(h.executed.lock().unwrap().len(), 20);
+}
+
+/// The guard a job adopted reaches the worker of the endpoint it covers,
+/// however the other workers race for it: they take their own.
+#[test]
+fn an_adopted_guard_reaches_its_own_target_while_other_workers_race() {
+    for _ in 0..30 {
+        let gate = Arc::new(Gate::default());
+        let h = harness(Box::new(Vec::new));
+        let mut plan = resume_fixture(&h, 3);
+        plan.jobs = Some(3);
+        let job = write_fixture(&h, &plan);
+        let request = SwapRequest::new(
+            SwapScope::Targets(vec!["conv-%0".into()]),
+            &SwapConfig::default(),
+        );
+        let runs = ["%1", "%2", "%0"]
+            .iter()
+            .map(|pane| {
+                let id = identity(pane, "/tmp/tmux-1/default");
+                let target_id = pane[1..].parse().unwrap();
+                AttemptRun {
+                    target_id,
+                    attempt: 1,
+                    report_index: usize::try_from(target_id).unwrap(),
+                    identity: id.clone(),
+                    target: FakeTarget {
+                        identity: id,
+                        // The two others hold until the adopted one is done.
+                        gate: (*pane != "%0").then(|| Arc::clone(&gate)),
+                    },
+                }
+            })
+            .collect();
+        let mine = endpoint_key("%0", Some("/tmp/tmux-1/default"));
+        let opener = Arc::clone(&gate);
+        let executed = Arc::clone(&h.executed);
+        let watcher = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !executed.lock().unwrap().contains(&"%0".to_owned()) && Instant::now() < deadline
+            {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            opener.open();
+        });
+        h.service
+            .run(&job, &request, runs, Some(Box::new(FakeGuard(mine))), None);
+        watcher.join().unwrap();
+        let mut acquired: Vec<String> = h.provider.acquired.lock().unwrap().clone();
+        acquired.sort();
+        assert_eq!(
+            acquired,
+            ["%1@default", "%2@default"],
+            "%0 used the adopted guard, the others their own"
+        );
+        let mut executed = h.executed.lock().unwrap().clone();
+        executed.sort();
+        assert_eq!(executed, ["%0", "%1", "%2"]);
+    }
+}
+
+fn home(name: &str) -> crate::home_gate::HomeKey {
+    crate::home_gate::HomeKey::unknown(&format!("service-test-{name}-{}", std::process::id()))
+}
+
+/// A target whose home another target holds waits in the queue holding
+/// nothing — no pane guard, nothing checked or started — while a target on
+/// another home goes ahead; it starts once the home is free.
+#[test]
+fn a_target_waits_for_its_home_in_the_queue_and_other_homes_go_ahead() {
+    let (x, y) = (home("x1"), home("y1"));
+    {
+        let mut homes = HOMES.lock().unwrap();
+        homes.insert("%hx1".into(), (x.clone(), x.clone()));
+        homes.insert("%hx2".into(), (x.clone(), x.clone()));
+        homes.insert("%hy1".into(), (y.clone(), y.clone()));
+    }
+    let gate = Arc::new(Gate::default());
+    let held = Arc::clone(&gate);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let h = harness(Box::new(move || {
+        if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            vec![gated("%hx1", &held)]
+        } else {
+            vec![run("%hx2"), run("%hy1")]
+        }
+    }));
+    let first = Service::submit(
+        &h.service,
+        "one",
+        &overrides(&["%hx1"]),
+        Origin::Public,
+        None,
+    )
+    .unwrap()
+    .job_id;
+    // %hx1 holds home x, held at its gate.
+    gate.until_holding(1);
+    let second = Service::submit(
+        &h.service,
+        "two",
+        &parallel(overrides(&["%hx2", "%hy1"]), 2),
+        Origin::Public,
+        None,
+    )
+    .unwrap()
+    .job_id;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !h.executed.lock().unwrap().contains(&"%hy1".to_owned()) {
+        assert!(
+            Instant::now() < deadline,
+            "the other home's target never ran"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    std::thread::sleep(Duration::from_millis(150));
+    assert!(
+        !h.executed.lock().unwrap().contains(&"%hx2".to_owned()),
+        "its home is held"
+    );
+    assert!(
+        !h.provider
+            .acquired
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|pane| pane.starts_with("%hx2")),
+        "a waiting target holds no pane guard"
+    );
+    gate.open();
+    assert_eq!(settled(&h.service, &first).state, "done");
+    assert_eq!(settled(&h.service, &second).state, "done");
+    let mut executed = h.executed.lock().unwrap().clone();
+    executed.sort();
+    assert_eq!(executed, ["%hx1", "%hx2", "%hy1"]);
+}
+
+/// A cancel that comes while a target waits for its home keeps it from
+/// ever starting.
+#[test]
+fn a_cancel_while_a_target_waits_for_its_home_keeps_it_from_starting() {
+    let x = home("x2");
+    {
+        let mut homes = HOMES.lock().unwrap();
+        homes.insert("%hx3".into(), (x.clone(), x.clone()));
+        homes.insert("%hx4".into(), (x.clone(), x.clone()));
+    }
+    let gate = Arc::new(Gate::default());
+    let held = Arc::clone(&gate);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let h = harness(Box::new(move || {
+        if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            vec![gated("%hx3", &held)]
+        } else {
+            vec![run("%hx4")]
+        }
+    }));
+    let first = Service::submit(
+        &h.service,
+        "one",
+        &overrides(&["%hx3"]),
+        Origin::Public,
+        None,
+    )
+    .unwrap()
+    .job_id;
+    gate.until_holding(1);
+    let second = Service::submit(
+        &h.service,
+        "two",
+        &overrides(&["%hx4"]),
+        Origin::Public,
+        None,
+    )
+    .unwrap()
+    .job_id;
+    std::thread::sleep(Duration::from_millis(100));
+    h.service.cancel(&JobRef::Id(second.clone())).unwrap();
+    // Settled while the other job still holds the home: a wait for a home
+    // never keeps a cancel from taking effect.
+    let view = settled(&h.service, &second);
+    assert_ne!(view.state, "running", "{view:?}");
+    assert_eq!(
+        gate.waiting.load(Ordering::SeqCst),
+        1,
+        "the first job still holds the home"
+    );
+    gate.open();
+    assert_eq!(settled(&h.service, &first).state, "done");
+    assert_eq!(
+        *h.executed.lock().unwrap(),
+        ["%hx3"],
+        "the waiting target never started"
+    );
+    assert!(
+        view.entries[0]
+            .outcome
+            .as_ref()
+            .is_some_and(|o| o.note.contains("cancelled")),
+        "{view:?}"
+    );
+}
+
+/// An idle deadline that passes while a target waits for its home ends that
+/// target, while the other job still holds the home.
+#[test]
+fn an_idle_deadline_that_passes_while_waiting_for_a_home_ends_the_wait() {
+    let x = home("x3");
+    {
+        let mut homes = HOMES.lock().unwrap();
+        homes.insert("%hx5".into(), (x.clone(), x.clone()));
+        homes.insert("%hx6".into(), (x.clone(), x.clone()));
+    }
+    let gate = Arc::new(Gate::default());
+    let held = Arc::clone(&gate);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let h = harness(Box::new(move || {
+        if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            vec![gated("%hx5", &held)]
+        } else {
+            vec![run("%hx6")]
+        }
+    }));
+    let first = Service::submit(
+        &h.service,
+        "one",
+        &overrides(&["%hx5"]),
+        Origin::Public,
+        None,
+    )
+    .unwrap()
+    .job_id;
+    gate.until_holding(1);
+    let waiting = SwapOverrides {
+        when_idle: true,
+        idle_timeout: Some("1s".into()),
+        ..overrides(&["%hx6"])
+    };
+    let second = Service::submit(&h.service, "two", &waiting, Origin::Public, None)
+        .unwrap()
+        .job_id;
+    let view = settled(&h.service, &second);
+    assert_ne!(view.state, "running", "{view:?}");
+    assert_eq!(
+        gate.waiting.load(Ordering::SeqCst),
+        1,
+        "the first job still holds the home"
+    );
+    gate.open();
+    assert_eq!(settled(&h.service, &first).state, "done");
+    assert_eq!(*h.executed.lock().unwrap(), ["%hx5"]);
+}
+
+/// With every host slot held by job A, job B's cancel and expired idle
+/// deadline take effect while A still holds them, and B never runs.
+#[test]
+fn a_job_waiting_for_a_host_slot_still_settles_its_cancel_and_deadline() {
+    for cancel in [true, false] {
+        let gate = Arc::new(Gate::default());
+        let held = Arc::clone(&gate);
+        let full: Vec<String> = (0..tend::swap_api::MAX_SWAP_JOBS)
+            .map(|i| format!("%s{i}"))
+            .collect();
+        let script = full.clone();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let h = harness(Box::new(move || {
+            if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                script.iter().map(|pane| gated(pane, &held)).collect()
+            } else {
+                vec![run("%late")]
+            }
+        }));
+        let first = Service::submit(
+            &h.service,
+            "a",
+            &parallel(overrides(&names(&full)), 16),
+            Origin::Public,
+            None,
+        )
+        .unwrap()
+        .job_id;
+        gate.until_holding(tend::swap_api::MAX_SWAP_JOBS);
+        let request = if cancel {
+            overrides(&["%late"])
+        } else {
+            SwapOverrides {
+                when_idle: true,
+                idle_timeout: Some("1s".into()),
+                ..overrides(&["%late"])
+            }
+        };
+        let second = Service::submit(&h.service, "b", &request, Origin::Public, None)
+            .unwrap()
+            .job_id;
+        if cancel {
+            std::thread::sleep(Duration::from_millis(100));
+            h.service.cancel(&JobRef::Id(second.clone())).unwrap();
+        }
+        let view = settled(&h.service, &second);
+        assert_ne!(view.state, "running", "cancel={cancel}: {view:?}");
+        assert_eq!(
+            gate.waiting.load(Ordering::SeqCst),
+            tend::swap_api::MAX_SWAP_JOBS,
+            "job A still holds every slot"
+        );
+        gate.open();
+        assert_eq!(settled(&h.service, &first).state, "done");
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(
+            !h.executed.lock().unwrap().contains(&"%late".to_owned()),
+            "cancel={cancel}"
+        );
+    }
 }

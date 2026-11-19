@@ -82,7 +82,17 @@ pub struct SwapConfig {
     pub aas: String,
     /// How a pane that still has its shell is relaunched.
     pub relaunch: RelaunchMode,
+    /// How many targets one swap works on at once (`--jobs`). Each target
+    /// is still one pane stopped, relaunched and checked in order; this
+    /// only lets several panes go through that at the same time. Clamped
+    /// to 1..=[`MAX_SWAP_JOBS`].
+    pub jobs: usize,
 }
+
+/// `[swap] jobs` when not set.
+pub const DEFAULT_SWAP_JOBS: usize = 4;
+/// The most targets one swap works on at once.
+pub const MAX_SWAP_JOBS: usize = 16;
 
 impl Default for SwapConfig {
     fn default() -> Self {
@@ -93,6 +103,7 @@ impl Default for SwapConfig {
             continue_evidence: ContinueEvidence::Binding,
             aas: "aas".into(),
             relaunch: RelaunchMode::Type,
+            jobs: DEFAULT_SWAP_JOBS,
         }
     }
 }
@@ -319,6 +330,10 @@ pub struct SwapOverrides {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub continue_evidence: Option<String>,
     pub exclude: Vec<String>,
+    /// Targets worked on at once (`--jobs`). Left out of the digest when
+    /// not typed, so a request from before the option is the same request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jobs: Option<u8>,
     /// The configuration file the caller loaded, if it named one. A request
     /// planned against a different file than the daemon's is refused rather
     /// than silently run on the daemon's.
@@ -337,6 +352,11 @@ impl SwapOverrides {
                 return Err("idle_timeout is too long".into());
             }
             crate::automation::parse_duration(timeout)?;
+        }
+        if let Some(jobs) = self.jobs {
+            if jobs == 0 || usize::from(jobs) > MAX_SWAP_JOBS {
+                return Err(format!("jobs must be between 1 and {MAX_SWAP_JOBS}"));
+            }
         }
         let conflict = |a: &str, b: &str| Err(format!("{a} and {b} cannot be combined"));
         if !self.targets.is_empty() && self.all {

@@ -61,6 +61,9 @@ const WATCH_DETAIL_PLACEHOLDERS: &[&str] = &[
 /// user can find it quickly.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
+    #[error("swap.jobs: {0} is not between 1 and 16")]
+    InvalidSwapJobs(usize),
+
     #[error("dashboard.bind: {addr:?} is not a valid socket address: {source}")]
     InvalidDashboardBind {
         addr: String,
@@ -1786,6 +1789,9 @@ impl Config {
             .validate()
             .map_err(ConfigError::InvalidConfigSync)?;
         validate_ask(&self.ask)?;
+        if !(1..=crate::swap_api::MAX_SWAP_JOBS).contains(&self.swap.jobs) {
+            return Err(ConfigError::InvalidSwapJobs(self.swap.jobs));
+        }
         // An automation types into a live agent, so a rule that does
         // not hold together fails the load rather than sitting in the
         // file waiting to surprise someone.
@@ -3812,6 +3818,14 @@ default_content = "nope"
     /// fail validation with a `DashboardRequiresAllowPublic` error so the
     /// user sees a deliberate "you need to opt in" message at load time
     /// instead of a runtime crash.
+    #[test]
+    fn validate_refuses_swap_jobs_out_of_range() {
+        for (jobs, ok) in [(0, false), (1, true), (16, true), (17, false)] {
+            let cfg: Config = toml::from_str(&format!("[swap]\njobs = {jobs}\n")).unwrap();
+            assert_eq!(cfg.validate().is_ok(), ok, "{jobs}");
+        }
+    }
+
     #[test]
     fn validate_rejects_non_loopback_bind_without_allow_public() {
         let cfg = Config {

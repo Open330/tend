@@ -17,5 +17,6 @@ pub mod account_route;
 pub mod account_swap;
 pub mod account_usage;
 pub mod codex_hook_trust;
+pub(crate) mod home_gate;
 pub(crate) mod swap_job;
 pub mod swap_service;

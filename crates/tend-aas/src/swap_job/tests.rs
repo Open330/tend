@@ -24,6 +24,7 @@ fn plan(targets: usize, text: Option<&str>) -> AcceptedPlan {
         continue_when: "limited".into(),
         continue_text: text.map(TextRef::of),
         settled: Vec::new(),
+        jobs: None,
         targets: (0..targets)
             .map(|i| PlannedTarget {
                 report_index: i,
