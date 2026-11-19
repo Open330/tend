@@ -294,8 +294,10 @@ private struct TendMenuBarAgentRow: View {
 }
 
 /// Text inks for the popover's material, which is not one of the Mac
-/// surfaces: the same deeper inks its status words use, 5:1 or more on the
-/// popover in both appearances (system orange, red and blue are 1.9 to 4:1).
+/// surfaces: the same deeper inks its status words use. Estimated at 5:1 or
+/// more over sample popover backgrounds (#D3D3D3 to #F6F6F6 light, up to
+/// #464646 dark), where system orange, red and blue were 1.9 to 4.3:1. The
+/// material blends with what is behind the popover, so this is an estimate.
 private enum TendMenuBarInk {
     static let attention = TendMenuBarAgentAppearance.statusColor(.needsInput(""), finished: false)
     static let failure = TendMenuBarAgentAppearance.statusColor(.error, finished: false)
