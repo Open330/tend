@@ -2261,6 +2261,16 @@ fn unrelated_output_or_an_unreadable_screen_is_not_a_key_read() {
         "──────────\n  ⏵⏵ auto mode on\n",
         AgentKind::ClaudeCode
     ));
+    // Rules with nothing, or only blanks, between them: no prompt seen.
+    for blank in [
+        "──────────\n──────────\n  ⏵⏵ auto mode on\n",
+        "──────────\n   \n──────────\n  ⏵⏵ auto mode on\n",
+    ] {
+        assert!(
+            !super::clear_read(Some(CLAUDE_WITH_DRAFT), blank, AgentKind::ClaudeCode),
+            "{blank:?}"
+        );
+    }
     // A draft that was there and is gone is the key read.
     assert!(super::clear_read(
         Some(CLAUDE_WITH_DRAFT),

@@ -3193,7 +3193,7 @@ fn clear_read(before: Option<&str>, now: &str, kind: AgentKind) -> bool {
 }
 
 /// Whether Claude's prompt is on `screen` and empty: its last two
-/// horizontal rules are there with nothing but `❯` between them.
+/// horizontal rules are there with its `❯` line between them and no text.
 fn claude_prompt_empty(screen: &str) -> bool {
     let lines: Vec<&str> = screen.lines().collect();
     let rules: Vec<usize> = lines
@@ -3208,9 +3208,14 @@ fn claude_prompt_empty(screen: &str) -> bool {
     let [.., top, bottom] = rules[..] else {
         return false;
     };
-    lines[top + 1..bottom]
+    let between = &lines[top + 1..bottom];
+    // The prompt's own `❯` line, and no text anywhere between the rules.
+    between
         .iter()
-        .all(|line| line.trim().trim_start_matches('❯').trim().is_empty())
+        .any(|line| line.trim_start().starts_with('❯'))
+        && between
+            .iter()
+            .all(|line| line.trim().trim_start_matches('❯').trim().is_empty())
 }
 
 /// Whether `now` shows that Esc, pressed on `before`, stopped the turn:
