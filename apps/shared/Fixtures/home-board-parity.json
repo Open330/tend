@@ -469,6 +469,40 @@
         "finished": [
           {
             "agents": [
+              "mba:changed"
+            ],
+            "empty_session": false,
+            "focus": {
+              "agent": "mba:changed",
+              "state": "idle"
+            },
+            "handled_limit": false,
+            "helpers": [],
+            "id": "agent:mba:changed",
+            "lane": "finished",
+            "orphan_helper": false,
+            "probable_helper": false,
+            "repo": "tend",
+            "requested_by_person": true,
+            "review_key": "home:563eec5ce47214a8840a271c5a2b638c5fcc97de8f811c386d773416408b5055",
+            "reviewed": false,
+            "revision": "mba:changed|idle|2026-11-16T08:44:00Z",
+            "since": "2026-11-16T08:44:00Z",
+            "source": {
+              "host": "mba",
+              "kind": "agent",
+              "session_id": "changed"
+            },
+            "stages": [
+              {
+                "name": "codex",
+                "state": "done"
+              }
+            ],
+            "title": "Tidy the README"
+          },
+          {
+            "agents": [
               "mba:seen"
             ],
             "empty_session": false,

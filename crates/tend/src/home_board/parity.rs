@@ -117,6 +117,9 @@ fn the_board_matches_the_parity_contract_tend_for_mac_also_meets() {
         .map(|case| build_case(case, now))
         .collect();
     let built = json!({"schema": 1, "cases": cases});
+    // Checked before anything is written, so a regeneration cannot record
+    // a summary that stopped testing what its cases are named for.
+    assert_named_facts(&built);
     let path = fixtures().join("home-board-parity.json");
     if std::env::var_os("UPDATE_FIXTURES").is_some() {
         std::fs::write(&path, serde_json::to_string_pretty(&built).unwrap() + "\n").unwrap();
@@ -137,7 +140,10 @@ fn the_board_matches_the_parity_contract_tend_for_mac_also_meets() {
 /// stopped exercising what it is named for.
 #[test]
 fn the_parity_cases_exercise_what_they_are_named_for() {
-    let recorded = read("home-board-parity.json");
+    assert_named_facts(&read("home-board-parity.json"));
+}
+
+fn assert_named_facts(recorded: &Value) {
     let case = |name: &str| {
         recorded["cases"]
             .as_array()
@@ -206,6 +212,16 @@ fn the_parity_cases_exercise_what_they_are_named_for() {
     assert_eq!(
         seen["reviewed"], true,
         "the recorded mark is this result's key"
+    );
+    let changed = marks["lanes"]["finished"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["id"] == "agent:mba:changed")
+        .unwrap();
+    assert_eq!(
+        changed["reviewed"], false,
+        "a mark for an earlier result does not hide this one"
     );
     assert_eq!(
         ids(&marks, "needs_you").len(),

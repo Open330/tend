@@ -538,6 +538,17 @@
                   "question": "Should I tag v0.10.25 now?"
                 },
                 "state_entered_at": "2026-11-16T08:35:00Z"
+              },
+              {
+                "agent_session_id": "changed",
+                "kind": "codex",
+                "pane": "%4",
+                "tmux_socket": "s",
+                "cwd": "/w/tend",
+                "state": "idle",
+                "last_prompt": "Tidy the README",
+                "last_response": "Tidied again.",
+                "state_entered_at": "2026-11-16T08:44:00Z"
               }
             ],
             "panes": [
@@ -579,6 +590,19 @@
                 "session_id": "$1",
                 "title": "",
                 "current_command": ""
+              },
+              {
+                "pane_id": "%4",
+                "socket": "s",
+                "session": "w",
+                "window_id": "@4",
+                "window_index": "3",
+                "window_name": "d",
+                "pane_index": "0",
+                "current_path": "/w/tend",
+                "session_id": "$1",
+                "title": "",
+                "current_command": ""
               }
             ]
           }
@@ -586,7 +610,8 @@
       ],
       "runs": [],
       "reviewed": [
-        "home:830790619aeeca3676643a1e8318291efff4bdeffe716260a28b5fe9709ce621"
+        "home:830790619aeeca3676643a1e8318291efff4bdeffe716260a28b5fe9709ce621",
+        "home:00362a51f6b547461a991239d7f8ff9e56787537e6b8ce40e09d8ad1b76878d6"
       ]
     }
   ]
