@@ -555,6 +555,43 @@ test("Steer this Work sends the next instruction to every agent of the Work, ope
     steerArea().fire("input");
     assert.equal(steerSend().disabled, true);
 
+    // A Work whose agents are all on another host: the route reaches only
+    // this host's panes, so nothing can be sent from here.
+    serverBoard = boardWith(work([agent("mini", false, "%2"), agent("mini", false, "%3")]), [
+      { alias: "mba", local: true, control: true }, { alias: "mini", local: false, control: true },
+    ]);
+    await home.refresh();
+    assert.match(steerSend().text, /Send to 0/);
+    steerArea().value = "go";
+    steerArea().fire("input");
+    assert.equal(steerSend().disabled, true, "no agent here to send to");
+    assert.match(inspector().text, /steer the 2 on other hosts from there/);
+    posts.length = 0;
+    steerSend().click();
+    await settle();
+    assert.equal(posts.length, 0, "nothing posted");
+
+    // A mixed Work, this host and a control-mode host: the count is this
+    // host's agents, the notice names the others, and the send goes through
+    // this host's Work control (which reaches only its own panes).
+    serverBoard = boardWith(work([agent("mba", true, "%4"), agent("mini", false, "%2")]), [
+      { alias: "mba", local: true, control: true }, { alias: "mini", local: false, control: true },
+    ]);
+    await home.refresh();
+    assert.match(steerSend().text, /Send to 1/, "this host's agents only");
+    assert.match(inspector().text, /This reaches the agents on this host; steer the 1 on other hosts from there\./);
+    assert.doesNotMatch(inspector().text, /observe mode/);
+    steerArea().value = "ship it";
+    steerArea().fire("input");
+    assert.equal(steerSend().disabled, false);
+    posts.length = 0;
+    steerSend().click();
+    await settle();
+    assert.equal(posts.length, 1, "one request, to this host's daemon");
+    assert.equal(posts[0].path, "/api/work-control/prompt");
+    assert.deepEqual(JSON.parse(posts[0].init.body), { identity: { workspace_id: "tend", work_id: "fix-login" }, text: "ship it", submit: true });
+    assert.equal(JSON.parse(posts[0].init.body).host, undefined, "never addressed to the other host");
+
     // Not an operator: no composer.
     status.access = 403;
     await home.refresh();

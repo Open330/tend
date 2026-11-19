@@ -274,6 +274,24 @@ test("a session or window row opens its detail; the chevron only folds it", () =
   globalThis.history = { replaceState() {} };
 });
 
+test("a full-path pane link opens that server's pane, not one whose socket shares the file name", () => {
+  const box = new Node("div");
+  const twins = { hosts: [{ alias: "mba", local: true, state: "online", remote: { agents: [], panes: [
+    { pane_id: "%1", socket: "/tmp/a/default", session: "tend", window_index: "0", window_name: "on-a", current_command: "zsh" },
+    { pane_id: "%1", socket: "/tmp/b/default", session: "tend", window_index: "0", window_name: "on-b", current_command: "zsh" },
+  ] } }] };
+  for (const [socket, name] of [["/tmp/b/default", "on-b"], ["/tmp/a/default", "on-a"]]) {
+    window.location.hash = `#pane=%251&socket=${encodeURIComponent(socket)}`;
+    const explore = mountExplore(box, deps);
+    explore.update(twins);
+    const head = find(box.children[1], (n) => n.className === "ex-pane-head");
+    assert.ok(head, "the pane opened");
+    assert.match(head.text, new RegExp(`0:${name}`), `the pane on ${socket}`);
+    explore.destroy();
+  }
+  window.location.hash = "";
+});
+
 test("a deep link opens a window, falls back to its session, and a workspace filters", () => {
   const box = new Node("div");
   window.location.hash = "#window=%409&session=a&socket=s";

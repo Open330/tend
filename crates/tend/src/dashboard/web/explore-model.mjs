@@ -334,10 +334,16 @@ function shortSocket(socket) {
   return String(socket || "default").split("/").pop() || "default";
 }
 
-/// Whether a pane's socket is the one a link names (any, when it names none).
+/// Whether a pane's socket is the one a link names (any, when it names
+/// none). A full path must match exactly: two servers can share a file
+/// name in different directories. Only a bare name (the short form
+/// main.js's `socketShort` and workspace-rail's `wsocket` wrote) matches
+/// by file name.
 export function sameSocket(have, want) {
   if (!want) return true;
-  return have === want || shortSocket(have) === shortSocket(want);
+  if (have === want) return true;
+  if (String(want).includes("/")) return false;
+  return shortSocket(have) === want;
 }
 
 /// Whether a pane belongs to the workspace a `#workspace=` link names: its

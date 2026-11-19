@@ -1390,8 +1390,13 @@ function steerComposer(unit) {
   area.value = state.drafts.get(key) || "";
   // Frozen while sending, so nothing typed now is lost when it clears.
   area.disabled = state.busy.has(key);
-  const send = button(S.sendToCount(here.length), () => steerWork(identity, area.value, key), "btn primary");
-  const sync = () => (send.disabled = !area.value.trim() || state.busy.has(key) || !here.length || observe);
+  // The Mac's `canSend`: words, not already sending, an agent this host's
+  // Work control reaches, and no host of the Work in observe mode.
+  const canSend = () => Boolean(area.value.trim()) && !state.busy.has(key) && here.length > 0 && !observe;
+  const send = button(S.sendToCount(here.length), () => {
+    if (canSend()) steerWork(identity, area.value, key);
+  }, "btn primary");
+  const sync = () => (send.disabled = !canSend());
   area.addEventListener("input", () => {
     if (area.value) state.drafts.set(key, area.value);
     else state.drafts.delete(key);

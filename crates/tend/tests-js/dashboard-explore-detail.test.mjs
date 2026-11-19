@@ -145,6 +145,52 @@ test("a workspace no live session matches says so, never everything", () => {
   assert.deepEqual(model.sections, []);
 });
 
+// Two tmux servers whose sockets share a file name in different
+// directories: a full path names one of them exactly.
+const twins = {
+  hosts: [{
+    alias: "mba", local: true, state: "online",
+    remote: {
+      agents: [],
+      panes: [
+        pane("%1", "/tmp/a/default", "tend", 1, "on-a"),
+        pane("%1", "/tmp/b/default", "tend", 1, "on-b"),
+      ],
+    },
+  }],
+};
+
+test("same file name, different directory: a session link opens the server it names", () => {
+  const mba = exploreSections(twins).sections[0];
+  const second = mba.sessions.find((s) => s.socket === "/tmp/b/default");
+  const link = exploreHash(sessionSelection(mba, second));
+  assert.equal(link, "#session=tend&socket=%2Ftmp%2Fb%2Fdefault");
+  const detail = exploreDetail(twins, selectionFromHash(link));
+  assert.equal(detail.socket, "/tmp/b/default");
+  assert.equal(detail.windows[0].name, "on-b");
+  assert.equal(exploreDetail(twins, { kind: "session", session: "tend", socket: "/tmp/a/default" }).windows[0].name, "on-a");
+});
+
+test("same file name, different directory: a window link opens the server it names", () => {
+  const mba = exploreSections(twins).sections[0];
+  for (const socket of ["/tmp/a/default", "/tmp/b/default"]) {
+    const session = mba.sessions.find((s) => s.socket === socket);
+    const link = exploreHash(windowSelection(mba, session, session.windows[0]));
+    const detail = exploreDetail(twins, selectionFromHash(link));
+    assert.equal(detail.kind, "window");
+    assert.equal(detail.socket, socket);
+    assert.equal(detail.name, socket === "/tmp/a/default" ? "on-a" : "on-b");
+  }
+  assert.equal(exploreDetail(twins, { kind: "window", window: "@1", session: "tend", socket: "/tmp/c/default" }).kind, "gone", "a third directory is no match");
+});
+
+test("same file name, different directory: only a bare name matches by file name", () => {
+  assert.equal(sameSocket("/tmp/a/default", "/tmp/b/default"), false);
+  assert.equal(sameSocket("/tmp/b/default", "/tmp/b/default"), true);
+  assert.equal(sameSocket("/tmp/a/default", "default"), true, "a legacy short-name link");
+  assert.equal(sameSocket(null, "default"), true, "the default server");
+});
+
 test("a short socket name matches the Fleet's socket path", () => {
   assert.equal(sameSocket("/tmp/tmux-501/main", "main"), true);
   assert.equal(sameSocket("/tmp/tmux-501/main", "/tmp/tmux-501/main"), true);
