@@ -2071,7 +2071,7 @@ export function start() {
     state.revealed = null;
     revealLinkedItem();
     // A pasted pane or message link in Explore opens what it names.
-    if (state.route === "explore") state.explore?.update(state.data.fleet);
+    if (state.route === "explore") state.explore?.update(state.data.fleet, boardAttention(state.data.server));
   });
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) refresh();

@@ -17,7 +17,8 @@ function statusOf(agent) {
     if (!Number.isFinite(until) || until > Date.now()) return "limited";
   }
   if (state === "idle" && agent.awaiting_reply) return "asked";
-  if (ATTENTION.has(state)) return state === "waiting_input" || state === "waiting_choice" ? "needs_input" : "error";
+  // Blocked waits on the person like a question (AgentStatus: needsInput).
+  if (ATTENTION.has(state)) return state === "waiting_input" || state === "waiting_choice" || state === "blocked" ? "needs_input" : "error";
   if (ACTIVE.has(state)) return "working";
   if (state === "idle") return "idle";
   return state || "other";
@@ -47,12 +48,16 @@ function firstLine(text) {
 
 /// Whether an agent needs the person (AgentStatus.needsAttention): an
 /// error, a question, input it waits for, or a usage cap no limit policy
-/// covers. The daemon's board says it for each agent with the policies'
-/// coverage (`attention`, keyed by host and session); without it a cap
-/// counts, as on a Mac whose daemon sent no rules.
-function needsAttention(status, attention, key) {
-  if (attention?.has(key)) return attention.get(key) === true;
-  return status === "error" || status === "needs_input" || status === "asked" || status === "limited";
+/// covers. Whether a policy covers a cap is the daemon's to say
+/// (`attention`, its board's word on each capped agent); it counts only
+/// for the same cap (same reset time) the live agent shows, and without it
+/// a cap counts, as on a Mac whose daemon sent no rules.
+function needsAttention(status, attention, key, agent) {
+  if (status !== "limited") return status === "error" || status === "needs_input" || status === "asked";
+  const word = attention?.get(key);
+  if (!word) return true;
+  const live = agent?.rate_limited_until || null;
+  return word.until && live && word.until !== live ? true : word.needs;
 }
 
 /// One row per pane on every host, with the agent in it if any.
@@ -98,7 +103,7 @@ export function paneRows(fleet, attention = null) {
           : null,
         status,
         group: groupOf(status),
-        attention: agent ? needsAttention(status, attention, `${host.alias}\u0000${agent.agent_session_id || ""}`) : false,
+        attention: agent ? needsAttention(status, attention, `${host.alias}\u0000${agent.agent_session_id || ""}`, agent) : false,
         since: agent?.state_entered_at || agent?.last_activity_at || null,
       });
     }
