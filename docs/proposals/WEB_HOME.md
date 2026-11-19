@@ -352,7 +352,7 @@ Nothing was retired in this wave. Every old link still opens where it did, or re
   - Digests are cut by code point, where Swift cuts by grapheme.
   - The board cuts `review.result` at 4,000 characters (`result_truncated`, "the rest is in the pane"), so the polled board stays bounded; the Mac shows the whole response.
   - The report's Markdown is a small DOM-only subset (headings, lists, code blocks, inline code, bold): no links, emphasis or tables.
-- **Explore**: both clients pin agents that asked. The web takes needing attention from its status group, so `asked` sits in the attention group (the Mac groups it under idle), and uncovered rate limits are left out, where the Mac's `needsAttention` includes them; that needs the limit policy's coverage. Messages reads this daemon's history; a link naming another Fleet host points to that host's dashboard instead of being read here. Collation is the browser's numeric `Intl.Collator`, not `localizedStandardCompare`.
+- **Explore**: needing attention is the board's one rule (wave 8): the web takes each agent's `needs_attention` from tendd's board, which applies the limit policies' coverage as the Mac does, and an agent that asked groups as idle, as on the Mac. Messages reads this daemon's history; a link naming another Fleet host points to that host's dashboard instead of being read here. Collation is the browser's numeric `Intl.Collator`, not `localizedStandardCompare`.
 - **Workbench**: the rows marked *Stays* above.
 
 ### Screenshots

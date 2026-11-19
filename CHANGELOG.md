@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Web Explore decides what needs you by the same rule as Home and Tend for
+  Mac: each agent's `needs_attention` from tendd's board, so a usage cap a
+  limit policy will handle is no longer pinned, and one no policy covers
+  is. An agent that asked is pinned and groups with the idle ones, as on the
+  Mac.
 - iOS: a device paired to decide only now says why on In progress,
   Finished, Hosts and every agent or Work it cannot open, with one button,
   **Pair again with hosts and new work…**. That button asks the dashboard

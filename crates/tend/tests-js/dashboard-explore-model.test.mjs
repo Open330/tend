@@ -219,3 +219,27 @@ test("what needs you: errors first, then the waiting, and only without a status 
   assert.deepEqual(exploreSections(waiting).attention.map((r) => r.pane), ["%2", "%1"]);
   assert.deepEqual(exploreSections(waiting, { show: "attention" }).attention, []);
 });
+
+test("needing attention is the board's one rule; an agent that asked groups as idle", async () => {
+  const { boardAttention } = await import("../src/dashboard/web/home-board.mjs");
+  const later = new Date(Date.now() + 3600_000).toISOString();
+  const capped = {
+    hosts: [{ alias: "mba", local: true, state: "online", remote: {
+      agents: [
+        { agent_session_id: "cap", kind: "codex", pane: "%1", tmux_socket: "s", state: "idle", rate_limit_scope: "five_hour", rate_limited_until: later },
+        { agent_session_id: "ask", kind: "claude_code", pane: "%2", tmux_socket: "s", state: "idle", awaiting_reply: { question: "Ship?" } },
+      ],
+      panes: ["%1", "%2"].map((id, i) => ({ pane_id: id, socket: "s", session: "w", window_index: "0", window_name: "w", pane_index: String(i) })),
+    } }],
+  };
+  // Without the board, a cap counts, as on a Mac whose daemon sent no rules.
+  let rows = paneRows(capped);
+  assert.deepEqual(rows.map((r) => [r.agent.session, r.group, r.attention]), [["cap", "limited", true], ["ask", "idle", true]]);
+  // The board says a limit policy covers the cap: it keeps working.
+  const board = { lanes: { running: { groups: [{ items: [{ agents: [{ host: "mba", session_id: "cap", needs_attention: false }], helpers: [], focus: null }] }] } } };
+  rows = paneRows(capped, boardAttention(board));
+  assert.equal(rows[0].attention, false);
+  assert.equal(rows[1].attention, true, "an agent the board does not list falls back to the rule");
+  assert.deepEqual(exploreSections(capped, { attention: boardAttention(board) }).attention.map((r) => r.agent.session), ["ask"]);
+  assert.equal(boardAttention(null), null);
+});

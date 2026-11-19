@@ -633,3 +633,21 @@ export function digest(text, limit = 320) {
   if (space >= 0) return `${head.slice(0, space).join("")}…`;
   return `${head.join("")}…`;
 }
+
+/// The daemon's needs-attention for each agent on its board, keyed by host
+/// and session: the one rule (AgentStatus.needsAttention, a usage cap only
+/// when no limit policy covers it) that Home and Explore both follow.
+export function boardAttention(server) {
+  if (!server?.lanes) return null;
+  const attention = new Map();
+  for (const lane of Object.values(server.lanes)) {
+    for (const group of lane?.groups || []) {
+      for (const item of group.items || []) {
+        for (const ref of [...(item.agents || []), ...(item.helpers || []), ...(item.focus ? [item.focus] : [])]) {
+          if (ref?.host && ref.session_id && typeof ref.needs_attention === "boolean") attention.set(`${ref.host}\u0000${ref.session_id}`, ref.needs_attention);
+        }
+      }
+    }
+  }
+  return attention;
+}
