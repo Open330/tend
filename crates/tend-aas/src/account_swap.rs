@@ -2266,7 +2266,7 @@ fn carry_codex_hook_trust(
     let homes = trust::known_homes(&codex_profiles);
     // Several targets may hold this home at once; Tend's own write into it
     // goes one at a time.
-    let writer = crate::home_gate::exclusive(&home);
+    let writer = crate::home_gate::exclusive(&crate::home_gate::HomeKey::known("codex", &home));
     let _one = writer
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);

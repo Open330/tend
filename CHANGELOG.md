@@ -47,9 +47,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tend swap` stops and starts up to four agents at once on one Codex
   account home too, as on a Claude one; Tend's own hook-trust write into a
   home still goes one target at a time. With real Codex 0.170.0 on a
-  disposable home, 8- and 16-way simultaneous starts and stops kept
-  `config.toml` and every sqlite store intact in 30 trials (only Codex's
-  own start counter lost increments). 20 fake Codex agents onto one
+  disposable, unauthenticated home, 8- and 16-way simultaneous starts and
+  stops kept `config.toml` valid (checked entries kept) and every sqlite
+  store intact in 65 trials, 20 held 8 s (only Codex's own start counter
+  lost increments). 20 fake Codex agents onto one
   account: ~42–48 s before, ~21 s now on a scratch bench.
 - `tend swap` plans with one read of the panes and processes for all its
   agents instead of one per agent, and no longer reads a pane's processes

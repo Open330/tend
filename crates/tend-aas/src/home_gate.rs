@@ -178,14 +178,15 @@ fn next_token() -> u64 {
 pub(crate) const CLAUDE_HOME_HOLDERS: usize = 4;
 
 /// How many targets may hold one Codex home at once. With real codex
-/// 0.170.0 on a disposable home, 8 and 16 simultaneous starts, held 8 s and
-/// stopped by `SIGTERM` as a swap stops them (30 trials, first-run and
-/// settled homes), always left `config.toml` valid with every other entry
-/// kept and every sqlite store intact; Codex re-reads the file when it
-/// writes (about 4 s after a start), and only its own start counter lost
-/// increments when all of them wrote in the same instant. Tend's own write
-/// to the home, the hook trust a relaunch needs, still goes one target at
-/// a time ([`exclusive`]).
+/// 0.170.0 on a disposable, unauthenticated home (no real resume), 8- and
+/// 16-way simultaneous starts stopped by `SIGTERM` as a swap stops them,
+/// 65 trials on new and settled homes, 20 of them held 8 s first, always
+/// left `config.toml` valid with the checked entries kept and every sqlite
+/// store passing `integrity_check`. Codex writes the file about 4 s after a
+/// start and re-reads it first; only its own start counter lost increments
+/// when all of them wrote in the same instant. Tend's own write into the
+/// home, the hook trust a relaunch needs, still goes one target at a time
+/// ([`exclusive`]).
 pub(crate) const CODEX_HOME_HOLDERS: usize = 4;
 
 /// How many targets may hold `key` at once: [`CLAUDE_HOME_HOLDERS`] for a
@@ -202,15 +203,16 @@ fn capacity(key: &HomeKey) -> usize {
 }
 
 /// One target at a time for what Tend itself writes into a home (a Codex
-/// home's hook trust): held for the write, not the target. Keyed by the
-/// home's path as given.
-pub(crate) fn exclusive(home: &Path) -> Arc<Mutex<()>> {
-    static WRITERS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
+/// home's hook trust): held for the write, not the target. Keyed like the
+/// gate, by the home's canonical identity, so two names for one home are
+/// one lock (and every home that cannot be told shares one).
+pub(crate) fn exclusive(home: &HomeKey) -> Arc<Mutex<()>> {
+    static WRITERS: OnceLock<Mutex<HashMap<HomeKey, Arc<Mutex<()>>>>> = OnceLock::new();
     let mut writers = WRITERS
         .get_or_init(Default::default)
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
-    writers.entry(home.to_path_buf()).or_default().clone()
+    writers.entry(home.clone()).or_default().clone()
 }
 
 /// Whether `pane` may take `keys` (distinct) now.
@@ -453,15 +455,27 @@ mod tests {
     }
 
     /// Tend's own write into a home is one at a time per home, whoever
-    /// holds the home.
+    /// holds the home, and two names for one home are one lock.
+    #[cfg(unix)]
     #[test]
     fn tend_s_own_writes_into_a_home_go_one_at_a_time() {
-        let home = std::path::Path::new("/tmp/gate-test-writer");
-        let first = exclusive(home);
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        let alias = dir.path().join("alias");
+        std::os::unix::fs::symlink(&real, &alias).unwrap();
+        let first = exclusive(&HomeKey::known("codex", &real));
         let held = first.lock().unwrap();
-        assert!(exclusive(home).try_lock().is_err(), "the same lock");
         assert!(
-            exclusive(std::path::Path::new("/tmp/gate-test-other"))
+            exclusive(&HomeKey::known("codex", &alias))
+                .try_lock()
+                .is_err(),
+            "the same home under another name: the same lock"
+        );
+        let other = dir.path().join("other");
+        std::fs::create_dir(&other).unwrap();
+        assert!(
+            exclusive(&HomeKey::known("codex", &other))
                 .try_lock()
                 .is_ok(),
             "another home's is free"
