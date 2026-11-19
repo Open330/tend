@@ -12,10 +12,12 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
 
     nonisolated(unsafe) static var replies: [String: [Reply]] = [:]
     nonisolated(unsafe) static var seen: [String] = []
+    /// Each request's path with the bearer token it carried.
+    nonisolated(unsafe) static var authorized: [(path: String, token: String?)] = []
     static let lock = NSLock()
 
     static func reset() {
-        lock.withLock { replies = [:]; seen = [] }
+        lock.withLock { replies = [:]; seen = []; authorized = [] }
     }
 
     static func on(_ path: String, _ replies: Reply...) {
@@ -29,6 +31,8 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
         let path = request.url?.path ?? ""
         let reply: Reply = Self.lock.withLock {
             Self.seen.append(path)
+            let bearer = request.value(forHTTPHeaderField: "Authorization").map { $0.replacingOccurrences(of: "Bearer ", with: "") }
+            Self.authorized.append((path, bearer))
             guard var queue = Self.replies[path], !queue.isEmpty else {
                 return Reply(status: 404, body: #"{"error":"no stub"}"#)
             }
@@ -315,8 +319,8 @@ extension LifecycleTests {
         XCTAssertEqual(model.pairing?.token, "tdv_x", "the old key was dropped")
         XCTAssertEqual(CredentialStore.load()?.token, "tdv_x")
         XCTAssertFalse(model.operates)
-        // Only the new key, never kept, is given back: one forget.
-        XCTAssertEqual(StubProtocol.seen.filter { $0 == "/api/device/forget" }.count, 1)
+        // Only the new key, never kept, is given back: one forget, with it.
+        XCTAssertEqual(StubProtocol.authorized.filter { $0.path == "/api/device/forget" }.map(\.token), ["tdv_new"])
         XCTAssertNil(model.upgrade)
     }
 
@@ -330,6 +334,9 @@ extension LifecycleTests {
         XCTAssertEqual(model.pairing?.token, "tdv_new")
         XCTAssertEqual(CredentialStore.load()?.token, "tdv_new")
         XCTAssertNil(model.scopeNote)
+        // The old key is the one given back.
+        await eventually { StubProtocol.authorized.contains { $0.path == "/api/device/forget" } }
+        XCTAssertEqual(StubProtocol.authorized.filter { $0.path == "/api/device/forget" }.map(\.token), ["tdv_x"])
     }
 
     func testADecideHostLineNeverSaysNothingForAPartialRead() throws {

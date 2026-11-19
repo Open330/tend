@@ -25,7 +25,7 @@ struct HostRow: View {
                 Text(verbatim: host.alias).font(TendType.body.weight(.semibold))
                 Text(host.online ? Self.summary(live) : HostState.label(host.state))
                     .font(TendType.meta)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(TendInk.secondary)
             }
             Spacer(minLength: 4)
             if attention > 0 {
@@ -95,7 +95,7 @@ struct HostsView: View {
                         .buttonStyle(.plain)
                     }
                 } else if let problem = model.fleetProblem {
-                    Label(problem, systemImage: "exclamationmark.triangle").font(TendType.meta).foregroundStyle(.secondary)
+                    Label(problem, systemImage: "exclamationmark.triangle").font(TendType.meta).foregroundStyle(TendInk.secondary)
                 } else {
                     ProgressView().frame(maxWidth: .infinity).padding(.top, 32)
                 }
@@ -187,7 +187,7 @@ struct HostDetailView: View {
                 Text(verbatim: [host.tendVersion.map { "tend \($0)" }, host.control ? String(localized: "control") : String(localized: "observe only")]
                     .compactMap { $0 }.joined(separator: " · "))
                     .font(TendType.meta)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(TendInk.secondary)
                 if let error = host.error, !host.online {
                     Text(verbatim: error).font(TendType.meta).foregroundStyle(TendPalette.red).lineLimit(3)
                 }
@@ -281,7 +281,7 @@ struct AgentDetailView: View {
 
     private func row(_ label: String, _ value: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(label).font(TendType.meta).foregroundStyle(.secondary).frame(width: 64, alignment: .leading)
+            Text(label).font(TendType.meta).foregroundStyle(TendInk.secondary).frame(width: 64, alignment: .leading)
             Text(verbatim: value).font(TendType.mono).textSelection(.enabled).lineLimit(2).truncationMode(.middle)
         }
     }
@@ -305,7 +305,7 @@ struct NowBox: View {
                 Spacer()
                 if let since = agent.since {
                     Text(since, format: .relative(presentation: .numeric, unitsStyle: .abbreviated))
-                        .font(TendType.meta).monospacedDigit().foregroundStyle(.tertiary)
+                        .font(TendType.meta).monospacedDigit().foregroundStyle(TendInk.tertiary)
                 }
             }
             if let text = text?.nonEmpty {
@@ -315,7 +315,7 @@ struct NowBox: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityIdentifier("agentSummary")
             } else {
-                Text("Nothing recorded yet.").font(TendType.body).foregroundStyle(.tertiary)
+                Text("Nothing recorded yet.").font(TendType.body).foregroundStyle(TendInk.tertiary)
             }
         }
         .padding(14)
@@ -369,7 +369,7 @@ struct OutputSection: View {
                     }
                     .accessibilityIdentifier("agentOutput")
                     if let problem {
-                        Label(problem, systemImage: "exclamationmark.triangle").font(TendType.meta).foregroundStyle(.secondary)
+                        Label(problem, systemImage: "exclamationmark.triangle").font(TendType.meta).foregroundStyle(TendInk.secondary)
                     }
                 }
                 .task(id: agent.id) { await poll() }

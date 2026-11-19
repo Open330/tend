@@ -1,0 +1,60 @@
+{
+  "sourceLanguage": "en",
+  "version": "1.0",
+  "strings": {
+    "CFBundleDisplayName": {
+      "extractionState": "manual",
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tend"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tend"
+          }
+        }
+      },
+      "comment": "Bundle display name"
+    },
+    "CFBundleName": {
+      "extractionState": "manual",
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tend"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tend"
+          }
+        }
+      },
+      "comment": "Bundle name"
+    },
+    "NSFaceIDUsageDescription": {
+      "extractionState": "manual",
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tend는 호스트에서 에이전트를 시작하기 전에 Face ID로 본인인지 확인합니다."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tend asks for Face ID before it starts agents on your hosts."
+          }
+        }
+      },
+      "comment": "Why Start Work asks for Face ID"
+    }
+  }
+}

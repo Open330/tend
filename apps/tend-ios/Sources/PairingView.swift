@@ -21,7 +21,7 @@ struct PairingView: View {
                             Text("Tend").font(.largeTitle.bold())
                             Text("Decide what your agents ask you, from here.")
                                 .font(.subheadline)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(TendInk.secondary)
                         }
                     }
                     switch model.phase {
@@ -46,7 +46,7 @@ struct PairingView: View {
                 .font(.title3.bold())
             Text("Enter the address of the tend dashboard you use in the browser. This device gets its own key for every host that dashboard covers. It never types into panes.")
                 .font(TendType.body)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(TendInk.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             VStack(alignment: .leading, spacing: 6) {
                 Text("Dashboard address").font(.footnote.weight(.semibold))
@@ -77,7 +77,7 @@ struct PairingView: View {
                             detail: String(localized: "Read and answer what needs you. An answer can still tell an agent to go ahead."))
                 Text("The operator who approves this device on the dashboard chooses too, and may allow deciding only.")
                     .font(TendType.meta)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(TendInk.secondary)
             }
             if let problem = model.pairingProblem {
                 Label(problem, systemImage: "exclamationmark.circle")
@@ -114,11 +114,11 @@ struct PairingView: View {
                 ProgressView()
                 Text("Waiting for approval · the code expires \(expires, style: .relative)")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(TendInk.secondary)
             }
             Text("Check that the dashboard shows this phone's name before you approve it.")
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(TendInk.secondary)
             Button("Cancel", role: .cancel) { model.cancelPairing() }
                 .accessibilityIdentifier("cancelPairing")
         }
@@ -144,11 +144,11 @@ private struct ScopeChoice: View {
         } label: {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+                    .foregroundStyle(selected ? Color.accentColor : TendInk.secondary)
                     .font(.title3)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title).font(TendType.body.weight(.semibold)).foregroundStyle(.primary)
-                    Text(detail).font(TendType.meta).foregroundStyle(.secondary)
+                    Text(detail).font(TendType.meta).foregroundStyle(TendInk.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)

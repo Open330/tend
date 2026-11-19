@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- iOS: the app now declares `NSFaceIDUsageDescription`. Start Work asks
+  for Face ID, and without the key iOS can refuse the request on a phone
+  with Face ID.
+
+### Changed
+
+- iOS: the app is in Korean as well as English, with Tend for Mac's
+  wording wherever the two share a sentence.
+- iOS: readability on real phones. Quieter text (meta rows, hints, times,
+  empty lanes) now measures at least 4.5:1 on a card in light and dark;
+  it was about 4:1 and 1.9:1. At large text sizes the lane strip wraps
+  into two rows instead of cutting the lanes' names, a card's meta row
+  wraps instead of dropping the host and project, and titles and results
+  get one more line. A running Work no longer repeats "Working" in a box
+  above its "Working" state. Version 0.2.0.
+
 ## [0.10.25] - 2026-11-19
 
 ### Added

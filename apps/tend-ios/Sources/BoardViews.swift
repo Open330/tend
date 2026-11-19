@@ -12,9 +12,9 @@ struct BoardGroupHeader: View {
             HStack(spacing: 6) {
                 Image(systemName: "gearshape").imageScale(.small)
                 Text("From tend itself").font(TendType.meta.weight(.semibold))
-                Text(verbatim: "\(group.items.count)").font(TendType.meta).monospacedDigit().foregroundStyle(.tertiary)
+                Text(verbatim: "\(group.items.count)").font(TendType.meta).monospacedDigit().foregroundStyle(TendInk.tertiary)
             }
-            .foregroundStyle(.secondary)
+            .foregroundStyle(TendInk.secondary)
             .padding(.top, 4)
             .accessibilityAddTraits(.isHeader)
         } else {
@@ -72,12 +72,12 @@ struct BoardYourTurn: View {
             ForEach(section.unavailable, id: \.self) { reason in
                 Label(String(localized: "\(section.alias): not everything could be read: \(reason)"), systemImage: "exclamationmark.triangle")
                     .font(TendType.meta)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(TendInk.secondary)
             }
             if section.truncated {
                 Text("\(section.alias): showing the first ones; more are waiting.")
                     .font(TendType.meta)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(TendInk.secondary)
             }
         }
         if !board.coverageKnown {
@@ -131,7 +131,7 @@ struct BoardLaneItems: View {
         if let undecoded = board.undecoded[lane], undecoded > 0 {
             Label(String(localized: "\(undecoded) this app cannot show"), systemImage: "exclamationmark.triangle")
                 .font(TendType.meta)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(TendInk.secondary)
         }
     }
 
@@ -196,12 +196,12 @@ struct WorkDetailView: View {
                             .font(TendType.meta.weight(.semibold))
                             .foregroundStyle(u.lane.tint)
                         if let repo = u.repo {
-                            Text(verbatim: repo).font(TendType.meta).foregroundStyle(.secondary)
+                            Text(verbatim: repo).font(TendType.meta).foregroundStyle(TendInk.secondary)
                         }
                         Spacer(minLength: 4)
                         if let time = u.time {
                             Text(time, format: .relative(presentation: .numeric, unitsStyle: .abbreviated))
-                                .font(TendType.meta).monospacedDigit().foregroundStyle(.tertiary)
+                                .font(TendType.meta).monospacedDigit().foregroundStyle(TendInk.tertiary)
                         }
                     }
                 }
@@ -222,10 +222,10 @@ struct WorkDetailView: View {
                                     Circle().fill(stage.state.color).frame(width: 8, height: 8)
                                     Text(verbatim: stage.name).font(TendType.body.weight(.medium))
                                     if let owner = stage.owner {
-                                        Text(verbatim: owner).font(TendType.meta).foregroundStyle(.secondary).lineLimit(1)
+                                        Text(verbatim: owner).font(TendType.meta).foregroundStyle(TendInk.secondary).lineLimit(1)
                                     }
                                     Spacer(minLength: 4)
-                                    Text(stage.state.label).font(TendType.meta).foregroundStyle(.secondary)
+                                    Text(stage.state.label).font(TendType.meta).foregroundStyle(TendInk.secondary)
                                 }
                                 .accessibilityElement(children: .combine)
                             }
@@ -237,7 +237,7 @@ struct WorkDetailView: View {
                     agents(String(localized: "Helpers"), u.helpers, focus: nil)
                     Text("Sessions other agents started to help with this work.")
                         .font(TendType.meta)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(TendInk.tertiary)
                 }
             }
             .padding(16)
@@ -296,7 +296,7 @@ struct AgentRefRow: View {
             Spacer(minLength: 4)
             AgentStatusTag(status: ref.agentStatus, showsLabel: false)
             if opens {
-                Image(systemName: "chevron.right").font(TendType.meta.weight(.semibold)).foregroundStyle(.tertiary)
+                Image(systemName: "chevron.right").font(TendType.meta.weight(.semibold)).foregroundStyle(TendInk.tertiary)
             }
         }
         .tendCard(stroke: isFocus ? ref.agentStatus.color.opacity(0.5) : TendSurface.border)

@@ -1,0 +1,2306 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "%@ (dashboard host)": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ (대시보드 호스트)"
+          }
+        }
+      }
+    },
+    "%@ did not start it.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@에서 시작하지 않았습니다."
+          }
+        }
+      }
+    },
+    "%@ has no pipeline configured. Add one to its tend config to start work there.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@에는 설정된 파이프라인이 없습니다. 그 호스트의 tend 설정에 파이프라인을 추가해야 작업을 시작할 수 있습니다."
+          }
+        }
+      }
+    },
+    "%@ on %@": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%2$@의 %1$@"
+          }
+        }
+      }
+    },
+    "%@, %lld": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@, %2$lld"
+          }
+        }
+      }
+    },
+    "%@: %@": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@: %2$@"
+          }
+        }
+      }
+    },
+    "%@: not everything could be read: %@": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@: 일부를 읽지 못했습니다: %2$@"
+          }
+        }
+      }
+    },
+    "%@: showing the first %lld; more are waiting.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@: 처음 %2$lld개만 보여 줍니다. 더 기다리는 항목이 있습니다."
+          }
+        }
+      }
+    },
+    "%@: showing the first ones; more are waiting.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@: 앞부분만 보여 줍니다. 더 기다리는 항목이 있습니다."
+          }
+        }
+      }
+    },
+    "%lld": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld"
+          }
+        }
+      }
+    },
+    "%lld agents": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "에이전트 %lld개"
+          }
+        }
+      }
+    },
+    "%lld empty sessions": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "빈 세션 %lld개"
+          }
+        }
+      }
+    },
+    "%lld helper sessions": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "보조 세션 %lld개"
+          }
+        }
+      }
+    },
+    "%lld more need you in a form this app cannot show yet. Open the dashboard in a browser, or update the app.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 앱이 아직 보여 줄 수 없는 형식으로 %lld개가 더 기다리고 있습니다. 브라우저에서 대시보드를 열거나 앱을 업데이트하세요."
+          }
+        }
+      }
+    },
+    "%lld need you": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld개가 기다림"
+          }
+        }
+      }
+    },
+    "%lld need you, maybe more": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld개가 기다림, 더 있을 수 있음"
+          }
+        }
+      }
+    },
+    "%lld need you, maybe more: %@": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$lld개가 기다림, 더 있을 수 있음: %2$@"
+          }
+        }
+      }
+    },
+    "%lld older": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이전 항목 %lld개"
+          }
+        }
+      }
+    },
+    "%lld older decided": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이전에 결정한 것 %lld개"
+          }
+        }
+      }
+    },
+    "%lld possible helper sessions": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "보조 세션 후보 %lld개"
+          }
+        }
+      }
+    },
+    "%lld this app cannot show": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 앱이 보여 줄 수 없는 항목 %lld개"
+          }
+        }
+      }
+    },
+    "%lld working": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld개 작업 중"
+          }
+        }
+      }
+    },
+    "Accept": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "수락"
+          }
+        }
+      }
+    },
+    "Accept with: %@": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "다음으로 수락: %@"
+          }
+        }
+      }
+    },
+    "Accepted": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "수락함"
+          }
+        }
+      }
+    },
+    "Accepted.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "수락했습니다."
+          }
+        }
+      }
+    },
+    "Access": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "접근 권한"
+          }
+        }
+      }
+    },
+    "Agent": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "에이전트"
+          }
+        }
+      }
+    },
+    "Agents": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "에이전트"
+          }
+        }
+      }
+    },
+    "Agents are on it": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "에이전트가 진행 중"
+          }
+        }
+      }
+    },
+    "An operator limited this device to deciding. Your turn works as before. To see hosts and agents again, ask again; an operator approves it on the dashboard.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "오퍼레이터가 이 기기를 결정 전용으로 제한했습니다. 내 차례는 전과 같이 쓸 수 있습니다. 호스트와 에이전트를 다시 보려면 다시 요청하세요. 오퍼레이터가 대시보드에서 승인합니다."
+          }
+        }
+      }
+    },
+    "Answer what needs you; see every host and agent and their recent output; start new work, which runs agents on your hosts (Face ID first).": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "나를 기다리는 일에 답하고, 모든 호스트와 에이전트, 최근 출력을 보고, 새 작업을 시작합니다. 새 작업은 내 호스트에서 에이전트를 실행합니다(먼저 Face ID를 확인합니다)."
+          }
+        }
+      }
+    },
+    "Answered": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "답변 완료"
+          }
+        }
+      }
+    },
+    "Answered.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "답했습니다."
+          }
+        }
+      }
+    },
+    "Answer…": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "답하기…"
+          }
+        }
+      }
+    },
+    "Approve this phone": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 휴대폰 승인하기"
+          }
+        }
+      }
+    },
+    "Ask for hosts and new work?": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "호스트와 새 작업 권한을 요청할까요?"
+          }
+        }
+      }
+    },
+    "Ask the dashboard": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "대시보드에 요청"
+          }
+        }
+      }
+    },
+    "Asked": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "맡긴 일"
+          }
+        }
+      }
+    },
+    "Asked by %@": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "요청: %@"
+          }
+        }
+      }
+    },
+    "Asked you": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "답을 기다림"
+          }
+        }
+      }
+    },
+    "Asking": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "질문함"
+          }
+        }
+      }
+    },
+    "Asks you to choose. Open to see the question.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "선택을 기다립니다. 열어서 질문을 확인하세요."
+          }
+        }
+      }
+    },
+    "Backlog": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "백로그"
+          }
+        }
+      }
+    },
+    "Cancel": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "취소"
+          }
+        }
+      }
+    },
+    "Check that the dashboard shows this phone's name before you approve it.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "승인하기 전에 대시보드에 이 휴대폰의 이름이 보이는지 확인하세요."
+          }
+        }
+      }
+    },
+    "Connecting": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "연결 중"
+          }
+        }
+      }
+    },
+    "Could not be read in full": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "전부 읽지 못했습니다"
+          }
+        }
+      }
+    },
+    "Could not be read in full: %@": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "전부 읽지 못했습니다: %@"
+          }
+        }
+      }
+    },
+    "Could not keep the key in this device's Keychain.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 기기의 키체인에 키를 저장하지 못했습니다."
+          }
+        }
+      }
+    },
+    "Could not keep the new key in this device's Keychain. This device still decides with its current key; ask again.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "새 키를 이 기기의 키체인에 저장하지 못했습니다. 이 기기는 지금 키로 계속 결정할 수 있습니다. 다시 요청하세요."
+          }
+        }
+      }
+    },
+    "Dashboard": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "대시보드"
+          }
+        }
+      }
+    },
+    "Dashboard address": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "대시보드 주소"
+          }
+        }
+      }
+    },
+    "Decide only": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "결정만"
+          }
+        }
+      }
+    },
+    "Decide or review": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "결정하거나 점검할 것"
+          }
+        }
+      }
+    },
+    "Decide this on %@; its tend cannot take decisions from here.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@에서 결정하세요. 그 호스트의 tend는 여기서 보낸 결정을 받을 수 없습니다."
+          }
+        }
+      }
+    },
+    "Decide what your agents ask you, from here.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "에이전트가 묻는 것을 여기서 결정합니다."
+          }
+        }
+      }
+    },
+    "Decide, hosts and new work": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "결정, 호스트, 새 작업"
+          }
+        }
+      }
+    },
+    "Decide, see hosts and start work": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "결정하고, 호스트를 보고, 작업 시작"
+          }
+        }
+      }
+    },
+    "Decided": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "결정한 것"
+          }
+        }
+      }
+    },
+    "Deciding, and watching hosts and agents, keep working.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "결정하기와 호스트·에이전트 보기는 계속 쓸 수 있습니다."
+          }
+        }
+      }
+    },
+    "Decline": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "거절"
+          }
+        }
+      }
+    },
+    "Declined": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "거절됨"
+          }
+        }
+      }
+    },
+    "Declined.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "거절했습니다."
+          }
+        }
+      }
+    },
+    "Degraded": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "성능 저하"
+          }
+        }
+      }
+    },
+    "Disabled": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "비활성"
+          }
+        }
+      }
+    },
+    "Done": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "완료"
+          }
+        }
+      }
+    },
+    "Enter only the address, like https://tend.example.com, without a path.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "https://tend.example.com처럼 경로 없이 주소만 입력하세요."
+          }
+        }
+      }
+    },
+    "Enter the address of the tend dashboard you use in the browser. This device gets its own key for every host that dashboard covers. It never types into panes.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "브라우저에서 쓰는 tend 대시보드의 주소를 입력하세요. 이 기기는 그 대시보드가 다루는 모든 호스트에 쓸 자기만의 키를 받습니다. 페인에 입력하는 일은 하지 않습니다."
+          }
+        }
+      }
+    },
+    "Enter your dashboard's address.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "대시보드 주소를 입력하세요."
+          }
+        }
+      }
+    },
+    "Error": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "오류"
+          }
+        }
+      }
+    },
+    "Finished": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "완료"
+          }
+        }
+      }
+    },
+    "Folder": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "폴더"
+          }
+        }
+      }
+    },
+    "Forget this device here only": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 기기에서만 지우기"
+          }
+        }
+      }
+    },
+    "From tend itself": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "tend가 직접 연 항목"
+          }
+        }
+      }
+    },
+    "Helper": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "보조"
+          }
+        }
+      }
+    },
+    "Helpers": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "보조 세션"
+          }
+        }
+      }
+    },
+    "Hide empty sessions": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "빈 세션 숨기기"
+          }
+        }
+      }
+    },
+    "Hide older": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이전 항목 숨기기"
+          }
+        }
+      }
+    },
+    "Hide possible helpers": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "보조 세션 후보 숨기기"
+          }
+        }
+      }
+    },
+    "Hide reviewed": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "확인한 항목 숨기기"
+          }
+        }
+      }
+    },
+    "Home": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "홈"
+          }
+        }
+      }
+    },
+    "Host": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "호스트"
+          }
+        }
+      }
+    },
+    "Hosts": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "호스트"
+          }
+        }
+      }
+    },
+    "Hosts %lld/%lld": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "호스트 %1$lld/%2$lld"
+          }
+        }
+      }
+    },
+    "Hosts this dashboard covers": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 대시보드가 다루는 호스트"
+          }
+        }
+      }
+    },
+    "Idle": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "대기"
+          }
+        }
+      }
+    },
+    "In progress": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "진행 중"
+          }
+        }
+      }
+    },
+    "It may have started: the host did not answer in time. Check %@ before trying again.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시작되었을 수도 있습니다. 호스트가 제때 답하지 않았습니다. 다시 시도하기 전에 %@를 확인하세요."
+          }
+        }
+      }
+    },
+    "It may have started; check the host.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시작되었을 수도 있습니다. 호스트를 확인하세요."
+          }
+        }
+      }
+    },
+    "Last result": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "마지막 결과"
+          }
+        }
+      }
+    },
+    "Limited": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "제한됨"
+          }
+        }
+      }
+    },
+    "Model": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "모델"
+          }
+        }
+      }
+    },
+    "More": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "더 보기"
+          }
+        }
+      }
+    },
+    "Name for this device": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 기기의 이름"
+          }
+        }
+      }
+    },
+    "Needs input": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "입력 필요"
+          }
+        }
+      }
+    },
+    "Needs update": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "업데이트 필요"
+          }
+        }
+      }
+    },
+    "Needs you": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "내 차례"
+          }
+        }
+      }
+    },
+    "No agent has worked on %@ yet, so there is no project to start in. Start one there first.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@에서 작업한 에이전트가 아직 없어서 시작할 프로젝트가 없습니다. 먼저 그 호스트에서 에이전트를 시작하세요."
+          }
+        }
+      }
+    },
+    "No agent is working.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "작업 중인 에이전트가 없습니다."
+          }
+        }
+      }
+    },
+    "No agent runs here.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "여기서 실행 중인 에이전트가 없습니다."
+          }
+        }
+      }
+    },
+    "No project": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "프로젝트 없음"
+          }
+        }
+      }
+    },
+    "No task recorded": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "기록된 작업 없음"
+          }
+        }
+      }
+    },
+    "Not every host's queue could be read, so more may need you.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "일부 호스트의 대기열을 읽지 못했습니다. 기다리는 항목이 더 있을 수 있습니다."
+          }
+        }
+      }
+    },
+    "Not shown on this device": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 기기에서는 보이지 않음"
+          }
+        }
+      }
+    },
+    "Not started.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시작하지 않았습니다."
+          }
+        }
+      }
+    },
+    "Not started: Face ID or the passcode is needed to start work.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시작하지 않았습니다. 작업을 시작하려면 Face ID나 암호가 필요합니다."
+          }
+        }
+      }
+    },
+    "Not started: what this device may do changed. Check and try again.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시작하지 않았습니다. 이 기기의 권한이 바뀌었습니다. 확인한 뒤 다시 시도하세요."
+          }
+        }
+      }
+    },
+    "Note for the asker": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "요청자에게 남길 메모"
+          }
+        }
+      }
+    },
+    "Nothing finished yet.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "아직 끝난 Work가 없습니다."
+          }
+        }
+      }
+    },
+    "Nothing needs you": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "확인할 항목 없음"
+          }
+        }
+      }
+    },
+    "Nothing needs you right now.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "지금 결정할 것이 없습니다."
+          }
+        }
+      }
+    },
+    "Nothing planned.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "계획된 작업이 없습니다."
+          }
+        }
+      }
+    },
+    "Nothing recorded yet.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "아직 기록된 것이 없습니다."
+          }
+        }
+      }
+    },
+    "Now": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "지금"
+          }
+        }
+      }
+    },
+    "Offline": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "오프라인"
+          }
+        }
+      }
+    },
+    "On a computer signed in to %@, open **access ▸ Devices**, enter this code, and tick **Also let this device see every host and agent…**:": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@에 로그인한 컴퓨터에서 **access ▸ Devices**를 열고, 이 코드를 입력한 다음 **Also let this device see every host and agent…**를 체크하세요."
+          }
+        }
+      }
+    },
+    "On a computer where you are signed in to %@, open **access ▸ Devices** and enter this code:": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@에 로그인한 컴퓨터에서 **access ▸ Devices**를 열고 이 코드를 입력하세요."
+          }
+        }
+      }
+    },
+    "Online": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "온라인"
+          }
+        }
+      }
+    },
+    "Other": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "기타"
+          }
+        }
+      }
+    },
+    "Other…": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "직접 입력…"
+          }
+        }
+      }
+    },
+    "Pair": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "페어링"
+          }
+        }
+      }
+    },
+    "Pair again with hosts and new work…": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "호스트와 새 작업 권한으로 다시 페어링…"
+          }
+        }
+      }
+    },
+    "Pair with your dashboard": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "대시보드와 페어링"
+          }
+        }
+      }
+    },
+    "Paired with": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "페어링한 곳"
+          }
+        }
+      }
+    },
+    "Pane": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "페인"
+          }
+        }
+      }
+    },
+    "Pipeline": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "파이프라인"
+          }
+        }
+      }
+    },
+    "Planned": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "계획됨"
+          }
+        }
+      }
+    },
+    "Planned Work starts from Tend for Mac or the dashboard; here you can start new work.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "계획된 Work는 Mac용 Tend나 대시보드에서 시작합니다. 여기서는 새 작업을 시작할 수 있습니다."
+          }
+        }
+      }
+    },
+    "Planned, not started": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "계획만 있고 시작 전"
+          }
+        }
+      }
+    },
+    "Project": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "프로젝트"
+          }
+        }
+      }
+    },
+    "Question": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "질문"
+          }
+        }
+      }
+    },
+    "Rate limited · the limit policy will resume it": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "한도 도달 · 한도 정책이 이어서 진행합니다"
+          }
+        }
+      }
+    },
+    "Read and answer what needs you. An answer can still tell an agent to go ahead.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "나를 기다리는 일을 읽고 답합니다. 답 하나로도 에이전트에게 진행하라고 할 수 있습니다."
+          }
+        }
+      }
+    },
+    "Ready for the next instruction": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "다음 지시를 기다림"
+          }
+        }
+      }
+    },
+    "Recent output": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "최근 출력"
+          }
+        }
+      }
+    },
+    "Reply from %@ is ready": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@의 회신 도착"
+          }
+        }
+      }
+    },
+    "Return": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "돌려보내기"
+          }
+        }
+      }
+    },
+    "Returned": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "반려함"
+          }
+        }
+      }
+    },
+    "Returned.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "반려했습니다."
+          }
+        }
+      }
+    },
+    "Return…": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "돌려보내기…"
+          }
+        }
+      }
+    },
+    "Review": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "리뷰"
+          }
+        }
+      }
+    },
+    "Say what needs to get done. The agents work out the rest.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "해야 할 일만 적으세요. 나머지는 에이전트가 판단합니다."
+          }
+        }
+      }
+    },
+    "Send": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "보내기"
+          }
+        }
+      }
+    },
+    "Session": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "세션"
+          }
+        }
+      }
+    },
+    "Sessions other agents started to help with this work.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "다른 에이전트가 이 작업을 돕기 위해 띄운 세션입니다."
+          }
+        }
+      }
+    },
+    "Settings": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "설정"
+          }
+        }
+      }
+    },
+    "Show %lld reviewed": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "확인한 항목 %lld개 보기"
+          }
+        }
+      }
+    },
+    "Show recent output": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "최근 출력 보기"
+          }
+        }
+      }
+    },
+    "Sign out": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "로그아웃"
+          }
+        }
+      }
+    },
+    "Sign-in failed": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "로그인 실패"
+          }
+        }
+      }
+    },
+    "Stage %@ is Blocked": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 단계가 막혔습니다"
+          }
+        }
+      }
+    },
+    "Stage %@ is Error": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 단계에 오류가 있습니다"
+          }
+        }
+      }
+    },
+    "Stages": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "단계"
+          }
+        }
+      }
+    },
+    "Start": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시작"
+          }
+        }
+      }
+    },
+    "Start Work": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Work 시작"
+          }
+        }
+      }
+    },
+    "Start agents on %@": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@에서 에이전트 시작"
+          }
+        }
+      }
+    },
+    "Started.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시작했습니다."
+          }
+        }
+      }
+    },
+    "Starting": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시작 중"
+          }
+        }
+      }
+    },
+    "Starting work is turned off": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "작업 시작이 꺼져 있습니다"
+          }
+        }
+      }
+    },
+    "Starting work is turned off on this dashboard ([dashboard] allow_work_start).": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 대시보드에서는 작업 시작이 꺼져 있습니다([dashboard] allow_work_start)."
+          }
+        }
+      }
+    },
+    "Stopped": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "중지됨"
+          }
+        }
+      }
+    },
+    "Team": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "팀"
+          }
+        }
+      }
+    },
+    "Tend": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tend"
+          }
+        }
+      }
+    },
+    "That is not a web address.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "웹 주소가 아닙니다."
+          }
+        }
+      }
+    },
+    "The code expired before it was approved. Start again.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "승인되기 전에 코드가 만료되었습니다. 다시 시작하세요."
+          }
+        }
+      }
+    },
+    "The code expired before it was approved. This device still decides; ask again.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "승인되기 전에 코드가 만료되었습니다. 이 기기는 계속 결정할 수 있습니다. 다시 요청하세요."
+          }
+        }
+      }
+    },
+    "The dashboard answered with a redirect. Tend only talks to the exact address you paired with.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "대시보드가 다른 주소로 보냈습니다. Tend는 페어링한 주소와만 통신합니다."
+          }
+        }
+      }
+    },
+    "The dashboard at %@ does not start work for anyone, from the web or from this device. Whoever runs that host can turn it on: set `allow_work_start = true` under `[dashboard]` in its tend config, then restart tendd.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 대시보드는 웹에서도 이 기기에서도 작업을 시작하지 않습니다. 그 호스트를 관리하는 사람이 켤 수 있습니다. tend 설정의 `[dashboard]` 아래에 `allow_work_start = true`를 넣고 tendd를 다시 시작하면 됩니다."
+          }
+        }
+      }
+    },
+    "The dashboard could not be reached, so this device is still paired there: %@": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "대시보드에 연결하지 못해서 이 기기는 아직 대시보드에 페어링되어 있습니다: %@"
+          }
+        }
+      }
+    },
+    "The dashboard forgets this device's key. To use it again, pair it again.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "대시보드가 이 기기의 키를 지웁니다. 다시 쓰려면 다시 페어링하세요."
+          }
+        }
+      }
+    },
+    "The operator who approves this device on the dashboard chooses too, and may allow deciding only.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "대시보드에서 이 기기를 승인하는 오퍼레이터도 권한을 고르며, 결정만 허용할 수도 있습니다."
+          }
+        }
+      }
+    },
+    "The previous key could not be removed on the dashboard. Remove \"%@\" under access ▸ Devices, or let it expire.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "대시보드에서 이전 키를 지우지 못했습니다. access ▸ Devices에서 \"%@\"를 지우거나, 만료되기를 기다리세요."
+          }
+        }
+      }
+    },
+    "Then remove it under access ▸ Devices on the dashboard; until then, its key keeps working there.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "그다음 대시보드의 access ▸ Devices에서 지우세요. 그때까지는 이 기기의 키가 대시보드에서 계속 유효합니다."
+          }
+        }
+      }
+    },
+    "This dashboard cannot pair devices. It needs a newer tend with an access token set.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 대시보드는 기기를 페어링할 수 없습니다. 액세스 토큰이 설정된 새 버전의 tend가 필요합니다."
+          }
+        }
+      }
+    },
+    "This dashboard's host": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 대시보드의 호스트"
+          }
+        }
+      }
+    },
+    "This device": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 기기"
+          }
+        }
+      }
+    },
+    "This device decides only": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 기기는 결정만 할 수 있습니다"
+          }
+        }
+      }
+    },
+    "This device is no longer paired. Pair it again.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 기기는 더 이상 페어링되어 있지 않습니다. 다시 페어링하세요."
+          }
+        }
+      }
+    },
+    "This device may only decide. Pair it again with hosts and new work to see this.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 기기는 결정만 할 수 있습니다. 이 화면을 보려면 호스트와 새 작업 권한으로 다시 페어링하세요."
+          }
+        }
+      }
+    },
+    "This device shows a code for an operator to approve on the dashboard. It keeps deciding meanwhile; once approved, the new key replaces this one. The operator may still allow deciding only.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 기기에 코드가 나타나고, 오퍼레이터가 대시보드에서 그 코드를 승인합니다. 그동안에도 이 기기는 계속 결정할 수 있습니다. 승인되면 새 키가 지금 키를 대신합니다. 오퍼레이터는 여전히 결정만 허용할 수도 있습니다."
+          }
+        }
+      }
+    },
+    "This device's key can also see every host and agent, read their recent output, and start new work, which runs agents on your hosts. Starting work asks for Face ID or your passcode. It stops working after 30 days unused, 90 days after pairing, or when removed or limited to deciding under access ▸ Devices.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 기기의 키로는 모든 호스트와 에이전트를 보고, 최근 출력을 읽고, 새 작업을 시작할 수도 있습니다. 새 작업은 내 호스트에서 에이전트를 실행합니다. 작업을 시작할 때는 Face ID나 암호를 확인합니다. 30일 동안 쓰지 않거나, 페어링하고 90일이 지나거나, access ▸ Devices에서 지우거나 결정 전용으로 제한하면 이 키는 더 이상 쓸 수 없습니다."
+          }
+        }
+      }
+    },
+    "This device's key can read and answer what needs you on every host the dashboard covers, and nothing else. It stops working after 30 days unused, 90 days after pairing, or when removed under access ▸ Devices.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 기기의 키로는 대시보드가 다루는 모든 호스트에서 나를 기다리는 일을 읽고 답할 수 있고, 그 밖의 일은 할 수 없습니다. 30일 동안 쓰지 않거나, 페어링하고 90일이 지나거나, access ▸ Devices에서 지우면 이 키는 더 이상 쓸 수 없습니다."
+          }
+        }
+      }
+    },
+    "This host is not in the Fleet snapshot.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 호스트는 Fleet 스냅숏에 없습니다."
+          }
+        }
+      }
+    },
+    "This work is not on the board any more.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 작업은 더 이상 보드에 없습니다."
+          }
+        }
+      }
+    },
+    "Turned off on this dashboard": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 대시보드에서 꺼져 있음"
+          }
+        }
+      }
+    },
+    "Unexpected answer from the dashboard: %@": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "대시보드가 예상하지 못한 답을 보냈습니다: %@"
+          }
+        }
+      }
+    },
+    "Unknown": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "알 수 없음"
+          }
+        }
+      }
+    },
+    "Unpair this device?": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 기기의 페어링을 해제할까요?"
+          }
+        }
+      }
+    },
+    "Until then this device keeps deciding with its current key.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "그때까지 이 기기는 지금 키로 계속 결정할 수 있습니다."
+          }
+        }
+      }
+    },
+    "Use an https:// address.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "https:// 주소를 쓰세요."
+          }
+        }
+      }
+    },
+    "Use https://. Plain http:// works only for this device itself (127.0.0.1).": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "https://를 쓰세요. 일반 http://는 이 기기 자신(127.0.0.1)에만 쓸 수 있습니다."
+          }
+        }
+      }
+    },
+    "Waiting": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "대기 중"
+          }
+        }
+      }
+    },
+    "Waiting for approval · expires %@": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "승인 대기 중 · %@ 후 만료"
+          }
+        }
+      }
+    },
+    "Waiting for approval · the code expires %@": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "승인 대기 중 · %@ 후 코드 만료"
+          }
+        }
+      }
+    },
+    "Waiting for choice": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "선택 대기 중"
+          }
+        }
+      }
+    },
+    "Waiting for input": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "입력 대기 중"
+          }
+        }
+      }
+    },
+    "Waiting for its agents to start": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "에이전트가 시작되기를 기다리는 중"
+          }
+        }
+      }
+    },
+    "Waiting in its pane": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "페인에서 기다리는 중"
+          }
+        }
+      }
+    },
+    "Waiting in its pane; answer it on a computer.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "페인에서 기다리는 중입니다. 컴퓨터에서 답하세요."
+          }
+        }
+      }
+    },
+    "Waiting on %@: %@": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 기다리는 중: %@"
+          }
+        }
+      }
+    },
+    "Waits for your answer in its pane.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "페인에서 답을 기다립니다."
+          }
+        }
+      }
+    },
+    "Waits for your answer. Open to see the question.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "답을 기다립니다. 열어서 질문을 확인하세요."
+          }
+        }
+      }
+    },
+    "What needs to get done? For example: fix the login timeout on slow networks and add a test.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "무엇을 해야 하나요? 예: 느린 네트워크에서 로그인 시간 초과를 고치고 테스트를 추가하기"
+          }
+        }
+      }
+    },
+    "What this device may do": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 기기가 할 수 있는 일"
+          }
+        }
+      }
+    },
+    "Where": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "위치"
+          }
+        }
+      }
+    },
+    "Withdraw": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "철회"
+          }
+        }
+      }
+    },
+    "Withdrawn": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "철회됨"
+          }
+        }
+      }
+    },
+    "Withdrawn.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "철회했습니다."
+          }
+        }
+      }
+    },
+    "Work": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Work"
+          }
+        }
+      }
+    },
+    "Working": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "작업 중"
+          }
+        }
+      }
+    },
+    "You asked for hosts and new work, and the operator allowed deciding only. Your turn works as before. To ask again, an operator has to approve it on the dashboard.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "호스트와 새 작업 권한을 요청했지만 오퍼레이터가 결정만 허용했습니다. 내 차례는 전과 같이 쓸 수 있습니다. 다시 요청하면 오퍼레이터가 대시보드에서 승인해야 합니다."
+          }
+        }
+      }
+    },
+    "Your answer": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "답변"
+          }
+        }
+      }
+    },
+    "Your turn": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "내 차례"
+          }
+        }
+      }
+    },
+    "Your turn works here. To also see what is in progress and finished, every host and its agents, and to start new work, ask the dashboard for hosts and new work. An operator approves it there.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "여기서는 내 차례를 쓸 수 있습니다. 진행 중인 것과 완료된 것, 모든 호스트와 에이전트를 보고 새 작업도 시작하려면 대시보드에 호스트와 새 작업 권한을 요청하세요. 오퍼레이터가 대시보드에서 승인합니다."
+          }
+        }
+      }
+    },
+    "a person": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "사람"
+          }
+        }
+      }
+    },
+    "an agent": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "에이전트"
+          }
+        }
+      }
+    },
+    "by %@": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "결정: %@"
+          }
+        }
+      }
+    },
+    "control": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "제어"
+          }
+        }
+      }
+    },
+    "exit %lld": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "종료 코드 %lld"
+          }
+        }
+      }
+    },
+    "failed": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "실패"
+          }
+        }
+      }
+    },
+    "https://tend.example.com": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "https://tend.example.com"
+          }
+        }
+      }
+    },
+    "killed": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "강제 종료됨"
+          }
+        }
+      }
+    },
+    "observe only": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "보기만"
+          }
+        }
+      }
+    },
+    "only the latest are shown": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "최근 것만 보여 줍니다"
+          }
+        }
+      }
+    },
+    "passed": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "통과"
+          }
+        }
+      }
+    },
+    "tend ran %lld checks: %lld passed": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "tend가 검사 %1$lld개를 실행했고 %2$lld개가 통과했습니다"
+          }
+        }
+      }
+    },
+    "tend ran 1 check: %@": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "tend가 검사 1개를 실행했습니다: %@"
+          }
+        }
+      }
+    },
+    "timed out": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시간 초과"
+          }
+        }
+      }
+    },
+    "⟳ Background task": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⟳ 백그라운드 작업"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

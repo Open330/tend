@@ -31,7 +31,7 @@ struct DecisionCard: View {
             if let detail = decision.detail {
                 Text(verbatim: detail)
                     .font(TendType.body)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(TendInk.secondary)
                     .lineLimit(5)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -49,7 +49,7 @@ struct DecisionCard: View {
             if !decision.decidable {
                 Label(notHere, systemImage: "desktopcomputer")
                     .font(TendType.meta)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(TendInk.secondary)
             } else if composing != nil {
                 composer
             } else {
@@ -107,7 +107,7 @@ struct DecisionCard: View {
             }
         }
         .font(TendType.meta.weight(.medium))
-        .foregroundStyle(.secondary)
+        .foregroundStyle(TendInk.secondary)
         .labelStyle(.titleAndIcon)
         .lineLimit(1)
     }
@@ -252,7 +252,7 @@ struct OptionRow: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 9)
-        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: TendSurface.controlRadius, style: .continuous))
+        .background(TendInk.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: TendSurface.controlRadius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: TendSurface.controlRadius, style: .continuous)
                 .strokeBorder(TendSurface.inputBorder, lineWidth: 1)
@@ -275,7 +275,7 @@ struct VerificationChecks: View {
                         .foregroundStyle(check.passed ? TendPalette.green : TendPalette.red)
                 }
                 .font(TendType.meta.weight(.medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(TendInk.secondary)
             }
         }
     }
@@ -316,7 +316,7 @@ struct EvidenceList: View {
         case .test(let command, let passed, _):
             Chip(
                 text: command,
-                color: passed == true ? TendPalette.green : passed == false ? TendPalette.red : .secondary,
+                color: passed == true ? TendPalette.green : passed == false ? TendPalette.red : TendInk.secondary,
                 symbol: passed == true ? "checkmark" : passed == false ? "xmark" : "circle"
             )
         case .path(let path):

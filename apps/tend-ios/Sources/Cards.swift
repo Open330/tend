@@ -8,23 +8,24 @@ import UIKit
 struct AgentCard: View {
     let agent: LaneAgent
     let lane: Lane
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         let a = agent.agent
         VStack(alignment: .leading, spacing: 8) {
             Text(verbatim: a.title)
                 .font(TendType.cardTitle)
-                .lineLimit(2)
+                .lineLimit(TendLines.more(2, typeSize))
                 .frame(maxWidth: .infinity, alignment: .leading)
             if lane != .finished {
                 Capsule().fill(a.status.color).frame(height: 4)
                     .accessibilityHidden(true)
-                Text(verbatim: a.maker).font(TendType.meta.weight(.medium)).foregroundStyle(.secondary)
+                Text(verbatim: a.maker).font(TendType.meta.weight(.medium)).foregroundStyle(TendInk.secondary)
             }
             Text(TendMarkdown.inline(a.headline ?? a.status.label))
                 .font(TendType.body)
-                .foregroundStyle(.secondary)
-                .lineLimit(lane == .finished ? 3 : 2)
+                .foregroundStyle(TendInk.secondary)
+                .lineLimit(TendLines.more(lane == .finished ? 3 : 2, typeSize))
             MetaRow(kind: a.kind, repo: a.repo, host: agent.host, hostIsLocal: agent.hostIsLocal, since: a.since)
         }
         .tendCard()
@@ -61,7 +62,7 @@ struct AgentLogo: View {
                     .foregroundStyle(colorScheme == .dark ? Color.white : Color.black)
                     .scaleEffect(asset.scale)
             } else {
-                Image(systemName: "terminal").resizable().scaledToFit().foregroundStyle(.secondary)
+                Image(systemName: "terminal").resizable().scaledToFit().foregroundStyle(TendInk.secondary)
             }
         }
         .frame(width: size, height: size)
@@ -77,10 +78,10 @@ struct ProjectHeader: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "folder").imageScale(.small)
-            Text(verbatim: name).font(TendType.meta.weight(.semibold)).foregroundStyle(.secondary)
-            Text(verbatim: "\(count)").font(TendType.meta).monospacedDigit().foregroundStyle(.tertiary)
+            Text(verbatim: name).font(TendType.meta.weight(.semibold)).foregroundStyle(TendInk.secondary)
+            Text(verbatim: "\(count)").font(TendType.meta).monospacedDigit().foregroundStyle(TendInk.tertiary)
         }
-        .foregroundStyle(.secondary)
+        .foregroundStyle(TendInk.secondary)
         .padding(.top, 4)
         .accessibilityAddTraits(.isHeader)
     }
@@ -142,7 +143,7 @@ struct DecidedCard: View {
             if let text = past.text {
                 Text(verbatim: text)
                     .font(TendType.body)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(TendInk.secondary)
                     .lineLimit(3)
             }
             HStack(spacing: 6) {
@@ -229,7 +230,7 @@ struct CardButtonStyle: ButtonStyle {
             .foregroundStyle(primary ? Color.white : Color.accentColor)
             .background(
                 RoundedRectangle(cornerRadius: TendSurface.controlRadius, style: .continuous)
-                    .fill(primary ? Color.accentColor.opacity(configuration.isPressed ? 0.8 : 1) : (configuration.isPressed ? Color.secondary.opacity(0.12) : Color.clear))
+                    .fill(primary ? Color.accentColor.opacity(configuration.isPressed ? 0.8 : 1) : (configuration.isPressed ? TendInk.secondary.opacity(0.12) : Color.clear))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: TendSurface.controlRadius, style: .continuous)
@@ -275,7 +276,7 @@ extension BoardStage.State {
         case .done: TendPalette.green
         case .running: TendPalette.blue
         case .needsYou: TendPalette.orange
-        case .waiting: Color.secondary.opacity(0.25)
+        case .waiting: TendInk.secondary.opacity(0.25)
         }
     }
 
@@ -304,14 +305,14 @@ struct StageBar: View {
             .accessibilityHidden(true)
             if let index = unit.currentStage {
                 HStack {
-                    Text(verbatim: unit.stages[index].name).fontWeight(.medium).foregroundStyle(.secondary)
+                    Text(verbatim: unit.stages[index].name).fontWeight(.medium).foregroundStyle(TendInk.secondary)
                     Spacer()
                     if unit.stages.count > 1 {
                         Text(verbatim: "\(unit.doneStages)/\(unit.stages.count)").monospacedDigit()
                     }
                 }
                 .font(TendType.meta)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(TendInk.tertiary)
             }
         }
     }
@@ -327,6 +328,14 @@ struct InsetBox<Content: View>: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color(token: TendDesignTokens.inset), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Color(token: TendDesignTokens.insetBorder)))
+    }
+}
+
+/// Card line limits: one more line at the accessibility text sizes, where
+/// two lines hold only a few words.
+enum TendLines {
+    static func more(_ lines: Int, _ size: DynamicTypeSize) -> Int {
+        size.isAccessibilitySize ? lines + 1 : lines
     }
 }
 
@@ -355,6 +364,7 @@ struct AgentLogoStack: View {
 /// and time on one line.
 struct WorkCard: View {
     let unit: BoardUnit
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -365,20 +375,20 @@ struct WorkCard: View {
                 Text(verbatim: unit.titleText)
                     .font(TendType.cardTitle)
                     .foregroundStyle(unit.lane == .finished ? Color.primary.opacity(0.82) : Color.primary)
-                    .lineLimit(2)
+                    .lineLimit(TendLines.more(2, typeSize))
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             if unit.lane != .finished || unit.stages.count > 1 {
                 StageBar(unit: unit)
             }
-            if unit.headlineText != nil || unit.handledLimit {
+            if cardHeadline != nil || unit.handledLimit {
                 InsetBox {
-                    if let headline = unit.headlineText {
+                    if let headline = cardHeadline {
                         // One paragraph on the card; the detail shows it whole.
                         Text(TendMarkdown.inline(headline.split(whereSeparator: \.isNewline).joined(separator: " ")))
                             .font(unit.lane == .yourTurn ? TendType.body.weight(.medium) : TendType.body)
-                            .foregroundStyle(unit.lane == .yourTurn ? Color.primary : Color.secondary)
-                            .lineLimit(unit.lane == .yourTurn ? 4 : 2)
+                            .foregroundStyle(unit.lane == .yourTurn ? Color.primary : TendInk.secondary)
+                            .lineLimit(TendLines.more(unit.lane == .yourTurn ? 4 : 2, typeSize))
                             // Measured and drawn at the same height in a lazy lane.
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -386,7 +396,7 @@ struct WorkCard: View {
                     if unit.handledLimit {
                         Label(String(localized: "Rate limited · the limit policy will resume it"), systemImage: "arrow.triangle.2.circlepath")
                             .font(TendType.meta)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(TendInk.secondary)
                     }
                 }
             }
@@ -398,25 +408,58 @@ struct WorkCard: View {
         .accessibilityIdentifier("workCard")
     }
 
+    /// The headline, unless it only repeats the state the meta row shows.
+    private var cardHeadline: String? { Self.shownHeadline(unit) }
+
+    /// Hidden only when it is exactly the lane's own state, as the meta row
+    /// shows it ("Working" over "Working" in progress). A status the row
+    /// does not show (an error, a question waiting) always stays.
+    static func shownHeadline(_ unit: BoardUnit) -> String? {
+        guard let headline = unit.headlineText else { return nil }
+        let said = headline.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+        if unit.lane == .inProgress, said.caseInsensitiveCompare(unit.lane.statusLabel) == .orderedSame { return nil }
+        return headline
+    }
+
     /// In a narrow column the host names, then the project, give way
-    /// first; the state and the time always stay.
+    /// first; the state and the time always stay. At large text sizes the
+    /// row becomes two: the state and the time, then who and where.
     private var meta: some View {
         ViewThatFits(in: .horizontal) {
-            metaRow(hostNames: true, project: true)
-            metaRow(hostNames: false, project: true)
-            metaRow(hostNames: false, project: false)
+            HStack(spacing: 6) { status; who(hostNames: true, project: true); Spacer(minLength: 4); time }
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) { status; Spacer(minLength: 4); time }
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 6) { who(hostNames: true, project: true) }
+                    HStack(spacing: 6) { who(hostNames: true, project: false) }
+                    HStack(spacing: 6) { who(hostNames: false, project: false) }
+                }
+            }
         }
+        .lineLimit(1)
         .font(TendType.meta)
         .foregroundStyle(TendSurface.metaText)
     }
 
-    private func metaRow(hostNames: Bool, project: Bool) -> some View {
-        HStack(spacing: 6) {
-            Label(unit.lane.statusLabel, systemImage: unit.lane.statusImage)
-                .labelStyle(.titleAndIcon)
-                .fontWeight(.semibold)
-                .foregroundStyle(unit.lane.tint)
+    private var status: some View {
+        Label(unit.lane.statusLabel, systemImage: unit.lane.statusImage)
+            .labelStyle(.titleAndIcon)
+            .fontWeight(.semibold)
+            .foregroundStyle(unit.lane.tint)
+            .fixedSize()
+    }
+
+    @ViewBuilder
+    private var time: some View {
+        if let time = unit.time {
+            Text(time, format: .relative(presentation: .numeric, unitsStyle: .abbreviated))
+                .monospacedDigit()
                 .fixedSize()
+        }
+    }
+
+    @ViewBuilder
+    private func who(hostNames: Bool, project: Bool) -> some View {
             if !unit.agentKinds.isEmpty {
                 AgentLogoStack(kinds: unit.agentKinds, size: 13)
             }
@@ -435,14 +478,6 @@ struct WorkCard: View {
                     .fixedSize()
                     .accessibilityLabel(Text("\(unit.helpers.count) helper sessions"))
             }
-            Spacer(minLength: 4)
-            if let time = unit.time {
-                Text(time, format: .relative(presentation: .numeric, unitsStyle: .abbreviated))
-                    .monospacedDigit()
-                    .fixedSize()
-            }
-        }
-        .lineLimit(1)
     }
 }
 
@@ -450,20 +485,21 @@ struct WorkCard: View {
 /// phone starts new work only, never a Work that already exists.
 struct BacklogCard: View {
     let record: BacklogRecord
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(verbatim: record.titleText)
                     .font(TendType.cardTitle)
-                    .lineLimit(2)
+                    .lineLimit(TendLines.more(2, typeSize))
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if let priority = record.priority {
                     Chip(text: "P\(priority)")
                 }
             }
             if let line = record.line?.nonEmpty {
-                Text(verbatim: line).font(TendType.body).foregroundStyle(.secondary).lineLimit(2)
+                Text(verbatim: line).font(TendType.body).foregroundStyle(TendInk.secondary).lineLimit(TendLines.more(2, typeSize))
             }
             let meta = [record.workspace, record.pipeline].compactMap { $0?.nonEmpty }
             if !meta.isEmpty {
