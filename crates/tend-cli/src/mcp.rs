@@ -9335,11 +9335,11 @@ mod tests {
         // A config-incompatible install cannot take down this live pipe,
         // and the same rejected binary/config pair is probed only once.
         let probes = dir.path().join("probes");
-        std::fs::write(
+        tend::test_support::replace_executable(
             &binary,
             format!("#!/bin/sh\nprintf p >> '{}'\nexit 1\n", probes.display()),
-        )
-        .unwrap();
+            0o755,
+        );
         // A poll schedules an OS process; its completion is not bounded by
         // a few timer ticks on a busy host. Wait for the probe's evidence.
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -9362,7 +9362,11 @@ mod tests {
         assert!(line.contains("\"id\":2"));
 
         // Replaced: the next idle poll hands over to the new binary once.
-        std::fs::write(&binary, b"#!/bin/sh\n# validated new build\nexit 0\n").unwrap();
+        tend::test_support::replace_executable(
+            &binary,
+            b"#!/bin/sh\n# validated new build\nexit 0\n",
+            0o755,
+        );
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
             while calls.load(Ordering::SeqCst) == 0 {
                 tokio::time::sleep(UPGRADE_POLL_INTERVAL).await;
