@@ -3650,10 +3650,14 @@ fn await_ready(
     // showing that another app owns the conversation, or a startup error.
     // Every swap, with or without a follow-up, waits for a usable screen.
     enter(runner, Phase::Readiness)?;
+    // The last screen the wait judged, kept for the journal's why: never a
+    // capture taken after it.
+    let judged: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
     let readiness = wait_for_resume_answering(
         io,
         || {
             let screen = io.capture();
+            judged.borrow_mut().clone_from(&screen);
             // The relaunch has booted once it draws its own prompt: no
             // prompt was on screen when it was typed, the screen shows the
             // agent's prompt and no dialog, and the one process bound to
@@ -3706,7 +3710,7 @@ fn await_ready(
         Resume::Exited => (Readiness::Exited, None),
         Resume::Unsettled => (
             Readiness::Unsettled,
-            Some(unsettled_why(io.capture().as_deref()).to_owned()),
+            Some(unsettled_why(judged.borrow().as_deref()).to_owned()),
         ),
     };
     if !runner.observe(Observation::Readiness { result: seen, why }) {

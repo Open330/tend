@@ -66,8 +66,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`no_agent_prompt`, `never_quiet`, `screen_empty`, `screen_unreadable`).
   `tend swap --status` shows it as the target's reason
   (`readiness_blocked: …`) once the daemon no longer holds the job's own
-  report, as after a restart. The fleet's swap history had 47 failed
-  targets whose cause could no longer be read.
+  report, as after a restart, for as long as the job's evidence is kept
+  (30 days). The fleet's swap history had 47 failed targets whose cause
+  could no longer be read.
 - Tend for iOS: the **Can't be answered** group, its Close all report and
   the reasons a question went unanswered now read in Korean too, and its
   quieter text uses the app's readable inks.
