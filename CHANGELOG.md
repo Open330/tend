@@ -90,6 +90,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Tend for Mac: Explore's rows keep the pane's name in a narrow sidebar (the
+  status gives up its word first, and keeps its dot); Inbox rows are named
+  after the agent's window instead of a cut-off "claude code"; Settings ›
+  Accounts no longer repeats tendd's English reason under the explanation;
+  Korean says 에이전트 and 페인 where it still said agent and pane.
 - `install-tend.ps1`: the default install from a release asked for
   `tend-vX.Y.Z-.zip` and stopped (404) before changing anything, because a
   variable for the Start menu entry hid the target name. With v0.10.24,

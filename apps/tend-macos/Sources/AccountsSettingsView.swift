@@ -13,14 +13,30 @@ struct TendAccountsSettingsPane: View {
     private var moduleOff: Bool { swaps.accountModuleOff }
     private var isEnabled: Bool { registry.isEnabled(AasModule.identity.id) && !moduleOff }
 
+    /// tendd's reason for a module turned off in its config, or left out of
+    /// its build (`swap_api::module_unavailable`): the two the captions say.
+    static func explained(_ reason: String) -> Bool {
+        reason.hasPrefix("the account module is not enabled") || notInBuild(reason)
+    }
+
+    static func notInBuild(_ reason: String?) -> Bool {
+        reason?.hasPrefix("the account module is not in this build") == true
+    }
+
     var body: some View {
         Form {
             if moduleOff {
                 Section {
                     Label("The account module is off in tendd", systemImage: "person.2.slash")
                         .font(.headline)
-                    TendSettingsCaption("Switching agents between accounts is an optional module. Set [modules] accounts = true in config.toml, or configure accounts, then restart tendd. Usage limits are still seen and resumed without it.")
-                    if let reason = swaps.health?.reason {
+                    if Self.notInBuild(swaps.health?.reason) {
+                        TendSettingsCaption("This tendd was built without the account module, so no setting turns it on. Install a Tend release, or rebuild tend-cli and tendd with the aas feature (on by default). Usage limits are still seen and resumed without it.")
+                    } else {
+                        TendSettingsCaption("Switching agents between accounts is an optional module. Set [modules] accounts = true in config.toml, or configure accounts, then restart tendd. Usage limits are still seen and resumed without it.")
+                    }
+                    // tendd's reason, unless it is the one the caption above
+                    // already says in the person's language.
+                    if let reason = swaps.health?.reason, !Self.explained(reason) {
                         TendSettingsCaption(verbatim: reason)
                     }
                 }

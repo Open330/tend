@@ -1188,9 +1188,13 @@ private struct OperatorInboxRow: View {
 private struct InboxAgentRow: View {
     let participant: TendHostedAgent
 
+    /// Its alias, its own title, else the window it runs in, as Explore
+    /// names it: the logo beside it already says which agent it is, and
+    /// "claude code" alone did not tell two rows apart (and was cut short).
     private var title: String {
-        participant.pane?.agentAlias.map { "@\($0)" }
-            ?? participant.agent.aiTitle
+        presentText(participant.pane?.agentAlias).map { "@\($0)" }
+            ?? presentText(participant.agent.aiTitle)
+            ?? presentText(participant.pane?.windowName)
             ?? participant.agent.kind.replacingOccurrences(of: "_", with: " ")
     }
 
