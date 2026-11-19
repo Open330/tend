@@ -137,11 +137,24 @@ impl Client {
         origin: &crate::collaboration::CollaborationOrigin,
         limit: usize,
     ) -> Result<crate::decision_queue::DecisionHistory, RuntimeError> {
+        self.decision_history_with(origin, limit, false).await
+    }
+
+    /// [`Self::decision_history`], also listing tend's own closures when
+    /// `include_closures` (needs `decision_history_closures_v1`; an older
+    /// daemon ignores the flag and sends the plain history).
+    pub async fn decision_history_with(
+        &self,
+        origin: &crate::collaboration::CollaborationOrigin,
+        limit: usize,
+        include_closures: bool,
+    ) -> Result<crate::decision_queue::DecisionHistory, RuntimeError> {
         let req = serde_json::json!({
             "protocol": PROTOCOL_VERSION,
             "kind": "decision_history",
             "limit": limit,
             "origin": origin,
+            "include_closures": include_closures,
         });
         field(&self.call_checked(&req).await?, "decision_history")
     }

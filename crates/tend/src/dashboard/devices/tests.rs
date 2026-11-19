@@ -1719,3 +1719,118 @@ fn what_review_shows_never_reaches_a_device() {
     let projected = super::operate::device_board(&board, None).to_string();
     assert!(!projected.contains("SENTINEL"), "{projected}");
 }
+
+/// A mailbox with one answered question and one item tend closed itself.
+async fn mailbox_with_a_closure() -> Arc<crate::collaboration::CollaborationStore> {
+    use crate::collaboration::system_asks::{
+        SystemAskCloseReason, SystemAskCloser, SystemAskClosure, SystemAskState,
+    };
+    use crate::collaboration::{
+        CollaborationOptions, CollaborationStore, HumanAction, NewRequest, Participant,
+        RequestKind, RequestStatus,
+    };
+    let mailbox = CollaborationStore::in_memory(CollaborationOptions::default());
+    let sender: Participant = serde_json::from_value(json!({
+        "agent_kind":"codex", "agent_session_id":"a", "pane":"%1",
+        "room":{"host":"tmux","socket":"default","window_id":"@1"},
+        "state":"idle", "launch_purpose":"worker"
+    }))
+    .unwrap();
+    let console = Participant::console(sender.room.clone());
+    let question = mailbox
+        .create(
+            sender,
+            console.clone(),
+            NewRequest {
+                body: "Merge?".into(),
+                kind: RequestKind::Question,
+                human_action: Some(HumanAction::Choice),
+                ..NewRequest::default()
+            },
+        )
+        .await
+        .unwrap();
+    mailbox
+        .reply(
+            &console,
+            &question.id,
+            RequestStatus::Completed,
+            "merge".into(),
+            vec![],
+        )
+        .await
+        .unwrap();
+    let mut closed = question.clone();
+    closed.id = "req_wake_closed".into();
+    closed.parent_request_id = Some(question.id.clone());
+    closed.from.agent_session_id = "tend:reply-wake".into();
+    closed.from.pane = "tend-reply-wake".into();
+    closed.from.agent_kind = crate::AgentKind::Task;
+    closed.human_action = Some(HumanAction::Information);
+    closed.provenance = None;
+    closed.reply = None;
+    closed.status = RequestStatus::Cancelled;
+    closed.system_ask = Some(SystemAskState {
+        subject_session: "a".into(),
+        covers: Vec::new(),
+        closed: Some(SystemAskClosure {
+            reason: SystemAskCloseReason::Stale,
+            at: time::OffsetDateTime::now_utc(),
+            by: SystemAskCloser::Daemon,
+            into: None,
+        }),
+    });
+    mailbox.put_rows_for_test(&[closed]).await;
+    mailbox
+}
+
+/// tend's closures are in the history only for a page that asks; a device,
+/// and its Home board, keep the history they decode today.
+#[tokio::test]
+async fn the_http_history_lists_closures_only_when_asked() {
+    let mailbox = mailbox_with_a_closure().await;
+    let app = router(state(Some(TOKEN)).with_collaboration(mailbox));
+    let kinds = |body: &Value| -> Vec<String> {
+        body["hosts"][0]["history"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["kind"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let (status, plain) = call(&app, "GET", "/api/decisions/history", Some(TOKEN), None).await;
+    assert_eq!(status, StatusCode::OK, "{plain}");
+    assert_eq!(kinds(&plain), vec!["human_answer"]);
+    let (status, with) = call(
+        &app,
+        "GET",
+        "/api/decisions/history?closures=true",
+        Some(TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{with}");
+    let mut got = kinds(&with);
+    got.sort();
+    assert_eq!(got, vec!["closed_by_tend", "human_answer"]);
+    let closure = with["hosts"][0]["history"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["kind"] == "closed_by_tend")
+        .unwrap();
+    assert_eq!(closure["reason"], "stale");
+    assert_eq!(closure["closed_by"], "daemon");
+
+    let (decide, _) = pair(&app, "watch").await;
+    let (status, device) = call(&app, "GET", "/api/decisions/history", Some(&decide), None).await;
+    assert_eq!(status, StatusCode::OK, "{device}");
+    assert_eq!(kinds(&device), vec!["human_answer"]);
+    let (operate, _) = pair_with(&app, "phone", Some("operate"), Some("operate")).await;
+    let (status, board) = call(&app, "GET", "/api/device/home", Some(&operate), None).await;
+    assert_eq!(status, StatusCode::OK, "{board}");
+    assert!(
+        !board.to_string().contains("closed_by_tend"),
+        "the device board keeps the plain history: {board}"
+    );
+}

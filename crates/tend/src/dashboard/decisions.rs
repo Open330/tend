@@ -88,6 +88,10 @@ const DEFAULT_LIMIT: usize = 100;
 pub(super) struct DecisionsQuery {
     #[serde(default)]
     limit: Option<usize>,
+    /// History only: also list the items tendd closed itself
+    /// (`?closures=true`). A page that cannot draw them leaves it off.
+    #[serde(default)]
+    closures: bool,
 }
 
 const FLEET_READ_TIMEOUT: Duration = Duration::from_secs(6);
@@ -298,17 +302,23 @@ pub(super) async fn history_handler(
     Query(query): Query<DecisionsQuery>,
 ) -> Response {
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT);
-    Json(history_json(&state, limit).await).into_response()
+    Json(history_json(&state, limit, query.closures).await).into_response()
 }
 
 /// Past decisions per host, as `GET /api/decisions/history` returns them.
 pub(in crate::dashboard) async fn history_json(
     state: &AppState,
     limit: usize,
+    include_closures: bool,
 ) -> serde_json::Value {
-    let history =
-        crate::decision_queue::read_history(&state.reviews, &state.collaboration, limit, true)
-            .await;
+    let history = crate::decision_queue::read_history(
+        &state.reviews,
+        &state.collaboration,
+        limit,
+        true,
+        include_closures,
+    )
+    .await;
     let fleet_hosts = fleet_hosts(state).await;
     let covers = local_alias(&fleet_hosts);
     let mut hosts = vec![json!({
@@ -320,7 +330,7 @@ pub(in crate::dashboard) async fn history_json(
             fleet_hosts
                 .into_iter()
                 .filter(|host| !host.local)
-                .map(|host| remote_history(fleet, host, limit)),
+                .map(|host| remote_history(fleet, host, limit, include_closures)),
         )
         .await;
         hosts.extend(sections);
@@ -334,6 +344,7 @@ async fn remote_history(
     fleet: &crate::fleet::FleetRuntime,
     host: crate::fleet::FleetHostSnapshot,
     limit: usize,
+    include_closures: bool,
 ) -> serde_json::Value {
     use crate::fleet::{FleetHostState, FleetOperation};
     let empty = || crate::decision_queue::assemble_history(Vec::new(), &[], limit);
@@ -357,10 +368,21 @@ async fn remote_history(
             vec!["decision history: this host's tend does not send it; upgrade it".into()],
         );
     }
+    // Only a relay that says it can is asked for closures (tendd's Fleet
+    // manager refuses it to any other); an older one gets the request it
+    // knows and answers the plain history.
+    let include_closures = include_closures
+        && host
+            .capabilities
+            .iter()
+            .any(|c| c == crate::fleet::FLEET_DECISION_HISTORY_CLOSURES_CAPABILITY);
     match fleet
         .execute(
             host.alias.clone(),
-            FleetOperation::DecisionHistory { limit },
+            FleetOperation::DecisionHistory {
+                limit,
+                include_closures,
+            },
             FLEET_READ_TIMEOUT,
         )
         .await

@@ -486,10 +486,17 @@ impl LocalTask {
                     .map(FleetCommandResult::decision_queue)
                     .map_err(|error| error.to_string())
             }
-            FleetOperation::DecisionHistory { limit } => {
+            FleetOperation::DecisionHistory {
+                limit,
+                include_closures,
+            } => {
                 audit_operation(LOCAL_HOST_ALIAS, "decision_history", 0);
                 self.client
-                    .decision_history(&tend::decision_queue::operator_origin(), limit)
+                    .decision_history_with(
+                        &tend::decision_queue::operator_origin(),
+                        limit,
+                        include_closures,
+                    )
                     .await
                     .map(FleetCommandResult::decision_history)
                     .map_err(|error| error.to_string())
@@ -733,6 +740,16 @@ fn decision_queue_refusal(
 ) -> Option<String> {
     let (capability, what) = match operation {
         FleetOperation::DecisionQueue { .. } => (FLEET_DECISION_QUEUE_CAPABILITY, "queue"),
+        // Asking for tend's own closures needs a relay that passes the
+        // flag on; an older one would answer the plain history, which is
+        // not what was asked for.
+        FleetOperation::DecisionHistory {
+            include_closures: true,
+            ..
+        } => (
+            tend::fleet::FLEET_DECISION_HISTORY_CLOSURES_CAPABILITY,
+            "history with tend's closures",
+        ),
         FleetOperation::DecisionHistory { .. } => (FLEET_DECISION_HISTORY_CAPABILITY, "history"),
         _ => return None,
     };
@@ -1793,13 +1810,20 @@ impl HostTask {
                             );
                             RelayRequest::DecisionQueue { request_id: id, limit }
                         }
-                        FleetOperation::DecisionHistory { limit } => {
+                        FleetOperation::DecisionHistory {
+                            limit,
+                            include_closures,
+                        } => {
                             audit_operation(&self.alias, "decision_history", 0);
                             pending.insert(
                                 id.clone(),
                                 PendingRequest::new(PendingReply::Command(command.reply), command_timeout),
                             );
-                            RelayRequest::DecisionHistory { request_id: id, limit }
+                            RelayRequest::DecisionHistory {
+                                request_id: id,
+                                limit,
+                                include_closures,
+                            }
                         }
                         FleetOperation::ReviewDispose { dispose } => {
                             audit_operation(&self.alias, "review_dispose", 0);
@@ -2361,10 +2385,25 @@ mod tests {
         };
         let older = hello(&[FLEET_DECISION_QUEUE_CAPABILITY]);
         let current = hello(FLEET_CAPABILITIES);
-        let history = FleetOperation::DecisionHistory { limit: 50 };
+        let history = FleetOperation::DecisionHistory {
+            limit: 50,
+            include_closures: false,
+        };
         let refusal = decision_queue_refusal("remote", &older, &history).unwrap();
         assert!(refusal.contains("decision history"), "{refusal}");
         assert!(decision_queue_refusal("remote", &current, &history).is_none());
+        // A relay with the history but not the closures: the plain read
+        // goes as the request it knows, the closures read is refused
+        // rather than answered with the plain history.
+        let plain_only = hello(&[FLEET_DECISION_HISTORY_CAPABILITY]);
+        assert!(decision_queue_refusal("remote", &plain_only, &history).is_none());
+        let with_closures = FleetOperation::DecisionHistory {
+            limit: 50,
+            include_closures: true,
+        };
+        let refusal = decision_queue_refusal("remote", &plain_only, &with_closures).unwrap();
+        assert!(refusal.contains("tend's closures"), "{refusal}");
+        assert!(decision_queue_refusal("remote", &current, &with_closures).is_none());
         assert!(
             !history.is_control(),
             "a read: observe-only hosts send it too"

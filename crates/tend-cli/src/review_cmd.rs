@@ -316,20 +316,26 @@ enum Action {
         #[arg(long)]
         json: bool,
     },
-    /// What was decided: review dispositions and answered human requests,
-    /// newest first, with their notes and answers.
+    /// What was decided: review dispositions, answered human requests and
+    /// the items tend closed itself, newest first, with their notes,
+    /// answers and reasons.
     History {
         #[arg(long, default_value_t = 50)]
         limit: usize,
         #[arg(long)]
         json: bool,
+        /// With --json, also list the items tend closed itself
+        /// (`"kind": "closed_by_tend"`). The text listing always shows them.
+        #[arg(long)]
+        closures: bool,
     },
     /// Close the items tend opened itself (peer recovery, replies for a gone
     /// sender) that can no longer matter: duplicates about the same session
     /// are merged into one, and items whose original request finished or
-    /// moved on, or that waited over a week with nobody left to act on
-    /// them, are closed with the reason recorded. Agents' own questions are
-    /// never touched. Prints what it would close; --apply closes it.
+    /// moved on, or whose condition is over a week old with nobody left to
+    /// act on it, are closed with the reason recorded. tendd does the same
+    /// every hour; this shows it now. Agents' own questions are never
+    /// touched. Prints what it would close; --apply closes it.
     Cleanup {
         /// Close them. Without it, nothing changes.
         #[arg(long)]
@@ -430,24 +436,44 @@ pub(crate) async fn run(args: Args, client: &Client) -> Result<()> {
             }
             Ok(())
         }
-        Action::History { limit, json } => {
-            require_queue_capability(client).await?;
-            let history = client
-                .decision_history(&tend::decision_queue::operator_origin(), limit)
-                .await?;
-            if json {
-                println!("{}", serde_json::to_string(&history)?);
-            } else {
-                print!("{}", render_history(&history, OffsetDateTime::now_utc()));
-            }
-            Ok(())
-        }
+        Action::History {
+            limit,
+            json,
+            closures,
+        } => history(client, limit, json, closures).await,
         Action::Cleanup { apply, json } => cleanup(client, apply, json).await,
         Action::Show { id, json } => show(client, &id, json).await,
         Action::Accept(a) => dispose(client, DispositionKind::Accepted, a).await,
         Action::Return(a) => dispose(client, DispositionKind::Returned, a).await,
         Action::Withdraw(a) => dispose(client, DispositionKind::Withdrawn, a).await,
     }
+}
+
+/// Decided items, newest first, with tend's own closures from a daemon that
+/// can list them (for `--json`, only with `--closures`).
+async fn history(client: &Client, limit: usize, json: bool, closures: bool) -> Result<()> {
+    require_queue_capability(client).await?;
+    // JSON keeps the shape scripts already parse unless they ask.
+    let wanted = closures || !json;
+    let closures = wanted
+        && client
+            .hello(std::time::Duration::from_secs(3))
+            .await
+            .is_ok_and(|hello| {
+                hello
+                    .capabilities
+                    .iter()
+                    .any(|c| c == tend::decision_queue::DECISION_HISTORY_CLOSURES_CAPABILITY)
+            });
+    let history = client
+        .decision_history_with(&tend::decision_queue::operator_origin(), limit, closures)
+        .await?;
+    if json {
+        println!("{}", serde_json::to_string(&history)?);
+    } else {
+        print!("{}", render_history(&history, OffsetDateTime::now_utc()));
+    }
+    Ok(())
 }
 
 /// One item in full, then the command that opens each piece of evidence.
@@ -693,6 +719,20 @@ fn render_history(history: &DecisionHistory, now: OffsetDateTime) -> String {
                     asker(&answer.request),
                     first_line(&answer.request.body),
                     first_line(&answer.answer),
+                );
+            }
+            DecidedItem::ClosedByTend(closed) => {
+                let why = match &closed.into {
+                    Some(into) => format!("merged into {into}"),
+                    None => closed.reason_text.clone(),
+                };
+                let _ = writeln!(
+                    out,
+                    "{ago:>4}  {:<9} {}  {}  {}  ({why})",
+                    "closed",
+                    closed.request.request_id,
+                    asker(&closed.request),
+                    first_line(&closed.request.body),
                 );
             }
         }

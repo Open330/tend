@@ -20,6 +20,11 @@ use time::OffsetDateTime;
 
 /// Daemons that serve `decision_queue` and `decision_history`.
 pub const DECISION_QUEUE_CAPABILITY: &str = "decision_queue_v1";
+
+/// `hello` capability: `decision_history` takes `include_closures` and then
+/// also lists the items tendd closed itself ([`DecidedItem::ClosedByTend`]).
+/// Without the flag the history is exactly what older readers decode.
+pub const DECISION_HISTORY_CLOSURES_CAPABILITY: &str = "decision_history_closures_v1";
 /// Upper bound on one queue or history read.
 pub const MAX_QUEUE_LIMIT: usize = 500;
 /// Serialized-size budget for one read, well under the IPC line cap: a
@@ -166,6 +171,10 @@ pub enum DecidedItem {
     Review(Box<ReviewItem>),
     /// A human request and the answer it got.
     HumanAnswer(Box<HumanAnswerEntry>),
+    /// An item tendd opened itself and closed without an answer, with why.
+    /// Only in a history read with `include_closures`: older readers have
+    /// no such variant.
+    ClosedByTend(Box<ClosedByTendEntry>),
 }
 
 impl DecidedItem {
@@ -178,7 +187,39 @@ impl DecidedItem {
                 .as_ref()
                 .map_or(item.requested_at, |d| d.at),
             Self::HumanAnswer(entry) => entry.answered_at,
+            Self::ClosedByTend(entry) => entry.closed_at,
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ClosedByTendEntry {
+    #[serde(flatten)]
+    pub request: HumanRequestEntry,
+    pub reason: crate::collaboration::system_asks::SystemAskCloseReason,
+    /// The reason in words, as `tend review cleanup` prints it.
+    pub reason_text: String,
+    pub closed_by: crate::collaboration::system_asks::SystemAskCloser,
+    /// For a merged duplicate: the item that covers it now.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub into: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub closed_at: OffsetDateTime,
+}
+
+impl ClosedByTendEntry {
+    /// The entry for a system ask tendd closed, if `request` is one.
+    #[must_use]
+    pub fn from_request(request: &CollaborationRequest) -> Option<Self> {
+        let closure = request.system_ask.as_ref()?.closed.as_ref()?;
+        Some(Self {
+            request: HumanRequestEntry::from_request(request),
+            reason: closure.reason,
+            reason_text: closure.reason.as_str().to_owned(),
+            closed_by: closure.by,
+            into: closure.into.clone(),
+            closed_at: closure.at,
+        })
     }
 }
 
@@ -318,6 +359,7 @@ pub async fn read_history(
     collaboration: &crate::collaboration::CollaborationStore,
     limit: usize,
     operator: bool,
+    include_closures: bool,
 ) -> DecisionHistory {
     let limit = limit.clamp(1, MAX_QUEUE_LIMIT);
     let mut unavailable = Vec::new();
@@ -328,6 +370,15 @@ pub async fn read_history(
         Err(crate::collaboration::CollaborationError::ScopeDenied)
     };
     let answered = human_source(answered, &mut truncated, &mut unavailable);
+    let closed = if operator && include_closures {
+        human_source(
+            collaboration.closed_system_asks(limit).await,
+            &mut truncated,
+            &mut unavailable,
+        )
+    } else {
+        Vec::new()
+    };
     let decided = match reviews.decided(limit).await {
         Ok(page) => {
             truncated |= page.has_more;
@@ -338,7 +389,7 @@ pub async fn read_history(
             Vec::new()
         }
     };
-    let mut history = assemble_history(decided, &answered, limit);
+    let mut history = assemble_history_with_closures(decided, &answered, &closed, limit);
     history.truncated |= truncated;
     history.unavailable = unavailable;
     history
@@ -410,6 +461,18 @@ pub fn assemble_history(
     answered: &[CollaborationRequest],
     limit: usize,
 ) -> DecisionHistory {
+    assemble_history_with_closures(reviews, answered, &[], limit)
+}
+
+/// [`assemble_history`] plus the system asks tendd closed, interleaved by
+/// when each was decided or closed.
+#[must_use]
+pub fn assemble_history_with_closures(
+    reviews: Vec<ReviewItem>,
+    answered: &[CollaborationRequest],
+    closed: &[CollaborationRequest],
+    limit: usize,
+) -> DecisionHistory {
     let mut items: Vec<DecidedItem> = reviews
         .into_iter()
         .filter(|item| !item.is_open())
@@ -422,6 +485,10 @@ pub fn assemble_history(
                 answer: reply.body.clone(),
                 answered_at: reply.at,
             })))
+        }))
+        .chain(closed.iter().filter_map(|request| {
+            ClosedByTendEntry::from_request(request)
+                .map(|entry| DecidedItem::ClosedByTend(Box::new(entry)))
         }))
         .collect();
     items.sort_by_key(|item| std::cmp::Reverse(item.decided_at()));

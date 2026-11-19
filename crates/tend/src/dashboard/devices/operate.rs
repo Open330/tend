@@ -1044,7 +1044,7 @@ pub(super) fn device_board(board: &Value, history: Option<&Value>) -> Value {
 pub(super) async fn home(State(state): State<AppState>) -> Response {
     let (board, history) = tokio::join!(
         crate::dashboard::home::shared_board(&state, 100),
-        crate::dashboard::decisions::history_json(&state, 100)
+        crate::dashboard::decisions::history_json(&state, 100, false)
     );
     Json(device_board(&board, Some(&history))).into_response()
 }

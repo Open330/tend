@@ -28,6 +28,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   limit policy will handle is no longer pinned, and one no policy covers
   is. An agent that asked is pinned and groups with the idle ones, as on the
   Mac.
+- tend's own items in Your turn (peer recovery, replies for a gone
+  sender) now close themselves. tendd runs the full cleanup at start and
+  every hour, the backlog included, where before only `tend review cleanup`
+  reached the backlog and nothing ran it. The week before an item can close
+  for "nobody left to act on it" now counts from the condition (when the
+  request was interrupted, or the reply arrived) rather than from the item,
+  which was recreated and kept restarting the week; an item is listed for at
+  least a day first. A recovery item for a request the person sent is still
+  never closed for age, and agents' own questions are never touched.
+  `tend review history` lists these closures with their reason (with
+  `--json`, only when given `--closures`)
+  (`decision_history_closures_v1`; `GET /api/decisions/history?closures=true`;
+  over Fleet `fleet_decision_history_closures_v1`). Readers that do not ask
+  get the history they decode today. Design: docs/proposals/STALE_QUESTIONS.md.
 - iOS: a device paired to decide only now says why on In progress,
   Finished, Hosts and every agent or Work it cannot open, with one button,
   **Pair again with hosts and new work…**. That button asks the dashboard

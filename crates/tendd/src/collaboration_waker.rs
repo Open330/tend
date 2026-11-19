@@ -33,6 +33,8 @@ pub(super) fn spawn_collaboration_waker_task(
             tracing::warn!(%error, "initial peer interruption reconciliation failed");
         }
         retire_gone_sender_items(&collaboration).await;
+        sweep_system_asks(&collaboration, &store).await;
+        let mut last_sweep = std::time::Instant::now();
         if wake_enabled {
             rearm_unsubmitted_wakes(&collaboration, &store).await;
             wake_idle_collaboration_peers_with_inflight(
@@ -97,6 +99,10 @@ pub(super) fn spawn_collaboration_waker_task(
                     tracing::warn!(%error, "peer interruption reconciliation failed");
                 }
                 retire_gone_sender_items(&collaboration).await;
+                if last_sweep.elapsed() >= SYSTEM_ASK_SWEEP_EVERY {
+                    sweep_system_asks(&collaboration, &store).await;
+                    last_sweep = std::time::Instant::now();
+                }
                 if wake_enabled {
                     rearm_unsubmitted_wakes(&collaboration, &store).await;
                     wake_idle_collaboration_peers_with_inflight(
@@ -111,6 +117,25 @@ pub(super) fn spawn_collaboration_waker_task(
             }
         }
     }))
+}
+
+/// The full pass over tend's own items, the backlog included: what `tend
+/// review cleanup --apply` does, at start and every
+/// [`SYSTEM_ASK_SWEEP_EVERY`]. The closures are recorded on the rows and
+/// logged; agents' own questions are never touched.
+const SYSTEM_ASK_SWEEP_EVERY: std::time::Duration = std::time::Duration::from_secs(
+    tend::collaboration::system_asks::SYSTEM_ASK_SWEEP_EVERY
+        .whole_seconds()
+        .unsigned_abs(),
+);
+
+async fn sweep_system_asks(collaboration: &CollaborationStore, store: &tend::Store) {
+    if let Err(error) = collaboration
+        .sweep_system_asks(&store.snapshot().await)
+        .await
+    {
+        tracing::warn!(%error, "scheduled cleanup of tend's own items failed");
+    }
 }
 
 /// Re-arm wakes the recipient never submitted, so the pass that follows

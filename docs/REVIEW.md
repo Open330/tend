@@ -33,7 +33,8 @@ tend review list --all      # include disposed items
 tend review list --offset 50   # next page; a page that has more says so
 tend review show rv_…
 tend review queue           # everything waiting on you, in one list
-tend review history         # what was decided: dispositions and answers
+tend review history         # what was decided: dispositions, answers, tend's closures
+tend review cleanup         # what of tend's own items would close now (--apply closes it)
 
 tend review accept   rv_… [--note "…"]
 tend review return   rv_… --note "tests missing"   # sent back for more work
@@ -133,6 +134,38 @@ instead of showing it as empty. Human requests from every room are an
 operator-console read, as for any listing past one's own mailbox: the CLI
 asks as the console and the read is written to the collaboration audit
 ledger; an agent's origin gets reviews and waiting agents only.
+
+### tend's own items close themselves
+
+tendd opens some items itself: peer recovery (a request's recipient is
+interrupted) and reply wakes (a reply arrived for a sender that is gone).
+They are listed after agents' questions and results, and tendd closes them,
+without an answer and with the reason recorded on the row, when they can no
+longer matter:
+
+- the original request is gone, or no longer holds the condition the item
+  was about;
+- another open item about the same session covers it (merged);
+- nobody is left to act on an answer, and every original request it covers
+  has been in its condition for a week. The week counts from the condition,
+  not from the item, because items are recreated. An item is listed for at
+  least a day before it can close this way. A recovery item for a request
+  the person sent is never closed for age.
+
+tendd applies the rules on every reconcile to the items it opened under
+them, and to every item, the backlog included, at start and every hour.
+`tend review cleanup` shows what the same pass would close now, and
+`--apply` runs it. Agents' own questions are never touched.
+
+The history lists these closures when the reader asks for them:
+`decision_history` with `include_closures` (capability
+`decision_history_closures_v1`), `GET /api/decisions/history?closures=true`,
+and over Fleet only to a relay with `fleet_decision_history_closures_v1`.
+Each is `"kind": "closed_by_tend"`, with `reason`, `reason_text`,
+`closed_by`, `into` for a merge, and `closed_at`. Without the flag the history
+is exactly what older readers decode. `tend review history` shows them;
+with `--json` it lists them only with `--closures`, so scripts that parse
+it see the shape they already know.
 
 Tend for Mac draws this queue in Home's **Your turn** and at the top of the
 Review sheet; see [MACOS](MACOS.md#workspace-information-architecture). It

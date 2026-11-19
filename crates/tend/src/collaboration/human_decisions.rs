@@ -41,6 +41,30 @@ impl CollaborationStore {
         Ok((open.into_iter().take(limit).cloned().collect(), more))
     }
 
+    /// System asks tendd closed without an answer, newest closure first,
+    /// and whether more than `limit` exist.
+    pub async fn closed_system_asks(
+        &self,
+        limit: usize,
+    ) -> Result<(Vec<CollaborationRequest>, bool), CollaborationError> {
+        self.ensure_enabled()?;
+        let requests = self.requests.read().await;
+        let closed_at = |request: &CollaborationRequest| {
+            request
+                .system_ask
+                .as_ref()
+                .and_then(|state| state.closed.as_ref())
+                .map(|closure| closure.at)
+        };
+        let mut closed: Vec<&CollaborationRequest> = requests
+            .values()
+            .filter(|request| request.reply.is_none() && closed_at(request).is_some())
+            .collect();
+        closed.sort_by(|a, b| closed_at(b).cmp(&closed_at(a)).then(b.id.cmp(&a.id)));
+        let more = closed.len() > limit;
+        Ok((closed.into_iter().take(limit).cloned().collect(), more))
+    }
+
     /// Console requests someone answered, newest answer first, and whether
     /// more than `limit` exist.
     pub async fn answered_human_requests(

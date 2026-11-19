@@ -1,6 +1,6 @@
 # Questions nobody can be answered
 
-Status: proposal (wave 8, 2026-11-19), revised after Codex's design review. Not built yet.
+Status: agreed design (wave 8, 2026-11-19, Codex agreed on 43531a1a). Part 1, tend's own items, is built (`feat/stale-system-asks`); the rest is not yet.
 
 ## The complaint
 
@@ -211,7 +211,8 @@ changes.
   without a condition timestamp keeps today's behaviour.
 - **The backlog is in scope.** tendd runs the full pass (`Scope::All`) at
   start and once an hour, inside the same transaction lock as the managed
-  reconcile. The closer is recorded as `daemon_schedule`.
+  reconcile. The closer is recorded as `daemon`, a value older readers
+  already decode, rather than a new one.
 
 A recovery item for a request the person sent (operator console or Fleet
 initiator) is never closed **for age**. It still resolves when its condition
@@ -274,11 +275,17 @@ The choice for the owner:
 - (b) commission the answer-revision design first, and ship folding and Keep
   without Close all until then.
 
-Folding and Keep do not depend on this choice and are built now. Close all
-is built but **off**: the route, the button and `tend review cleanup --apply
---questions` stay disabled unless the owner explicitly accepts (a). Silence
-does not select (a). If the owner chooses (b), the answer-revision design
-comes first, and these stay off until it ships.
+**Status of the choice (2026-11-19):** the coordinator recommended (a), with
+safeguards: Close all asks for one confirmation that names the count and says
+each asker gets a declined reply; it never includes an item whose evidence is
+younger than the 24-hour grace or that was kept; and `tend review cleanup
+--questions` is a dry run unless `--apply` is given. The owner has not yet
+accepted it in their own words. Until they do, Close all is built but
+**off**: it sits behind `[review] close_unanswerable = false`, and the route,
+the button and `--questions --apply` refuse with that reason. Silence does not
+select (a). If the owner chooses (b), the answer-revision design comes first.
+
+Folding and Keep do not depend on this choice and ship enabled.
 
 ### Alternatives considered
 
@@ -345,7 +352,7 @@ run with --apply to close tend's items; add --questions to also close these 3
 
 ## Build plan
 
-Close all stays disabled until the owner decides, as above.
+Close all ships off, behind `[review] close_unanswerable`, until the owner accepts (a).
 
 1. **Daemon and CLI** (one PR):
    - end and replacement facts recorded at ingestion;

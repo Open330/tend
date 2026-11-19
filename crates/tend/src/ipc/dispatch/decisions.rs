@@ -10,7 +10,7 @@ use super::*;
 fn decision_audit(body: &RequestBody) -> Option<CollaborationAuditContext> {
     match body {
         RequestBody::DecisionQueue { origin, limit }
-        | RequestBody::DecisionHistory { origin, limit } => origin
+        | RequestBody::DecisionHistory { origin, limit, .. } => origin
             .as_ref()
             .filter(|origin| origin.console)
             .map(|origin| {
