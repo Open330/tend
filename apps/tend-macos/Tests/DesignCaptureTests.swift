@@ -42,8 +42,9 @@ struct DesignCaptureTests {
         defer { restorePreferences(saved) }
         let model = AppModel(client: TendIPCClient(socketPath: socket), launchesDaemon: false)
         model.retryConnection()
-        try await until("connected with agents", timeout: 60) {
-            model.connectionState == .connected && !model.fleetHosts.isEmpty
+        // The fixture's fleet, not just a host: demo-setup seeds a dozen agents.
+        try await until("connected with the fixture's agents", timeout: 60) {
+            model.connectionState == .connected && model.executionSnapshot.hostedAgents.count >= 10
         }
         // Let the board, the decision queue and the pane previews arrive.
         try await Task.sleep(for: .seconds(6))
@@ -147,8 +148,11 @@ struct DesignCaptureTests {
 
     private static let preferenceKeys = [TendPreferences.homeCardLayoutKey, TendPreferences.settingsTabKey]
 
+    /// The host's own persisted values (not the registered defaults, which
+    /// `object(forKey:)` would also return), so an absent key stays absent.
     private func savePreferences() -> [String: Any?] {
-        Dictionary(uniqueKeysWithValues: Self.preferenceKeys.map { ($0, UserDefaults.standard.object(forKey: $0)) })
+        let persisted = Bundle.main.bundleIdentifier.flatMap(UserDefaults.standard.persistentDomain(forName:)) ?? [:]
+        return Dictionary(uniqueKeysWithValues: Self.preferenceKeys.map { ($0, persisted[$0]) })
     }
 
     private func restorePreferences(_ saved: [String: Any?]) {
