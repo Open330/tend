@@ -178,21 +178,26 @@ private final class OffscreenWindow {
         if let sheet = window.attachedSheet { window.endSheet(sheet) }
     }
 
-    /// Presses the first control whose accessibility label is `label`.
+    /// Presses the first button whose accessibility label or title starts
+    /// with `label`, through the accessibility tree as VoiceOver would.
     func press(label: String) -> Bool {
-        func find(_ element: Any) -> NSAccessibilityElementProtocol? {
+        func get(_ object: NSObject, _ key: String) -> Any? {
+            object.responds(to: Selector(key)) ? object.value(forKey: key) : nil
+        }
+        func find(_ element: Any) -> NSObject? {
             guard let element = element as? NSObject else { return nil }
-            let role = element.accessibilityRole()
-            if role == .button, element.accessibilityLabel()?.hasPrefix(label) == true || element.accessibilityTitle()?.hasPrefix(label) == true {
-                return element as? NSAccessibilityElementProtocol
+            let name = (get(element, "accessibilityLabel") as? String) ?? (get(element, "accessibilityTitle") as? String) ?? ""
+            if (get(element, "accessibilityRole") as? String) == NSAccessibility.Role.button.rawValue, name.hasPrefix(label) {
+                return element
             }
-            for child in element.accessibilityChildren() ?? [] {
+            for child in (get(element, "accessibilityChildren") as? [Any]) ?? [] {
                 if let hit = find(child) { return hit }
             }
             return nil
         }
-        guard let button = find(host) as? NSObject else { return false }
-        return button.accessibilityPerformPress()
+        guard let button = find(host), button.responds(to: Selector("accessibilityPerformPress")) else { return false }
+        button.perform(Selector("accessibilityPerformPress"))
+        return true
     }
 
     func close() {
