@@ -2038,13 +2038,41 @@ impl<E: Engine> Service<E> {
             else {
                 break;
             };
+            if self.fault().is_some() {
+                // Halted: later targets are never reached, their pane stays
+                // reserved until the daemon restarts and recovers the job.
+                break;
+            }
+            // A cancelled job starts nothing more, without waiting on a pane.
+            match self.boundary(job, target_id, attempt, false) {
+                Some(Boundary::Deferred) => {
+                    self.release(&identity.endpoint);
+                    continue;
+                }
+                Some(Boundary::Cancelled) => {
+                    self.cancelled(job, report_index, &identity);
+                    continue;
+                }
+                Some(_) => {}
+                None => break,
+            }
+            if request.when_idle
+                && !request.force
+                && deadline
+                    .is_some_and(|until| time::OffsetDateTime::now_utc().unix_timestamp() >= until)
+            {
+                self.timed_out(job, target_id, attempt, report_index, &identity);
+                continue;
+            }
             // Before the pane is held: a worker waiting for a host slot
             // holds no pane. Dropped at the end of this target, or when it
             // goes back to wait for idle.
             let slot = self.slot();
             // Every home the target touches, taken now, before its pane is
             // held and before anything of it is checked; or, if another
-            // target holds one, back in the queue holding nothing.
+            // target holds one, back in the queue holding nothing, to be
+            // looked at again — fault, cancel and idle deadline first — on
+            // its next pass.
             let known = queue
                 .homes
                 .lock()
@@ -2085,32 +2113,6 @@ impl<E: Engine> Service<E> {
                     }
                 }
             };
-            if self.fault().is_some() {
-                // Halted: later targets are never reached, their pane stays
-                // reserved until the daemon restarts and recovers the job.
-                break;
-            }
-            // A cancelled job starts nothing more, without waiting on a pane.
-            match self.boundary(job, target_id, attempt, false) {
-                Some(Boundary::Deferred) => {
-                    self.release(&identity.endpoint);
-                    continue;
-                }
-                Some(Boundary::Cancelled) => {
-                    self.cancelled(job, report_index, &identity);
-                    continue;
-                }
-                Some(_) => {}
-                None => break,
-            }
-            if request.when_idle
-                && !request.force
-                && deadline
-                    .is_some_and(|until| time::OffsetDateTime::now_utc().unix_timestamp() >= until)
-            {
-                self.timed_out(job, target_id, attempt, report_index, &identity);
-                continue;
-            }
             // An adopted guard protects the one endpoint it was taken for.
             // The adopted guard goes only to the worker whose endpoint it
             // covers, looked at and taken under one lock; any other worker

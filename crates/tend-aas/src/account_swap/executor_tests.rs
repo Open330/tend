@@ -63,6 +63,8 @@ struct FakeIo {
     /// The homes a test watches, and whether they were held at each capture.
     watched: RefCell<Option<crate::home_gate::HeldHomes>>,
     held_at_capture: RefCell<Vec<bool>>,
+    /// The next captures that fail.
+    blind: Cell<usize>,
 }
 
 impl FakeIo {
@@ -99,6 +101,7 @@ impl FakeIo {
             launch_mark: RefCell::new(None),
             watched: RefCell::new(None),
             held_at_capture: RefCell::new(Vec::new()),
+            blind: Cell::new(0),
         }
     }
 
@@ -166,6 +169,10 @@ impl SwapIo for FakeIo {
     fn capture(&self) -> Option<String> {
         if let Some(homes) = self.watched.borrow().as_ref() {
             self.held_at_capture.borrow_mut().push(homes.holding());
+        }
+        if self.blind.get() > 0 {
+            self.blind.set(self.blind.get() - 1);
+            return None;
         }
         Some(self.screen.borrow().clone())
     }
@@ -2061,4 +2068,42 @@ fn a_fresh_prompt_of_this_launch_lets_the_home_go_before_readiness_ends() {
         seen.iter().rev().skip(1).all(|held| *held),
         "another launch never lets it go early: {seen:?}"
     );
+}
+
+/// A screen that could not be read when the relaunch was typed may have
+/// shown the old prompt: the home is kept, even for a correctly marked
+/// relaunch, until readiness ends.
+#[test]
+fn an_unreadable_screen_before_the_relaunch_keeps_the_home_until_readiness_ends() {
+    let io = FakeIo::new(
+        CODEX_IDLE,
+        Box::new(|io: &FakeIo, line: &str| {
+            if line.starts_with("signal TERM") {
+                io.kill(AGENT);
+                // The capture taken before the relaunch fails; the old prompt stays.
+                io.blind.set(1);
+            }
+            if line == "text \"\\r\""
+                && io
+                    .previous()
+                    .is_some_and(|typed| typed.contains("RELAUNCH"))
+            {
+                io.agent_appears_in(Duration::from_secs(1));
+            }
+        }),
+    );
+    *io.launch_mark.borrow_mut() = Some("L1".into());
+    let homes = held_homes("blind");
+    *io.watched.borrow_mut() = Some(homes.clone());
+    let mut blind = target(AgentKind::Codex, false, false);
+    blind.launch_id = Some("L1".into());
+    blind.homes = homes.clone();
+    let (result, _, _) = run(&io, &blind, &launch(), None, &mut NoObserver);
+    assert!(result.is_ok(), "{result:?}");
+    let seen = io.held_at_capture.borrow().clone();
+    assert!(
+        seen.iter().all(|held| *held),
+        "held at every capture: {seen:?}"
+    );
+    assert!(!homes.holding());
 }

@@ -3332,9 +3332,17 @@ fn a_cancel_while_a_target_waits_for_its_home_keeps_it_from_starting() {
     .job_id;
     std::thread::sleep(Duration::from_millis(100));
     h.service.cancel(&JobRef::Id(second.clone())).unwrap();
+    // Settled while the other job still holds the home: a wait for a home
+    // never keeps a cancel from taking effect.
+    let view = settled(&h.service, &second);
+    assert_ne!(view.state, "running", "{view:?}");
+    assert_eq!(
+        gate.waiting.load(Ordering::SeqCst),
+        1,
+        "the first job still holds the home"
+    );
     gate.open();
     assert_eq!(settled(&h.service, &first).state, "done");
-    let view = settled(&h.service, &second);
     assert_eq!(
         *h.executed.lock().unwrap(),
         ["%hx3"],
@@ -3347,4 +3355,54 @@ fn a_cancel_while_a_target_waits_for_its_home_keeps_it_from_starting() {
             .is_some_and(|o| o.note.contains("cancelled")),
         "{view:?}"
     );
+}
+
+/// An idle deadline that passes while a target waits for its home ends that
+/// target, while the other job still holds the home.
+#[test]
+fn an_idle_deadline_that_passes_while_waiting_for_a_home_ends_the_wait() {
+    let x = home("x3");
+    {
+        let mut homes = HOMES.lock().unwrap();
+        homes.insert("%hx5".into(), (x.clone(), x.clone()));
+        homes.insert("%hx6".into(), (x.clone(), x.clone()));
+    }
+    let gate = Arc::new(Gate::default());
+    let held = Arc::clone(&gate);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let h = harness(Box::new(move || {
+        if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            vec![gated("%hx5", &held)]
+        } else {
+            vec![run("%hx6")]
+        }
+    }));
+    let first = Service::submit(
+        &h.service,
+        "one",
+        &overrides(&["%hx5"]),
+        Origin::Public,
+        None,
+    )
+    .unwrap()
+    .job_id;
+    gate.until_holding(1);
+    let waiting = SwapOverrides {
+        when_idle: true,
+        idle_timeout: Some("1s".into()),
+        ..overrides(&["%hx6"])
+    };
+    let second = Service::submit(&h.service, "two", &waiting, Origin::Public, None)
+        .unwrap()
+        .job_id;
+    let view = settled(&h.service, &second);
+    assert_ne!(view.state, "running", "{view:?}");
+    assert_eq!(
+        gate.waiting.load(Ordering::SeqCst),
+        1,
+        "the first job still holds the home"
+    );
+    gate.open();
+    assert_eq!(settled(&h.service, &first).state, "done");
+    assert_eq!(*h.executed.lock().unwrap(), ["%hx5"]);
 }

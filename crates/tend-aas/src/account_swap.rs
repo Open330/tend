@@ -2979,10 +2979,12 @@ fn execute(
     // The old agent has exited: its home goes (unless the relaunch's is it).
     target.homes.stopped();
     enter(runner, Phase::Launching)?;
-    target.stale_prompt.set(
-        io.capture()
-            .is_some_and(|screen| tend::agent_tui::agent_prompt_visible(&screen)),
-    );
+    target
+        .stale_prompt // A screen that cannot be read counts as one that may show a prompt.
+        .set(
+            io.capture()
+                .is_none_or(|screen| tend::agent_tui::agent_prompt_visible(&screen)),
+        );
     relaunch(runner, target, command)?;
     let started = io.now();
     let relaunched = loop {
@@ -3484,7 +3486,11 @@ fn await_ready(
             // let go here; the full readiness checks below are unchanged.
             // Without that evidence it is kept until readiness ends.
             if screen.as_deref().is_some_and(|screen| {
-                boot_evident(screen, target.stale_prompt.get(), target.launch_id.as_deref())
+                boot_evident(
+                    screen,
+                    target.stale_prompt.get(),
+                    target.launch_id.as_deref(),
+                )
             }) && this_launch_runs(io, target)
             {
                 target.homes.booted("its own prompt is on screen");
@@ -3602,7 +3608,10 @@ fn boot_evident(screen: &str, stale: bool, launch_id: Option<&str>) -> bool {
     };
     let echo = starts.iter().rposition(|start| *start <= at).unwrap_or(0);
     lines[echo + 1..].iter().any(|line| {
-        tend::agent_tui::PROMPT_MARKS.iter().any(|mark| line.contains(mark)) || line.starts_with("› ")
+        tend::agent_tui::PROMPT_MARKS
+            .iter()
+            .any(|mark| line.contains(mark))
+            || line.starts_with("› ")
     })
 }
 
@@ -4141,18 +4150,33 @@ pub(crate) mod tests {
         let typed = format!("{old}env TEND_SWAP_LAUNCH_ID={id} aas e b@claude --resume S\n");
         assert!(!boot_evident(&typed, true, Some(id)));
         // The new prompt below the echo.
-        assert!(boot_evident(&format!("{typed} ✻ Welcome\n  ? for shortcuts\n"), true, Some(id)));
+        assert!(boot_evident(
+            &format!("{typed} ✻ Welcome\n  ? for shortcuts\n"),
+            true,
+            Some(id)
+        ));
         // The echo wrapped across two lines still counts.
-        let wrapped = format!("{old}env TEND_SWAP_LAUNCH_ID={}\n{} aas e b@claude\n  ? for shortcuts\n", &id[..10], &id[10..]);
+        let wrapped = format!(
+            "{old}env TEND_SWAP_LAUNCH_ID={}\n{} aas e b@claude\n  ? for shortcuts\n",
+            &id[..10],
+            &id[10..]
+        );
         assert!(boot_evident(&wrapped, true, Some(id)));
         // Another launch's echo, no echo at all, no id: cannot tell.
-        let other = "env TEND_SWAP_LAUNCH_ID=aaaaaaaa-0000-4000-8000-000000000000 x\n  ? for shortcuts\n";
+        let other =
+            "env TEND_SWAP_LAUNCH_ID=aaaaaaaa-0000-4000-8000-000000000000 x\n  ? for shortcuts\n";
         assert!(!boot_evident(&format!("{old}{other}"), true, Some(id)));
         assert!(!boot_evident("  ? for shortcuts\n", true, Some(id)));
-        assert!(!boot_evident(&format!("{typed}  ? for shortcuts\n"), true, None));
+        assert!(!boot_evident(
+            &format!("{typed}  ? for shortcuts\n"),
+            true,
+            None
+        ));
         // A dialog is not a prompt.
         assert!(!boot_evident(
-            &format!("{typed}Do you trust the files in this folder?\n❯ 1. Yes, proceed\n  2. No, exit\n"),
+            &format!(
+                "{typed}Do you trust the files in this folder?\n❯ 1. Yes, proceed\n  2. No, exit\n"
+            ),
             true,
             Some(id)
         ));

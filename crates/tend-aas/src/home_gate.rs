@@ -53,35 +53,39 @@ impl HomeKey {
     }
 }
 
-/// `dir` with its deepest existing ancestor canonicalized and the missing
-/// rest appended, `.` and `..` resolved by name. `None` for a relative path.
+/// `dir` as the filesystem resolves it: walked one component at a time,
+/// each existing prefix canonicalized before the next is applied (so a
+/// `..` after a symlink leaves the symlink's target, as the kernel does),
+/// the missing tail appended as written. `None` for a relative path, or a
+/// `..` within the missing tail (where the answer would be a guess).
 fn canonical(dir: &Path) -> Option<PathBuf> {
     if !dir.is_absolute() {
         return None;
     }
-    let mut lexical = PathBuf::new();
+    let mut at = PathBuf::new();
+    let mut missing = false;
     for part in dir.components() {
         match part {
+            Component::Prefix(_) | Component::RootDir => at.push(part),
             Component::CurDir => {}
             Component::ParentDir => {
-                lexical.pop();
+                if missing {
+                    return None;
+                }
+                at.pop();
             }
-            other => lexical.push(other),
+            Component::Normal(name) => {
+                at.push(name);
+                if !missing {
+                    match std::fs::canonicalize(&at) {
+                        Ok(real) => at = real,
+                        Err(_) => missing = true,
+                    }
+                }
+            }
         }
     }
-    let mut missing = Vec::new();
-    let mut existing = lexical.as_path();
-    loop {
-        if let Ok(real) = std::fs::canonicalize(existing) {
-            let mut full = real;
-            for part in missing.iter().rev() {
-                full.push(part);
-            }
-            return Some(full);
-        }
-        missing.push(existing.file_name()?.to_owned());
-        existing = existing.parent()?;
-    }
+    Some(at)
 }
 
 /// The environment variable that names a provider's home, and its default
@@ -385,9 +389,33 @@ mod tests {
                 HomeKey::known("claude", &alias.join("new-home"))
             );
             assert_eq!(
-                HomeKey::known("claude", &alias.join("x/../new-home")),
+                HomeKey::known("claude", &alias.join("./new-home")),
                 HomeKey::known("claude", &real.join("new-home"))
             );
+        }
+        #[cfg(unix)]
+        {
+            // `..` after a symlink leaves the symlink's target.
+            let deep = base.join("real/sub");
+            std::fs::create_dir_all(&deep).unwrap();
+            std::fs::create_dir_all(base.join("real/home")).unwrap();
+            let link = base.join("link");
+            let _ = std::fs::remove_file(&link);
+            std::os::unix::fs::symlink(&deep, &link).unwrap();
+            assert_eq!(
+                HomeKey::known("claude", &link.join("../home")),
+                HomeKey::known(
+                    "claude",
+                    &std::fs::canonicalize(base.join("real/home")).unwrap()
+                ),
+                "as the kernel resolves it"
+            );
+            // `..` inside a missing tail is not guessed at.
+            assert_eq!(
+                HomeKey::known("claude", &real.join("nope/../x")),
+                HomeKey::unknown("claude")
+            );
+            let _ = std::fs::remove_file(&link);
         }
         assert_ne!(
             HomeKey::known("claude", &real),
