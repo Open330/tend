@@ -58,9 +58,14 @@ struct HomeView: View {
             Divider()
             TabView(selection: $lane) {
                 ForEach(model.lanes) { lane in
-                    ScrollView {
-                        LaneContent(lane: lane)
-                            .padding(16)
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            LaneContent(lane: lane)
+                                .padding(16)
+                        }
+                        .onChange(of: model.focusedDecision) { _, id in
+                            if let id { withAnimation { proxy.scrollTo(id, anchor: .top) } }
+                        }
                     }
                     .refreshable { await model.refresh(); await model.refreshHistory() }
                     .tag(lane)
@@ -68,6 +73,8 @@ struct HomeView: View {
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
         }
+        // A notification's item is in Your turn.
+        .onChange(of: model.focusedDecision) { _, id in if id != nil { lane = .yourTurn } }
         // The backlog emptied while it was shown.
         .onChange(of: model.lanes) { if !model.lanes.contains(lane) { lane = .yourTurn } }
     }
@@ -198,10 +205,15 @@ struct LaneColumn: View {
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isHeader)
             .accessibilityIdentifier("laneHeader-\(lane.rawValue)")
-            ScrollView {
-                LaneContent(lane: lane, showsSubtitle: false)
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 12)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LaneContent(lane: lane, showsSubtitle: false)
+                        .padding(.horizontal, 10)
+                        .padding(.bottom, 12)
+                }
+                .onChange(of: model.focusedDecision) { _, id in
+                    if let id, lane == .yourTurn { withAnimation { proxy.scrollTo(id, anchor: .top) } }
+                }
             }
             .refreshable { await model.refresh(); await model.refreshHistory() }
         }
@@ -229,6 +241,7 @@ struct LaneContent: View {
                 }
             }
             notices
+            if lane == .yourTurn { NotificationOffer() }
             if let board = model.visibleBoard {
                 switch lane {
                 case .backlog: backlog(board)

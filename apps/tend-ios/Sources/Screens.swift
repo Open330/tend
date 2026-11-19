@@ -2,6 +2,7 @@
 // hosts, then Settings. iPad gets the Mac's sidebar beside the selected
 // screen; iPhone gets them as tabs.
 import SwiftUI
+import UserNotifications
 import UIKit
 
 /// One host's part of Your turn: its heading, what could not be read, and
@@ -58,6 +59,7 @@ struct DeviceSettingsView: View {
                         HostsAndWorkRequest()
                     }
                 }
+                NotificationSettings()
                 if let problem = model.signOutProblem {
                     Section {
                         Label(problem, systemImage: "exclamationmark.triangle")
@@ -195,7 +197,8 @@ struct RootView: View {
 
 @main
 struct TendApp: App {
-    @State private var model = AppModel()
+    @UIApplicationDelegateAdaptor(PushDelegate.self) private var delegate
+    private var model: AppModel { delegate.model }
 
     var body: some Scene {
         WindowGroup {
@@ -206,7 +209,17 @@ struct TendApp: App {
             if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
                 Color.clear
             } else {
-                RootView().environment(model)
+                // The delegate is an ObservableObject, so SwiftUI puts it in
+                // the environment itself (`@EnvironmentObject`).
+                RootView()
+                    .environment(model)
+                    // The badge follows what the app read itself, too: APNs
+                    // may drop or reorder the host's updates.
+                    .onChange(of: model.actionableCount) { _, count in
+                        if model.notificationsWanted {
+                            UNUserNotificationCenter.current().setBadgeCount(count)
+                        }
+                    }
             }
         }
     }

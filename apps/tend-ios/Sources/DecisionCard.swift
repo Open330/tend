@@ -14,6 +14,8 @@ struct DecisionCard: View {
     /// Set when an option was picked: sent with Accept as the chosen option.
     @State private var chosenOption: String?
 
+    private var focused: Bool { model.focusedDecision == decision.id }
+
     private var busy: Bool { model.busy.contains(decision.id) }
 
     var body: some View {
@@ -62,10 +64,18 @@ struct DecisionCard: View {
                     .accessibilityIdentifier("cardFailure")
             }
         }
-        .tendCard(stroke: TendPalette.orange.opacity(decision.decidable ? 0.45 : 0.2))
+        .tendCard(stroke: focused ? TendPalette.orange : TendPalette.orange.opacity(decision.decidable ? 0.45 : 0.2))
+        .overlay {
+            // The item a notification named.
+            if focused {
+                RoundedRectangle(cornerRadius: TendSurface.cardRadius, style: .continuous)
+                    .strokeBorder(TendPalette.orange, lineWidth: 2.5)
+            }
+        }
+        .id(decision.id)
         .disabled(busy)
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("card")
+        .accessibilityIdentifier(focused ? "focusedCard" : "card")
     }
 
     private var notHere: String {

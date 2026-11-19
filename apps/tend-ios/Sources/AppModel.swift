@@ -300,6 +300,17 @@ final class AppModel {
     private(set) var scopeNote: ScopeNote?
     /// Sign out is waiting for the dashboard; no upgrade may start.
     private(set) var signingOut = false
+    /// Whether this dashboard sends notifications, from `GET /api/device`.
+    private(set) var pushSupport: DeviceInfo.PushSupport?
+    /// This phone's APNs token, as hex, once iOS gave one.
+    private(set) var apnsToken: String?
+    /// Why the last registration did not take, said in Settings.
+    private(set) var pushProblem: String?
+    /// The item a tapped notification names, opened once a fresh read of
+    /// Your turn finds it.
+    var pushFocus: PushPayload?
+    /// The decision Your turn should scroll to and mark.
+    var focusedDecision: String?
 
     init() {
         if ProcessInfo.processInfo.arguments.contains("-TendResetState") {
@@ -339,6 +350,9 @@ final class AppModel {
             let next = scope == .operate ? info.features : []
             let leavesBoard = readsBoard && !next.contains("home")
             features = next
+            let pushChanged = pushSupport != info.push
+            pushSupport = info.push
+            if pushChanged { await registerPush() }
             if leavesBoard {
                 // The queue was not being read: never show its empty
                 // fallback as all clear. Read it now.
@@ -594,6 +608,8 @@ final class AppModel {
         signingOut = true
         defer { signingOut = false }
         let mine = session
+        // Best effort: the host also drops it with the device.
+        if pairing?.push != nil { try? await client.removePush() }
         do {
             try await client.forget()
         } catch DashboardError.signedOut {
@@ -614,6 +630,10 @@ final class AppModel {
         cancelUpgrade()
         upgradeProblem = nil
         scopeNote = nil
+        pushSupport = nil
+        pushProblem = nil
+        pushFocus = nil
+        focusedDecision = nil
         session = UUID()
         signOutProblem = nil
         phase = .unpaired
@@ -948,6 +968,147 @@ final class AppModel {
         }
         return await act(decision, done: done) {
             try await $0.review(id: item.id, disposition: disposition, note: note, option: option, host: host)
+        }
+    }
+}
+
+// MARK: - Notifications
+
+extension AppModel {
+    /// The person's choice, on this phone only (not a secret).
+    static let notificationsKey = "notificationsWanted"
+    static let notificationContentKey = "notificationContent"
+
+    var notificationsWanted: Bool {
+        get { UserDefaults.standard.bool(forKey: Self.notificationsKey) }
+        set { UserDefaults.standard.set(newValue, forKey: Self.notificationsKey) }
+    }
+
+    var notificationContentWanted: Bool {
+        get { UserDefaults.standard.bool(forKey: Self.notificationContentKey) }
+        set { UserDefaults.standard.set(newValue, forKey: Self.notificationContentKey) }
+    }
+
+    /// The APNs environment this build's entitlement names.
+    static var pushEnvironment: String {
+        #if DEBUG
+        "development"
+        #else
+        "production"
+        #endif
+    }
+
+    /// iOS gave this phone a token (at every launch, and when it changes).
+    func receivedAPNsToken(_ token: Data) async {
+        apnsToken = token.map { String(format: "%02x", $0) }.joined()
+        await registerPush()
+    }
+
+    /// Tell the host this phone's token, if the person wants notifications
+    /// and the host sends them; keep the binding it answers with.
+    func registerPush() async {
+        guard let client, let pairing, notificationsWanted, let token = apnsToken,
+              pushSupport?.enabled == true else { return }
+        let mine = session
+        do {
+            let answer = try await client.registerPush(token: token, environment: Self.pushEnvironment, content: notificationContentWanted)
+            guard session == mine, self.pairing?.token == pairing.token else { return }
+            switch answer {
+            case .on(let binding):
+                pushProblem = nil
+                keep(binding)
+            case .off(let reason):
+                keep(nil)
+                pushProblem = reason == "environment"
+                    ? String(localized: "This dashboard's notification key does not serve this build of the app.")
+                    : String(localized: "This dashboard does not send notifications.")
+            }
+        } catch {
+            guard session == mine else { return }
+            pushProblem = error.localizedDescription
+        }
+    }
+
+    /// Stop notifications for this phone, here and on the host.
+    func unregisterPush() async {
+        notificationsWanted = false
+        guard let client, pairing?.push != nil else { return }
+        do {
+            try await client.removePush()
+            keep(nil)
+        } catch {
+            pushProblem = error.localizedDescription
+        }
+    }
+
+    #if DEBUG
+    /// UI tests: a binding as a registration would give, without a host
+    /// that sends to Apple.
+    func adoptTestBinding(_ binding: PushBinding) { keep(binding) }
+    #endif
+
+    private func keep(_ binding: PushBinding?) {
+        guard var pairing, pairing.push != binding else { return }
+        pairing.push = binding
+        if CredentialStore.save(pairing) { phase = .paired(pairing) }
+    }
+
+    /// A tapped notification: open Your turn and its item, once a fresh
+    /// read finds it. One from another pairing only opens the app.
+    func open(_ payload: PushPayload) async {
+        guard let binding = pairing?.push, binding.channel == payload.channel else { return }
+        pushFocus = payload
+        await refresh()
+        focusPushedItem()
+    }
+
+    /// Mark the item a notification named, if the queue holds it now.
+    func focusPushedItem() {
+        guard let payload = pushFocus, let key = pairing?.push?.refKey, loaded else { return }
+        pushFocus = nil
+        let match = pending.first { $0.host == payload.host && PushRef.of(key: key, $0) == payload.ref }
+        focusedDecision = match?.id
+        if match == nil {
+            outcome = String(localized: "That item was already decided, or is no longer waiting.")
+        }
+    }
+
+    /// A notification's button. Decides only if every check holds; otherwise
+    /// nothing is decided and the caller opens the item.
+    func act(on payload: PushPayload, action: String, text: String?) async -> Result<String, PushRefusal> {
+        guard let client else { return .failure(.otherChannel) }
+        let mine = session
+        let fresh = try? await client.queue().first { $0.alias == payload.host }
+        guard session == mine else { return .failure(.otherChannel) }
+        let checked = PushActionCheck.verify(
+            payload,
+            binding: pairing?.push,
+            contentSwitch: notificationContentWanted,
+            hostAllowsContent: pushSupport?.contentAllowed == true,
+            fresh: fresh
+        )
+        guard case .success(let decision) = checked else {
+            if case .failure(let refusal) = checked { return .failure(refusal) }
+            return .failure(.changed)
+        }
+        let host = decision.hostIsLocal ? nil : decision.host
+        do {
+            switch (action, decision.kind) {
+            case (PushCategory.accept, .result(let item)):
+                try await client.review(id: item.id, disposition: .accepted, note: nil, option: nil, host: host, via: "notification")
+                return .success(String(localized: "Accepted."))
+            case (PushCategory.sendBack, .result(let item)):
+                try await client.review(id: item.id, disposition: .returned, note: text, option: nil, host: host, via: "notification")
+                return .success(String(localized: "Returned."))
+            case (PushCategory.answer, .question(let entry)):
+                guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .failure(.changed) }
+                try await client.answer(requestID: entry.requestID, answer: text, declined: false, host: host, via: "notification")
+                return .success(String(localized: "Answered."))
+            default:
+                return .failure(.otherKind)
+            }
+        } catch {
+            return .failure(.changed)
         }
     }
 }

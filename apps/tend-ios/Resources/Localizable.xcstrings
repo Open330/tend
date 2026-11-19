@@ -221,6 +221,36 @@
         }
       }
     },
+    "A notification says only which host needs you and how many. Tap it to open the item.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "알림에는 어느 호스트에서 몇 개가 기다리는지만 표시됩니다. 알림을 누르면 그 항목이 열립니다."
+          }
+        }
+      }
+    },
+    "A notification says only which host needs you and how many; tap it to open the item.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "알림에는 어느 호스트에서 몇 개가 기다리는지만 표시됩니다. 알림을 누르면 그 항목이 열립니다."
+          }
+        }
+      }
+    },
+    "A notification shows the question or result and who asked. The text passes through Apple and shows on the lock screen as far as iOS's Show Previews allows; turning this off stops later ones only. Looks good, Send back and Answer work from the notification once the phone is unlocked.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "알림에 질문이나 결과와 물어본 쪽이 표시됩니다. 이 내용은 Apple을 거쳐 전달되고, iOS의 미리보기 표시 설정이 허용하는 만큼 잠금 화면에 보입니다. 이 설정을 끄면 이후 알림부터 적용됩니다. 좋습니다, 돌려보내기, 답하기는 휴대폰 잠금을 푼 뒤 알림에서 바로 쓸 수 있습니다."
+          }
+        }
+      }
+    },
     "Accept": {
       "localizations": {
         "ko": {
@@ -301,12 +331,32 @@
         }
       }
     },
+    "Allow notifications for Tend in the Settings app first.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "먼저 설정 앱에서 Tend의 알림을 허용하세요."
+          }
+        }
+      }
+    },
     "An operator limited this device to deciding. Your turn works as before. To see hosts and agents again, ask again; an operator approves it on the dashboard.": {
       "localizations": {
         "ko": {
           "stringUnit": {
             "state": "translated",
             "value": "오퍼레이터가 이 기기를 결정 전용으로 제한했습니다. 내 차례는 전과 같이 쓸 수 있습니다. 호스트와 에이전트를 다시 보려면 다시 요청하세요. 오퍼레이터가 대시보드에서 승인합니다."
+          }
+        }
+      }
+    },
+    "Answer": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "답하기"
           }
         }
       }
@@ -751,6 +801,16 @@
         }
       }
     },
+    "Get notified when something needs you": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "기다리는 일이 생기면 알림 받기"
+          }
+        }
+      }
+    },
     "Helper": {
       "localizations": {
         "ko": {
@@ -921,6 +981,16 @@
         }
       }
     },
+    "Looks good": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "좋습니다"
+          }
+        }
+      }
+    },
     "Model": {
       "localizations": {
         "ko": {
@@ -1041,6 +1111,16 @@
         }
       }
     },
+    "Not now": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "나중에"
+          }
+        }
+      }
+    },
     "Not shown on this device": {
       "localizations": {
         "ko": {
@@ -1141,6 +1221,26 @@
         }
       }
     },
+    "Notifications": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "알림"
+          }
+        }
+      }
+    },
+    "Notify me when something needs me": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "기다리는 일이 생기면 알림 받기"
+          }
+        }
+      }
+    },
     "Now": {
       "localizations": {
         "ko": {
@@ -1191,6 +1291,16 @@
         }
       }
     },
+    "Open Tend to decide this.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tend를 열어 결정하세요."
+          }
+        }
+      }
+    },
     "Other": {
       "localizations": {
         "ko": {
@@ -1210,6 +1320,42 @@
           }
         }
       }
+    },
+    "PUSH_BODY": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "새 항목 %@개"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ new"
+          }
+        }
+      },
+      "extractionState": "manual",
+      "comment": "Named by the host's push payload (title-loc-key / loc-key)."
+    },
+    "PUSH_TITLE": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tend: %@에서 기다리는 일이 있습니다"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tend: %@ needs you"
+          }
+        }
+      },
+      "extractionState": "manual",
+      "comment": "Named by the host's push payload (title-loc-key / loc-key)."
     },
     "Pair": {
       "localizations": {
@@ -1441,6 +1587,16 @@
         }
       }
     },
+    "Send back": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "돌려보내기"
+          }
+        }
+      }
+    },
     "Session": {
       "localizations": {
         "ko": {
@@ -1487,6 +1643,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "최근 출력 보기"
+          }
+        }
+      }
+    },
+    "Show what was asked": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "물어본 내용 보이기"
           }
         }
       }
@@ -1651,6 +1817,16 @@
         }
       }
     },
+    "That item was already decided, or is no longer waiting.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "그 항목은 이미 결정되었거나 더 이상 기다리지 않습니다."
+          }
+        }
+      }
+    },
     "The code expired before it was approved. Start again.": {
       "localizations": {
         "ko": {
@@ -1751,12 +1927,52 @@
         }
       }
     },
+    "This dashboard does not send notifications.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 대시보드는 알림을 보내지 않습니다."
+          }
+        }
+      }
+    },
+    "This dashboard does not send notifications. Whoever runs it can turn them on with [dashboard.push].": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 대시보드는 알림을 보내지 않습니다. 대시보드를 관리하는 사람이 [dashboard.push]로 켤 수 있습니다."
+          }
+        }
+      }
+    },
     "This dashboard's host": {
       "localizations": {
         "ko": {
           "stringUnit": {
             "state": "translated",
             "value": "이 대시보드의 호스트"
+          }
+        }
+      }
+    },
+    "This dashboard's notification key does not serve this build of the app.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 대시보드의 알림 키는 이 빌드의 앱에 보낼 수 없습니다."
+          }
+        }
+      }
+    },
+    "This dashboard's tend cannot send notifications yet. It needs a newer tend.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 대시보드의 tend는 아직 알림을 보낼 수 없습니다. 새 버전의 tend가 필요합니다."
           }
         }
       }
@@ -1847,6 +2063,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "이 작업은 더 이상 보드에 없습니다."
+          }
+        }
+      }
+    },
+    "Turn on": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "켜기"
           }
         }
       }
@@ -2041,6 +2267,16 @@
         }
       }
     },
+    "What should change?": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "무엇을 바꿔야 하나요?"
+          }
+        }
+      }
+    },
     "What this device may do": {
       "localizations": {
         "ko": {
@@ -2126,7 +2362,7 @@
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "답변"
+            "value": "답"
           }
         }
       }

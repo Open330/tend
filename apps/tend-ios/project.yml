@@ -47,6 +47,14 @@ targets:
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         CODE_SIGN_STYLE: Automatic
         SWIFT_EMIT_LOC_STRINGS: YES
+      # Push (docs/proposals/IOS_APP.md, "Push"): Debug builds register with
+      # APNs' development environment, TestFlight and store builds with
+      # production. The App ID needs the Push Notifications capability.
+      configs:
+        Debug:
+          CODE_SIGN_ENTITLEMENTS: Tend-Debug.entitlements
+        Release:
+          CODE_SIGN_ENTITLEMENTS: Tend-Release.entitlements
 
   TendTests:
     type: bundle.unit-test

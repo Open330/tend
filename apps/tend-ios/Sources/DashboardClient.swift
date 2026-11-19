@@ -136,15 +136,51 @@ struct DeviceInfo: Decodable, Sendable {
     /// `capture` (recent output), `work` (start work). Absent on a dashboard
     /// that has neither yet.
     let features: Set<String>
+    /// Whether this dashboard sends notifications; nil from a tend that
+    /// cannot.
+    let push: PushSupport?
 
-    enum CodingKeys: String, CodingKey { case device, scope, features }
+    struct PushSupport: Decodable, Sendable, Equatable {
+        let enabled: Bool
+        let contentAllowed: Bool
+        let environments: [String]
+
+        enum CodingKeys: String, CodingKey {
+            case enabled, environments
+            case contentAllowed = "content_allowed"
+        }
+
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            enabled = (try? values.decode(Bool.self, forKey: .enabled)) ?? false
+            contentAllowed = (try? values.decode(Bool.self, forKey: .contentAllowed)) ?? false
+            environments = (try? values.decode([String].self, forKey: .environments)) ?? []
+        }
+
+        init(enabled: Bool, contentAllowed: Bool, environments: [String]) {
+            self.enabled = enabled
+            self.contentAllowed = contentAllowed
+            self.environments = environments
+        }
+    }
+
+    enum CodingKeys: String, CodingKey { case device, scope, features, push }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         device = try values.decode(PairedDevice.self, forKey: .device)
         scope = DeviceScope(names: try? values.decodeIfPresent([String].self, forKey: .scope))
         features = Set(((try? values.decodeIfPresent([String].self, forKey: .features)) ?? nil) ?? [])
+        push = (try? values.decodeIfPresent(PushSupport.self, forKey: .push)) ?? nil
     }
+}
+
+/// What `POST /api/device/push` answered.
+enum PushRegistration: Equatable, Sendable {
+    /// The host does not send to this phone (push off, or this build's
+    /// environment is not one its key serves).
+    case off(reason: String)
+    case on(PushBinding)
 }
 
 /// What a host offers new work from the phone (`GET
@@ -317,9 +353,11 @@ struct DashboardClient: Sendable {
         return URLSession(configuration: configuration, delegate: NoRedirects(), delegateQueue: nil)
     }()
 
-    private func send(_ method: String, _ path: String, body: [String: Any]? = nil, authorized: Bool) async throws -> (Int, Data) {
+    private func send(_ method: String, _ path: String, body: [String: Any]? = nil, authorized: Bool, via: String? = nil) async throws -> (Int, Data) {
         var request = URLRequest(url: origin.endpoint(path))
         request.httpMethod = method
+        // Recorded in the decision's audit line on the host.
+        if let via { request.setValue(via, forHTTPHeaderField: "X-Tend-Via") }
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -416,10 +454,10 @@ struct DashboardClient: Sendable {
     }
 
     /// Answer (or decline) a question addressed to the person.
-    func answer(requestID: String, answer: String, declined: Bool, host: String?) async throws {
+    func answer(requestID: String, answer: String, declined: Bool, host: String?, via: String? = nil) async throws {
         var body: [String: Any] = ["answer": answer, "declined": declined]
         if let host { body["host"] = host }
-        let (status, data) = try await send("POST", "/api/decisions/requests/\(Self.segment(requestID))", body: body, authorized: true)
+        let (status, data) = try await send("POST", "/api/decisions/requests/\(Self.segment(requestID))", body: body, authorized: true, via: via)
         try check(status, data)
     }
 
@@ -445,12 +483,12 @@ struct DashboardClient: Sendable {
 
     /// Decide a result: accept (optionally with one of its options), send it
     /// back with a note, or withdraw it.
-    func review(id: String, disposition: TendReviewDisposition, note: String?, option: String?, host: String?) async throws {
+    func review(id: String, disposition: TendReviewDisposition, note: String?, option: String?, host: String?, via: String? = nil) async throws {
         var body: [String: Any] = ["disposition": disposition.rawValue]
         if let note, !note.isEmpty { body["note"] = note }
         if let option { body["option"] = option }
         if let host { body["host"] = host }
-        let (status, data) = try await send("POST", "/api/decisions/reviews/\(Self.segment(id))", body: body, authorized: true)
+        let (status, data) = try await send("POST", "/api/decisions/reviews/\(Self.segment(id))", body: body, authorized: true, via: via)
         try check(status, data)
     }
 
@@ -461,6 +499,37 @@ struct DashboardClient: Sendable {
         let (status, data) = try await send("GET", "/api/device", authorized: true)
         try check(status, data)
         return try decode(DeviceInfo.self, data)
+    }
+
+    // MARK: Notifications
+
+    /// `POST /api/device/push`: this phone's APNs token, for this build's
+    /// environment. 404 from a tend without push.
+    func registerPush(token: String, environment: String, content: Bool) async throws -> PushRegistration {
+        let (status, data) = try await send("POST", "/api/device/push", body: ["token": token, "environment": environment, "content": content], authorized: true)
+        if status == 404 { return .off(reason: "unsupported") }
+        try check(status, data)
+        struct Answer: Decodable {
+            let enabled: Bool
+            let reason: String?
+            let content: Bool?
+            let channel: String?
+            let refKey: String?
+            enum CodingKeys: String, CodingKey { case enabled, reason, content, channel, refKey = "ref_key" }
+        }
+        let answer = try decode(Answer.self, data)
+        guard answer.enabled else { return .off(reason: answer.reason ?? "off") }
+        guard let channel = answer.channel, !channel.isEmpty,
+              let key = answer.refKey.flatMap({ Data(base64Encoded: $0) }), key.count >= 16
+        else { throw DashboardError.server(status, "the dashboard's push answer is incomplete") }
+        return .on(PushBinding(channel: channel, refKey: key, content: answer.content ?? false))
+    }
+
+    /// `POST /api/device/push/remove`: stop notifying this phone.
+    func removePush() async throws {
+        let (status, data) = try await send("POST", "/api/device/push/remove", authorized: true)
+        if status == 404 { return }
+        try check(status, data)
     }
 
     // MARK: Hosts, agents, work (the `operate` scope)

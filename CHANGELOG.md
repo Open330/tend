@@ -25,6 +25,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   device store (`device_push`, schema version unchanged) and go with their
   device. A decision sent with `X-Tend-Via: notification` is audited with
   `"via": "notification"`.
+- iOS: notifications from the dashboard's host (design: docs/proposals/
+  IOS_APP.md, "Push"). Settings has a switch, and Your turn offers it once
+  when the host sends notifications; iOS asks for permission only then. A
+  notification says only which host needs you and how many. Tapping it
+  opens Your turn, scrolled to that item and marked. With both the host's
+  `allow_content` and the phone's "Show what was asked" on, it also shows
+  the text and who asked, with **Looks good** and **Send back** on a result
+  and **Answer** on a question. Each needs an unlocked phone, and decides
+  only after a fresh read finds exactly that item still waiting, with the
+  text the notification showed. Otherwise nothing is decided and the
+  notification offers the item instead. The badge also follows the app's
+  own count. Builds carry the `aps-environment` entitlement (development
+  for Debug, production for Release).
 - Web: Explore opens a session's or a window's detail, as Tend for Mac's
   session and window views do. Selecting a session or window in the tree
   (its chevron still folds it) shows its name, host, window and pane
