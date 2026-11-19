@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   daemon fails closed. Only the dashboard's decision routes will send them; the
   raw Fleet command route and the IPC socket refuse them.
   (`docs/proposals/FLEET_UNANSWERABLE.md`, step 1 of 3.)
+- Dashboard: Keep and Close all reach questions on another Fleet host.
+  `POST /api/decisions/keep` and `/api/decisions/close-unanswerable` take
+  `host`; a remote section of `GET /api/decisions` says what can be sent
+  (`subject_check`, `close_unanswerable`) and why not
+  (`unanswerable_note`: observe-only, Close all off there, or an upgrade).
+  A host's answer about anything it was not asked to keep or close is
+  refused. (Step 2 of 3.)
 - iOS: notifications from the dashboard's host (design: docs/proposals/
   IOS_APP.md, "Push"). Settings has a switch, and Your turn offers it once
   when the host sends notifications; iOS asks for permission only then. A
