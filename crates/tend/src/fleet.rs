@@ -107,6 +107,13 @@ pub const FLEET_DECISION_HISTORY_CAPABILITY: &str = "fleet_decision_history_v1";
 /// Relay capability: [`RelayRequest::DecisionHistory`] takes
 /// `include_closures` and passes it to its host's daemon.
 pub const FLEET_DECISION_HISTORY_CLOSURES_CAPABILITY: &str = "fleet_decision_history_closures_v1";
+/// Relay capability: the relay applies [`RelayRequest::DecisionKeep`] on its
+/// host, whose daemon folds unanswerable questions (`subject_check_v1`).
+pub const FLEET_DECISION_UNANSWERABLE_CAPABILITY: &str = "fleet_decision_unanswerable_v1";
+/// Relay capability: the relay applies
+/// [`RelayRequest::DecisionCloseUnanswerable`], advertised only while its
+/// host's `[review] close_unanswerable` is on (`close_unanswerable_v1`).
+pub const FLEET_CLOSE_UNANSWERABLE_CAPABILITY: &str = "fleet_close_unanswerable_v1";
 /// The relay (and, in a daemon's own hello, the controller) carries
 /// `SendPrompt.force` end to end and enforces it through the destination
 /// daemon's guarded `send_prompt`. Distinct from the local
@@ -139,6 +146,8 @@ pub const FLEET_CAPABILITIES: &[&str] = &[
     FLEET_REVIEW_DISPOSE_CAPABILITY,
     FLEET_DECISION_HISTORY_CAPABILITY,
     FLEET_DECISION_HISTORY_CLOSURES_CAPABILITY,
+    FLEET_DECISION_UNANSWERABLE_CAPABILITY,
+    FLEET_CLOSE_UNANSWERABLE_CAPABILITY,
 ];
 
 /// Read one UTF-8 line without allowing a peer that withholds `\n` to grow
@@ -610,6 +619,17 @@ pub enum RelayRequest {
         request_id: String,
         dispose: FleetReviewDispose,
     },
+    /// Keep one of the relay host's unanswerable questions, as its operator.
+    DecisionKeep {
+        request_id: String,
+        keep: FleetDecisionKeep,
+    },
+    /// Close the relay host's unanswerable questions on this list, as its
+    /// operator.
+    DecisionCloseUnanswerable {
+        request_id: String,
+        close: FleetCloseUnanswerable,
+    },
     /// The relay host's past decisions as its operator sees them; read-only.
     DecisionHistory {
         request_id: String,
@@ -698,6 +718,8 @@ impl RelayRequest {
             | Self::ServerInventory { request_id }
             | Self::DecisionQueue { request_id, .. }
             | Self::ReviewDispose { request_id, .. }
+            | Self::DecisionKeep { request_id, .. }
+            | Self::DecisionCloseUnanswerable { request_id, .. }
             | Self::DecisionHistory { request_id, .. }
             | Self::CollaborationSend { request_id, .. }
             | Self::CollaborationMailbox { request_id, .. }
@@ -854,6 +876,18 @@ pub enum FleetOperation {
     ReviewDispose {
         dispose: FleetReviewDispose,
     },
+    /// `fleet_decision_unanswerable_v1`: keep one of the host's
+    /// unanswerable questions in the person's turn through its episode. A
+    /// control action; the outcome is in `decision_keep`.
+    DecisionKeep {
+        keep: FleetDecisionKeep,
+    },
+    /// `fleet_close_unanswerable_v1`: close exactly these of the host's
+    /// unanswerable questions, revalidated there. A control action; the
+    /// outcome is in `decision_close_unanswerable`.
+    DecisionCloseUnanswerable {
+        close: FleetCloseUnanswerable,
+    },
     /// `fleet_decision_history_v1`: the host's decided review items and
     /// answered questions to its operator, newest first. Read-only.
     DecisionHistory {
@@ -921,6 +955,35 @@ pub struct FleetReviewDispose {
     pub note: Option<String>,
 }
 
+/// Keep sent to the host that holds the question. The host's daemon keeps
+/// it exactly as its own Keep does; `actor`, `surface` and `controller` go
+/// in its audit (`docs/proposals/FLEET_UNANSWERABLE.md`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FleetDecisionKeep {
+    pub id: String,
+    pub episode: String,
+    /// Who kept it, as the controller authenticated them (`web:<email>`,
+    /// `device:<id>`).
+    pub actor: String,
+    /// The surface the person used: one of the subject check's surfaces.
+    pub surface: String,
+    /// The controller's Fleet alias.
+    pub controller: String,
+}
+
+/// Close all sent to the host that holds the questions. The host's daemon
+/// revalidates every pair under its own locks and records the person's
+/// real surface and `actor` on each closure.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FleetCloseUnanswerable {
+    pub items: Vec<crate::collaboration::subject_check::CloseItem>,
+    pub actor: String,
+    pub surface: String,
+    pub controller: String,
+}
+
 /// How a [`FleetOperation::ReviewDispose`] ended on the host.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
@@ -949,6 +1012,8 @@ impl FleetOperation {
                 | Self::SendKeys { .. }
                 | Self::WorktreeChange { .. }
                 | Self::ReviewDispose { .. }
+                | Self::DecisionKeep { .. }
+                | Self::DecisionCloseUnanswerable { .. }
                 | Self::CollaborationSend { .. }
                 | Self::CollaborationGet { .. }
                 | Self::CollaborationClaim { .. }
@@ -1025,6 +1090,12 @@ pub struct FleetCommandResult {
     /// The host's past decisions, for `decision_history`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decision_history: Option<Box<crate::decision_queue::DecisionHistory>>,
+    /// What `decision_keep` kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision_keep: Option<Box<crate::collaboration::subject_check::KeepOutcome>>,
+    /// What `decision_close_unanswerable` closed and skipped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision_close_unanswerable: Option<Box<crate::collaboration::subject_check::CloseOutcome>>,
 }
 
 impl FleetCommandResult {
@@ -1034,6 +1105,8 @@ impl FleetCommandResult {
             decision_queue: None,
             review_dispose: None,
             decision_history: None,
+            decision_keep: None,
+            decision_close_unanswerable: None,
             accepted: true,
             message: Some(message.into()),
             capture: None,
@@ -1083,6 +1156,24 @@ impl FleetCommandResult {
     }
 
     #[must_use]
+    pub fn decision_keep(kept: crate::collaboration::subject_check::KeepOutcome) -> Self {
+        Self {
+            decision_keep: Some(Box::new(kept)),
+            ..Self::accepted("decision keep")
+        }
+    }
+
+    #[must_use]
+    pub fn decision_close_unanswerable(
+        outcome: crate::collaboration::subject_check::CloseOutcome,
+    ) -> Self {
+        Self {
+            decision_close_unanswerable: Some(Box::new(outcome)),
+            ..Self::accepted("decision close unanswerable")
+        }
+    }
+
+    #[must_use]
     pub fn review_dispose(outcome: FleetReviewOutcome) -> Self {
         Self {
             review_dispose: Some(outcome),
@@ -1113,6 +1204,8 @@ impl FleetCommandResult {
             decision_queue: None,
             review_dispose: None,
             decision_history: None,
+            decision_keep: None,
+            decision_close_unanswerable: None,
             accepted: true,
             message: None,
             capture,
@@ -1143,6 +1236,8 @@ impl FleetCommandResult {
             decision_queue: None,
             review_dispose: None,
             decision_history: None,
+            decision_keep: None,
+            decision_close_unanswerable: None,
             accepted: true,
             message: None,
             capture,
@@ -1171,6 +1266,8 @@ impl FleetCommandResult {
             decision_queue: None,
             review_dispose: None,
             decision_history: None,
+            decision_keep: None,
+            decision_close_unanswerable: None,
             accepted: true,
             message: None,
             capture: None,
@@ -1199,6 +1296,8 @@ impl FleetCommandResult {
             decision_queue: None,
             review_dispose: None,
             decision_history: None,
+            decision_keep: None,
+            decision_close_unanswerable: None,
             accepted: true,
             message: None,
             capture: None,
@@ -1227,6 +1326,8 @@ impl FleetCommandResult {
             decision_queue: None,
             review_dispose: None,
             decision_history: None,
+            decision_keep: None,
+            decision_close_unanswerable: None,
             accepted: true,
             message: None,
             capture: None,
@@ -1275,6 +1376,8 @@ impl FleetCommandResult {
             decision_queue: None,
             review_dispose: None,
             decision_history: None,
+            decision_keep: None,
+            decision_close_unanswerable: None,
             accepted: true,
             message: None,
             capture: None,
@@ -1304,6 +1407,8 @@ impl FleetCommandResult {
             decision_queue: None,
             review_dispose: None,
             decision_history: None,
+            decision_keep: None,
+            decision_close_unanswerable: None,
             accepted: true,
             message: None,
             capture: None,

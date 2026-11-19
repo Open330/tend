@@ -24,7 +24,10 @@ fn decision_audit(body: &RequestBody) -> Option<CollaborationAuditContext> {
                 context
             }),
         RequestBody::DecisionKeep {
-            origin, request_id, ..
+            origin,
+            request_id,
+            via_fleet,
+            ..
         } => origin
             .as_ref()
             .filter(|origin| origin.console)
@@ -34,9 +37,12 @@ fn decision_audit(body: &RequestBody) -> Option<CollaborationAuditContext> {
                     origin.clone(),
                 );
                 context.request_id = Some(request_id.clone());
+                context.via_fleet.clone_from(via_fleet);
                 context
             }),
-        RequestBody::DecisionCloseUnanswerable { origin, .. } => origin
+        RequestBody::DecisionCloseUnanswerable {
+            origin, via_fleet, ..
+        } => origin
             .as_ref()
             .filter(|origin| origin.console)
             .map(|origin| {
@@ -45,6 +51,7 @@ fn decision_audit(body: &RequestBody) -> Option<CollaborationAuditContext> {
                     origin.clone(),
                 );
                 context.scope = Some(MailboxScope::All);
+                context.via_fleet.clone_from(via_fleet);
                 context
             }),
         RequestBody::SystemAskCleanup {

@@ -219,6 +219,55 @@ impl Client {
 }
 
 impl Client {
+    /// Apply a Fleet Keep on this host, as the operator, recording where it
+    /// came from in the collaboration audit.
+    pub async fn decision_keep_from_fleet(
+        &self,
+        keep: &crate::fleet::FleetDecisionKeep,
+    ) -> Result<crate::collaboration::subject_check::KeepOutcome, RuntimeError> {
+        let req = serde_json::json!({
+            "protocol": PROTOCOL_VERSION,
+            "kind": "fleet_decision_keep",
+            "request_id": keep.id,
+            "episode": keep.episode,
+            "origin": crate::decision_queue::operator_origin(),
+            "via_fleet": crate::collaboration_audit::FleetVia {
+                controller: keep.controller.clone(),
+                actor: keep.actor.clone(),
+                surface: keep.surface.clone(),
+            },
+        });
+        field(&self.call_checked(&req).await?, "decision_keep")
+    }
+
+    /// Apply a Fleet Close all on this host, as the operator: each closure
+    /// records the person's own surface and `actor`, and the audit where it
+    /// came from.
+    pub async fn decision_close_unanswerable_from_fleet(
+        &self,
+        close: &crate::fleet::FleetCloseUnanswerable,
+    ) -> Result<crate::collaboration::subject_check::CloseOutcome, RuntimeError> {
+        let req = serde_json::json!({
+            "protocol": PROTOCOL_VERSION,
+            "kind": "fleet_decision_close_unanswerable",
+            "items": close.items,
+            "origin": crate::decision_queue::operator_origin(),
+            "by_label": close.surface,
+            "actor": close.actor,
+            "via_fleet": crate::collaboration_audit::FleetVia {
+                controller: close.controller.clone(),
+                actor: close.actor.clone(),
+                surface: close.surface.clone(),
+            },
+        });
+        field(
+            &self.call_checked(&req).await?,
+            "decision_close_unanswerable",
+        )
+    }
+}
+
+impl Client {
     /// Apply a Fleet review decision on this host, as the operator, and
     /// say exactly how it ended: the option must be one the item offers,
     /// and the item must end up holding this disposition and note (a

@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fleet relays apply Keep and Close all for questions nobody can answer on
+  their own host (`fleet_decision_unanswerable_v1`, and
+  `fleet_close_unanswerable_v1` while that host's `[review]
+  close_unanswerable` is on). The holding host revalidates every item under
+  its own locks; each closure keeps the person's real surface and actor,
+  and the collaboration audit records the controller it came through
+  (`via_fleet`). The relay sends them as `fleet_decision_keep` and
+  `fleet_decision_close_unanswerable`, which a daemon without
+  `decision_via_fleet_v1` refuses, so an updated relay over an older
+  daemon fails closed. Only the dashboard's decision routes will send them; the
+  raw Fleet command route and the IPC socket refuse them.
+  (`docs/proposals/FLEET_UNANSWERABLE.md`, step 1 of 3.)
+- Dashboard: Keep and Close all reach questions on another Fleet host.
+  `POST /api/decisions/keep` and `/api/decisions/close-unanswerable` take
+  `host`; a remote section of `GET /api/decisions` says what can be sent
+  (`subject_check`, `close_unanswerable`) and why not
+  (`unanswerable_note`: observe-only, Close all off there, or an upgrade).
+  A host's answer about anything it was not asked to keep or close is
+  refused. (Step 2 of 3.)
 - iOS: notifications from the dashboard's host (design: docs/proposals/
   IOS_APP.md, "Push"). Settings has a switch, and Your turn offers it once
   when the host sends notifications; iOS asks for permission only then. A
@@ -25,6 +44,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `tend swap` plans with one read of the panes and processes for all its
+  agents instead of one per agent, and no longer reads a pane's processes
+  again each time its plan is looked at. Planning 20 agents took ~0.1 s
+  instead of 3–5 s on a scratch bench, so a large swap starts its first
+  agent at once. Every agent is still checked again, live, right before it
+  is stopped.
 - `tend swap` waits on what the pane shows instead of fixed pauses where
   the screen can say so: `/exit` follows Ctrl-C once the draft is gone or
   Claude answers the key, the next key follows Esc once the turn is seen

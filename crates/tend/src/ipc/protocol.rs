@@ -160,16 +160,25 @@ pub(super) enum RequestBody {
     /// Keep one unanswerable question in the person's turn until its
     /// subject is seen alive and gone again (`subject_check_v1`). The
     /// console origin is required, as for `system_ask_cleanup`.
+    /// Also `fleet_decision_keep` (`decision_via_fleet_v1`): the same Keep,
+    /// sent by a Fleet relay under a kind an older daemon refuses.
+    #[serde(alias = "fleet_decision_keep")]
     DecisionKeep {
         request_id: String,
         episode: String,
         #[serde(default)]
         origin: Option<collaboration::CollaborationOrigin>,
+        /// Sent by a Fleet relay for another host's controller: recorded
+        /// in the collaboration audit, never trusted for authority.
+        #[serde(default)]
+        via_fleet: Option<crate::collaboration_audit::FleetVia>,
     },
     /// Close exactly these `(request id, episode)` pairs, each still open,
     /// unanswerable, in that episode and not kept, with the reply Dismiss
     /// sends (`close_unanswerable_v1`, only while `[review]
     /// close_unanswerable` is on). The console origin is required.
+    /// Also `fleet_decision_close_unanswerable` (`decision_via_fleet_v1`).
+    #[serde(alias = "fleet_decision_close_unanswerable")]
     DecisionCloseUnanswerable {
         items: Vec<collaboration::subject_check::CloseItem>,
         #[serde(default)]
@@ -178,6 +187,13 @@ pub(super) enum RequestBody {
         /// `web`, `mac` or `ios`.
         #[serde(default)]
         by_label: Option<String>,
+        /// Who closed them, as the surface authenticated them; recorded as
+        /// each closure's `actor`.
+        #[serde(default)]
+        actor: Option<String>,
+        /// As for `decision_keep`.
+        #[serde(default)]
+        via_fleet: Option<crate::collaboration_audit::FleetVia>,
     },
     /// Durable Work records, backlog order (`work_backlog_v1`). With
     /// `stage`, only records at that stage.
@@ -1186,6 +1202,7 @@ pub(super) const CAPABILITIES: &[&str] = &[
     crate::decision_queue::DECISION_HISTORY_CLOSURES_CAPABILITY,
     collaboration::system_asks::SYSTEM_ASK_CLEANUP_CAPABILITY,
     collaboration::subject_check::SUBJECT_CHECK_CAPABILITY,
+    collaboration::subject_check::DECISION_VIA_FLEET_CAPABILITY,
     crate::work::WORK_BACKLOG_CAPABILITY,
     crate::work::WORK_VERIFY_CAPABILITY,
     crate::work_complete::CAPABILITY,

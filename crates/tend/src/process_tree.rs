@@ -550,6 +550,15 @@ pub(crate) fn read_descendants(root: u32) -> Vec<ProcessInfo> {
     crate::process_snapshot::read_current_process_table().descendants(root, MAX_DEPTH, MAX_NODES)
 }
 
+/// [`read_descendants`] of `root` in an already read `table`.
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn descendants_in(
+    table: &crate::process_snapshot::ProcessTable,
+    root: u32,
+) -> Vec<ProcessInfo> {
+    table.descendants(root, MAX_DEPTH, MAX_NODES)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

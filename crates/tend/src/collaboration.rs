@@ -4721,6 +4721,12 @@ impl CollaborationStore {
         self.commit_request_rows(rows).await.unwrap();
     }
 
+    /// One row as stored, for tests elsewhere in the crate.
+    #[cfg(test)]
+    pub(crate) async fn row_for_test(&self, id: &str) -> Option<CollaborationRequest> {
+        self.requests.read().await.get(id).cloned()
+    }
+
     /// Publish durable rows to memory only after their transaction commits.
     /// Notification methods with irreversible terminal side effects keep their
     /// separate install-on-failure semantics. This helper deliberately does not

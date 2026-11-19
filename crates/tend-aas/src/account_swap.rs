@@ -1715,11 +1715,7 @@ impl PreparedTarget {
                 planned.launch.line.account().map(str::to_owned)
             },
             assigned_account: self.account.clone().ok(),
-            direct: classify_direct(shell_above(
-                &pane_processes(planned.pane.pane_pid),
-                planned.launch.agent_pid,
-                planned.pane.pane_pid,
-            )),
+            direct: classify_direct(planned.shell),
         }
     }
 }
@@ -1860,6 +1856,11 @@ fn plan(
     outcomes: &mut Vec<SwapOutcome>,
 ) -> Vec<Planned> {
     let mut planned: Vec<Planned> = Vec::new();
+    // One read of the panes and processes for the whole plan, not one per
+    // agent: every agent is planned against the same moment, and each one
+    // is checked again, live, right before it is stopped.
+    let processes = tend::pane_process::PaneProcessReader::read();
+    let mut panes = PaneListing::new(backends);
     for agent in chosen {
         // The same pane id on two servers is two agents; one pane on one
         // server is planned once.
@@ -1869,8 +1870,13 @@ fn plan(
         {
             continue;
         }
-        match locate(agent, backends) {
-            Ok((launch, pane, backend)) => {
+        match locate(agent, backends, &mut panes, &processes) {
+            Ok(Located {
+                launch,
+                pane,
+                backend,
+                shell,
+            }) => {
                 let process_start = tend::agent_conversation::process_start(launch.agent_pid);
                 let runtime = runtime_conversation(agent.kind, launch.agent_pid);
                 let registry = Some(agent.session_id.as_str()).filter(|id| resumable_id(id));
@@ -1902,6 +1908,7 @@ fn plan(
                     launch,
                     pane,
                     backend,
+                    shell,
                 });
             }
             Err(note) => outcomes.push(SwapOutcome::new(agent, SwapStatus::Skipped, note)),
@@ -2087,6 +2094,8 @@ fn swap_one(
         launch,
         pane,
         backend,
+        // Read again, live, below.
+        shell: _,
     } = planned;
     let mut outcome = SwapOutcome::new(agent, SwapStatus::Skipped, "");
     outcome.agent_session_id.clone_from(session_id);
@@ -2495,6 +2504,9 @@ pub(crate) struct Planned {
     launch: PaneLaunch,
     pane: tend::tmux::PaneInfo,
     backend: SharedBackend,
+    /// [`shell_above`] the agent when planned: whether the pane runs it
+    /// directly. Read again, live, right before it is stopped.
+    shell: Option<bool>,
 }
 
 /// Why each account was passed over, for a "nothing left" report.
@@ -2769,23 +2781,56 @@ fn unresolved(target: &str, note: &str) -> SwapOutcome {
 }
 
 /// Find the agent's pane, and how it was launched there.
+/// A planned agent's pane, found.
+struct Located {
+    launch: PaneLaunch,
+    pane: tend::tmux::PaneInfo,
+    backend: SharedBackend,
+    /// [`shell_above`] the agent.
+    shell: Option<bool>,
+}
+
+/// Each backend's panes, listed once per plan, when first asked for.
+struct PaneListing<'a> {
+    backends: &'a [SharedBackend],
+    listed: Vec<Option<Vec<tend::tmux::PaneInfo>>>,
+}
+
+impl<'a> PaneListing<'a> {
+    fn new(backends: &'a [SharedBackend]) -> Self {
+        Self {
+            backends,
+            listed: vec![None; backends.len()],
+        }
+    }
+
+    /// The panes of `backends[index]`.
+    fn of(&mut self, index: usize) -> &[tend::tmux::PaneInfo] {
+        let backends = self.backends;
+        self.listed[index].get_or_insert_with(|| backends[index].list_panes())
+    }
+}
+
 fn locate(
     agent: &Agent,
     backends: &[SharedBackend],
-) -> Result<(PaneLaunch, tend::tmux::PaneInfo, SharedBackend), String> {
+    panes: &mut PaneListing<'_>,
+    processes: &tend::pane_process::PaneProcessReader,
+) -> Result<Located, String> {
     let pane_id = agent.pane.as_deref().unwrap_or_default();
     let host = tend::backend::pane_id_host_kind(pane_id)
         .ok_or_else(|| format!("unknown pane namespace for {pane_id}"))?;
-    let backend = backends
+    let index = backends
         .iter()
-        .find(|backend| backend.kind() == host)
+        .position(|backend| backend.kind() == host)
         .ok_or_else(|| format!("no active {host} backend"))?;
+    let backend = &backends[index];
     if !backend.caps().send_text {
         return Err(format!("{host} cannot type into panes"));
     }
-    let pane = backend
-        .list_panes()
-        .into_iter()
+    let pane = panes
+        .of(index)
+        .iter()
         .find(|pane| {
             pane.pane_id == pane_id
                 && agent
@@ -2793,18 +2838,19 @@ fn locate(
                     .as_deref()
                     .is_none_or(|socket| pane.socket.as_deref().is_none_or(|s| s == socket))
         })
+        .cloned()
         .ok_or_else(|| "pane is gone".to_owned())?;
     if pane.pane_pid == 0 {
         return Err("the pane's process id is unknown".into());
     }
-    let processes = pane_processes(pane.pane_pid);
+    let processes = processes.of(pane.pane_pid);
     let launch = find_launch(&processes, pane.pane_pid, agent.kind)
         .ok_or_else(|| format!("no running {} process in the pane", agent.kind))?;
     // A pane started *with* the agent (`new-window 'aas e …'`) has no shell
     // behind it: it is kept open past the exit and respawned in place, which
     // only the tmux-family backends can do.
-    let direct = !shell_above(&processes, launch.agent_pid, pane.pane_pid)
-        .ok_or_else(|| "could not read the pane's root process".to_owned())?;
+    let shell = shell_above(&processes, launch.agent_pid, pane.pane_pid);
+    let direct = !shell.ok_or_else(|| "could not read the pane's root process".to_owned())?;
     if direct
         && !matches!(
             host,
@@ -2813,7 +2859,12 @@ fn locate(
     {
         return Err("the pane runs the agent directly, with no shell to relaunch into".into());
     }
-    Ok((launch, pane, backend.clone()))
+    Ok(Located {
+        launch,
+        pane,
+        backend: backend.clone(),
+        shell,
+    })
 }
 
 #[allow(clippy::struct_excessive_bools)] // independent facts about one pane
@@ -5618,6 +5669,7 @@ pub(crate) mod tests {
             },
             pane,
             backend: tend::backend::default_backend(),
+            shell: Some(true),
         };
         let config = SwapConfig {
             aas: "/nonexistent/tend-test/aas".into(),

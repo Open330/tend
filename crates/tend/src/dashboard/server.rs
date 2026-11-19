@@ -1356,6 +1356,19 @@ async fn fleet_command_handler(
         )
             .into_response();
     }
+    // Keep and Close all carry the person too: only the audited
+    // `/api/decisions/keep` and `/api/decisions/close-unanswerable` routes
+    // send them.
+    if matches!(
+        request.operation,
+        FleetOperation::DecisionKeep { .. } | FleetOperation::DecisionCloseUnanswerable { .. }
+    ) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "keep or close questions through /api/decisions/keep and /api/decisions/close-unanswerable" })),
+        )
+            .into_response();
+    }
     match fleet
         .execute(host, request.operation, Duration::from_secs(20))
         .await
@@ -3819,6 +3832,294 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)] // one fake Fleet covers every capability case and the audit
+    async fn keep_and_close_all_on_another_host_go_to_that_host_through_the_audited_path() {
+        use crate::collaboration::subject_check::{CloseOutcome, KeepOutcome, SkippedClose};
+        use crate::fleet::{
+            FleetCommandResult, HostAccessMode, FLEET_CLOSE_UNANSWERABLE_CAPABILITY,
+            FLEET_DECISION_QUEUE_CAPABILITY, FLEET_DECISION_UNANSWERABLE_CAPABILITY,
+        };
+        let store = Arc::new(crate::fleet::FleetStore::new());
+        let mut here = fleet_host("here", "dev");
+        here.local = true;
+        let host = |alias: &str, mode: HostAccessMode, caps: &[&str]| {
+            let mut host = fleet_host(alias, "dev");
+            host.mode = mode;
+            host.capabilities = std::iter::once(FLEET_DECISION_QUEUE_CAPABILITY)
+                .chain(caps.iter().copied())
+                .map(str::to_owned)
+                .collect();
+            host
+        };
+        let both = [
+            FLEET_DECISION_UNANSWERABLE_CAPABILITY,
+            FLEET_CLOSE_UNANSWERABLE_CAPABILITY,
+        ];
+        for host in [
+            here,
+            host("ctl", HostAccessMode::Control, &both),
+            // Close all switched off there: Keep only.
+            host(
+                "keeps",
+                HostAccessMode::Control,
+                &[FLEET_DECISION_UNANSWERABLE_CAPABILITY],
+            ),
+            host("old", HostAccessMode::Control, &[]),
+            host("obs", HostAccessMode::Observe, &both),
+            // A host that answers with what it was not asked about.
+            host("liar", HostAccessMode::Control, &both),
+        ] {
+            store.upsert_host(host).await;
+        }
+        let (runtime, mut commands) = FleetRuntime::new(store);
+        let sent = Arc::new(std::sync::Mutex::new(Vec::<(String, Value)>::new()));
+        let seen = sent.clone();
+        tokio::spawn(async move {
+            while let Some(command) = commands.recv().await {
+                let liar = command.host == "liar";
+                let result = match command.operation {
+                    FleetOperation::DecisionQueue { limit } => {
+                        Ok(FleetCommandResult::decision_queue(
+                            crate::decision_queue::assemble_queue(&[], &[], Vec::new(), limit),
+                        ))
+                    }
+                    FleetOperation::DecisionKeep { keep } => {
+                        seen.lock()
+                            .unwrap()
+                            .push((command.host.clone(), serde_json::to_value(&keep).unwrap()));
+                        // A refusal that still carries a matching payload.
+                        let refused = keep.id == "rq_refused";
+                        let mut result = FleetCommandResult::decision_keep(KeepOutcome {
+                            request_id: if liar && !refused {
+                                "rq_other".into()
+                            } else {
+                                keep.id
+                            },
+                            episode: keep.episode,
+                        });
+                        result.accepted = !refused;
+                        Ok(result)
+                    }
+                    FleetOperation::DecisionCloseUnanswerable { close } => {
+                        seen.lock()
+                            .unwrap()
+                            .push((command.host.clone(), serde_json::to_value(&close).unwrap()));
+                        let ids: Vec<String> = close
+                            .items
+                            .into_iter()
+                            .map(|item| item.request_id)
+                            .collect();
+                        let outcome = |closed: &[&str], skipped: &[&str]| CloseOutcome {
+                            closed: closed.iter().map(|id| (*id).to_owned()).collect(),
+                            skipped: skipped
+                                .iter()
+                                .map(|id| SkippedClose {
+                                    request_id: (*id).to_owned(),
+                                    reason: "kept".into(),
+                                })
+                                .collect(),
+                        };
+                        let mut accepted = true;
+                        let reported = if liar {
+                            // How a host could answer wrongly, by what it was asked.
+                            match ids.first().map(String::as_str) {
+                                Some("rq_omit") => outcome(&[], &[]),
+                                Some("rq_twice") => outcome(&["rq_twice", "rq_twice"], &[]),
+                                Some("rq_both") => outcome(&["rq_both"], &["rq_both"]),
+                                Some("rq_refused") => {
+                                    accepted = false;
+                                    outcome(&["rq_refused"], &[])
+                                }
+                                _ => outcome(&["rq_other"], &[]),
+                            }
+                        } else {
+                            let (first, rest) = ids
+                                .split_first()
+                                .map_or((None, &[][..]), |(f, r)| (Some(f), r));
+                            CloseOutcome {
+                                closed: first.cloned().into_iter().collect(),
+                                skipped: rest
+                                    .iter()
+                                    .map(|request_id| SkippedClose {
+                                        request_id: request_id.clone(),
+                                        reason: "kept".into(),
+                                    })
+                                    .collect(),
+                            }
+                        };
+                        let mut result = FleetCommandResult::decision_close_unanswerable(reported);
+                        result.accepted = accepted;
+                        Ok(result)
+                    }
+                    other => Err(format!("unexpected {other:?}")),
+                };
+                let _ = command.reply.send(result);
+            }
+        });
+        let audit_dir = tempfile::tempdir().unwrap();
+        let audit_path = audit_dir.path().join("decisions.jsonl");
+        let app = router(
+            state_with_token("s3cret")
+                .with_fleet(Some(runtime))
+                .with_decision_audit(Some(audit_path.clone())),
+        );
+        let call = |uri: &str, body: Value| {
+            let app = app.clone();
+            let uri = uri.to_owned();
+            async move {
+                let request = Request::builder()
+                    .method("POST")
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, "Bearer s3cret")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header("x-tend-operator", "1")
+                    .body(Body::from(body.to_string()))
+                    .unwrap();
+                app.oneshot(request).await.unwrap()
+            }
+        };
+        let keep = |host: &str| {
+            call(
+                "/api/decisions/keep",
+                json!({ "request_id": "rq_1", "episode": "ep_1", "host": host }),
+            )
+        };
+        let close = |host: &str| {
+            call(
+                "/api/decisions/close-unanswerable",
+                json!({ "host": host, "items": [
+                    { "request_id": "rq_1", "episode": "ep_1" },
+                    { "request_id": "rq_2", "episode": "ep_2" },
+                ] }),
+            )
+        };
+
+        // What each section says it can do.
+        let queue = body_json(
+            app.clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/decisions")
+                        .header(header::AUTHORIZATION, "Bearer s3cret")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
+        let section = |alias: &str| {
+            queue["hosts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|h| h["alias"] == alias)
+                .unwrap()
+                .clone()
+        };
+        let flags = |alias: &str| {
+            let s = section(alias);
+            (s["subject_check"].clone(), s["close_unanswerable"].clone())
+        };
+        assert_eq!(flags("ctl"), (json!(true), json!(true)));
+        assert_eq!(section("ctl")["unanswerable_note"], Value::Null);
+        assert_eq!(flags("keeps"), (json!(true), json!(false)));
+        assert!(section("keeps")["unanswerable_note"]
+            .as_str()
+            .unwrap()
+            .contains("turned off on keeps"));
+        assert_eq!(flags("old"), (json!(false), json!(false)));
+        assert!(section("old")["unanswerable_note"]
+            .as_str()
+            .unwrap()
+            .contains("upgrade"));
+        assert_eq!(flags("obs"), (json!(false), json!(false)));
+        assert!(section("obs")["unanswerable_note"]
+            .as_str()
+            .unwrap()
+            .contains("observe-only"));
+
+        // Refused before anything is sent.
+        assert_eq!(keep("obs").await.status(), StatusCode::FORBIDDEN);
+        assert_eq!(close("obs").await.status(), StatusCode::FORBIDDEN);
+        assert_eq!(keep("old").await.status(), StatusCode::CONFLICT);
+        assert_eq!(close("old").await.status(), StatusCode::CONFLICT);
+        assert_eq!(close("keeps").await.status(), StatusCode::FORBIDDEN);
+        assert_eq!(keep("nowhere").await.status(), StatusCode::NOT_FOUND);
+        assert!(sent.lock().unwrap().is_empty());
+
+        // Keep goes where Close all is off.
+        let response = keep("keeps").await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(body_json(response).await["request_id"], "rq_1");
+        // Close all on its host, as the authenticated operator, through
+        // this controller, from the web.
+        let response = close("ctl").await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["closed"], json!(["rq_1"]));
+        assert_eq!(body["skipped"][0]["reason"], "kept");
+        {
+            let sent = sent.lock().unwrap();
+            assert_eq!(sent.len(), 2);
+            assert_eq!(sent[0].0, "keeps");
+            assert_eq!(sent[1].0, "ctl");
+            assert_eq!(sent[1].1["actor"], "web:token");
+            assert_eq!(sent[1].1["surface"], "web");
+            assert_eq!(sent[1].1["controller"], "here");
+        }
+        // A host reporting what it was not asked about is not believed.
+        assert_eq!(keep("liar").await.status(), StatusCode::BAD_GATEWAY);
+        assert_eq!(close("liar").await.status(), StatusCode::BAD_GATEWAY);
+        // Nor a refusal carrying a matching Keep or close.
+        let refused_keep = call(
+            "/api/decisions/keep",
+            json!({ "request_id": "rq_refused", "episode": "ep_1", "host": "liar" }),
+        )
+        .await;
+        assert_eq!(refused_keep.status(), StatusCode::BAD_GATEWAY);
+        // Nor a close that leaves a listed question out, reports one twice,
+        // or both closes and skips it; and a list naming one twice is
+        // refused before it is sent.
+        let close_one = |id: &str| {
+            call(
+                "/api/decisions/close-unanswerable",
+                json!({ "host": "liar", "items": [{ "request_id": id, "episode": "ep" }] }),
+            )
+        };
+        for id in ["rq_omit", "rq_twice", "rq_both", "rq_refused"] {
+            assert_eq!(
+                close_one(id).await.status(),
+                StatusCode::BAD_GATEWAY,
+                "{id}"
+            );
+        }
+        let sent_before = sent.lock().unwrap().len();
+        let twice = call(
+            "/api/decisions/close-unanswerable",
+            json!({ "host": "ctl", "items": [
+                { "request_id": "rq_1", "episode": "ep_1" },
+                { "request_id": "rq_1", "episode": "ep_1" },
+            ] }),
+        )
+        .await;
+        assert_eq!(twice.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(sent.lock().unwrap().len(), sent_before);
+
+        // Every attempt is audited here, with its host.
+        let lines: Vec<Value> = std::fs::read_to_string(&audit_path)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(lines.len(), 16, "{lines:?}");
+        let close_line = lines.iter().find(|line| line["host"] == "ctl").unwrap();
+        assert_eq!(close_line["action"], "close_unanswerable");
+        assert_eq!(close_line["status"], 200);
+        assert!(lines.iter().all(|line| line["by"] == "web:token"));
+    }
+
+    #[tokio::test]
     #[allow(clippy::too_many_lines)] // one fake Fleet covers every outcome and the audit
     async fn remote_review_items_are_decided_on_their_host_through_the_audited_path() {
         use crate::fleet::{
@@ -4101,6 +4402,20 @@ mod tests {
         )
         .await;
         assert_eq!(raw.status(), StatusCode::FORBIDDEN);
+        // Nor a Keep or a Close all, which name the person too.
+        for operation in [
+            json!({ "kind": "decision_keep", "keep": { "id": "rq_1", "episode": "ep_1",
+                "actor": "web:someone-else", "surface": "web", "controller": "here" } }),
+            json!({ "kind": "decision_close_unanswerable", "close": { "items": [],
+                "actor": "web:someone-else", "surface": "web", "controller": "here" } }),
+        ] {
+            let raw = call(
+                "/api/fleet/ctl/command".into(),
+                json!({ "operation": operation }),
+            )
+            .await;
+            assert_eq!(raw.status(), StatusCode::FORBIDDEN);
+        }
         assert_eq!(sent.lock().unwrap().len(), 10);
     }
 
