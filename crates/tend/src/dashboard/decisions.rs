@@ -1113,11 +1113,14 @@ async fn keep_remote(
             controller: local_alias(hosts),
         },
     };
-    let kept = fleet
+    let result = fleet
         .execute(alias.to_owned(), operation, FLEET_WRITE_TIMEOUT)
         .await
-        .map_err(|error| (StatusCode::BAD_GATEWAY, format!("{alias}: {error}")))?
+        .map_err(|error| (StatusCode::BAD_GATEWAY, format!("{alias}: {error}")))?;
+    // A refusal is never taken as a Keep, whatever else it carries.
+    let kept = result
         .decision_keep
+        .filter(|_| result.accepted)
         .ok_or_else(|| {
             (
                 StatusCode::BAD_GATEWAY,
@@ -1148,7 +1151,19 @@ async fn close_remote(
     surface: &str,
 ) -> Result<crate::collaboration::subject_check::CloseOutcome, (StatusCode, String)> {
     use crate::fleet::{FleetCloseUnanswerable, FleetOperation};
+    use std::collections::BTreeSet;
     let fleet = unanswerable_host(state, hosts, alias, true)?;
+    let asked: BTreeSet<&str> = close
+        .items
+        .iter()
+        .map(|item| item.request_id.as_str())
+        .collect();
+    if asked.len() != close.items.len() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "each question may be listed once".into(),
+        ));
+    }
     let operation = FleetOperation::DecisionCloseUnanswerable {
         close: FleetCloseUnanswerable {
             items: close.items.clone(),
@@ -1157,27 +1172,33 @@ async fn close_remote(
             controller: local_alias(hosts),
         },
     };
-    let outcome = fleet
+    let result = fleet
         .execute(alias.to_owned(), operation, FLEET_WRITE_TIMEOUT)
         .await
-        .map_err(|error| (StatusCode::BAD_GATEWAY, format!("{alias}: {error}")))?
+        .map_err(|error| (StatusCode::BAD_GATEWAY, format!("{alias}: {error}")))?;
+    // A refusal is never taken as a close, whatever else it carries.
+    let outcome = result
         .decision_close_unanswerable
+        .filter(|_| result.accepted)
         .ok_or_else(|| {
             (
                 StatusCode::BAD_GATEWAY,
                 format!("{alias} did not say what it closed"),
             )
         })?;
-    let listed = |id: &String| close.items.iter().any(|item| &item.request_id == id);
-    if let Some(stray) = outcome
+    // Every listed question exactly once, closed or skipped: nothing left
+    // out, nothing twice, nothing that was not asked about.
+    let reported: Vec<&str> = outcome
         .closed
         .iter()
-        .chain(outcome.skipped.iter().map(|skip| &skip.request_id))
-        .find(|id| !listed(id))
-    {
+        .map(String::as_str)
+        .chain(outcome.skipped.iter().map(|skip| skip.request_id.as_str()))
+        .collect();
+    let unique: BTreeSet<&str> = reported.iter().copied().collect();
+    if unique.len() != reported.len() || unique != asked {
         return Err((
             StatusCode::BAD_GATEWAY,
-            format!("{alias} reported {stray}, which was not on the list"),
+            format!("{alias} did not account for exactly the listed questions"),
         ));
     }
     Ok(*outcome)

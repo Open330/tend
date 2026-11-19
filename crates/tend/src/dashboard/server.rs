@@ -3887,32 +3887,69 @@ mod tests {
                         seen.lock()
                             .unwrap()
                             .push((command.host.clone(), serde_json::to_value(&keep).unwrap()));
-                        Ok(FleetCommandResult::decision_keep(KeepOutcome {
-                            request_id: if liar { "rq_other".into() } else { keep.id },
+                        // A refusal that still carries a matching payload.
+                        let refused = keep.id == "rq_refused";
+                        let mut result = FleetCommandResult::decision_keep(KeepOutcome {
+                            request_id: if liar && !refused {
+                                "rq_other".into()
+                            } else {
+                                keep.id
+                            },
                             episode: keep.episode,
-                        }))
+                        });
+                        result.accepted = !refused;
+                        Ok(result)
                     }
                     FleetOperation::DecisionCloseUnanswerable { close } => {
                         seen.lock()
                             .unwrap()
                             .push((command.host.clone(), serde_json::to_value(&close).unwrap()));
-                        let mut ids = close.items.into_iter().map(|item| item.request_id);
-                        Ok(FleetCommandResult::decision_close_unanswerable(if liar {
-                            CloseOutcome {
-                                closed: vec!["rq_other".into()],
-                                skipped: Vec::new(),
+                        let ids: Vec<String> = close
+                            .items
+                            .into_iter()
+                            .map(|item| item.request_id)
+                            .collect();
+                        let outcome = |closed: &[&str], skipped: &[&str]| CloseOutcome {
+                            closed: closed.iter().map(|id| (*id).to_owned()).collect(),
+                            skipped: skipped
+                                .iter()
+                                .map(|id| SkippedClose {
+                                    request_id: (*id).to_owned(),
+                                    reason: "kept".into(),
+                                })
+                                .collect(),
+                        };
+                        let mut accepted = true;
+                        let reported = if liar {
+                            // How a host could answer wrongly, by what it was asked.
+                            match ids.first().map(String::as_str) {
+                                Some("rq_omit") => outcome(&[], &[]),
+                                Some("rq_twice") => outcome(&["rq_twice", "rq_twice"], &[]),
+                                Some("rq_both") => outcome(&["rq_both"], &["rq_both"]),
+                                Some("rq_refused") => {
+                                    accepted = false;
+                                    outcome(&["rq_refused"], &[])
+                                }
+                                _ => outcome(&["rq_other"], &[]),
                             }
                         } else {
+                            let (first, rest) = ids
+                                .split_first()
+                                .map_or((None, &[][..]), |(f, r)| (Some(f), r));
                             CloseOutcome {
-                                closed: ids.next().into_iter().collect(),
-                                skipped: ids
+                                closed: first.cloned().into_iter().collect(),
+                                skipped: rest
+                                    .iter()
                                     .map(|request_id| SkippedClose {
-                                        request_id,
+                                        request_id: request_id.clone(),
                                         reason: "kept".into(),
                                     })
                                     .collect(),
                             }
-                        }))
+                        };
+                        let mut result = FleetCommandResult::decision_close_unanswerable(reported);
+                        result.accepted = accepted;
+                        Ok(result)
                     }
                     other => Err(format!("unexpected {other:?}")),
                 };
@@ -4034,6 +4071,40 @@ mod tests {
         // A host reporting what it was not asked about is not believed.
         assert_eq!(keep("liar").await.status(), StatusCode::BAD_GATEWAY);
         assert_eq!(close("liar").await.status(), StatusCode::BAD_GATEWAY);
+        // Nor a refusal carrying a matching Keep or close.
+        let refused_keep = call(
+            "/api/decisions/keep",
+            json!({ "request_id": "rq_refused", "episode": "ep_1", "host": "liar" }),
+        )
+        .await;
+        assert_eq!(refused_keep.status(), StatusCode::BAD_GATEWAY);
+        // Nor a close that leaves a listed question out, reports one twice,
+        // or both closes and skips it; and a list naming one twice is
+        // refused before it is sent.
+        let close_one = |id: &str| {
+            call(
+                "/api/decisions/close-unanswerable",
+                json!({ "host": "liar", "items": [{ "request_id": id, "episode": "ep" }] }),
+            )
+        };
+        for id in ["rq_omit", "rq_twice", "rq_both", "rq_refused"] {
+            assert_eq!(
+                close_one(id).await.status(),
+                StatusCode::BAD_GATEWAY,
+                "{id}"
+            );
+        }
+        let sent_before = sent.lock().unwrap().len();
+        let twice = call(
+            "/api/decisions/close-unanswerable",
+            json!({ "host": "ctl", "items": [
+                { "request_id": "rq_1", "episode": "ep_1" },
+                { "request_id": "rq_1", "episode": "ep_1" },
+            ] }),
+        )
+        .await;
+        assert_eq!(twice.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(sent.lock().unwrap().len(), sent_before);
 
         // Every attempt is audited here, with its host.
         let lines: Vec<Value> = std::fs::read_to_string(&audit_path)
@@ -4041,7 +4112,7 @@ mod tests {
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
-        assert_eq!(lines.len(), 10, "{lines:?}");
+        assert_eq!(lines.len(), 16, "{lines:?}");
         let close_line = lines.iter().find(|line| line["host"] == "ctl").unwrap();
         assert_eq!(close_line["action"], "close_unanswerable");
         assert_eq!(close_line["status"], 200);
