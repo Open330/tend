@@ -701,6 +701,10 @@ test("questions nobody can answer fold out of Your turn; Keep and Close all send
   find(section, (n) => n.tag === "button" && n.text.includes("Close all")).click();
   section = yourTurn();
   assert.match(section.text, /Close 2 questions\? Each asking agent gets a reply that you dismissed it\. This can't be undone\./);
+  // That it is final is said in the dialog itself, on its own line, and
+  // the button that closes says how many, styled as destructive.
+  assert.ok(find(section, (n) => n.tag === "p" && n.className === "undo" && n.text.includes("This can't be undone.")));
+  assert.match(find(section, (n) => n.tag === "button" && n.text.includes("Close 2")).className, /danger/);
   const sent = posts.length;
   find(section, (n) => n.tag === "button" && n.text.includes("Close 2")).click();
   await settle();

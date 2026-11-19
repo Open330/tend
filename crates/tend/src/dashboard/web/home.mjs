@@ -698,7 +698,8 @@ function cantAnswerSection(group) {
     if (state.confirmCloseAll) {
       const confirm = el("div", "confirm-close");
       confirm.setAttribute("role", "alertdialog");
-      confirm.append(el("p", null, S.closeAllConfirm(n)));
+      // What happens, then, on its own line, that it is final.
+      confirm.append(el("p", null, S.closeAllConfirm(n)), el("p", "undo", S.closeAllUndo));
       const row = el("div", "row end");
       row.append(
         button(S.cancel, () => {

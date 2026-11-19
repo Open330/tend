@@ -855,3 +855,4 @@ dialog.share-dialog ul { margin: 0; padding-left: 18px; }
 .decided.closedByTend .outcome .icon, .decided.closedByTend .inset .outcome .icon { color: var(--text-tertiary); }
 .cant-answer-report { display: flex; gap: 6px; align-items: flex-start; justify-content: space-between; }
 .cant-answer-report .result { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.cant-answer .confirm-close p.undo { font-weight: 700; color: var(--red); }
