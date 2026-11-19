@@ -19,10 +19,9 @@ struct TendAccountsSettingsPane: View {
                 Section {
                     Label("The account module is off in tendd", systemImage: "person.2.slash")
                         .font(.headline)
+                    // tendd's own reason says the same, in English only: the
+                    // caption above is that sentence in the person's language.
                     TendSettingsCaption("Switching agents between accounts is an optional module. Set [modules] accounts = true in config.toml, or configure accounts, then restart tendd. Usage limits are still seen and resumed without it.")
-                    if let reason = swaps.health?.reason {
-                        TendSettingsCaption(verbatim: reason)
-                    }
                 }
             }
             Section {

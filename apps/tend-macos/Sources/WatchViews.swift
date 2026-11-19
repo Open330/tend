@@ -497,6 +497,7 @@ private struct WatchPaneRow: View {
                     Text(title)
                         .font(.callout)
                         .lineLimit(1)
+                        .layoutPriority(1)
                     TendUnreadDot(pane: pane.id) // WS-A
                     Spacer(minLength: 3)
                     WatchPaneRowTrailing(pane: pane)
@@ -533,7 +534,12 @@ private struct WatchPaneRowTrailing: View {
 
     var body: some View {
         if let status = pane.agentStatus {
-            AgentStatusTag(status: status, showsLabel: status.priority <= 3)
+            // In a narrow sidebar the status keeps its dot and gives up its
+            // word before the pane's name does (the row's help says it).
+            ViewThatFits(in: .horizontal) {
+                AgentStatusTag(status: status, showsLabel: status.priority <= 3)
+                AgentStatusTag(status: status, showsLabel: false)
+            }
         } else if let command = pane.pane.currentCommand.nonEmpty {
             Text(command)
                 .font(TendType.meta.monospaced())
@@ -616,9 +622,12 @@ struct WatchFlatPaneRow: View {
                     .padding(.top, 1)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
+                        // The name first: a short one ("auth") was cut to
+                        // "a…" to make room for the status beside it.
                         Text(title)
                             .font(.callout.weight(.medium))
                             .lineLimit(1)
+                            .layoutPriority(1)
                         TendUnreadDot(pane: pane.id) // WS-A
                         Spacer(minLength: 3)
                         WatchPaneRowTrailing(pane: pane)
