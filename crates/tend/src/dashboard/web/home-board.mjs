@@ -541,6 +541,8 @@ export function fromServerBoard(server, { history = null, filter = {}, now = Dat
     projects: Array.isArray(server?.projects) ? server.projects : [],
     hosts: ordered((server?.hosts || []).map((h) => ({ alias: h.alias, local: Boolean(h.local), state: h.local ? "online" : h.state || "unknown", error: h.error || null, hue: hostHue(h.alias) }))),
     agentCount: Number(server?.agent_count) || 0,
+    // Hosts registered in observe mode: nothing is sent to their agents.
+    observeHosts: sections.filter((s) => !s.local && s.control === false).map((s) => s.alias),
     backlog: (Array.isArray(server?.backlog) ? server.backlog : []).filter((b) => !filter.project || b.project === filter.project),
     reviewedCount,
     empty: LANES.every((lane) => lanes[lane].length === 0) && !(server?.backlog || []).length,

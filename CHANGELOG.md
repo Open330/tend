@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Web: Explore opens a session's or a window's detail, as Tend for Mac's
+  session and window views do. Selecting a session or window in the tree
+  (its chevron still folds it) shows its name, host, window and pane
+  counts, and its panes as cards with their agent, status and latest
+  activity; a card opens the pane. A window also shows the Mac's metrics
+  (agents, working, need attention, subagents, child processes). They are
+  linkable: `/explore#session=…&socket=…` and
+  `/explore#window=…&session=…&socket=…` (the window as `@id` or
+  `session:index`), with `&host=` for another Fleet host, so the same
+  names on two tmux servers or hosts never collide. A window that is gone
+  opens its session.
+- Web: *Steer this Work* in Home's inspector for a Work, the Mac's Work
+  prompt composer: the next instruction goes to every live agent of the
+  Work at once (`POST /api/work-control/prompt`). Operator-only; as on the
+  Mac, nothing is sent while one of the Work's hosts is in observe mode.
+
+### Changed
+
+- Web: links the old workbench made (`/#pane=…`, `#window=…`,
+  `#session=…`, `#workspace=…&wsocket=…`, `#message=…`, `#thread=…`) now
+  open in Explore or Messages instead of the workbench. A pane wins over a
+  session or window in the same link; `workspace` narrows Explore to that
+  workspace and says so when no live session matches. A `#token=` or
+  `?token=` credential is stored and scrubbed first, never carried into
+  the new address. The same adapter is ready for `/workbench#…`, which
+  still serves the workbench for now.
+
 ### Fixed
 
 - iOS: the app now declares `NSFaceIDUsageDescription`. Start Work asks
