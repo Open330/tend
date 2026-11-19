@@ -178,8 +178,10 @@ The state machine runs on every reconcile, and every pass yields **alive**,
   *gone*, `gone_since` and a new episode id are set.
 - **Unknown** pauses the episode. If the time since `confirmed_at` exceeds 10
   minutes (a failed scan, the daemon being down, an ambiguous foreground),
-  the episode resets: `gone_since` becomes the next confirmed *gone*. A
-  daemon that was down 24 hours therefore cannot fold anything at start.
+  only the grace clock restarts: `gone_since` becomes the next confirmed
+  *gone*. The episode id and `kept_episode` are unchanged, because nothing
+  showed the subject alive. A daemon that was down 24 hours therefore cannot
+  fold anything at start, and an item kept before the outage stays kept.
 
 An item is **unanswerable** when all of these hold:
 - the episode is *gone*;
@@ -189,8 +191,9 @@ An item is **unanswerable** when all of these hold:
 - `kept_episode` is not this episode.
 
 A change of cause within one episode (for example pane gone, then shell,
-then replaced) is the same episode. Keep therefore holds until the subject is
-seen alive and then gone again.
+then replaced) is the same episode. Only positive *alive* evidence ends an
+episode. Keep therefore holds until the subject is seen alive and then gone
+again; an outage alone never starts a new episode.
 
 ## What happens to each kind
 
@@ -210,13 +213,22 @@ changes.
   start and once an hour, inside the same transaction lock as the managed
   reconcile. The closer is recorded as `daemon_schedule`.
 
-A recovery or reply wake for a request the person sent (operator console or
-Fleet initiator) is never closed **for age**. It still resolves when its
-condition ends, as now. When its subject (the recipient) is established gone
-under the episode rules, it folds like an agent's question. Closing it, by a
-person, closes only the recovery item, with a recorded dismissal. The
-original task's state, its authority and its interruption record are not
-changed.
+A recovery item for a request the person sent (operator console or Fleet
+initiator) is never closed **for age**. It still resolves when its condition
+ends, as now. When its subject is established gone under the episode rules,
+it folds like an agent's question. For a recovery item the subject is the
+original request's recipient; `binding_unavailable` alone never counts.
+
+Closing it is a person's decline of the recovery item. As with any answer to
+a recovery item, the decline is copied into the original request's
+interruption decision (`recovery.rs`, `info.decision.clone_from`), so the
+original request records that the person dismissed it. Its status, its
+execution authority and the task itself are not changed, and nothing is
+restarted, cancelled or retried. A regression test pins this.
+
+Reply wakes keep today's `abandoned` rule, which exempts only a console
+sender. Adding the Fleet-initiator exemption to reply wakes is not part of
+this change.
 
 On jiun-mbp, the three measured console recoveries have only
 `binding_unavailable`. Unless a scan establishes E3 or E4 for their recipients,
@@ -247,12 +259,22 @@ evidence.
   it back in Your turn until a new episode.
 - Nothing closes an agent's question without a person, however old.
 
-**Reopen** is Keep. The brief's "per-item reopen" is the way back *before* a
-close. A close is a decline reply, which the asker may already have read,
-exactly as Dismiss is today. That is final in the protocol and is not
-reversed. Undoing a delivered decline would need a second, independent answer
-revision, which the mailbox does not have, and inventing one is out of scope.
-History shows every close with its reason, so nothing disappears unseen.
+**Reopening a closed item is not built. That needs the owner's decision.**
+The brief asks for a per-item reopen. This design offers Keep, which is the
+way back *before* a close, and that is not the same thing. A close is a
+decline reply, which the asker may already have read, exactly as Dismiss is
+today, and it is final in the protocol. Reopening it would need a second,
+independent answer revision that keeps the delivered decline and the
+history intact. The mailbox has no such revision, and designing one is a
+separate protocol change.
+
+The choice for the owner:
+- (a) accept that closing is final, as Dismiss already is, with History
+  showing every close and its reason;
+- (b) commission the answer-revision design first, and ship folding and Keep
+  without Close all until then.
+
+This proposal builds (a) and reports the choice.
 
 ### Alternatives considered
 
@@ -291,8 +313,13 @@ History shows every close with its reason, so nothing disappears unseen.
     coordinator against a new host.
 - **Close all and Keep** are new IPC operations behind
   `subject_check_v1`, mirrored as dashboard routes for the web and the
-  phone (operator for the web; `operate` scope for a device, as with
-  decisions). Old clients do not show the buttons.
+  phone. They are authorized like the existing decision routes
+  (`decision_auth_middleware`): an operator on the web, or a paired device
+  of either scope. A `decide` device can already decline a question, and
+  Close all is that same decline for an explicit list, while Keep only
+  changes where an item is listed. Tests cover a `decide` device succeeding,
+  a viewer being refused, and a device token being refused on an unrelated
+  Work-control route. Old clients do not show the buttons.
 
 ## The CLI
 
@@ -313,6 +340,9 @@ run with --apply to close tend's items; add --questions to also close these 3
   unlisted.
 
 ## Build plan
+
+Close all ships with option (a) above. If the owner chooses (b), the
+Close all route and button stay off, and folding and Keep ship alone.
 
 1. **Daemon and CLI** (one PR):
    - end and replacement facts recorded at ingestion;
@@ -345,7 +375,15 @@ Each identity and evidence case gets its own fixture:
 - the same pane id on two sockets;
 - a partial (herdr) scan;
 - a failed socket;
-- a daemon down 24 hours (the episode resets);
+- a daemon down 24 hours, where the grace clock restarts but the episode
+  does not;
+- Keep, then unknown for 24 hours, then gone again with no alive in between,
+  which stays kept;
+- a recovery close, after which the original request records the dismissal
+  in its interruption decision, with its status unchanged and nothing
+  restarted;
+- a `decide` device closing and keeping, a viewer refused, and a device
+  refused on Work control;
 - a rate-limited agent;
 - an asker on another host.
 
