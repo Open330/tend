@@ -17474,6 +17474,16 @@
         }
       }
     },
+    "This tendd was built without the account module, so no setting turns it on. Install a Tend release, or rebuild tend-cli and tendd with the aas feature (on by default). Usage limits are still seen and resumed without it." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 tendd는 계정 모듈 없이 빌드되어 어떤 설정으로도 켤 수 없습니다. Tend 릴리스를 설치하거나 aas 기능(기본값 켜짐)을 넣어 tend-cli와 tendd를 다시 빌드하세요. 모듈이 없어도 사용량 한도는 감지되고 한도가 풀리면 다시 이어집니다."
+          }
+        }
+      }
+    },
     "This tmux window" : {
       "localizations" : {
         "ko" : {
