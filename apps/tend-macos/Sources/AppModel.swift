@@ -1871,18 +1871,36 @@ final class AppModel: ObservableObject {
         await refreshFoldedQuestions(force: false)
     }
 
-    /// Which of this Mac's questions nobody can answer, so no badge counts
-    /// them (`subject_check_v1`). Folding takes a day, so a read a minute
-    /// old is fresh enough; Keep and Close all read at once.
+    /// Which questions nobody can answer, so no badge counts them
+    /// (`subject_check_v1`): this Mac's, from its queue, and other Fleet
+    /// hosts', from theirs (`FleetDecisions.readsQueue`). Folding takes a
+    /// day, so a read a minute old is fresh enough; Keep and Close all read
+    /// at once.
     func refreshFoldedQuestions(force: Bool) async {
         guard force || Date().timeIntervalSince(lastFoldedRead) >= 60 else { return }
-        guard await client.supports(tendSubjectCheckCapability) else {
-            attention.ingestFoldedQuestions(FleetFoldedQuestions())
-            return
-        }
         lastFoldedRead = Date()
-        guard let queue = try? await client.decisionQueue(limit: 500) else { return }
-        attention.ingestFoldedQuestions(FleetDecisions.foldedQuestions(queue, localHost: localHostAlias))
+        var folded = FleetFoldedQuestions()
+        if await client.supports(tendSubjectCheckCapability) {
+            // An unreadable local queue keeps what the badges knew.
+            guard let queue = try? await client.decisionQueue(limit: 500) else { return }
+            folded = FleetDecisions.foldedQuestions(queue, localHost: localHostAlias)
+        }
+        let client = client
+        let remote = fleetHosts.filter(FleetDecisions.readsQueue).map(\.identity)
+        let theirs = await withTaskGroup(of: FleetFoldedQuestions.self) { group in
+            for host in remote {
+                // A host that cannot be read now folds nothing.
+                group.addTask {
+                    let queue = try? await client.remoteDecisionQueue(host: host)
+                    return FleetDecisions.foldedQuestions(queue ?? nil, localHost: host.alias)
+                }
+            }
+            var all = FleetFoldedQuestions()
+            for await one in group { all.merge(one) }
+            return all
+        }
+        folded.merge(theirs)
+        attention.ingestFoldedQuestions(folded)
     }
 
     func openOperatorMessage(_ message: TendOperatorMessage) {

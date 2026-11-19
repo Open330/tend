@@ -32,9 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The web and Tend for iPhone and iPad offer Keep, and one Close all per
   host whose relay takes it, each confirmation naming the host; a host
   that cannot take them says why (observe-only, Close all off there, or
-  an upgrade). Tend for Mac opens another host's question on the
+  an upgrade). Tend for Mac now reads the decision queue of every Fleet
+  host that sends one, so another host's questions nobody can answer fold
+  out of Your turn and the badges there too; it opens them on the
   dashboard's Can't be answered group (which a link now opens) and never
-  acts on it itself. New iOS and Mac strings are in Korean too. (Step 3
+  acts on them itself. New iOS and Mac strings are in Korean too. (Step 3
   of 3.)
 - iOS: notifications from the dashboard's host (design: docs/proposals/
   IOS_APP.md, "Push"). Settings has a switch, and Your turn offers it once

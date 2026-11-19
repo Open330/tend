@@ -172,14 +172,54 @@ enum FleetDecisions {
             && capabilities.contains("fleet_decision_queue_v1") && capabilities.contains("fleet_review_dispose_v1")
     }
 
-    /// Other hosts' open review items, in each host's queue order.
-    static func remoteReviews(_ queues: [(host: TendFleetHostIdentity, queue: TendPendingQueue)]) -> [FleetDecision] {
-        queues.flatMap { entry in
+    /// Fleet hosts whose decision queue Home reads: connected, and a relay
+    /// that sends it. Their questions nobody can answer fold here as they
+    /// do there; their review items are listed only where
+    /// `decidesReviews` also holds.
+    static func readsQueue(_ host: TendFleetHost) -> Bool {
+        !host.local && (host.state == "online" || host.state == "degraded")
+            && (host.capabilities ?? []).contains("fleet_decision_queue_v1")
+    }
+
+    /// Other hosts' open review items, in each host's queue order; only the
+    /// hosts in `deciding` when it is given.
+    static func remoteReviews(
+        _ queues: [(host: TendFleetHostIdentity, queue: TendPendingQueue)],
+        deciding: Set<String>? = nil
+    ) -> [FleetDecision] {
+        queues.filter { deciding?.contains($0.host.alias) ?? true }.flatMap { entry in
             entry.queue.items.compactMap { item -> FleetDecision? in
                 guard case .review(let review) = item, review.disposition == nil else { return nil }
                 return FleetDecision(review: review, host: entry.host)
             }
         }
+    }
+
+    /// Home's decisions with other hosts' queues applied: each host's
+    /// folded questions replace their mailbox copies (and, from a cut page
+    /// that may have left folded ones out, so does every question of that
+    /// host it did not list as live) and come last, folded; then the
+    /// review items of the hosts in `deciding`. Nothing here acts on
+    /// another host: Home opens those on the dashboard.
+    static func withRemote(
+        _ merged: [FleetDecision],
+        queues: [(host: TendFleetHostIdentity, queue: TendPendingQueue)],
+        deciding: Set<String>
+    ) -> [FleetDecision] {
+        var remoteFolded = FleetFoldedQuestions()
+        var folded: [FleetDecision] = []
+        for entry in queues where !entry.host.local {
+            remoteFolded.merge(foldedQuestions(entry.queue, localHost: entry.host.alias))
+            for case .humanRequest(let request) in entry.queue.items where request.unanswerable != nil {
+                folded.append(FleetDecision(humanRequest: request, host: entry.host))
+            }
+        }
+        let kept = merged.filter { decision in
+            guard case .humanRequest(let id) = decision.source, !decision.host.local, !decision.isUnanswerable else { return true }
+            return remoteFolded.counts(host: decision.host.alias, id: "\(decision.host.alias):\(id)")
+        }
+        let live = kept.filter { !$0.isUnanswerable } + remoteReviews(queues, deciding: deciding)
+        return live.filter { !$0.isSystemAsk } + live.filter(\.isSystemAsk) + kept.filter(\.isUnanswerable) + folded
     }
 
     /// The queue Home shows. With the daemon's queue: its human requests and
@@ -237,10 +277,11 @@ enum FleetDecisions {
         queue.truncated && queue.unanswerableCount > 0
     }
 
-    /// Which local questions the badges may count, from this Mac's queue.
+    /// Which of one host's questions the badges may count, from its queue
+    /// (this Mac's, or another host's read over Fleet).
     static func foldedQuestions(_ queue: TendPendingQueue?, localHost: String) -> FleetFoldedQuestions {
         guard let queue else { return FleetFoldedQuestions() }
-        var folded = FleetFoldedQuestions(host: localHost)
+        var folded = FleetFoldedQuestions()
         var live = Set<String>()
         for case .humanRequest(let entry) in queue.items {
             let id = "\(localHost):\(entry.requestID)"
@@ -248,23 +289,33 @@ enum FleetDecisions {
         }
         // A cut page that may have left folded questions out: only what it
         // lists as live counts on this host.
-        if omitsFoldedRows(queue) { folded.live = live }
+        if omitsFoldedRows(queue) { folded.live[localHost] = live }
         return folded
     }
 }
 
-/// The questions on this Mac no badge counts: the ones the queue folded,
-/// and, when its page was cut with folded questions past it, every local
-/// one it did not list as live (`live`). Ids are `host:request`.
+/// The questions no badge counts: the ones a host's queue folded, and,
+/// when its page was cut with folded questions past it, every question of
+/// that host it did not list as live (`live`, by host). Ids are
+/// `host:request`.
 struct FleetFoldedQuestions: Equatable, Sendable {
     var folded: Set<String> = []
-    var host: String?
-    var live: Set<String>?
+    var live: [String: Set<String>] = [:]
 
     func counts(_ message: TendOperatorMessage) -> Bool {
-        if folded.contains(message.id) { return false }
-        if let live, message.host.alias == host { return live.contains(message.id) }
+        counts(host: message.host.alias, id: message.id)
+    }
+
+    func counts(host: String, id: String) -> Bool {
+        if folded.contains(id) { return false }
+        if let live = live[host] { return live.contains(id) }
         return true
+    }
+
+    /// Another host's, read from its own queue.
+    mutating func merge(_ other: FleetFoldedQuestions) {
+        folded.formUnion(other.folded)
+        live.merge(other.live) { $1 }
     }
 }
 

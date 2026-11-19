@@ -23,6 +23,10 @@ final class FleetDecisionFeed: ObservableObject {
     }
     /// The dashboard tendd named, where another host's review is decided.
     @Published private(set) var dashboard: URL?
+    /// The hosts in `remoteQueues` whose review items Home lists.
+    @Published private(set) var reviewHosts: Set<String> = [] {
+        didSet { sourceRevision &+= 1 }
+    }
     static let remoteEvery: Duration = .seconds(15)
     /// Bumped with every change of `queue`, `reviews` or `remoteQueues`.
     private var sourceRevision: UInt64 = 0
@@ -83,14 +87,18 @@ final class FleetDecisionFeed: ObservableObject {
         perfSubscription = TendPerf.observe(self, "decision.publish")
     }
 
-    /// Reads the open review items of every Fleet host Home lists them for
-    /// (`FleetDecisions.decidesReviews`), all at once, and the dashboard to
-    /// decide them on. Home runs it on its own loop, apart from this Mac's
-    /// decisions.
+    /// Reads the decision queue of every Fleet host that sends one
+    /// (`FleetDecisions.readsQueue`), all at once, and the dashboard to act
+    /// on them on: their questions nobody can answer fold here, and their
+    /// review items are listed where Home lists them
+    /// (`FleetDecisions.decidesReviews`). Home runs it on its own loop,
+    /// apart from this Mac's decisions.
     func loadRemote(_ client: TendIPCClient, hosts: [TendFleetHost]) async {
         let link = await client.dashboardURL
         if dashboard != link { dashboard = link }
-        let read = hosts.filter(FleetDecisions.decidesReviews).map(\.identity)
+        let deciding = Set(hosts.filter(FleetDecisions.decidesReviews).map(\.alias))
+        if reviewHosts != deciding { reviewHosts = deciding }
+        let read = hosts.filter(FleetDecisions.readsQueue).map(\.identity)
         let found = await withTaskGroup(of: (Int, TendPendingQueue?).self) { group in
             for (index, host) in read.enumerated() {
                 // A host that cannot be read now shows nothing to act on.
@@ -286,8 +294,11 @@ final class FleetDecisionFeed: ObservableObject {
         if let cachedDecisions, cachedDecisions.key == key { return cachedDecisions.value }
         decisionBuilds += 1
         TendPerf.count("decision.merge")
-        let merged = FleetDecisions.merge(queue: queue, reviews: reviews, messages: model.operatorMessages, localHost: local)
-            + FleetDecisions.remoteReviews(remoteQueues)
+        let merged = FleetDecisions.withRemote(
+            FleetDecisions.merge(queue: queue, reviews: reviews, messages: model.operatorMessages, localHost: local),
+            queues: remoteQueues,
+            deciding: reviewHosts
+        )
         let value = FleetDecisions.attachAskers(merged, index: model.hostedAgentIndex)
         cachedDecisions = (key, value)
         drafts.prune(keeping: Set(value.map(\.id)))

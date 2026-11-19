@@ -128,22 +128,86 @@ private func message(id: String) throws -> TendOperatorMessage {
         #expect(!FleetDecisions.omitsFoldedRows(plain))
         let filled = FleetDecisions.merge(queue: plain, reviews: [], messages: [omitted], localHost: local)
         #expect(filled.contains { $0.id == "human:mac:rq_omitted" })
-        #expect(FleetDecisions.foldedQuestions(plain, localHost: "mac").live == nil)
+        #expect(FleetDecisions.foldedQuestions(plain, localHost: "mac").live.isEmpty)
     }
 
-    /// Another host's folded question opens on the dashboard's group to be
-    /// kept or closed there; this Mac's never does, and neither does one
-    /// when tendd names no dashboard (docs/proposals/FLEET_UNANSWERABLE.md).
-    @Test func anotherHostsQuestionOpensOnTheDashboard() throws {
+    /// Another host's queue, read over Fleet, folds its questions here as
+    /// it does there: through `loadRemote` and `withRemote` the folded
+    /// entry replaces that host's mailbox copy (live in Your turn before),
+    /// comes last, opens on the dashboard and is left off the badges; that
+    /// host's review items stay off a host Home does not decide them for.
+    /// This Mac's own folded question never opens there
+    /// (docs/proposals/FLEET_UNANSWERABLE.md).
+    @MainActor
+    @Test func anotherHostsFoldedQuestionFoldsHereAndOpensOnTheDashboard() async throws {
+        let remoteQueue = """
+        {"items":[
+          {"kind":"human_request","request_id":"rq_r","body":"Deploy there?","from_session_id":"s9","from_pane":"%9",
+           "created_at":"2026-11-10T11:00:00Z",
+           "unanswerable":{"cause":"ended","episode":"ep_r","since":"2026-11-16T00:00:00Z"}},
+          {"kind":"review","id":"rv_1","target":{"kind":"session","provider":"claude","session_id":"s"},
+           "generation":1,"summary":"Check it","requested_by":{"kind":"agent","label":"impl"}}
+        ],"unanswerable_count":1}
+        """
+        let client = TendIPCClient(socketPath: "/tmp/tend-cant-answer-remote.sock") { _, payload in
+            let object = try #require(JSONSerialization.jsonObject(with: payload) as? [String: Any])
+            switch object["kind"] as? String {
+            case "hello":
+                var hello = try #require(JSONSerialization.jsonObject(with: try hello(["fleet_v1", "subject_check_v1"])) as? [String: Any])
+                hello["dashboard_url"] = "https://tend.example/home"
+                return try JSONSerialization.data(withJSONObject: hello)
+            case "fleet_command":
+                let operation = try #require(object["operation"] as? [String: Any])
+                #expect(operation["kind"] as? String == "decision_queue")
+                #expect(object["host"] as? String == "jiun-mini")
+                let queueObject = try JSONSerialization.jsonObject(with: Data(remoteQueue.utf8))
+                return try JSONSerialization.data(withJSONObject: ["ok": true, "fleet_result": [
+                    "accepted": true, "decision_queue": queueObject,
+                ]])
+            default:
+                return try JSONSerialization.data(withJSONObject: ["ok": true])
+            }
+        }
+        try await client.hello()
+        // An observe-only host that sends its queue: its folded questions
+        // are read, its review items are not listed.
+        let mini = try JSONDecoder().decode(TendFleetHost.self, from: JSONSerialization.data(withJSONObject: [
+            "alias": "jiun-mini", "local": false, "mode": "observe", "state": "online",
+            "capabilities": ["fleet_decision_queue_v1"],
+        ]))
+        #expect(FleetDecisions.readsQueue(mini) && !FleetDecisions.decidesReviews(mini))
+        let feed = FleetDecisionFeed()
+        await feed.loadRemote(client, hosts: [mini])
+        #expect(feed.remoteQueues.map(\.host.alias) == ["jiun-mini"])
+        #expect(feed.reviewHosts.isEmpty)
+        let dashboard = try #require(feed.dashboard)
+
+        // Its mailbox copy, which listed it as live before, and a live one.
+        let copy = TendOperatorMessage(host: mini.identity, routePane: .operatorRoute, request: try message(id: "rq_r").request)
+        let liveThere = TendOperatorMessage(host: mini.identity, routePane: .operatorRoute, request: try message(id: "rq_live2").request)
+        let before = FleetDecisions.merge(queue: nil, reviews: [], messages: [copy, liveThere], localHost: local)
+        #expect(before.filter { !$0.isUnanswerable }.map(\.id) == ["human:jiun-mini:rq_r", "human:jiun-mini:rq_live2"])
+        let decisions = FleetDecisions.withRemote(before, queues: feed.remoteQueues, deciding: feed.reviewHosts)
+        #expect(decisions.map(\.id) == ["human:jiun-mini:rq_live2", "human:jiun-mini:rq_r"])
+        let folded = try #require(decisions.last)
+        #expect(folded.isUnanswerable && folded.unanswerable?.episode == "ep_r")
+        #expect(FleetCantAnswer.dashboardLink(folded, on: dashboard)?.absoluteString
+            == "https://tend.example/needs#item=rq_r&host=jiun-mini")
+        #expect(FleetCantAnswer.dashboardLink(folded, on: nil) == nil)
+        // Where Home decides its review items, they are listed too.
+        let deciding = FleetDecisions.withRemote(before, queues: feed.remoteQueues, deciding: ["jiun-mini"])
+        #expect(deciding.map(\.id) == ["human:jiun-mini:rq_live2", "review:jiun-mini:rv_1", "human:jiun-mini:rq_r"])
+
+        // The badges leave it out, as AppModel.refreshFoldedQuestions reads it.
+        var foldedIDs = FleetDecisions.foldedQuestions(nil, localHost: "mac")
+        foldedIDs.merge(FleetDecisions.foldedQuestions(feed.remoteQueues[0].queue, localHost: "jiun-mini"))
+        let badge = TendAttentionSummary.make(agents: [], messages: [copy, liveThere], unread: [], folded: foldedIDs, paneKey: { $0.id })
+        #expect(badge.decisions == 1)
+
+        // This Mac's own folded question is kept here, never opened there.
         let queue = try JSONDecoder().decode(TendPendingQueue.self, from: Data(foldedQueueJSON.utf8))
-        let mini = TendFleetHostIdentity(alias: "jiun-mini", local: false, state: "online", mode: "control")
-        let folded = FleetDecisions.merge(queue: queue, reviews: [], messages: [], localHost: local).filter(\.isUnanswerable)
-        let theirs = FleetDecisions.merge(queue: queue, reviews: [], messages: [], localHost: mini).filter(\.isUnanswerable)
-        let dashboard = try #require(URL(string: "https://tend.example"))
-        #expect(FleetCantAnswer.dashboardLink(folded[0], on: dashboard) == nil, "this Mac's is kept here")
-        #expect(FleetCantAnswer.dashboardLink(theirs[0], on: dashboard)?.absoluteString
-            == "https://tend.example/needs#item=rq_a&host=jiun-mini")
-        #expect(FleetCantAnswer.dashboardLink(theirs[0], on: nil) == nil)
+        let ours = FleetDecisions.merge(queue: queue, reviews: [], messages: [], localHost: local).filter(\.isUnanswerable)
+        #expect(FleetCantAnswer.dashboardLink(ours[0], on: dashboard) == nil)
     }
 
     @Test func theCloseAllReportListsEverySkippedQuestion() {
