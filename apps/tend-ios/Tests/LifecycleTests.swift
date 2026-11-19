@@ -375,3 +375,122 @@ extension LifecycleTests {
         XCTAssertEqual(HostsView.waitingLine(truncated), "1 need you, maybe more")
     }
 }
+
+/// Notifications: the host's registration follows the person's last wish,
+/// and a notification's button decides only on what the host says now.
+extension LifecycleTests {
+    private static let pushDevice = #"{"device":{"id":"dev_1","name":"phone"},"scope":["decide"],"push":{"enabled":true,"content_allowed":true,"environments":["development"]}}"#
+    private static let pushKey = Data(repeating: 7, count: 32)
+    private static var pushAnswer: String {
+        #"{"enabled":true,"content":true,"channel":"ch_new","ref_key":"\#(pushKey.base64EncodedString())"}"#
+    }
+    private static let oneQuestion = #"{"hosts":[{"alias":"here","local":true,"unavailable":[],"queue":{"items":[{"kind":"human_request","request_id":"r1","body":"Ship?","from_session_id":"s1","from_pane":"%1","created_at":"2026-11-19T10:00:00Z"}],"truncated":false,"unavailable":[]}}]}"#
+
+    /// Runs `body` with the notification preferences set, restoring them.
+    private func withPreferences(wanted: Bool, content: Bool, _ body: () async throws -> Void) async rethrows {
+        let defaults = UserDefaults.standard
+        let saved = (defaults.object(forKey: AppModel.notificationsKey), defaults.object(forKey: AppModel.notificationContentKey), defaults.object(forKey: "pushRemovalOwed"))
+        defaults.set(wanted, forKey: AppModel.notificationsKey)
+        defaults.set(content, forKey: AppModel.notificationContentKey)
+        defaults.removeObject(forKey: "pushRemovalOwed")
+        defer {
+            defaults.set(saved.0, forKey: AppModel.notificationsKey)
+            defaults.set(saved.1, forKey: AppModel.notificationContentKey)
+            defaults.set(saved.2, forKey: "pushRemovalOwed")
+        }
+        try await body()
+    }
+
+    private func answerPayload() -> PushPayload {
+        let ref = PushRef.of(key: Self.pushKey, host: "here", kind: "request", id: "r1")
+        return PushPayload(userInfo: ["tend": ["v": 1, "channel": "ch_new", "host": "here", "ref": ref]], category: PushCategory.question, body: "Ship?", subtitle: "%1")!
+    }
+
+    func testTurningOffWinsOverARegistrationInFlight() async {
+        await withPreferences(wanted: true, content: false) {
+            StubProtocol.on("/api/device", .init(status: 200, body: Self.pushDevice))
+            StubProtocol.on("/api/device/push", .init(status: 200, body: Self.pushAnswer, delay: 0.5))
+            StubProtocol.on("/api/device/push/remove", .init(status: 200, body: #"{"removed":true}"#))
+            let model = pairedModel()
+            await model.refreshDevice()
+            let registering = Task { await model.receivedAPNsToken(Data(repeating: 1, count: 32)) }
+            await eventually { StubProtocol.seen.contains("/api/device/push") }
+            await model.turnNotificationsOff()
+            await registering.value
+            await eventually { StubProtocol.seen.contains("/api/device/push/remove") && model.pairing?.push == nil }
+            XCTAssertFalse(model.notificationsWanted)
+            XCTAssertNil(model.pairing?.push, "off lost to the late registration")
+            XCTAssertTrue(StubProtocol.seen.contains("/api/device/push/remove"), "the host still has the registration")
+        }
+    }
+
+    func testARegistrationThatCannotBeKeptIsTakenBack() async {
+        await withPreferences(wanted: true, content: false) {
+            StubProtocol.on("/api/device", .init(status: 200, body: Self.pushDevice))
+            StubProtocol.on("/api/device/push", .init(status: 200, body: Self.pushAnswer))
+            StubProtocol.on("/api/device/push/remove", .init(status: 200, body: #"{"removed":true}"#))
+            let model = pairedModel()
+            await model.refreshDevice()
+            CredentialStore.failSaves = true
+            defer { CredentialStore.failSaves = false }
+            await model.receivedAPNsToken(Data(repeating: 1, count: 32))
+            XCTAssertNil(model.pairing?.push)
+            XCTAssertNotNil(model.pushProblem)
+            XCTAssertTrue(StubProtocol.seen.contains("/api/device/push/remove"), "a registration this phone cannot use was left on the host")
+        }
+    }
+
+    func testAnUpgradedPairingRegistersAgain() async {
+        await withPreferences(wanted: true, content: false) {
+            StubProtocol.on("/api/device", .init(status: 200, body: Self.pushDevice))
+            StubProtocol.on("/api/device/push", .init(status: 200, body: Self.pushAnswer))
+            StubProtocol.on("/auth/devices/request", .init(status: 201, body: #"{"device_code":"d2","user_code":"UPGR-ADE2","expires_in":600,"interval":1}"#))
+            StubProtocol.on("/auth/devices/token", .init(status: 201, body: #"{"device":{"id":"dev_2","name":"phone"},"token":"tdv_new","scope":["operate"]}"#))
+            StubProtocol.on("/api/device/forget", .init(status: 200, body: #"{"removed":"dev_1"}"#))
+            let model = pairedModel()
+            await model.refreshDevice()
+            await model.receivedAPNsToken(Data(repeating: 1, count: 32))
+            XCTAssertNotNil(model.pairing?.push)
+            model.requestHostsAndWork()
+            await eventually(4) { model.pairing?.token == "tdv_new" && model.pairing?.push != nil }
+            XCTAssertEqual(model.pairing?.token, "tdv_new")
+            XCTAssertNotNil(model.pairing?.push, "the new key was never registered")
+            let registrations = StubProtocol.authorized.filter { $0.path == "/api/device/push" }.map(\.token)
+            XCTAssertEqual(registrations.last, "tdv_new")
+        }
+    }
+
+    func testAButtonReadsTheHostsConsentNow() async {
+        await withPreferences(wanted: true, content: true) {
+            StubProtocol.on("/api/device",
+                            .init(status: 200, body: Self.pushDevice),
+                            .init(status: 200, body: Self.pushDevice.replacingOccurrences(of: #""content_allowed":true"#, with: #""content_allowed":false"#)))
+            StubProtocol.on("/api/decisions", .init(status: 200, body: Self.oneQuestion))
+            StubProtocol.on("/api/decisions/requests/r1", .init(status: 200, body: "{}"))
+            let model = pairedModel()
+            await model.refreshDevice()
+            model.adoptTestBinding(PushBinding(channel: "ch_new", refKey: Self.pushKey, content: true))
+            let result = await model.act(on: answerPayload(), action: PushCategory.answer, text: "Go ahead")
+            XCTAssertEqual(result, .refused(.contentOff))
+            XCTAssertFalse(StubProtocol.seen.contains("/api/decisions/requests/r1"), "decided on the host's old consent")
+        }
+    }
+
+    func testALostAnswerIsNotCalledUndecided() async {
+        await withPreferences(wanted: true, content: true) {
+            StubProtocol.on("/api/device", .init(status: 200, body: Self.pushDevice))
+            StubProtocol.on("/api/decisions", .init(status: 200, body: Self.oneQuestion))
+            StubProtocol.on("/api/decisions/requests/r1",
+                            .init(status: 502, body: #"{"error":"relay lost"}"#),
+                            .init(status: 409, body: #"{"error":"already answered"}"#))
+            let model = pairedModel()
+            await model.refreshDevice()
+            model.adoptTestBinding(PushBinding(channel: "ch_new", refKey: Self.pushKey, content: true))
+            let lost = await model.act(on: answerPayload(), action: PushCategory.answer, text: "Go ahead")
+            XCTAssertEqual(lost, .unknown)
+            let refused = await model.act(on: answerPayload(), action: PushCategory.answer, text: "Go ahead")
+            XCTAssertEqual(refused, .refused(.changed))
+            XCTAssertEqual(StubProtocol.authorized.filter { $0.path == "/api/decisions/requests/r1" }.count, 2)
+        }
+    }
+}

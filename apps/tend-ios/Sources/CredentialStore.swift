@@ -14,6 +14,9 @@ struct Pairing: Codable, Hashable, Sendable {
     /// What the dashboard issued; a pairing kept by build 1 has none and
     /// may only decide.
     var scope: DeviceScope
+    /// This pairing's push registration, once the host answered one; a
+    /// notification from any other channel is not acted on.
+    var push: PushBinding?
 
     init(origin: ServerOrigin, device: PairedDevice, token: String, scope: DeviceScope = .decide) {
         self.origin = origin
@@ -22,7 +25,7 @@ struct Pairing: Codable, Hashable, Sendable {
         self.scope = scope
     }
 
-    enum CodingKeys: String, CodingKey { case origin, device, token, scope }
+    enum CodingKeys: String, CodingKey { case origin, device, token, scope, push }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -30,6 +33,7 @@ struct Pairing: Codable, Hashable, Sendable {
         device = try values.decode(PairedDevice.self, forKey: .device)
         token = try values.decode(String.self, forKey: .token)
         scope = (try? values.decodeIfPresent(DeviceScope.self, forKey: .scope)) ?? .decide
+        push = try? values.decodeIfPresent(PushBinding.self, forKey: .push)
     }
 }
 

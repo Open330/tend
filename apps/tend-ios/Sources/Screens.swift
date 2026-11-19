@@ -2,6 +2,7 @@
 // hosts, then Settings. iPad gets the Mac's sidebar beside the selected
 // screen; iPhone gets them as tabs.
 import SwiftUI
+import UserNotifications
 import UIKit
 
 /// One host's part of Your turn: its heading, what could not be read, and
@@ -58,6 +59,7 @@ struct DeviceSettingsView: View {
                         HostsAndWorkRequest()
                     }
                 }
+                NotificationSettings()
                 if let problem = model.signOutProblem {
                     Section {
                         Label(problem, systemImage: "exclamationmark.triangle")
@@ -102,6 +104,10 @@ struct RootView: View {
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.scenePhase) private var scenePhase
     @State private var selection: SidebarItem? = .home
+    @State private var tab = 0
+    /// Home's navigation (iPhone tab, iPad detail), so a notification can
+    /// close whatever detail covers it.
+    @State private var homePath = NavigationPath()
 
     var body: some View {
         Group {
@@ -112,6 +118,14 @@ struct RootView: View {
             } else {
                 tabs
             }
+        }
+        // iPad: the detail column's stack belongs to what the sidebar shows.
+        .onChange(of: selection) { homePath = NavigationPath() }
+        // A notification's item: Home, with nothing on top of it.
+        .onChange(of: model.showHome) {
+            tab = 0
+            selection = .home
+            homePath = NavigationPath()
         }
         // Re-read when the app comes forward, and every 10 s while it is.
         .task(id: TaskKey(paired: model.pairing != nil, active: scenePhase == .active)) {
@@ -134,18 +148,21 @@ struct RootView: View {
     }
 
     private var tabs: some View {
-        TabView {
-            NavigationStack {
+        TabView(selection: $tab) {
+            NavigationStack(path: $homePath) {
                 HomeView().withAgentDestinations()
             }
             .tabItem { Label(String(localized: "Home"), systemImage: "house") }
             .badge(model.actionableCount)
+            .tag(0)
             NavigationStack {
                 HostsView().withAgentDestinations()
             }
             .tabItem { Label(String(localized: "Hosts"), systemImage: "server.rack") }
+            .tag(1)
             NavigationStack { DeviceSettingsView() }
                 .tabItem { Label(String(localized: "Settings"), systemImage: "gearshape") }
+                .tag(2)
         }
     }
 
@@ -181,7 +198,7 @@ struct RootView: View {
             .background(TendSurface.sideBar)
             .navigationTitle("Tend")
         } detail: {
-            NavigationStack {
+            NavigationStack(path: $homePath) {
                 switch selection ?? .home {
                 case .home: HomeView().withAgentDestinations()
                 case .host(let alias): HostDetailView(alias: alias).withAgentDestinations()
@@ -195,7 +212,8 @@ struct RootView: View {
 
 @main
 struct TendApp: App {
-    @State private var model = AppModel()
+    @UIApplicationDelegateAdaptor(PushDelegate.self) private var delegate
+    private var model: AppModel { delegate.model }
 
     var body: some Scene {
         WindowGroup {
@@ -206,7 +224,17 @@ struct TendApp: App {
             if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
                 Color.clear
             } else {
-                RootView().environment(model)
+                // The delegate is an ObservableObject, so SwiftUI puts it in
+                // the environment itself (`@EnvironmentObject`).
+                RootView()
+                    .environment(model)
+                    // The badge follows what the app read itself, too: APNs
+                    // may drop or reorder the host's updates.
+                    .onChange(of: model.actionableCount) { _, count in
+                        if model.notificationsWanted {
+                            UNUserNotificationCenter.current().setBadgeCount(count)
+                        }
+                    }
             }
         }
     }
