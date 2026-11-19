@@ -240,8 +240,23 @@ or a paired device). `tend review cleanup` lists these questions with id,
 age, action, cause and since, and never closes one without `--questions
 --apply`; `--json` adds `questions` and `unanswerable_count` to the report.
 `tend review queue` shows them last, marked `✕ gone`. Each Fleet host judges
-its own questions; Keep and Close all act on this host only (a Fleet relay
-for them is not built yet).
+its own questions.
+
+**On another Fleet host** (`docs/proposals/FLEET_UNANSWERABLE.md`), both
+routes take `host`, the host's Fleet alias; without it, or with this host's
+alias, they act here. The host's own daemon applies them under its own locks
+and checks, and its own `[review] close_unanswerable` decides whether Close
+all runs there. Its relay advertises `fleet_decision_unanswerable_v1` for
+Keep and, only while that switch is on, `fleet_close_unanswerable_v1`. Each
+closure records the person's own surface and actor, and that host's
+collaboration audit records `via_fleet: {controller, actor, surface}`. One
+host per Close all. In `GET /api/decisions`, a remote section carries
+`subject_check` (Keep can be sent), `close_unanswerable` (Close all can be
+sent) and, when either is false, `unanswerable_note` saying why: an
+observe-only host (403), Close all turned off there (403, Keep still
+works), or a relay that needs an upgrade (409). The raw Fleet command route
+and the IPC socket refuse both; every attempt goes in the decision audit
+with its `host`.
 
 Tend for Mac, the web Home and Tend for iPhone and iPad list them in a
 collapsed **Can't be answered (N)** group at the end of Your turn (N is

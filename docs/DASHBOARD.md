@@ -434,7 +434,12 @@ then holds; an answer about any other item is refused. Observe-only hosts'
 items, and review items on an older host, are shown but decided on their
 own host. Only this route sends that Fleet operation: `fleet_command` over
 IPC and `POST /api/fleet/{host}/command` refuse it, so nothing else can name
-a person as having decided. The decided half of **Finished** is
+a person as having decided. Questions nobody can answer on a control-mode
+Fleet host can be kept or closed from the page the same way: `POST
+/api/decisions/keep` and `/api/decisions/close-unanswerable` take `host`,
+and that host's daemon applies them under its own rules (the section's
+`subject_check`, `close_unanswerable` and `unanswerable_note`; see
+[REVIEW.md](REVIEW.md#questions-nobody-can-answer)). The decided half of **Finished** is
 per host too: a Fleet host whose tend answers the Fleet `decision_history`
 read (`fleet_decision_history_v1`) sends its past decisions, read there as
 its operator console; an older or offline host is listed with what kept it

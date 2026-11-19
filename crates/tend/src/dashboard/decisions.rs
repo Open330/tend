@@ -148,7 +148,6 @@ async fn remote_section(
 ) -> serde_json::Value {
     use crate::fleet::{FleetHostState, FleetOperation, HostAccessMode};
     let control = host.mode == HostAccessMode::Control;
-    let reviews = decides_reviews(&host);
     if !matches!(
         host.state,
         FleetHostState::Online | FleetHostState::Degraded
@@ -178,15 +177,7 @@ async fn remote_section(
                 accepted: true,
                 decision_queue: Some(queue),
                 ..
-            }) => {
-                let queue = *queue;
-                json!({
-                    "alias": host.alias, "local": false, "control": control,
-                    "decides_reviews": reviews,
-                    "covers": ["questions", "waiting agents", "review items"],
-                    "unavailable": queue.unavailable.clone(), "queue": queue,
-                })
-            }
+            }) => queue_section(&host, *queue),
             // A reply without the queue is not an empty queue.
             Ok(_) => json!({
                 "alias": host.alias, "local": false, "control": control,
@@ -746,6 +737,114 @@ async fn review_remote(
     }
 }
 
+/// A current relay's section: its host's whole queue, what can be decided
+/// on it from here, and why not.
+fn queue_section(
+    host: &crate::fleet::FleetHostSnapshot,
+    queue: crate::decision_queue::PendingQueue,
+) -> serde_json::Value {
+    let unanswerable = unanswerable_actions(host);
+    json!({
+        "alias": host.alias, "local": false,
+        "control": host.mode == crate::fleet::HostAccessMode::Control,
+        "decides_reviews": decides_reviews(host),
+        "subject_check": unanswerable.keep,
+        "close_unanswerable": unanswerable.close,
+        "unanswerable_note": unanswerable.note,
+        "covers": ["questions", "waiting agents", "review items"],
+        "unavailable": queue.unavailable.clone(), "queue": queue,
+    })
+}
+
+/// What Can't be answered can do for a Fleet host's questions from here
+/// (`docs/proposals/FLEET_UNANSWERABLE.md`).
+struct UnanswerableActions {
+    /// Keep: control mode and a relay that applies it.
+    keep: bool,
+    /// Close all: that, and the host's own `[review] close_unanswerable`.
+    close: bool,
+    /// Why not, when either is missing: shown under the folded group.
+    note: Option<String>,
+}
+
+fn unanswerable_actions(host: &crate::fleet::FleetHostSnapshot) -> UnanswerableActions {
+    use crate::fleet::{
+        HostAccessMode, FLEET_CLOSE_UNANSWERABLE_CAPABILITY, FLEET_DECISION_UNANSWERABLE_CAPABILITY,
+    };
+    let has = |capability: &str| host.capabilities.iter().any(|c| c == capability);
+    let alias = &host.alias;
+    if host.mode != HostAccessMode::Control {
+        return UnanswerableActions {
+            keep: false,
+            close: false,
+            note: Some(format!(
+                "{alias} is observe-only; keep or close these there, or set mode = \"control\""
+            )),
+        };
+    }
+    if !has(FLEET_DECISION_UNANSWERABLE_CAPABILITY) {
+        return UnanswerableActions {
+            keep: false,
+            close: false,
+            note: Some(format!(
+                "{alias} cannot keep or close these over Fleet; upgrade tend there"
+            )),
+        };
+    }
+    if !has(FLEET_CLOSE_UNANSWERABLE_CAPABILITY) {
+        return UnanswerableActions {
+            keep: true,
+            close: false,
+            note: Some(format!(
+                "Close all is turned off on {alias} ([review] close_unanswerable)"
+            )),
+        };
+    }
+    UnanswerableActions {
+        keep: true,
+        close: true,
+        note: None,
+    }
+}
+
+/// The Fleet host a Keep or Close all names, when it is not this one.
+fn remote_alias<'a>(
+    host: Option<&'a str>,
+    hosts: &[crate::fleet::FleetHostSnapshot],
+) -> Option<&'a str> {
+    host.filter(|alias| *alias != local_alias(hosts) && *alias != "this host")
+}
+
+/// The remote host for a Keep or Close all, checked before anything is
+/// sent: it exists, and can take `close` (Close all) or Keep.
+fn unanswerable_host<'a>(
+    state: &'a AppState,
+    hosts: &[crate::fleet::FleetHostSnapshot],
+    alias: &str,
+    close: bool,
+) -> Result<&'a crate::fleet::FleetRuntime, (StatusCode, String)> {
+    let Some(fleet) = &state.fleet else {
+        return Err((StatusCode::NOT_FOUND, "Fleet is not enabled here".into()));
+    };
+    let Some(host) = hosts.iter().find(|host| host.alias == alias && !host.local) else {
+        return Err((StatusCode::NOT_FOUND, format!("no Fleet host {alias}")));
+    };
+    let actions = unanswerable_actions(host);
+    let allowed = if close { actions.close } else { actions.keep };
+    if allowed {
+        return Ok(fleet);
+    }
+    let note = actions.note.unwrap_or_default();
+    // Observe-only and Close all switched off there are the host's own
+    // choices; an older relay needs an upgrade.
+    let code = if host.mode != crate::fleet::HostAccessMode::Control || actions.keep {
+        StatusCode::FORBIDDEN
+    } else {
+        StatusCode::CONFLICT
+    };
+    Err((code, note))
+}
+
 /// A Fleet host whose review items can be decided from here: control mode
 /// and a relay that applies the decision exactly.
 fn decides_reviews(host: &crate::fleet::FleetHostSnapshot) -> bool {
@@ -944,6 +1043,10 @@ async fn answer_remote(
 pub(super) struct KeepRequest {
     request_id: String,
     episode: String,
+    /// The Fleet host the question is on; absent (or this host's alias)
+    /// for one here.
+    #[serde(default)]
+    host: Option<String>,
 }
 
 /// `POST /api/decisions/keep`: keep one unanswerable question on this host
@@ -955,20 +1058,30 @@ pub(super) async fn keep_handler(
     Json(keep): Json<KeepRequest>,
 ) -> Response {
     let (by, account) = operator_identity(&state, &headers, device.as_deref());
-    let result = state
-        .collaboration
-        .keep_unanswerable(&keep.request_id, &keep.episode)
-        .await;
+    let hosts = fleet_hosts(&state).await;
+    let remote = remote_alias(keep.host.as_deref(), &hosts);
+    let result: Result<crate::collaboration::subject_check::KeepOutcome, (StatusCode, String)> =
+        match remote {
+            Some(alias) => {
+                let surface = if device.is_some() { "ios" } else { "web" };
+                keep_remote(&state, &hosts, alias, &keep, &by, surface).await
+            }
+            None => state
+                .collaboration
+                .keep_unanswerable(&keep.request_id, &keep.episode)
+                .await
+                .map_err(|e| subject_error(&e)),
+        };
     let (code, outcome) = match &result {
         Ok(_) => (StatusCode::OK, "kept".to_owned()),
-        Err(e) => subject_error(e),
+        Err((code, message)) => (*code, message.clone()),
     };
     audit(
         state.decision_audit.as_ref(),
         json!({
             "at": time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).ok(),
             "by": by, "account": account, "action": "keep", "id": keep.request_id,
-            "episode": keep.episode, "outcome": outcome, "status": code.as_u16(),
+            "host": remote, "episode": keep.episode, "outcome": outcome, "status": code.as_u16(),
         }),
     )
     .await;
@@ -976,6 +1089,119 @@ pub(super) async fn keep_handler(
         Ok(kept) => Json(kept).into_response(),
         Err(_) => error(code, outcome),
     }
+}
+
+/// Keep on another Fleet host, applied there by its daemon
+/// (`fleet_decision_unanswerable_v1`). The host must report the item and
+/// episode it was asked to keep.
+async fn keep_remote(
+    state: &AppState,
+    hosts: &[crate::fleet::FleetHostSnapshot],
+    alias: &str,
+    keep: &KeepRequest,
+    by: &str,
+    surface: &str,
+) -> Result<crate::collaboration::subject_check::KeepOutcome, (StatusCode, String)> {
+    use crate::fleet::{FleetDecisionKeep, FleetOperation};
+    let fleet = unanswerable_host(state, hosts, alias, false)?;
+    let operation = FleetOperation::DecisionKeep {
+        keep: FleetDecisionKeep {
+            id: keep.request_id.clone(),
+            episode: keep.episode.clone(),
+            actor: by.to_owned(),
+            surface: surface.to_owned(),
+            controller: local_alias(hosts),
+        },
+    };
+    let result = fleet
+        .execute(alias.to_owned(), operation, FLEET_WRITE_TIMEOUT)
+        .await
+        .map_err(|error| (StatusCode::BAD_GATEWAY, format!("{alias}: {error}")))?;
+    // A refusal is never taken as a Keep, whatever else it carries.
+    let kept = result
+        .decision_keep
+        .filter(|_| result.accepted)
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("{alias} did not say what it kept"),
+            )
+        })?;
+    if kept.request_id != keep.request_id || kept.episode != keep.episode {
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            format!(
+                "{alias} kept {} instead of {}",
+                kept.request_id, keep.request_id
+            ),
+        ));
+    }
+    Ok(*kept)
+}
+
+/// Close all on another Fleet host, applied there by its daemon under its
+/// own locks (`fleet_close_unanswerable_v1`). Everything the host reports
+/// must be one of the listed pairs.
+async fn close_remote(
+    state: &AppState,
+    hosts: &[crate::fleet::FleetHostSnapshot],
+    alias: &str,
+    close: &CloseUnanswerableRequest,
+    by: &str,
+    surface: &str,
+) -> Result<crate::collaboration::subject_check::CloseOutcome, (StatusCode, String)> {
+    use crate::fleet::{FleetCloseUnanswerable, FleetOperation};
+    use std::collections::BTreeSet;
+    let fleet = unanswerable_host(state, hosts, alias, true)?;
+    let asked: BTreeSet<&str> = close
+        .items
+        .iter()
+        .map(|item| item.request_id.as_str())
+        .collect();
+    if asked.len() != close.items.len() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "each question may be listed once".into(),
+        ));
+    }
+    let operation = FleetOperation::DecisionCloseUnanswerable {
+        close: FleetCloseUnanswerable {
+            items: close.items.clone(),
+            actor: by.to_owned(),
+            surface: surface.to_owned(),
+            controller: local_alias(hosts),
+        },
+    };
+    let result = fleet
+        .execute(alias.to_owned(), operation, FLEET_WRITE_TIMEOUT)
+        .await
+        .map_err(|error| (StatusCode::BAD_GATEWAY, format!("{alias}: {error}")))?;
+    // A refusal is never taken as a close, whatever else it carries.
+    let outcome = result
+        .decision_close_unanswerable
+        .filter(|_| result.accepted)
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("{alias} did not say what it closed"),
+            )
+        })?;
+    // Every listed question exactly once, closed or skipped: nothing left
+    // out, nothing twice, nothing that was not asked about.
+    let reported: Vec<&str> = outcome
+        .closed
+        .iter()
+        .map(String::as_str)
+        .chain(outcome.skipped.iter().map(|skip| skip.request_id.as_str()))
+        .collect();
+    let unique: BTreeSet<&str> = reported.iter().copied().collect();
+    if unique.len() != reported.len() || unique != asked {
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            format!("{alias} did not account for exactly the listed questions"),
+        ));
+    }
+    Ok(*outcome)
 }
 
 #[derive(Debug, Deserialize)]
@@ -986,6 +1212,10 @@ pub(super) struct CloseUnanswerableRequest {
     /// `ios` for a paired device and `web` otherwise.
     #[serde(default)]
     by_label: Option<String>,
+    /// The Fleet host the questions are on; absent (or this host's alias)
+    /// for this one. One host per Close all.
+    #[serde(default)]
+    host: Option<String>,
 }
 
 /// `POST /api/decisions/close-unanswerable`: close exactly the listed
@@ -1003,10 +1233,16 @@ pub(super) async fn close_unanswerable_handler(
         .by_label
         .clone()
         .unwrap_or_else(|| if device.is_some() { "ios" } else { "web" }.to_owned());
-    let result = state
-        .collaboration
-        .close_unanswerable(&close.items, &state.store, &surface, Some(by.clone()))
-        .await;
+    let hosts = fleet_hosts(&state).await;
+    let remote = remote_alias(close.host.as_deref(), &hosts);
+    let result = match remote {
+        Some(alias) => close_remote(&state, &hosts, alias, &close, &by, &surface).await,
+        None => state
+            .collaboration
+            .close_unanswerable(&close.items, &state.store, &surface, Some(by.clone()))
+            .await
+            .map_err(|e| subject_error(&e)),
+    };
     let (code, outcome) = match &result {
         Ok(outcome) => (
             StatusCode::OK,
@@ -1016,13 +1252,14 @@ pub(super) async fn close_unanswerable_handler(
                 outcome.skipped.len()
             ),
         ),
-        Err(e) => subject_error(e),
+        Err((code, message)) => (*code, message.clone()),
     };
     audit(
         state.decision_audit.as_ref(),
         json!({
             "at": time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).ok(),
             "by": by, "account": account, "action": "close_unanswerable", "surface": surface,
+            "host": remote,
             "items": close.items, "closed": result.as_ref().ok().map(|o| o.closed.clone()),
             "outcome": outcome, "status": code.as_u16(),
         }),
