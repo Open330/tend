@@ -3406,3 +3406,65 @@ fn an_idle_deadline_that_passes_while_waiting_for_a_home_ends_the_wait() {
     assert_eq!(settled(&h.service, &first).state, "done");
     assert_eq!(*h.executed.lock().unwrap(), ["%hx5"]);
 }
+
+/// With every host slot held by job A, job B's cancel and expired idle
+/// deadline take effect while A still holds them, and B never runs.
+#[test]
+fn a_job_waiting_for_a_host_slot_still_settles_its_cancel_and_deadline() {
+    for cancel in [true, false] {
+        let gate = Arc::new(Gate::default());
+        let held = Arc::clone(&gate);
+        let full: Vec<String> = (0..tend::swap_api::MAX_SWAP_JOBS)
+            .map(|i| format!("%s{i}"))
+            .collect();
+        let script = full.clone();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let h = harness(Box::new(move || {
+            if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                script.iter().map(|pane| gated(pane, &held)).collect()
+            } else {
+                vec![run("%late")]
+            }
+        }));
+        let first = Service::submit(
+            &h.service,
+            "a",
+            &parallel(overrides(&names(&full)), 16),
+            Origin::Public,
+            None,
+        )
+        .unwrap()
+        .job_id;
+        gate.until_holding(tend::swap_api::MAX_SWAP_JOBS);
+        let request = if cancel {
+            overrides(&["%late"])
+        } else {
+            SwapOverrides {
+                when_idle: true,
+                idle_timeout: Some("1s".into()),
+                ..overrides(&["%late"])
+            }
+        };
+        let second = Service::submit(&h.service, "b", &request, Origin::Public, None)
+            .unwrap()
+            .job_id;
+        if cancel {
+            std::thread::sleep(Duration::from_millis(100));
+            h.service.cancel(&JobRef::Id(second.clone())).unwrap();
+        }
+        let view = settled(&h.service, &second);
+        assert_ne!(view.state, "running", "cancel={cancel}: {view:?}");
+        assert_eq!(
+            gate.waiting.load(Ordering::SeqCst),
+            tend::swap_api::MAX_SWAP_JOBS,
+            "job A still holds every slot"
+        );
+        gate.open();
+        assert_eq!(settled(&h.service, &first).state, "done");
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(
+            !h.executed.lock().unwrap().contains(&"%late".to_owned()),
+            "cancel={cancel}"
+        );
+    }
+}

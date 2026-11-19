@@ -945,7 +945,6 @@ pub(crate) struct Service<E: Engine> {
     /// Targets in flight on this host, across every job; at most
     /// [`tend::swap_api::MAX_SWAP_JOBS`].
     inflight: Mutex<usize>,
-    slot_free: std::sync::Condvar,
     spawner: Spawner,
     /// The ownership lock ([`ownership_lock`]). Owned here, where every
     /// running job holds a reference, so it is released only once the
@@ -1011,17 +1010,15 @@ type HomeKeys = Option<(crate::home_gate::HomeKey, crate::home_gate::HomeKey)>;
 /// looked at again.
 const HOME_RETRY: std::time::Duration = std::time::Duration::from_millis(50);
 
-/// A host-wide target slot ([`Service::slot`]).
+/// A host-wide target slot ([`Service::try_slot`]).
 struct Slot<'a> {
     inflight: &'a Mutex<usize>,
-    free: &'a std::sync::Condvar,
 }
 
 impl Drop for Slot<'_> {
     fn drop(&mut self) {
         let mut inflight = self.inflight.lock().unwrap_or_else(PoisonError::into_inner);
         *inflight = inflight.saturating_sub(1);
-        self.free.notify_one();
     }
 }
 
@@ -1050,7 +1047,6 @@ impl<E: Engine> Service<E> {
             fault: Mutex::new(None),
             admission: Mutex::new(()),
             inflight: Mutex::new(0),
-            slot_free: std::sync::Condvar::new(),
             spawner: thread_spawner(),
             ownership: None,
             done: Mutex::new(HashMap::new()),
@@ -1314,21 +1310,17 @@ impl<E: Engine> Service<E> {
         }
     }
 
-    /// One of this host's [`tend::swap_api::MAX_SWAP_JOBS`] target slots,
-    /// waited for; freed when dropped.
-    fn slot(&self) -> Slot<'_> {
+    /// One of this host's [`tend::swap_api::MAX_SWAP_JOBS`] target slots if
+    /// one is free, never waited for; freed when dropped.
+    fn try_slot(&self) -> Option<Slot<'_>> {
         let mut inflight = self.inflight.lock().unwrap_or_else(PoisonError::into_inner);
-        while *inflight >= tend::swap_api::MAX_SWAP_JOBS {
-            inflight = self
-                .slot_free
-                .wait(inflight)
-                .unwrap_or_else(PoisonError::into_inner);
+        if *inflight >= tend::swap_api::MAX_SWAP_JOBS {
+            return None;
         }
         *inflight += 1;
-        Slot {
+        Some(Slot {
             inflight: &self.inflight,
-            free: &self.slot_free,
-        }
+        })
     }
 
     /// A snapshot planned against the configuration the caller loaded.
@@ -2067,7 +2059,23 @@ impl<E: Engine> Service<E> {
             // Before the pane is held: a worker waiting for a host slot
             // holds no pane. Dropped at the end of this target, or when it
             // goes back to wait for idle.
-            let slot = self.slot();
+            let Some(slot) = self.try_slot() else {
+                // The host is full: back in the queue holding nothing, to
+                // be looked at again — fault, cancel, deadline first.
+                queue
+                    .pending
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push_back(AttemptRun {
+                        target_id,
+                        attempt,
+                        report_index,
+                        identity,
+                        target,
+                    });
+                std::thread::sleep(HOME_RETRY);
+                continue;
+            };
             // Every home the target touches, taken now, before its pane is
             // held and before anything of it is checked; or, if another
             // target holds one, back in the queue holding nothing, to be
@@ -2250,6 +2258,17 @@ impl<E: Engine> Service<E> {
                     None,
                     &format!("no longer due: {why}; nothing was done"),
                 );
+                continue;
+            }
+            // The accepted idle deadline holds to the very start, however
+            // long the target waited for its slot, home or pane.
+            if request.when_idle
+                && !request.force
+                && deadline
+                    .is_some_and(|until| time::OffsetDateTime::now_utc().unix_timestamp() >= until)
+            {
+                drop(guard);
+                self.timed_out(job, target_id, attempt, report_index, &identity);
                 continue;
             }
             // The pane is held: start it, unless a cancel or a fault came
