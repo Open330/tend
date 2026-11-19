@@ -181,10 +181,10 @@ auth = "public_read"
 token = "replace-with-a-long-random-token"
 ```
 
-Open `http://<host>:7878/` for anonymous read-only access. Select **unlock
-edit** and paste the token to enable prompt, abort, input, and terminate
-controls. The browser stores it in `localStorage`; selecting **lock edit**
-removes it again.
+Open `http://<host>:7878/` for anonymous read-only access: the shell opens
+read-only. **Upgrade with token** (on Home, or in Settings) takes the token
+and enables prompt and interrupt. The browser stores it in `localStorage`;
+**Forget token** in Settings removes it again.
 
 The equivalent CLI invocation is:
 
@@ -649,7 +649,7 @@ or another app.
    keeps the device code and shows the user code (`BCDF-GHJK`).
    It may add `"scope": "operate"` to ask for hosts and new work; anything
    else asks for `decide`.
-2. An operator opens **access** in the dashboard header and types the code
+2. An operator opens **Manage access…** in Settings and types the code
    under **Devices**. The dashboard first looks it up without granting
    anything (`POST /api/devices/lookup` `{"user_code": "…"}`: the name,
    platform, requested scope and when it asked), then the operator approves
@@ -1082,10 +1082,9 @@ not an operator is not turned away:
    where it started. From then on the account signs in directly.
 
 **Cancel** discards the pending enrollment. A signed-in viewer can enroll its own
-account the same way with **upgrade with token** in the header; the viewer
+account the same way with **Upgrade with token** (Home or Settings); the viewer
 session is replaced by an operator session. To remove an enrolled account, open
-**access** in the dashboard header (shown to an unlocked or signed-in
-operator) and choose **Remove**, or call `POST /api/operators/{id}/remove` with
+**Manage access…** in Settings (shown to an operator) and choose **Remove**, or call `POST /api/operators/{id}/remove` with
 the bearer token. Removal ends that account's live sessions at once; signing in
 again leads back to the enrollment page. Group members are not listed and need
 no enrollment.
@@ -1154,9 +1153,9 @@ Authenticated sharing gives an invited account access to a local **tmux or rmux
 pane**, or the current panes in its **window**. Choose the scope when creating
 an invitation. A window invitation pins up to 16 pane processes; panes created
 later are not included. The recipient selects a pane to view or send commands.
-If one pane ends, the other original panes remain accessible. Choose **share** on a pane, enter the recipient's email,
+If one pane ends, the other original panes remain accessible. Choose **Share…** on a pane in Explore, enter the recipient's email,
 choose **View output** or **View and send prompts**, then copy the generated link.
-The dashboard's **Shares** button lists and revokes invitations. The recipient
+**Manage shares…** in Settings lists and revokes invitations. The recipient
 signs in on a separate page; the operator bearer token must not be sent to them.
 
 Configure an OIDC application that supports authorization code flow with PKCE

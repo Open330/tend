@@ -386,7 +386,7 @@ agent와 아직 만들어야 할 agent를 구분하지 못해 수렴 대신 팀�
 
 ## dashboard에서
 
-같은 파이프라인을 work board의 **start work** 컨트롤에서도 실행할 수 있습니다.
+같은 파이프라인을 dashboard Home의 **Start Work**에서도 실행할 수 있습니다.
 `POST /api/work-control/up`으로 갑니다. 제어 토큰 **위에** `[dashboard]
 allow_work_start = true`가 더 필요합니다 — dashboard의 다른 쓰기는 이미 떠 있는
 프로세스를 조종하지만, 이건 권한을 우회한 프로세스를 새로 만들기 때문입니다.

@@ -434,7 +434,7 @@ a team instead of converging on it. See [MCP.md](MCP.md).
 
 ## From the dashboard
 
-The same pipeline runs from the work board's **start work** control, which
+The same pipeline runs from the dashboard Home's **Start Work**, which
 posts to `POST /api/work-control/up`. It needs `[dashboard] allow_work_start
 = true` on top of the control token: every other dashboard write steers a
 process you already started, while this one starts new ones with permissions

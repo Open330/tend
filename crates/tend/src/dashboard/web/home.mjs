@@ -1826,9 +1826,30 @@ function accessActions(access) {
     row.append(link);
   }
   if (login.signed_in) row.append(button(S.signOut, () => signOut(), "btn"));
+  // A token this browser keeps (a `#token=` link, Upgrade with token) can be
+  // dropped here, as the workbench's "lock edit" did.
+  if (storedToken()) row.append(button(S.forgetToken, () => forgetToken(), "btn"));
   if (row.children.length) nodes.push(row);
   if (canUpgrade(access)) nodes.push(upgradeForm(Boolean(login.signed_in)));
   return nodes;
+}
+
+function storedToken() {
+  try {
+    return Boolean(localStorage.getItem(TOKEN_KEY));
+  } catch {
+    return false;
+  }
+}
+
+/// Drop the token this browser keeps, then start over without it.
+export function forgetToken() {
+  try {
+    localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // Storage blocked: there was nothing to forget.
+  }
+  window.location.reload();
 }
 
 /// Upgrade with token, in the page.
