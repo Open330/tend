@@ -1718,3 +1718,42 @@ fn an_initial_v4_deferral_gets_a_window_from_its_original_transition() {
     let lease = store.acquire(&me("next", 2), &gone).unwrap();
     assert_eq!(store.claim_resume(&lease, &job, 0, 1, false).unwrap(), None);
 }
+
+/// A failed target with no reason of its own reads its readiness's why;
+/// any other target, or a ready one, does not.
+#[test]
+fn a_failed_target_reads_why_its_readiness_failed() {
+    let observed = |result: Readiness, why: Option<&str>| {
+        serde_json::to_string(&Observation::Readiness {
+            result,
+            why: why.map(str::to_owned),
+        })
+        .unwrap()
+    };
+    let blocked = observed(
+        Readiness::Blocked,
+        Some("another app still owns this conversation"),
+    );
+    assert_eq!(
+        super::failed_readiness(Some("failed"), Some(&blocked)).as_deref(),
+        Some("readiness_blocked: another app still owns this conversation")
+    );
+    // A journal from before the why was kept.
+    assert_eq!(
+        super::failed_readiness(
+            Some("failed"),
+            Some(r#"{"kind":"readiness","result":"exited"}"#)
+        )
+        .as_deref(),
+        Some("readiness_exited")
+    );
+    assert_eq!(
+        super::failed_readiness(Some("swapped"), Some(&blocked)),
+        None
+    );
+    assert_eq!(
+        super::failed_readiness(Some("failed"), Some(&observed(Readiness::Ready, None))),
+        None
+    );
+    assert_eq!(super::failed_readiness(Some("failed"), None), None);
+}
