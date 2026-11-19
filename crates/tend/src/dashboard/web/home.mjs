@@ -9,7 +9,6 @@ import { boardAttention, buildBoard, byProject, digest, fromServerBoard, hostHue
 import { languageOf, relativeTime, stringsFor, textOf } from "./home-strings.mjs";
 import { itemHash, linkedHostOf, linkedItemOf } from "./needs-model.mjs";
 import { mountExplore } from "./explore.mjs";
-import { paneFromHash, paneHash } from "./explore-model.mjs";
 import { MESSAGES_PATH, messagesReturnPath } from "./messages-model.mjs";
 import { legacyLink } from "./legacy-link.mjs";
 import { openAccessManager } from "./operators-admin.mjs";
@@ -1788,15 +1787,22 @@ function renderReadOnlyHome() {
 function readOnlyReason(access) {
   const login = access?.login || {};
   if (!access?.write_available) return S.roNoToken;
-  if (login.signed_in) return S.roViewer(login.email || "—");
+  if (login.signed_in) return login.enrollment ? S.roViewer(login.email || "—") : S.roViewerNoEnroll(login.email || "—");
   return S.roAnonymous;
+}
+
+/// Whether Upgrade with token can work here: a token to check, and for a
+/// signed-in account, enrollment allowed (else `/auth/enroll` refuses it).
+function canUpgrade(access) {
+  const login = access?.login || {};
+  return Boolean(access?.write_available && !operatorAccess(access) && (!login.signed_in || login.enrollment));
 }
 
 /// Changes only when what the notice says does, so a poll never redraws a
 /// field someone is typing a token into.
 function accessSignature(access) {
   const login = access?.login || {};
-  return JSON.stringify([access?.mode, Boolean(access?.write_available), operatorAccess(access), Boolean(login.available), Boolean(login.signed_in), login.email || "", login.role || ""]);
+  return JSON.stringify([access?.mode, Boolean(access?.write_available), operatorAccess(access), Boolean(login.available), Boolean(login.signed_in), Boolean(login.enrollment), login.email || "", login.role || ""]);
 }
 
 function renderOperatorNotice() {
@@ -1821,7 +1827,7 @@ function accessActions(access) {
   }
   if (login.signed_in) row.append(button(S.signOut, () => signOut(), "btn"));
   if (row.children.length) nodes.push(row);
-  if (access?.write_available && !operatorAccess(access)) nodes.push(upgradeForm(Boolean(login.signed_in)));
+  if (canUpgrade(access)) nodes.push(upgradeForm(Boolean(login.signed_in)));
   return nodes;
 }
 
@@ -2075,10 +2081,17 @@ export function homeReturnPath(hash, pathname = "/home") {
 /// Where sign-in from any page of the shell comes back to, rebuilt from
 /// what the address names (so never with a credential): Home and its card,
 /// Explore and its pane, Messages and its message, or Settings.
+const EXPLORE_LINK_KEYS = new Set(["pane", "session", "window", "socket", "host", "workspace", "wsocket"]);
+
 export function shellReturnPath(pathname, hash) {
   if (pathname === "/explore") {
-    const pane = paneFromHash(hash);
-    return pane ? `/explore${paneHash({ ...pane, local: !pane.host })}` : "/explore";
+    // The whole selection Explore reads (pane, session, window and the
+    // workspace filter, with their sockets and host), in the link's order;
+    // anything else, a token included, stays behind.
+    const params = new URLSearchParams(String(hash || "").replace(/^#/, ""));
+    const kept = new URLSearchParams([...params].filter(([key]) => EXPLORE_LINK_KEYS.has(key)));
+    const rest = kept.toString();
+    return rest ? `/explore#${rest}` : "/explore";
   }
   if (pathname === "/settings") return "/settings";
   return homeReturnPath(hash, pathname);

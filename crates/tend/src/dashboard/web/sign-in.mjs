@@ -34,7 +34,19 @@ export function safeReturnTo(value) {
   if (url.origin !== BASE || url.pathname === "/welcome" || url.pathname.startsWith("/welcome/")) return null;
   url.searchParams.delete("token");
   const path = `${url.pathname}${url.search}${withoutToken(url.hash)}`;
-  return path.length <= 1024 ? path : null;
+  // Normalizing dot segments can make a scheme-relative address out of a
+  // safe-looking one (`/a/..//evil`, `/%2e%2e//evil`): check what comes out.
+  return samePath(path) ? path : null;
+}
+
+/// One leading "/", no backslash, and still this origin when resolved.
+function samePath(path) {
+  if (path.length > 1024 || !path.startsWith("/") || path.startsWith("//") || path.includes("\\")) return false;
+  try {
+    return new URL(path, BASE).origin === BASE;
+  } catch {
+    return false;
+  }
 }
 
 /// A token in this page's own address (`#token=…`, or the legacy

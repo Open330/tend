@@ -134,8 +134,9 @@ viewer, who gets 403 on operator routes) gets the shell read-only:
 - **Messages** shows the collaboration with details redacted, as the API
   already returns it.
 - **Home** says it needs an operator and offers **Upgrade with token**, a
-  field in the page. A signed-in viewer's token goes once to
-  `POST /auth/enroll`, which makes the account an operator; a browser
+  field in the page. Where the dashboard enrolls accounts, a signed-in
+  viewer's token goes once to `POST /auth/enroll`, which makes the account
+  an operator (otherwise the viewer is told to ask the owner); a browser
   without an account keeps the token as its credential, and only if it
   makes the browser an operator. With `auth = "none"` there is no token, so
   there is nothing to upgrade with.

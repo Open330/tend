@@ -102,7 +102,8 @@ const queue = { hosts: [{ alias: "mba", local: true, control: true, decides_revi
 const ACCESS = {
   operator: { mode: "token", write_available: true, write_authorized: true, capabilities: {}, login: { available: true, signed_in: true, role: "operator", email: "op@x" } },
   publicRead: { mode: "public_read", write_available: true, write_authorized: false, capabilities: {}, login: { available: false, signed_in: false, role: "none" } },
-  viewer: { mode: "token", write_available: true, write_authorized: false, capabilities: {}, login: { available: true, signed_in: true, role: "viewer", email: "viewer@x" } },
+  viewer: { mode: "token", write_available: true, write_authorized: false, capabilities: {}, login: { available: true, signed_in: true, role: "viewer", email: "viewer@x", enrollment: true } },
+  viewerNoEnroll: { mode: "token", write_available: true, write_authorized: false, capabilities: {}, login: { available: true, signed_in: true, role: "viewer", email: "viewer@x", enrollment: false } },
   noAuth: { mode: "read_only", write_available: false, write_authorized: false, capabilities: {}, login: { available: false, signed_in: false, role: "none" } },
 };
 // Who is asking: each principal's answers, as the server's auth layers give them.
@@ -112,6 +113,7 @@ const answers = {
   anonymous: { access: [401], fleet: [401], decisions: [401], home: [401], history: [401] },
   publicRead: { access: [200, ACCESS.publicRead], fleet: [200, fleet], decisions: [401], home: [401], history: [401] },
   viewer: { access: [200, ACCESS.viewer], fleet: [200, fleet], decisions: [403], home: [403], history: [403] },
+  viewerNoEnroll: { access: [200, ACCESS.viewerNoEnroll], fleet: [200, fleet], decisions: [403], home: [403], history: [403] },
   noAuth: { access: [200, ACCESS.noAuth], fleet: [200, fleet], decisions: [403], home: [403], history: [403] },
   operator: { access: [200, ACCESS.operator], fleet: [200, fleet], decisions: [200, queue], home: [404], history: [200, { hosts: [] }] },
 };
@@ -151,6 +153,13 @@ test("the return address keeps what each page names, never a credential", () => 
   assert.equal(home.shellReturnPath("/explore", "#pane=%251&socket=s&token=x"), "/explore#pane=%251&socket=s");
   assert.equal(home.shellReturnPath("/explore", "#pane=%252&host=mini"), "/explore#pane=%252&host=mini");
   assert.equal(home.shellReturnPath("/explore", "#token=x"), "/explore");
+  // Explore's whole selection survives (session and window detail, the
+  // workspace filter), in the link's order; nothing else, never a token.
+  assert.equal(
+    home.shellReturnPath("/explore", "#session=api&window=%401&socket=s&host=mini&token=x&workspace=tend&wsocket=w&pane=%253&junk=1"),
+    "/explore#session=api&window=%401&socket=s&host=mini&workspace=tend&wsocket=w&pane=%253",
+  );
+  assert.equal(home.welcomeHref("/explore", "#workspace=tend&token=x"), `/welcome?return_to=${encodeURIComponent("/explore#workspace=tend")}`);
   assert.equal(home.shellReturnPath("/explore/messages", "#message=r1&token=x"), "/explore/messages#message=r1");
   assert.equal(home.shellReturnPath("/settings", "#token=x"), "/settings");
   assert.equal(home.shellReturnPath("/home", "#item=a&token=x"), "/home#item=a");
@@ -268,6 +277,17 @@ test("Settings shows who this is, sign-out and the upgrade", async () => {
   assert.equal(input.value, "half a tok");
   rail[0].click();
   await settle();
+});
+
+test("a viewer on a dashboard that does not enroll accounts gets no upgrade it could not use", async () => {
+  principal = "viewerNoEnroll";
+  await home.refresh();
+  assert.match(notice().text, /does not enroll accounts/);
+  assert.equal(find(notice(), (n) => n.tag === "form"), null, "no form: /auth/enroll would refuse it");
+  assert.ok(find(notice(), (n) => n.tag === "button" && n.text.includes("Sign out")));
+  principal = "viewer";
+  await home.refresh();
+  assert.ok(find(notice(), (n) => n.tag === "form"), "enrollment back on: the notice redraws with the form");
 });
 
 test("auth off: read-only with no upgrade, since there is no token", async () => {

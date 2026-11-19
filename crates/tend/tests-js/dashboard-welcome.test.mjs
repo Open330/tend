@@ -23,6 +23,16 @@ test("return_to is a same-origin path, or nothing", () => {
   }
 });
 
+test("dot segments and encoded dots never normalize into another origin", () => {
+  for (const bad of ["/a/..//evil.example/path", "/%2e%2e//evil.example", "/a/%2E%2E//evil.example", "/./..//evil.example", "/a/b/../..//evil.example"]) {
+    assert.equal(safeReturnTo(bad), null, bad);
+    assert.deepEqual(welcomeAddress(`?return_to=${encodeURIComponent(bad)}`), { back: "/home", address: "/welcome" }, bad);
+  }
+  // Harmless dot segments still resolve to this origin's path.
+  assert.equal(safeReturnTo("/a/../home#item=x"), "/home#item=x");
+  assert.equal(welcomeAddress(`?return_to=${encodeURIComponent("/%2e/explore")}`).back, "/explore");
+});
+
 test("return_to never carries a credential", () => {
   assert.equal(safeReturnTo("/home?token=s3cret"), "/home");
   assert.equal(safeReturnTo("/home#token=s3cret&item=req_9"), "/home#item=req_9");
