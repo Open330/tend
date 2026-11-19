@@ -411,22 +411,30 @@ struct WorkbenchStatusBar: View {
 
     private var shown: TendStatusBarInputs { inputs.value }
 
-    /// Healthy, the bar is neutral like the rest of the chrome and only the
-    /// leading chip carries the accent; a problem turns the whole bar its
-    /// color so it can't be missed.
+    /// Healthy, the bar is quiet: tendd's state is a dot and a word, like the
+    /// rest of the chrome (docs/proposals/MAC_DESIGN.md). Connecting is quiet
+    /// too. A problem turns the whole bar a fill that white text reads on, so
+    /// it can't be missed.
     private var healthy: Bool {
         if case .connected = shown.connectionState { return true }
         return false
+    }
+
+    /// Upgrade required or disconnected: the bar is a coloured fill.
+    private var alarming: Bool {
+        switch shown.connectionState {
+        case .upgradeRequired, .failed: true
+        case .connected, .connecting: false
+        }
     }
 
     var body: some View {
         let _ = TendPerf.count("statusbar.body")
         HStack(spacing: 0) {
             connectionItems
-                .padding(.horizontal, 9)
+                .padding(.horizontal, 10)
                 .frame(maxHeight: .infinity)
-                .background(healthy ? Color.accentColor : Color.clear)
-                .foregroundStyle(.white)
+                .foregroundStyle(alarming ? Color.white : TendInk.secondary(colorScheme))
 
             Spacer(minLength: 12)
 
@@ -437,13 +445,13 @@ struct WorkbenchStatusBar: View {
                         model.agentActionError = nil
                     } label: {
                         Label(error, systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(alarming ? Color.white : TendInk.state(.orange, colorScheme))
                     }
                     .buttonStyle(.plain)
                     .help("Click to dismiss")
                 } else if let notice = shown.agentActionNotice {
                     Label(notice, systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
+                        .foregroundStyle(alarming ? Color.white : TendInk.state(.green, colorScheme))
                         .lineLimit(1)
                 }
                 if healthy {
@@ -459,12 +467,12 @@ struct WorkbenchStatusBar: View {
             }
             .labelStyle(StatusBarLabelStyle())
             .padding(.trailing, 10)
-            .foregroundStyle(healthy ? Color.secondary : Color.white)
+            .foregroundStyle(alarming ? Color.white : TendInk.secondary(colorScheme))
         }
-        .font(.system(size: 12))
+        .font(TendType.tabularMeta)
         .lineLimit(1)
         .frame(maxWidth: .infinity, minHeight: TendTheme.statusBarHeight, maxHeight: TendTheme.statusBarHeight)
-        .background(healthy ? TendTheme.sideBar(colorScheme) : statusColor)
+        .background(alarming ? statusColor : TendTheme.sideBar(colorScheme))
         .overlay(alignment: .top) {
             TendTheme.border(colorScheme).frame(height: 1)
         }
@@ -477,11 +485,14 @@ struct WorkbenchStatusBar: View {
             case .connecting:
                 ProgressView()
                     .controlSize(.mini)
-                    .tint(.white)
                 Text("Connecting to tendd…")
             case .connected:
-                Label("tendd", systemImage: "bolt.horizontal.fill")
-                    .labelStyle(StatusBarLabelStyle())
+                HStack(spacing: 5) {
+                    Circle().fill(Color(nsColor: .systemGreen)).frame(width: 6, height: 6)
+                    Text(verbatim: "tendd")
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(String(localized: "tendd connected"))
             case .upgradeRequired(let message):
                 Label("tendd upgrade required", systemImage: "arrow.triangle.2.circlepath")
                 Text(message).lineLimit(1)
@@ -500,12 +511,13 @@ struct WorkbenchStatusBar: View {
         }
     }
 
+    /// Fills white reads on at 4.8:1 or more (system orange and red were
+    /// 2.2 and 3.6:1).
     private var statusColor: Color {
         switch shown.connectionState {
-        case .connected: Color.accentColor
-        case .connecting: Color(nsColor: .systemGray)
-        case .upgradeRequired: Color.orange
-        case .failed: Color.red
+        case .connected, .connecting: TendTheme.sideBar(colorScheme)
+        case .upgradeRequired: TendTheme.token(TendDesignTokens.Mac.stateInkOrange, .light)
+        case .failed: TendInk.dangerFill(colorScheme)
         }
     }
 }
