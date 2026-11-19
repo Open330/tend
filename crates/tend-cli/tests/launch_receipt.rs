@@ -1,6 +1,5 @@
 //! Uses only a disposable -L tmux server, private tendd and isolated HOME/XDG.
 #![cfg(target_os = "linux")]
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
