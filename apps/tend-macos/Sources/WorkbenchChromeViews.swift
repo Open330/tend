@@ -328,6 +328,7 @@ private struct EditorTab: View {
                             }
                         }
                     Text(title)
+                        .fontWeight(active ? .medium : .regular)
                         .italic(preview)
                         .lineLimit(1)
                 }
@@ -366,19 +367,17 @@ private struct EditorTab: View {
             .padding(.trailing, 6)
         }
         .frame(minWidth: 120, maxWidth: 220, maxHeight: .infinity)
-        .foregroundStyle(active ? Color.primary : Color.secondary)
+        .foregroundStyle(active || hovering ? TendInk.label(colorScheme) : TendInk.secondary(colorScheme))
         // A view, not a ShapeStyle: a style background would spread into the
         // title bar's safe area above the tab. The showing tab is the
         // content's own colour, joined to it with rounded top corners; no
         // coloured rule (docs/proposals/MAC_DESIGN.md). Drawn as background
         // only, so the strip's layout does not move.
         .background {
+            // Only the showing tab has a fill: a hovered one lifts its text
+            // instead, so it never looks selected.
             UnevenRoundedRectangle(topLeadingRadius: 7, topTrailingRadius: 7, style: .continuous)
-                .fill(
-                    active
-                        ? TendTheme.editor(colorScheme)
-                        : hovering ? TendTheme.hover(colorScheme) : Color.clear
-                )
+                .fill(active ? TendTheme.editor(colorScheme) : Color.clear)
                 .padding(.top, 4)
         }
         .overlay(alignment: .trailing) {
