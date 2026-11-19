@@ -91,8 +91,8 @@ before committing (`ffmpeg -i docs/demo.gif -vf fps=1/2 frame-%02d.png`)
 for real hostnames, paths or names.
 
 The landing page's dashboard screenshots come from the same fixture with
-the dashboard on: `scripts/landing-shots/live.sh` (Home, Explore and the
-workbench's collaboration panel, light and dark). It needs a release
+the dashboard on: `scripts/landing-shots/live.sh` (Home, Explore and
+Explore → Messages, light and dark). It needs a release
 build, because a debug build reads the dashboard's files from the source
 tree it was built in.
 

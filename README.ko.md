@@ -119,7 +119,7 @@ Tend는 두 층으로 되어 있습니다. **Attention** 층은 이미 돌리는
 | `tend timeline` | agent 작업/대기/error, human interaction, tmux foreground를 full-screen TUI timeline으로 표시. |
 | `tend stats activity` | stats/report에 들어간 raw duration ledger 조회. |
 | Tend for Mac | Home(Work 단위를 Your turn·In progress·Finished lane으로 표시)에서 시작해 Explore·Inbox·Ask·Shells·Files를 제공하는 네이티브 앱, libghostty 터미널과 알림. 네이티브 PTY는 `tendd`가 소유. |
-| Dashboard | `tendd`가 제공하는 선택적 loopback 웹 UI. Home(Mac과 같은 lane), Explore(모든 host의 pane), Settings(접근 권한, 페어링한 기기, 공유)와 기존 workbench(`/workbench`: Work board, timeline, 협업 graph)를 제공하고, [OIDC 로그인 기반 pane/window 공유](docs/DASHBOARD.md#invite-someone-to-a-pane)(조회/프롬프트 권한)를 지원. |
+| Dashboard | `tendd`가 제공하는 선택적 loopback 웹 UI. Home(Mac과 같은 lane), Explore(모든 host의 pane), Settings(접근 권한, 페어링한 기기, 공유), Explore → Messages(협업 graph와 sequence)를 제공하고, [OIDC 로그인 기반 pane/window 공유](docs/DASHBOARD.md#invite-someone-to-a-pane)(조회/프롬프트 권한)를 지원. |
 | Tend for iPhone and iPad | 휴대폰에서 보는 Home. 질문에 답하고 결과를 결정하며, 허용하면 host와 agent를 보고 새 작업도 시작. 대시보드 하나와 페어링. [휴대폰에서 쓰기](#휴대폰에서-쓰기) 참고. |
 | Tend for Windows | Home 창(WebView2)과 알림 토스트를 제공하는 트레이 앱. [docs/WINDOWS.md](docs/WINDOWS.md#tend-for-windows-the-app) 참고. |
 | BarShelf widget (macOS) | active/working/waiting/error agent를 host별(로컬 또는 SSH)로 메뉴바 popover에서 요약. |

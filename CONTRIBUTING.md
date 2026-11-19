@@ -115,7 +115,7 @@ for the deferred stub.
    For user-facing app changes, add highlights to `TendWhatsNew.catalog` in
    `apps/tend-macos/Sources/OnboardingLogic.swift` and their Korean translations.
    Check Welcome, install docs, and landing copy against the release; regenerate
-   dashboard screenshots with `scripts/landing-shots/capture.mjs` after UI changes.
+   dashboard screenshots with `scripts/landing-shots/live.sh` after UI changes.
 2. Reinstall locally first (`cargo install --path crates/tend-cli --force
    --locked`, same for `crates/tendd`, then restart tendd) — shipping a
    version you have not run is how a broken release gets tagged. For Mac app

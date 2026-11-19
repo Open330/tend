@@ -3,7 +3,7 @@
 // The terminal frames are captures of a real tend in a sandbox
 // (scripts/landing-shots/film.sh → landing-frames.mjs): tmux, the tend
 // status line, `tend attend` moving the client, and the `tend peek` popup.
-// The last scene is the dashboard's Work board screenshot. This module only
+// The last scene is the dashboard's Home screenshot (landing/board-*.webp). This module only
 // sequences them, types the command, and adds the desktop notification.
 // It pauses off screen or in a hidden tab; with reduced motion it does not
 // autoplay and rests on the attend scene.

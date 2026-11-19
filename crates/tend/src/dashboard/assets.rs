@@ -8,8 +8,9 @@
 //! Routes:
 //!
 //! - `GET /`, `/explore`, `/explore/messages`, `/settings` — the shell (`home.html`)
+//! - `GET /workbench`   — the shell too, so the retired workbench's links
+//!   (`/workbench#pane=…`) reach its link adapter (`legacy-link.mjs`)
 //! - `GET /welcome`     — the landing for visitors asked to sign in (`welcome.html`)
-//! - `GET /workbench`   — the classic workbench (`index.html`)
 //! - `GET /static/{path}` — any embedded file by relative path
 //!
 //! These two routes are intentionally **not** behind the bearer-token
@@ -44,23 +45,20 @@ pub fn router<S: Clone + Send + Sync + 'static>() -> Router<S> {
     Router::new()
         // The dashboard's address opens Home, as Tend for Mac opens on it.
         // A visitor who may read but not operate gets the shell read-only;
-        // one whose reads answer 401 is sent to /welcome. The classic
-        // workbench is at /workbench, where the links it made (`/#pane=…`)
-        // still go.
+        // one whose reads answer 401 is sent to /welcome.
         .route("/", get(home_handler))
         .route("/explore", get(home_handler))
         // Explore → Messages, the collaboration reader (explore-messages.mjs).
         .route("/explore/messages", get(home_handler))
         .route("/settings", get(home_handler))
+        // The retired workbench's address: the shell's link adapter maps
+        // its fragment (`#pane=…`, `#session=…`, `#message=…`) to Explore
+        // or Messages, and anything else to Home.
+        .route("/workbench", get(home_handler))
         // The landing (product, docs, sign-in) for a visitor the dashboard
-        // asks to authenticate: its own page, without the workbench.
+        // asks to authenticate.
         .route("/welcome", get(welcome_handler))
-        .route("/workbench", get(index_handler))
         .route("/static/{*path}", get(static_handler))
-}
-
-async fn index_handler() -> Response {
-    serve_page("index.html")
 }
 
 async fn home_handler() -> Response {
@@ -78,7 +76,7 @@ async fn static_handler(Path(path): Path<String>) -> Response {
 /// `no-cache` asks every cache to revalidate with the daemon. It is not
 /// enough on its own: a CDN in front of tendd can rewrite it (Cloudflare's
 /// Browser Cache TTL turns it into `max-age=14400`), so browsers kept the
-/// previous build's `main.js` next to the new `index.html` for hours after
+/// previous build's `home.mjs` next to the new `home.html` for hours after
 /// an upgrade. Pages therefore also link assets under a build-specific
 /// path (`serve_page`).
 const ASSET_CACHE_CONTROL: &str = "no-cache";
@@ -100,7 +98,7 @@ fn asset_build_id() -> &'static str {
     })
 }
 
-/// `/static/v/<build>/main.js` is `/static/main.js`. Any build id is
+/// `/static/v/<build>/home.mjs` is `/static/home.mjs`. Any build id is
 /// accepted: a page cached from an older build still loads (current) files.
 fn unversioned(path: &str) -> &str {
     path.strip_prefix("v/")
@@ -114,9 +112,10 @@ fn unversioned(path: &str) -> &str {
 /// No dashboard page may be framed by another site.
 pub(super) const FRAME_POLICY: &str = "frame-ancestors 'none'";
 
-/// Home (`/home`, `/needs`) and `/welcome` are written for a strict policy:
+/// The shell (`home.html`) and `/welcome` are written for a strict policy:
 /// their own scripts and styles only, no inline code, no other origin. The
-/// older pages still carry inline handlers and only get [`FRAME_POLICY`].
+/// share page (`share.html`) and the other static files only get
+/// [`FRAME_POLICY`].
 pub(super) const HOME_POLICY: &str = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'";
 
 fn policy_for(path: &str) -> &'static str {
@@ -194,21 +193,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn embedded_assets_include_index_and_main() {
+    fn embedded_assets_include_the_pages_and_their_modules() {
         // If these blow up the build will too, but assert here so the
         // intent is documented and a missing file fails one focused
         // test instead of a nebulous binary bloat.
-        assert!(WebAssets::get("index.html").is_some());
-        assert!(WebAssets::get("main.js").is_some());
-        assert!(WebAssets::get("work-model.mjs").is_some());
+        for page in [
+            "home.html",
+            "home.mjs",
+            "home.css",
+            "share.html",
+            "share.mjs",
+        ] {
+            assert!(WebAssets::get(page).is_some(), "missing {page}");
+        }
         assert!(WebAssets::get("collaboration-model.mjs").is_some());
-        assert!(WebAssets::get("style.css").is_some());
         assert!(WebAssets::get("operator-enroll.mjs").is_some());
         assert!(WebAssets::get("operators-admin.mjs").is_some());
-        assert!(WebAssets::get("pane-drawer.mjs").is_some());
         assert!(WebAssets::get("pane-stream.mjs").is_some());
-        assert!(WebAssets::get("topology-model.mjs").is_some());
-        assert!(WebAssets::get("workspace-rail.mjs").is_some());
+        assert!(WebAssets::get("legacy-link.mjs").is_some());
         assert!(WebAssets::get("landing.mjs").is_some());
         assert!(WebAssets::get("welcome.html").is_some());
         assert!(WebAssets::get("welcome.mjs").is_some());
@@ -234,6 +236,19 @@ mod tests {
             assert!(WebAssets::get(icon).is_some(), "missing {icon}");
         }
         assert!(WebAssets::get("fonts/LICENSE-nerd-fonts-symbols.txt").is_some());
+        // The retired workbench (wave 9) is gone from the binary.
+        for gone in [
+            "index.html",
+            "main.js",
+            "style.css",
+            "pane-drawer.mjs",
+            "topology-model.mjs",
+            "work-model.mjs",
+            "workspace-rail.mjs",
+            "fleet-view.mjs",
+        ] {
+            assert!(WebAssets::get(gone).is_none(), "still embedded: {gone}");
+        }
         for shot in ["board", "collaboration", "agents"] {
             for scheme in ["light", "dark"] {
                 let path = format!("landing/{shot}-{scheme}.webp");
@@ -245,9 +260,9 @@ mod tests {
     #[test]
     fn assets_tell_caches_to_revalidate() {
         for path in [
-            "index.html",
-            "main.js",
-            "style.css",
+            "home.html",
+            "home.mjs",
+            "home.css",
             "landing/board-light.webp",
         ] {
             let response = serve_asset(path);
@@ -270,7 +285,7 @@ mod tests {
         assert_eq!(response.headers()[header::CONTENT_TYPE], "font/woff2");
         assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
         // Every stylesheet that renders pane output falls back to it.
-        for css in ["style.css", "share.css"] {
+        for css in ["home.css", "share.css"] {
             let text = String::from_utf8(WebAssets::get(css).unwrap().data.into_owned()).unwrap();
             assert!(
                 text.contains("url(\"/static/fonts/tend-nerd-symbols.woff2\")"),
@@ -288,27 +303,27 @@ mod tests {
         let id = asset_build_id();
         assert_eq!(id.len(), 12);
         assert_eq!(id, asset_build_id(), "stable within a build");
-        assert_eq!(unversioned(&format!("v/{id}/main.js")), "main.js");
+        assert_eq!(unversioned(&format!("v/{id}/home.mjs")), "home.mjs");
         assert_eq!(
             unversioned("v/older/landing/board-dark.webp"),
             "landing/board-dark.webp"
         );
-        assert_eq!(unversioned("main.js"), "main.js");
+        assert_eq!(unversioned("home.mjs"), "home.mjs");
         assert_eq!(unversioned("v"), "v");
-        let versioned = serve_asset(unversioned(&format!("v/{id}/main.js")));
+        let versioned = serve_asset(unversioned(&format!("v/{id}/home.mjs")));
         assert_eq!(versioned.status(), StatusCode::OK);
     }
 
     #[tokio::test]
-    async fn index_html_points_every_static_link_at_the_build_path() {
+    async fn home_html_points_every_static_link_at_the_build_path() {
         use http_body_util::BodyExt as _;
-        let response = serve_page("index.html");
+        let response = serve_page("home.html");
         assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let html = String::from_utf8(body.to_vec()).unwrap();
         let prefix = format!("/static/v/{}/", asset_build_id());
-        assert!(html.contains(&format!("{prefix}main.js")));
-        assert!(html.contains(&format!("{prefix}style.css")));
+        assert!(html.contains(&format!("{prefix}home.mjs")));
+        assert!(html.contains(&format!("{prefix}home.css")));
         assert!(!html.replace(&prefix, "").contains("/static/"));
     }
 

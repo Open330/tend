@@ -1,11 +1,10 @@
 // Explore → Messages as data: the links it reads and writes, the query it
 // sends, the scope a pane or session gives it, the host check that keeps
-// another daemon's ids out, and the adapter for the workbench's old links.
+// and another daemon's ids out. Old links: dashboard-legacy-link.test.mjs.
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  collaborationLinkTarget,
   collaborationParams,
   customRangeError,
   hostCheck,
@@ -123,20 +122,6 @@ test("a custom period is asked for only when it is one", () => {
   const ok = collaborationParams(readerState({ range: "custom", since: "2026-11-01T10:00", until: "2026-11-02T10:00" })).params;
   assert.equal(ok.get("since"), new Date("2026-11-01T10:00").toISOString());
   assert.equal(ok.get("until"), new Date("2026-11-02T10:00").toISOString());
-});
-
-test("only collaboration-only workbench links move to Explore; mixed links stay", () => {
-  assert.equal(collaborationLinkTarget("/workbench", "#message=req_1"), "/explore/messages#message=req_1");
-  assert.equal(collaborationLinkTarget("/", "#message=req_1"), "/explore/messages#message=req_1");
-  assert.equal(collaborationLinkTarget("/workbench", "#thread=ENG-1%2Freview"), "/explore/messages#thread=ENG-1%2Freview");
-  assert.equal(collaborationLinkTarget("/workbench", "#message=req_1&pane=%251"), null, "a pane link stays");
-  assert.equal(collaborationLinkTarget("/workbench", "#message=req_1&workspace=tend"), null);
-  assert.equal(collaborationLinkTarget("/workbench", "#pane=%251"), null);
-  assert.equal(collaborationLinkTarget("/workbench", "#message="), null);
-  assert.equal(collaborationLinkTarget("/workbench", ""), null);
-  // The new view's own links are never sent anywhere (no loop).
-  assert.equal(collaborationLinkTarget("/explore/messages", "#message=req_1"), null);
-  assert.equal(collaborationLinkTarget("/home", "#message=req_1"), null);
 });
 
 test("a message id is looked up only on the host its link names", () => {

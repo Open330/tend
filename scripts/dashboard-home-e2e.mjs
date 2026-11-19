@@ -3,7 +3,7 @@
 // tendd: answer a question, decide a result, and see both land in Finished;
 // then the same on a phone-sized viewport. On the desktop it also types to a
 // pane in Explore and reads the answered question in Explore → Messages,
-// including the workbench's `#message=` link that now opens there.
+// including the retired workbench's `#message=` link that now opens there.
 //
 //   apps/tend-ios/Scripts/scratch-tendd.sh up        # seeds a question + a result
 //   apps/tend-ios/Scripts/scratch-tendd.sh seed      # one more pair for the phone run
@@ -165,15 +165,17 @@ async function run(name, contextOptions) {
     await page.locator(".mx-graph .mx-edge-group").first().waitFor({ timeout: 5000 });
     await page.getByRole("tab", { name: "Sequence" }).click();
     await page.locator(".mx-seq .mx-event").first().waitFor({ timeout: 5000 });
-    // The workbench's message link opens here; one that also names a pane
-    // stays on the workbench.
-    await page.goto(`${base}/workbench#message=${encodeURIComponent(id)}`);
-    await page.waitForURL((url) => url.pathname === "/explore/messages" && url.hash.includes("message="), { timeout: 15000 });
-    await page.locator(`.mx-row[data-id="${id}"]`).waitFor({ timeout: 15000 });
-    await page.goto(`${base}/workbench#message=${encodeURIComponent(id)}&pane=%25999`);
-    await page.waitForTimeout(2500);
-    check(new URL(page.url()).pathname === "/workbench", "a mixed link left the workbench");
-    console.log(`  messages: read ${id}, drew its graph and sequence; the workbench link opened it here`);
+    // The retired workbench's message link opens here, with or without a
+    // pane beside it (the shell's link adapter, legacy-link.mjs).
+    for (const extra of ["", "&pane=%25999"]) {
+      await page.goto(`${base}/workbench#message=${encodeURIComponent(id)}${extra}`);
+      await page.waitForURL((url) => url.pathname === "/explore/messages" && url.hash.includes("message="), { timeout: 15000 });
+      await page.locator(`.mx-row[data-id="${id}"]`).waitFor({ timeout: 15000 });
+    }
+    // Anything else at the old address goes Home.
+    await page.goto(`${base}/workbench#tab=timeline`);
+    await page.waitForURL((url) => url.pathname === "/home", { timeout: 15000 });
+    console.log(`  messages: read ${id}, drew its graph and sequence; the old /workbench links opened it here`);
   }
   check(!problems.length, problems.join("\n"));
   await context.close();

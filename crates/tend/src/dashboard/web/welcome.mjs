@@ -1,6 +1,6 @@
 // /welcome: the landing for a visitor the dashboard asks to authenticate
 // (its reads answer 401). Product, docs and the ways in (landing.mjs), on
-// a page of its own under the strict policy, without the workbench.
+// a page of its own under the strict policy.
 //
 // The shell (home.mjs) sends such a visitor here with `return_to`, the
 // address they opened, already stripped of credentials. Sign-in comes back

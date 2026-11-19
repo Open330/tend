@@ -1000,8 +1000,9 @@ fn dashboard_static_index_is_public() {
     let Some(dd) = spawn_dashboard(Some("e2e-token")) else {
         return;
     };
-    // `/` is Home's shell; the classic workbench (and its landing page for
-    // visitors) is at /workbench. Both are public pages.
+    // `/` is Home's shell, and so is /workbench (the retired workbench's
+    // address, whose old links the shell maps); /welcome is the landing for
+    // visitors. All are public pages.
     let url = format!("http://127.0.0.1:{}/", dd.port);
     assert_eq!(curl_status(&url, None), 200);
     let body = curl_body(&url, None);
@@ -1013,8 +1014,15 @@ fn dashboard_static_index_is_public() {
     assert_eq!(curl_status(&workbench, None), 200);
     let body = curl_body(&workbench, None);
     assert!(
-        body.contains("tend dashboard"),
-        "expected the workbench HTML; got: {body:.200}"
+        body.contains("home.mjs") && !body.contains("main.js"),
+        "expected Home's shell at /workbench; got: {body:.200}"
+    );
+    let welcome = format!("http://127.0.0.1:{}/welcome", dd.port);
+    assert_eq!(curl_status(&welcome, None), 200);
+    let body = curl_body(&welcome, None);
+    assert!(
+        body.contains("welcome.mjs"),
+        "expected the welcome page; got: {body:.200}"
     );
     drop(dd.daemon);
 }

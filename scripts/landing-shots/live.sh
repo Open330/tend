@@ -5,8 +5,8 @@
 #
 # Stands up the demo GIFs' fixture fleet (docs/demo-setup.sh on the
 # isolated sandbox) with the dashboard on, adds two results waiting for a
-# decision, and has capture-live.mjs photograph Home, Explore and the
-# workbench's collaboration panel in light and dark. Everything shown is
+# decision, and has capture-live.mjs photograph Home, Explore and
+# Explore → Messages in light and dark. Everything shown is
 # fixture; nothing reads the tend you use.
 #
 # Binaries: TEND_SHOTS_BIN_DIR (default target/debug; on macOS point it at

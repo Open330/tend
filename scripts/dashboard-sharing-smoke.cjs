@@ -5,11 +5,11 @@ const pane=n=>(process.env.TEND_TEST_PANE_PREFIX||'')+'%'+n;
  try {
   const owner=await browser.newContext();const page=await owner.newPage();const origin=process.argv[2];
   page.on('pageerror',e=>console.error('PAGEERROR',e)); page.on('response',async r=>{if(r.url().includes('/api/shares'))console.log('SHARE',r.status(),await r.text())});
-  // The workbench (pane drawer, shares) lives at /workbench; / is Home.
-  await page.goto(origin+'/workbench#token=operator');
-  await page.locator('[data-collapse-target="data-panel"]').click();
-  await page.locator('[data-tab="panes"]').click();
-  await page.locator('#panes-tbody [data-open-pane]').first().click();await page.locator('#pane-drawer-share').click();
+  // An old workbench pane link: the shell stores the token, then opens the
+  // pane in Explore, where Share… opens the invitation dialog.
+  await page.goto(origin+'/workbench#token=operator&pane='+encodeURIComponent(pane(1)));
+  await page.waitForURL(u=>new URL(u).pathname==='/explore');
+  await page.getByRole('button',{name:'Share…'}).click();
   await page.getByRole('button',{name:'Check login setup'}).click();
   await page.waitForFunction(()=>document.querySelector('.share-message').textContent.includes('reachable'));
   await page.locator('[name=email]').fill('guest@example.com');await page.locator('[name=permission]').selectOption('prompt');await page.locator('[name=scope]').selectOption('window');await page.getByRole('button',{name:'Create share',exact:true}).click();

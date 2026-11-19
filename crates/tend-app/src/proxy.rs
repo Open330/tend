@@ -198,6 +198,9 @@ mod tests {
         }
         for (method, path) in [
             ("GET", "/"),
+            // The retired workbench's address serves the full shell; the
+            // window is only Home.
+            ("GET", "/workbench"),
             ("GET", "/api/agents"),
             ("GET", "/api/panes/%251/output"),
             ("GET", "/api/operators"),
@@ -234,6 +237,7 @@ mod tests {
         assert!(stays_in_window("http://tend.localhost/needs#item=rq_1"));
         for url in [
             "http://tend.localhost/",
+            "http://tend.localhost/workbench#pane=%251",
             "http://tend.localhost.evil/home",
             "http://user@tend.localhost/home",
             "http://tend.localhost:8080/home",

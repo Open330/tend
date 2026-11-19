@@ -1,19 +1,16 @@
 // Live pane output over SSE (GET /api/panes/{pane}/output/stream).
 //
 // EventSource cannot send an Authorization header, so this uses fetch() and
-// parses the frames itself, the same way main.js reads /api/events: bearer
+// parses the frames itself: bearer
 // tokens travel in the header and an operator session cookie rides along
 // with `credentials: "same-origin"`.
 //
-// The pure helpers (reconnect delay, status classification, the tile stream
-// budget, the frame parser) are tested in tests-js/dashboard-pane-stream.test.mjs;
+// The pure helpers (reconnect delay, status classification, the frame
+// parser) are tested in tests-js/dashboard-pane-stream.test.mjs;
 // openPaneStream wires them to fetch.
 
 export const RECONNECT_BASE_MS = 500;
 export const RECONNECT_MAX_MS = 15000;
-/// Window tiles that may hold a live stream at once; the rest poll.
-export const TILE_STREAM_BUDGET = 6;
-
 /// Delay before reconnect attempt `attempt` (0 = first retry): exponential
 /// from `baseMs`, capped at `maxMs`, with "equal jitter" (half fixed, half
 /// random) so many tabs reconnecting after a daemon restart spread out.
@@ -36,22 +33,6 @@ export function classifyStreamStatus(status) {
   if (status === 401 || status === 403) return "denied";
   if ([400, 404, 405, 501].includes(status)) return "unsupported";
   return "retry";
-}
-
-/// Split the panes a window shows into those that get a live stream and
-/// those that poll. Panes already streaming keep their slot so a re-plan
-/// does not churn connections; free slots go to the first remaining panes
-/// in `keys` order (callers list agent panes first).
-export function planTileStreams(keys, budget = TILE_STREAM_BUDGET, streaming = new Set()) {
-  const wanted = [...new Set(keys)];
-  const max = Math.max(0, Math.floor(budget));
-  const keep = wanted.filter((key) => streaming.has(key)).slice(0, max);
-  const fill = wanted.filter((key) => !streaming.has(key)).slice(0, max - keep.length);
-  const chosen = new Set([...keep, ...fill]);
-  return {
-    stream: wanted.filter((key) => chosen.has(key)),
-    poll: wanted.filter((key) => !chosen.has(key)),
-  };
 }
 
 /// Incremental SSE parser. `push(chunk)` feeds decoded text; `onEvent(name,

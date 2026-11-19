@@ -182,8 +182,8 @@ function when(iso) {
   return relativeTime(iso, Date.now(), LANG);
 }
 
-/// The workbench's pane drawer deep link (pane-drawer.mjs parsePaneHash):
-/// pane ids repeat across tmux servers, so the socket picks the right one.
+/// A pane's deep link in Explore: pane ids repeat across tmux servers, so
+/// the socket picks the right one.
 export function paneLink(unit) {
   const params = new URLSearchParams({ pane: unit.pane });
   if (unit.socket) params.set("socket", unit.socket);
@@ -1831,7 +1831,7 @@ function accessActions(access) {
   return nodes;
 }
 
-/// Upgrade with token, in the page (the workbench asked in a prompt).
+/// Upgrade with token, in the page.
 function upgradeForm(signedIn) {
   const form = el("form", "upgrade");
   const label = el("label", "upgrade-label");
@@ -1869,8 +1869,8 @@ function upgradeForm(signedIn) {
 /// A signed-in viewer enrolls its own account with the token
 /// (`POST /auth/enroll`): the server checks it once and replaces the
 /// viewer session with an operator's; nothing is stored here. A browser
-/// without an account keeps the token as its credential instead, as the
-/// workbench's unlock did, and only if it makes this browser an operator.
+/// without an account keeps the token as its credential instead, and only
+/// if it makes this browser an operator.
 export async function upgradeWithToken(token, signedIn) {
   if (signedIn) {
     try {
@@ -1973,6 +1973,7 @@ function renderRoute() {
       S, el, icon, button, logo, hostBadge, when, read, write, authHeaders, canWrite,
       access: () => state.data.access,
       fleetSettled: () => state.fleetSettled,
+      share: (target) => openShareManager(target, adminFetch),
     });
     state.explore.update(state.data.fleet, boardAttention(state.data.server));
   }
@@ -1987,8 +1988,7 @@ function settingsRow(label, value) {
 
 /// Settings, the web's part of the Mac's Settings: who is signed in and
 /// what this dashboard allows, sign-in, sign-out and Upgrade with token,
-/// access and sharing administration, and the classic workbench for what
-/// has not moved into the shell yet.
+/// and access and sharing administration.
 function renderSettings() {
   const box = $("view-settings");
   const access = state.data.access;
@@ -2023,17 +2023,10 @@ function renderSettings() {
     admin.append(row);
     page.append(admin);
   }
-  const more = el("section", "set-section");
-  more.append(el("h2", null, S.settingsWorkbench));
-  more.append(el("p", "set-help", S.settingsWorkbenchHelp));
-  const link = el("a", "btn", S.settingsOpenWorkbench);
-  link.href = "/workbench";
-  more.append(link);
-  page.append(more);
   box.replaceChildren(page);
 }
 
-/// The admin dialogs' request helper (`controlFetch` in the workbench):
+/// The admin dialogs' request helper:
 /// JSON in and out, the operator header on every call.
 async function adminFetch(path, options = {}) {
   const resp = await fetch(path, {

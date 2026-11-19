@@ -1,10 +1,10 @@
-// The shell's link adapter: links the old workbench made (`/#…`, and
-// `/workbench#…` once that address serves the shell) open what they named,
+// The shell's link adapter: links the retired workbench made (`/#…` and
+// `/workbench#…`, both of which serve the shell) open what they named,
 // in Explore or Messages (docs/proposals/WEB_HOME.md, "Wave 9"). Pure: the
 // page applies what this returns.
 //
-// The fragment's keys are the ones main.js, workspace-rail.mjs and
-// pane-drawer.mjs wrote:
+// The fragment's keys are the ones the workbench (main.js, workspace-rail.mjs
+// and pane-drawer.mjs, removed in wave 9) wrote:
 //   pane (+ socket)                      → that pane in Explore; a pane wins
 //                                          over session/window beside it
 //   window (+ session, + socket)         → that window's detail (`@id`, or

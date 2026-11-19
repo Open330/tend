@@ -6,7 +6,7 @@
 //
 // Everything is local: a self-hosted daemon should not load fonts, images
 // or scripts from elsewhere. Screens are regenerated with
-// scripts/landing-shots/capture.mjs from made-up data.
+// scripts/landing-shots/live.sh from the demo fixture fleet.
 
 import { mountFilm } from "./landing-film.mjs";
 import { applyStyles, LANDING_LANG_KEY, pickLanguage, publicHeader } from "./landing-shared.mjs";
@@ -84,7 +84,7 @@ const COPY = {
       ["tend watch", "The whole fleet in one TUI"],
       ["tend peek", "Overlay on the current tmux window"],
       ["status line", "Your pane's agent, in tmux"],
-      ["dashboard", "Home, Explore, Work board"],
+      ["dashboard", "Home, Explore, Settings"],
       ["Tend for Mac", "Native app with notifications"],
       ["iPhone and iPad", "Answer and decide from your phone"],
       ["Tend for Windows", "Tray app, Home and toasts"],
@@ -188,7 +188,7 @@ const COPY = {
       ["tend watch", "전체 에이전트를 한 TUI에서"],
       ["tend peek", "현재 tmux 창 위 오버레이"],
       ["status line", "지금 pane의 에이전트를 tmux에"],
-      ["대시보드", "Home, Explore, Work 보드"],
+      ["대시보드", "Home, Explore, Settings"],
       ["Tend for Mac", "알림이 있는 네이티브 앱"],
       ["iPhone, iPad", "휴대폰에서 답하고 결정"],
       ["Tend for Windows", "트레이 앱, Home, 알림"],

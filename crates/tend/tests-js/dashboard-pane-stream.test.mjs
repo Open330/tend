@@ -4,14 +4,11 @@ import test from "node:test";
 import {
   RECONNECT_BASE_MS,
   RECONNECT_MAX_MS,
-  TILE_STREAM_BUDGET,
   classifyStreamStatus,
   createSseParser,
   openPaneStream,
-  planTileStreams,
   reconnectDelay,
 } from "../src/dashboard/web/pane-stream.mjs";
-import { updatedLabel } from "../src/dashboard/web/pane-drawer.mjs";
 
 test("reconnect delay doubles from the base and stops at the cap", () => {
   const noJitter = { random: () => 1 };
@@ -52,28 +49,6 @@ test("stream statuses map to stream, stop, poll or retry", () => {
   assert.equal(classifyStreamStatus(0), "retry");
 });
 
-test("tile budget streams the first panes and polls the rest", () => {
-  const keys = ["a", "b", "c", "d", "e", "f", "g", "h"];
-  const plan = planTileStreams(keys, TILE_STREAM_BUDGET);
-  assert.equal(TILE_STREAM_BUDGET, 6);
-  assert.deepEqual(plan.stream, ["a", "b", "c", "d", "e", "f"]);
-  assert.deepEqual(plan.poll, ["g", "h"]);
-  assert.deepEqual(planTileStreams(["a", "b"], 6), { stream: ["a", "b"], poll: [] });
-  assert.deepEqual(planTileStreams(["a", "b"], 0), { stream: [], poll: ["a", "b"] });
-  assert.deepEqual(planTileStreams([], 6), { stream: [], poll: [] });
-  // Duplicate keys count once.
-  assert.deepEqual(planTileStreams(["a", "a", "b"], 1), { stream: ["a"], poll: ["b"] });
-});
-
-test("tile budget keeps panes that already stream instead of churning", () => {
-  const plan = planTileStreams(["a", "b", "c", "d"], 2, new Set(["d", "gone"]));
-  assert.deepEqual(plan.stream, ["a", "d"]);
-  assert.deepEqual(plan.poll, ["b", "c"]);
-  // More existing streams than slots: the earliest in order win.
-  const shrunk = planTileStreams(["a", "b", "c"], 1, new Set(["c", "b"]));
-  assert.deepEqual(shrunk, { stream: ["b"], poll: ["a", "c"] });
-});
-
 test("SSE parser handles split chunks, comments and CRLF", () => {
   const seen = [];
   const parser = createSseParser((name, data) => seen.push([name, data]));
@@ -88,13 +63,6 @@ test("SSE parser handles split chunks, comments and CRLF", () => {
   // A nameless event is ignored.
   parser.push("data: orphan\n\n");
   assert.equal(seen.length, 3);
-});
-
-test("drawer label says the stream is live and when the pane last changed", () => {
-  assert.equal(updatedLabel(0, 5000, true), "live");
-  assert.equal(updatedLabel(1000, 4500, true), "live · changed 3s ago");
-  assert.equal(updatedLabel(1000, 1000 + 125_000, true), "live · changed 2m ago");
-  assert.equal(updatedLabel(1000, 4500), "updated 3s ago");
 });
 
 function sseResponse(chunks, status = 200) {

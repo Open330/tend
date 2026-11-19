@@ -7,20 +7,14 @@ paired devices, sharing) beside it; see
 [The shell](#the-shell-home-explore-settings). The phone app and the Windows
 tray app read the same Home through this server.
 
-The classic workbench at `/workbench` reads the canonical tend hierarchy:
-**Workspace → Work → Run → Agent session**, with tmux session/window/pane
-retained only as the current execution binding. An optional
-Linear/GitHub/Jira issue is a reference attached to Work; it is not the Work
-identity itself. Its board never promotes every visible tmux window into a
-Work card: managed or persisted Work appears on the four-stage board, while
-generic windows are listed separately as **Unlinked executions**. The
-timeline and raw agent/pane/terminal inventories are collapsed secondary
-panels there.
+The API reads the canonical tend hierarchy: **Workspace → Work → Run →
+Agent session**, with tmux session/window/pane retained only as the current
+execution binding. An optional Linear/GitHub/Jira issue is a reference
+attached to Work; it is not the Work identity itself.
 
-Home refreshes by polling while the page is visible. The classic workbench
-reads a live Server-Sent Events stream (and polls its other inventories).
-Optional control actions are protected by a bearer token that can be pasted
-into the browser like a PAT.
+Home and Explore refresh by polling while the page is visible; a pane open in
+Explore streams its output. Optional control actions are protected by a
+bearer token that can be pasted into the browser like a PAT.
 
 The dashboard is **off by default** and **loopback-only when on by default**.
 Token authentication is the default auth mode, and an enabled dashboard must
@@ -34,7 +28,7 @@ bound to loopback and configure the public origin as described below.
 | ------------------- | ------------------------------------------------------------------------------ |
 | `GET /`, `/home`, `/explore`, `/settings` | The shell's pages: Home, Explore, Settings. Someone who may read but not operate gets them read-only; a visitor whose reads answer 401 is sent to `/welcome`. |
 | `GET /welcome`      | The landing for visitors asked to sign in: what tend is, the docs, sign-in. `?return_to=<path>` is where sign-in comes back to. |
-| `GET /workbench`    | The classic workbench, with its own landing page, sign-in and public read view (to be retired; see [WEB_HOME.md](proposals/WEB_HOME.md#wave-9-retiring-workbench)). |
+| `GET /workbench`    | The shell, for links the retired workbench made: its fragment opens in Explore or Messages, anything else goes to Home (see [Old links](#old-links)). |
 | `GET /static/*`     | Embedded JS/CSS/font assets.                                                   |
 | `GET /api/health`   | `{ ok, version, protocol }`                                                    |
 | `GET /api/proof?nonce=N` | No credential: `{ version: 1, proof }`, `proof` = hex HMAC-SHA256(token, `tend-dashboard-proof/v1\n` + node + `\n` + bind + `\n` + N), where node is this host's Fleet node id (`host-id`) and bind the dashboard's address, for a 32-128 hex-digit nonce. A client checks it before sending the token, since anyone can bind a loopback port while tendd is down; node and bind stop an impostor from relaying the nonce to another tend that shares the token. 404 without a token or with `auth = "none"`. |
@@ -296,84 +290,7 @@ session name, a ticket-shaped window name, or repository cwd.
 | Agent session | daemon agent session attached to a Run pane | Runtime state, model, prompt/response, control target. |
 | Signal | attention, blocked, error | Overlay on Work; never a board lane. |
 
-### Workspace rail
-
-tend's managed layout is Workspace = tmux session, Run = window, Agent = pane,
-so the **Workspaces** rail lists every live tmux session, whether or not
-anything in it was started with `tend work up`. It is the union of the
-sessions in `/api/panes` (plus any that only appear in `unlinked_executions`)
-and the managed workspaces in `/api/works`; a managed workspace whose id equals
-a session name is the same entry. Each entry shows its window and agent
-counts, a rolled-up state (error > waiting > working > idle, as in the
-[Sessions navigator](#sessions-windows-and-panes), with a Work's error and
-attention signals counted too) and its Work count when it has any. A session
-name that exists on several tmux servers is shown as `name · socket`; a managed
-workspace with no live session keeps its own entry. The header shows the
-number of entries as a badge (its tooltip spells out sessions, managed
-workspaces and Works); the **all workspaces** row counts Works and agents. Sort by
-**priority** (rolled-up state), **latest** (last agent or Work activity) or
-**A-Z**.
-
-This is presentation only: an entry built from a session never creates Work
-and never tags a tmux window. Work still only comes from managed runs.
-
-Selecting an entry sets the page **scope**:
-
-- the Work board shows that workspace's managed Works, and **Windows not
-  tracked as Work** that session's windows;
-- the Sessions navigator tree shows only that session, expanded, with a
-  **show all sessions** switch (the filter box still works inside the scope);
-- the Agents and Panes tables and the Timeline's workspace filter follow it;
-- the Collaboration panel keeps only messages whose sender or recipient pane
-  is in that session (panes are mapped to sessions by the live pane scan, and
-  a pane that has since closed by the session name the message recorded). A
-  participant without a pane — the operator console, an agent outside tmux —
-  appears only through a message it exchanged with an in-scope participant.
-  The panel header reads **scoped to <name> · clear**. Session and socket
-  filters are applied by the API before counting and pagination; a managed
-  workspace with no live session keeps the messages filed under its Work.
-  Rooms are grouped under their durable session, and selecting a group scopes
-  the graph and sequence to it.
-
-Picking a session in the Timeline filter selects its rail entry too, and **all
-workspaces** (or ∅, or **clear** in the Collaboration header) clears the scope.
-Selecting a session in the navigator also changes the page scope. Selecting
-a window or pane only chooses what the navigator's detail side and pane drawer
-show. Viewers see the same rail; it carries only metadata.
-
-Scope and detail selection live in separate URL fragment parameters, so a link
-restores both:
-
-| Parameter | Set by | Meaning |
-| --- | --- | --- |
-| `workspace=<name>` | rail | Page scope: a tmux session name, or a managed workspace id with no live session. |
-| `wsocket=<socket>` | rail | The tmux server of the scoped session; only written when that session name exists on several servers. |
-| `session=<name>` | navigator | Detail selection: a session. |
-| `window=<@id>` | navigator, untracked-window rows | Detail selection: a window (with `session=`). |
-| `pane=<id>` | pane drawer | The open pane drawer. |
-| `socket=<socket>` | navigator, pane drawer | The tmux server of the selected session/window or open pane. |
-
-A link from before the split (`#session=<name>` with no `workspace=`) used to
-scope the whole page; on load it is migrated once to the same
-`workspace=<name>` (and `wsocket=` from its `socket=`), and the navigator
-selection is kept.
-
-When there is no managed Work at all, the six summary cards and the empty board
-collapse into one line (with the **start work** form when
-`allow_work_start` is on) and the Sessions navigator follows it directly. The
-live windows are still listed under a compact **Windows not tracked as Work
-(N)** section, collapsed by default in that case (the browser remembers when
-you expand it). It follows the rail scope, and each row opens that window in
-the navigator (`#window=`).
-
-### Work board
-
-Selecting a workspace filters the four local
-Work stages: **Queued**, **In progress**, **Review**, and **Done**. Attention,
-blocked, and error render as signal badges on the card so a waiting agent does
-not silently rewrite the operator's workflow stage. Selecting a Work opens a
-drawer that shows local stage, external issue status, Run state, and Agent state
-as separate facts. Expanding execution reveals all linked Runs and panes.
+### Work records
 
 Durable records live in `$XDG_DATA_HOME/tend/dashboard-work.json` (normally
 `~/.local/share/tend/dashboard-work.json`). Schema v2 keys records by logical
@@ -385,8 +302,8 @@ Managed tmux options (`@tend_workspace_id`, `@tend_work_id`, agent role/task)
 link a Run to Work. `tend work up` also stores optional external-source metadata
 on the window, which `/api/works` discovers and persists. Unmanaged windows stay
 in `unlinked_executions`; they are never guessed into Work from their names.
-Their sessions still appear as workspaces in the rail (see
-[Workspace rail](#workspace-rail)), but Work only comes from managed runs.
+Work only comes from managed runs. `tend work plan WORK --title/--stage/--goal/--next`
+edits a Work's metadata (`GET`/`PUT /api/work-metadata`).
 
 ## The shell: Home, Explore, Settings
 
@@ -406,14 +323,35 @@ The activity rail on the left switches between pages:
   on that host. `#pane=<id>&socket=<socket>` links to a pane.
 - **Settings**: `/settings`. Who is signed in and what this dashboard
   allows. It also opens access administration (operators, viewers, paired
-  devices), pane sharing, and the classic workbench.
+  devices) and pane sharing.
 
-The classic workbench (workspaces, the Work board, collaboration, the
-timeline and the execution inventory) is at `/workbench`, until it is
-retired. Links the workbench made before (`/#pane=…`,
-`/#workspace=…`, `/#window=…`, `/#session=…`, `/#message=…`) open in
-Explore or Messages (legacy-link.mjs), their credential stored and
-scrubbed first.
+### Old links
+
+The classic workbench was retired in wave 9
+([WEB_HOME.md](proposals/WEB_HOME.md#wave-9-retiring-workbench)).
+`/workbench` and `/` serve the shell, and its link adapter
+(`legacy-link.mjs`) opens what the workbench's links named. A credential in
+the link (`#token=`, `?token=`) is stored first, then scrubbed; it is never
+copied into the new address.
+
+| Old fragment | Opens |
+| --- | --- |
+| `pane=<id>` (+ `socket=`) | That pane in Explore. A pane wins over `session`/`window` in the same link. |
+| `window=<@id or session:index>` (+ `session=`, `socket=`) | That window's detail in Explore, or its session's when the window is gone. |
+| `session=<name>` (+ `socket=`) | That session's detail in Explore. |
+| `workspace=<name>` (+ `wsocket=`) | Explore filtered to that workspace's session; Explore says so when no live session matches. |
+| `message=<id>`, `thread=<key>` | Explore → Messages. |
+| anything else at `/workbench` | Home. |
+
+A visitor whose reads answer 401 is sent to `/welcome` with the mapped
+address, without the credential, as where to come back to.
+
+What the workbench had that the shell does not: the Work metadata editor
+(use `tend work plan`), Abort all agents of a Work (`POST
+/api/work-control/abort` stays for clients; Explore interrupts one pane),
+the timeline (`tend timeline`, `tend stats --timeline`; `/api/timeline`
+stays) and the Terminals tab (`tend proc run`/`attach`/`detach`;
+`/api/terminal-sessions` stays).
 
 ## Home (needs you)
 
@@ -452,7 +390,7 @@ daemon-side board read (WEB_HOME.md, phase 2).
 Selecting a unit opens its details beside the lanes (over them in a narrow
 window): what it is doing now or its last result, a field to answer it or
 send it the next instruction (`POST /api/panes/{pane}/prompt`, operators
-only, local panes only), **Open Pane** (the pane drawer on `/`), its stages
+only, local panes only), **Open Pane** (the pane in Explore), its stages
 and its agents. Escape closes it.
 
 **Your turn** has everything waiting on you, in the order
@@ -768,7 +706,7 @@ pairs. `/api/access` reports `capabilities.device_pairing`.
 
 ## Collaboration graph and history API
 
-The collaboration panel projects retained requests into two linked views. The
+Explore → Messages (`/explore/messages`) projects retained requests into two linked views. The
 graph uses stable host/socket/agent-session nodes (plus one operator-console
 node) and aggregates directed request edges by peer pair, count, kind, and
 status; replies appear as dashed reverse edges. Selecting an edge or room
@@ -800,126 +738,74 @@ it or replace it with an offset. The response contains `generated_at`,
 When `details_included` is false, request/reply/update bodies, provenance, paths,
 generic artifacts, and links are omitted. Participant, room,
 thread/parent, Work/Run, kind, status, timestamps, and counts remain available
-for a useful summary graph. In the Sessions panel, use the Collaboration tab
-and select a session or window to filter its history. Unlock details with the
-existing dashboard PAT control or sign in as an operator to read requests,
-replies, and artifacts. Locking access immediately clears loaded details.
+for a useful summary graph. In Explore, a session's or pane's messages link
+filters the history to it. Use **Upgrade with token** (Settings) or sign in as
+an operator to read requests, replies, and artifacts.
 
-Collaboration opens as a message list beside a detail reader. The list shows
-participants, status, timestamps, response latency, update counts, and body
-previews for authenticated operators. Search filters retained history on the server before pagination. Public and
-viewer searches cover visible metadata; authenticated operators can also
-search request, reply, and progress bodies. Counts reflect all matching rows,
-while summaries of loaded pages are labeled when older pages remain. Custom
-period controls accept a start and end time. Graph and Sequence
-are separate views; the graph supports zoom and fit in both dimensions.
-Drag the separators (or use arrow keys while focused) to resize the navigator,
-list/detail split, and panel height. Sizes persist across reloads. Expand fills
-the viewport; restore or Escape returns to the normal layout. Narrow screens
-stack the list and detail reader and hide the desktop height handle.
-Unchanged refreshes preserve text selection and reading position. Thread and
-parent buttons open related history across rooms, and message links reopen an
-exact retained request even outside the default period. Copy-link strips all
-other URL parameters; copy-conversation is available to authenticated operators.
+Messages opens as a message list beside a detail reader. The list shows
+participants, status, timestamps, response latency and update counts. Search
+filters retained history on the server before pagination. Public and viewer
+searches cover visible metadata; authenticated operators can also search
+request, reply, and progress bodies. Counts reflect all matching rows, while
+summaries of loaded pages are labeled when older pages remain. Custom period
+controls accept a start and end time. Graph and Sequence are separate views;
+the graph supports zoom and fit in both dimensions. Thread and parent buttons
+open related history across rooms, and message links
+(`/explore/messages#message=<id>`) reopen an exact retained request even
+outside the default period. Copy-link strips all other URL parameters.
 
 ## Fleet hosts
 
-When `[fleet] enabled = true` and `[fleet.hosts]` lists SSH hosts, the
-dashboard shows a **Fleet** panel above the session tree: one card per host
-(this node first) with its connection state, tend version, relay latency,
-agent and pane counts, and how many agents need you (waiting on input or a
-choice, or in error). A host that is offline shows the relay's error.
-Selecting an online host lists its agents: state, kind, session and pane,
-task, and last activity, with the ones that need you first.
-
-The panel reads `GET /api/fleet` every five seconds while it is open, and
-stays hidden when the daemon has no fleet or only this node. It follows the
-same read policy as `/api/agents`; it is read-only, and
+When `[fleet] enabled = true` and `[fleet.hosts]` lists SSH hosts, Home and
+Explore cover every host: Home's header shows Hosts n/m with each host's
+state, and Explore lists each host's sessions, windows and panes (this node
+first; an offline host shows the relay's error). Both read `GET /api/fleet`,
+which follows the same read policy as `/api/agents`; it is read-only, and
 `POST /api/fleet/{host}/command` is not wired to it.
 
 ## Sessions, windows and panes
 
 tend tracks every agent by where it runs: a tmux (or rmux) **session**, a
-**window** in it, and a **pane** in that window. The **Sessions** panel near
-the top of the page is organized the same way.
+**window** in it, and a **pane** in that window. Explore lists them the same
+way, under each Fleet host: host, then session, then window, then pane, from
+`GET /api/fleet` (each host's `/api/panes` joined with its agents). Selecting
+a session or a window opens its detail: its panes, with their state and
+latest activity, as Tend for Mac's session and window detail draw them.
+`#session=<name>`, `#window=<@id>&session=<name>` and `#pane=<id>` (with
+`&socket=<socket>` when more than one tmux server is running) link to them.
 
-- **Tree.** Sessions → windows → panes, built from `/api/panes` (which
-  carries the socket, session, window and pane ids) joined with the agents
-  list by pane id and socket. Each node shows its agent kinds, pane and agent
-  counts (`3p · 2a`) and a rolled-up state: the most urgent state below it,
-  in the order error, waiting (input or choice), working, starting, idle,
-  stopped. With more than one tmux server the top level is the socket. The
-  tree is keyboard navigable (↑/↓, → expands or enters, ← collapses or goes
-  up, Home/End, Enter selects). The filter box matches session and window
-  names, working directories, commands and agent kinds; several words must
-  all match along one session → window → pane path.
-- **Session view.** Selecting a session lists its windows with their rolled-up
-  state. With nothing selected, the panel lists the windows that need
-  attention.
-- **Window view.** Selecting a window draws its panes the way tmux lays them
-  out, from `GET /api/windows/{window}/layout` (tmux's own pane geometry; a
-  zoomed window shows only its zoomed pane, and other hosts or a geometry
-  that no longer matches the pane list fall back to a plain grid). Each tile shows the pane,
-  its agent kind and state, working directory and last prompt; operators also
-  see the pane's last 15 lines while the window is shown and the tab is
-  visible: up to six tiles (agent panes first) stream live, and any others
-  are polled every 3 seconds (one request per pane at a time, four at most).
-  Click a tile to open the pane drawer. **share window** invites
-  someone to every pane in the window when sharing is configured.
-- **Agents table.** Still available under Execution inventory; its pane column
-  reads `session › window › pane`, and the session and window parts jump to
-  the navigator.
-
-While the [workspace rail](#workspace-rail) scopes the page to a session, the
-tree shows only that session; **show all sessions** lists every session again
-without changing the scope. Selecting a session also scopes diagnostics to
-that session; selecting a window remains a detail selection. The selection is kept in
-the URL fragment: `#session=<name>`, `#window=<@id>` (with `&socket=<socket>`
-when more than one tmux server is running) and `#pane=<id>` for an open
-drawer, next to the rail's `#workspace=`, so a link restores all of them.
-
-The layout endpoint is metadata, so viewers and `public_read` visitors can
-read it; the socket is looked up in the scanned inventory, never used as a
-caller-supplied path. Viewers see the tree and the window layout but no
-output tails and no composer.
+`GET /api/windows/{window}/layout` (tmux's own pane geometry) is metadata,
+so viewers and `public_read` visitors can read it; the socket is looked up in
+the scanned inventory, never used as a caller-supplied path. Viewers see the
+tree and the details but no pane output and no composer.
 
 ## Talking to an agent
 
-Click a pane tile in the Sessions panel, an agent in **Execution inventory →
-Agents** (or a pane in the **Panes** tab, or a pane row in a Work card's
-execution list) to open its drawer. The **agents** chip in the header jumps to that table and shows how
-many agents are tracked. Rows are focusable: Tab to one and press Enter.
-
-The drawer shows the pane as `session:window.pane`, the agent kind, state,
-model, working directory and last activity, and below that the pane's live
-output, streamed live while the drawer is open and the tab is visible (the
-header reads `live · changed 5s ago`). Output stays pinned to the newest line unless you scroll up; then a
-**jump to latest** chip appears. Type in **Message this agent…** and press
-Enter to send it (Shift+Enter for a new line; Enter that confirms an IME
-candidate never sends). **abort (Ctrl-C)** asks first; **share** opens the
-pane-sharing dialog when [sharing](#invite-someone-to-a-pane-or-window) is
-configured. Esc or × closes the drawer.
-
+Select a pane in Explore (or **Open Pane** on a Home unit) to open it. The
+pane view shows its agent, state and working directory, and below that the
+pane's live output, streamed while the pane is open and the tab is visible.
+Type in the field and press Enter to send (Shift+Enter adds a line; Enter
+that confirms an IME candidate never sends). **Interrupt** sends Ctrl-C.
 `#pane=<id>` (plus `&socket=<socket>` when the id exists on several tmux
-servers) links straight to a drawer; closing it removes the fragment.
+servers) links straight to it.
 
 Output and sending are for operators (the token, or an operator sign-in).
 Pane output can contain anything the agent printed, including secrets, so
 `GET /api/panes/{pane}/output` is gated like a write even though it is a GET:
 a viewer gets 403, and in `public_read` an anonymous visitor needs the token.
-Viewers and signed-out visitors can still open the drawer, but it shows only
-the metadata above and never requests output. With `auth = "none"` nobody
+Viewers and `public_read` visitors can still select a pane, but Explore shows
+only its metadata and never requests output. With `auth = "none"` nobody
 can read output. The live stream (below) is gated the same way.
 
 ### Live pane output
 
-The drawer and the window tiles read
+Explore's pane view reads
 `GET /api/panes/{pane}/output/stream?socket=&lines=N`, a server-sent event
 stream with the same access rules, validation and `Cache-Control: no-store` as
 `/output`.
 
-- **One capture loop per pane.** Every viewer of a pane (both tabs, the drawer
-  and a tile) shares one loop in the daemon. It runs only while someone is
+- **One capture loop per pane.** Every viewer of a pane (every tab, every
+  client) shares one loop in the daemon. It runs only while someone is
   connected: it captures the pane every 300 ms, strips escapes with the same
   sanitizer as `/output`, and publishes only when the text changed. It stops
   within one tick after the last viewer leaves. A capture still running when
@@ -936,29 +822,27 @@ stream with the same access rules, validation and `Cache-Control: no-store` as
   stream open.
 - **Client.** The dashboard reads the stream with `fetch()` (like
   `/api/events`), so bearer tokens and sign-in cookies both work. It
-  reconnects with exponential backoff (0.5 s doubling to 15 s, jittered),
-  closes streams while the tab is hidden or the drawer or window is closed,
-  and caps a window at six streaming tiles. Against an older daemon that
-  answers `404`, it falls back to polling `/output` (1.5 s in the drawer, 3 s
-  for tiles).
+  reconnects with exponential backoff (0.5 s doubling to 15 s, jittered) and
+  closes the stream while the tab is hidden or the pane is closed. Against an
+  older daemon that answers `404`, it falls back to polling `/output` every
+  1.5 s.
 
 ### Nerd Font glyphs
 
 Shell prompts (powerlevel10k, starship) and agent status lines often print
-Nerd Font icons, which live in Unicode's Private Use Areas. The dashboard,
-including the shared-pane page, bundles a subset of **Symbols Nerd Font Mono**
+Nerd Font icons, which live in Unicode's Private Use Areas. Explore's pane
+output and the shared-pane page use a bundled subset of **Symbols Nerd Font Mono**
 and lists it after the primary monospace font with a `unicode-range` of
 U+E000–U+F8FF and U+F0000–U+FFFFF, so ordinary text keeps your system's
 monospace font and browsers fetch the icon font (about 1.2 MB, served from
-`/static/fonts/`) only when output actually contains such a glyph. The
-shared-pane page's Content-Security-Policy allows it with `font-src 'self'`.
+`/static/fonts/`) only when output actually contains such a glyph. Both
+pages' Content-Security-Policy allows it with `font-src 'self'`.
 See [Third-party notices](#third-party-notices).
 
 ## Starting work from the board
 
-The board could steer Work it had not started — prompt its Runs, abort them,
-annotate it — but not create the team. `POST /api/work-control/up`, and the
-board header's **start work** control, close that: give it a stable Work id and,
+`POST /api/work-control/up`, and Home's **Start Work**, create a Work's
+team: give it a stable Work id and,
 optionally, a separate external issue key. Tend routes it to a workspace and
 directory and creates whichever agent panes the pipeline declares but the Run
 does not have yet.
@@ -986,42 +870,23 @@ independent.
 
 ## Timeline
 
-The all-session overview places activity on the same wall-clock axis as the
-selected session timeline. Overlapping agent intervals are unioned into rows
-for working, waiting, error, idle, and starting; interaction and tmux presence
-have their own rows. Gaps remain empty. Totals still report summed agent time
-and the shared `tend stats` attribution, so simultaneous agents can accumulate
-more work time than the width of a wall-clock interval.
+`GET /api/timeline` serves the same intervals as `tend timeline` and
+`tend stats --timeline` (the browser timeline went with the workbench). It
+defaults to `since=7d` and also takes `24h`, `today`, `last week`, `month`,
+`last month`, `30d`, `12w` or a `YYYY-MM-DD` day, `session=<name>` and
+`agent=<kind>` (`codex`, `claude_code`, `antigravity`, `opencode`,
+`unknown`), and comma-separated, case-sensitive `exclude-pane` /
+`exclude-session` globs, for example
+`/api/timeline?since=month&exclude-session=monitor*`. Overlapping agent
+intervals are unioned into rows for working, waiting, error, idle and
+starting; interaction and tmux presence have their own rows, and numeric
+client-view sessions are folded into their base session.
 
-Numeric client-view sessions are folded into their base session in the
-workspace rail, pane inventory, diagnostics, and retained session filters.
-
-The timeline panel calls `/api/timeline?since=7d` by default and can switch
-to `24h`, `today`, `last week`, `month`, `last month`, `30d`, `12w`, or a clicked `YYYY-MM-DD` calendar day in the
-browser. The endpoint also accepts `session=<name>` and `agent=<kind>`
-(`codex`, `claude_code`, `antigravity`, `opencode`, `unknown`).
-API callers can also pass comma-separated `exclude-pane` / `exclude-session`
-case-sensitive globs, for example
-`/api/timeline?since=month&exclude-session=monitor*`.
-The browser renders a daily contribution-map style heatmap above the lane
-graph with ISO-style Monday-first week rows; clicking a day drills the graph
-into that local calendar day. Timeline
-lanes are grouped by session by default, with agent, human, and tmux
-foreground lanes shown under the same session header.
-
-The overview's `act` metric follows the same meaning as `tend stats ACT`:
-engaged human time estimated from submitted prompts, tmux input ticks, and
-time spent present while agents are waiting for a human answer. Prompt/input
-padding is clipped to active presence (tmux foreground, prompt input, or tmux
-attach; not a plain open `tend watch` interval). The `human` metric follows
-`tend stats HUMAN`: the union of tmux foreground time and tend-recorded human
-interaction intervals. Timeline lanes still show raw human-interaction spans
-separately as `interaction`.
-
-The workspace sidebar sorts by workflow priority, latest agent activity, or
-name. Timeline session filtering remains independent from logical workspace
-selection because one repository workspace may contain several physical tmux
-sessions.
+The `act` metric follows `tend stats ACT`: engaged human time estimated from
+submitted prompts, tmux input ticks, and time spent present while agents are
+waiting for a human answer. The `human` metric follows `tend stats HUMAN`:
+the union of tmux foreground time and tend-recorded human interaction
+intervals.
 
 Closed intervals come from `activity.ndjson`. Currently-open agent states
 come from the live `Store` snapshot, and currently-open tmux foreground spans
@@ -1029,8 +894,8 @@ come from `session-activity.json` when that tracker is enabled.
 
 ## Live updates
 
-The frontend opens a single fetch-streamed SSE connection at `/api/events`.
-Three event types appear on the wire:
+`/api/events` is a fetch-streamed SSE connection for clients that follow
+agent state. Three event types appear on the wire:
 
 - **`snapshot`** — sent once on connect. Payload: `{ "agents": [...] }`.
   Lets a freshly-loaded page paint without a `/api/agents` round-trip.
@@ -1039,8 +904,8 @@ Three event types appear on the wire:
 - **`lagged`** — when the broadcast receiver falls behind the server's ring
   buffer. The client refetches `/api/agents` for a clean baseline.
 
-(`EventSource` can't carry `Authorization` headers, so the frontend uses
-`fetch()` and parses SSE frames manually. ~30 lines of JS.)
+(`EventSource` can't carry `Authorization` headers, so a browser client uses
+`fetch()` and parses SSE frames itself, as `pane-stream.mjs` does.)
 
 Pane output has its own per-pane stream; see
 [Live pane output](#live-pane-output).
