@@ -467,6 +467,7 @@ const SWAP_VALUE_FLAGS: &[&str] = &[
     "--request-key",
     "--wait-secs",
     "--idle-timeout",
+    "--jobs",
 ];
 
 /// Check a `swap` argv: JSON output, only the allowlisted flags, and plain

@@ -13,6 +13,7 @@
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Args as ClapArgs, ValueEnum};
+use futures_util::StreamExt as _;
 use std::fmt::Write as _;
 use std::future::Future;
 use std::path::Path;
@@ -42,7 +43,8 @@ use tend_aas::account_swap::{self, AccountChoice, SwapRequest, SwapScope};
   tend swap --all --force --provider codex
   tend swap --dry-run           show the plan, touch nothing
   tend swap --status cli-…      follow a swap the daemon is running or ran
-  tend swap --host build --to work   swap on a Fleet host")]
+  tend swap --host build --to work   swap on a Fleet host
+  tend swap --host local --host build --all --to work   on several hosts at once")]
 #[allow(clippy::struct_excessive_bools)] // independent CLI switches
 pub struct Args {
     /// Panes (`%5`, `herdr:p9`) or provider session ids to swap.
@@ -117,9 +119,11 @@ pub struct Args {
     #[arg(long)]
     json: bool,
     /// Run the swap on this Fleet host (a control-mode `[fleet.hosts]`
-    /// alias) instead of here: its daemon, its agents, its config.
+    /// alias) instead of here: its daemon, its agents, its config. Repeat
+    /// it to swap on several hosts at once (`local` is this one); each
+    /// host runs its own job and is reported on its own.
     #[arg(long, value_name = "ALIAS")]
-    host: Option<String>,
+    host: Vec<String>,
     /// Leave this pane alone whatever the scope (repeatable).
     #[arg(long, value_name = "PANE")]
     exclude: Vec<String>,
@@ -310,8 +314,13 @@ pub(crate) async fn run(
     if args.continue_legacy.is_some() {
         eprintln!("{CONTINUE_DEPRECATED}");
     }
+    // Several hosts: each runs its own swap, at the same time.
+    let hosts = fleet_hosts(&args.host);
+    if hosts.len() > 1 {
+        return run_hosts(client, &args, &hosts).await;
+    }
     // A Fleet host decides for itself whether it runs the account module.
-    if let Some(host) = tend::work_control::remote_host_alias(args.host.as_deref()) {
+    if let Some(host) = tend::work_control::remote_host_alias(hosts.first().map(String::as_str)) {
         return run_remote(client, &args, host).await;
     }
     // Reading or cancelling a job the daemon already has stays possible;
@@ -1386,6 +1395,11 @@ fn remote_argv(args: &Args) -> Vec<String> {
     if let Some(timeout) = &args.idle_timeout {
         words.push(format!("--idle-timeout={timeout}"));
     }
+    // Only when asked: a host from before `--jobs` refuses the flag, and
+    // its own `[swap] jobs` is the default there.
+    if let Some(jobs) = args.jobs {
+        words.push(format!("--jobs={jobs}"));
+    }
     if let Some(to) = &args.to {
         words.push(format!("--to={to}"));
     }
@@ -1486,9 +1500,10 @@ pub(crate) fn checked_argv(words: &[String]) -> std::result::Result<Vec<String>,
 /// What a relayed swap needs of the daemon: Fleet's work command. A trait
 /// so the relay can be tested without one.
 trait Relay {
+    /// Run `argv` on Fleet host `host`, or on this host's daemon (`None`).
     fn run(
         &self,
-        host: &str,
+        host: Option<&str>,
         argv: &[String],
     ) -> impl Future<Output = Result<tend::work_control::WorkCommandOutput, RuntimeError>>;
 }
@@ -1496,10 +1511,10 @@ trait Relay {
 impl Relay for Client {
     fn run(
         &self,
-        host: &str,
+        host: Option<&str>,
         argv: &[String],
     ) -> impl Future<Output = Result<tend::work_control::WorkCommandOutput, RuntimeError>> {
-        self.work_command(Some(host), argv, None)
+        self.work_command(host, argv, None)
     }
 }
 
@@ -1529,7 +1544,7 @@ async fn run_remote(relay: &impl Relay, args: &Args, host: &str) -> Result<()> {
             eprintln!("{}", remote_wait_notice(host));
         }
     }
-    let output = relay.run(host, &words).await.map_err(|error| {
+    let output = relay.run(Some(host), &words).await.map_err(|error| {
         let error = anyhow!(error).context(format!("running the swap on {host}"));
         match &key {
             Some(key) => error.context(format!(
@@ -1563,29 +1578,183 @@ async fn run_remote(relay: &impl Relay, args: &Args, host: &str) -> Result<()> {
     if args.detach {
         return remote_detached(&output, args, host, key.as_deref());
     }
+    let (outcomes, verdict) = relayed_outcomes(&output, host, &hint);
+    if let Some(outcomes) = outcomes {
+        if args.json {
+            println!("{}", serde_json::to_string_pretty(&outcomes)?);
+        } else {
+            print!("{}", render(&outcomes));
+        }
+    }
+    verdict
+}
+
+/// A relayed swap's report, if it sent one, and whether it ended cleanly:
+/// no failed agent and a clean exit (a host's daemon job can end unclean
+/// with no failed row: faulted, uncertain effects, cancelled). `hint` says
+/// where to look when the answer does not settle it.
+fn relayed_outcomes(
+    output: &tend::work_control::WorkCommandOutput,
+    host: &str,
+    hint: &str,
+) -> (Option<Vec<SwapOutcome>>, Result<()>) {
     let Ok(outcomes) = serde_json::from_str::<Vec<SwapOutcome>>(&output.stdout) else {
-        bail!(
-            "{host}: swap failed (exit {}): {}\n{hint}",
-            output.exit_code,
-            output.stderr.trim()
+        return (
+            None,
+            Err(anyhow!(
+                "{host}: swap failed (exit {}): {}\n{hint}",
+                output.exit_code,
+                output.stderr.trim()
+            )),
         );
     };
-    if args.json {
-        println!("{}", serde_json::to_string_pretty(&outcomes)?);
-    } else {
-        print!("{}", render(&outcomes));
-    }
-    if outcomes.iter().any(|o| o.status == SwapStatus::Failed) {
-        bail!("some agents on {host} could not be swapped");
-    }
-    // A host's daemon job can end unclean with no failed row (faulted,
-    // uncertain effects, cancelled): its exit status says so.
-    if output.exit_code != 0 {
-        bail!(
+    let verdict = if outcomes.iter().any(|o| o.status == SwapStatus::Failed) {
+        Err(anyhow!("some agents on {host} could not be swapped"))
+    } else if output.exit_code != 0 {
+        Err(anyhow!(
             "the swap on {host} did not end cleanly (exit {}): {}\n{hint}",
             output.exit_code,
             output.stderr.trim()
+        ))
+    } else {
+        Ok(())
+    };
+    (Some(outcomes), verdict)
+}
+
+/// The `--host` aliases, trimmed, blanks and repeats dropped, in order.
+fn fleet_hosts(hosts: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for host in hosts
+        .iter()
+        .map(|host| host.trim())
+        .filter(|host| !host.is_empty())
+    {
+        if !out.iter().any(|seen| seen == host) {
+            out.push(host.to_owned());
+        }
+    }
+    out
+}
+
+/// How many hosts' swaps are in flight at once: each is a work command on
+/// this host's daemon, which runs at most four at a time and refuses the
+/// rest (`MAX_CONCURRENT_WORK_COMMANDS`).
+const HOSTS_AT_ONCE: usize = 4;
+
+/// One host's part of a swap on several.
+#[derive(serde::Serialize)]
+struct HostReport {
+    host: String,
+    /// What the host reported, if it sent a report.
+    outcomes: Option<Vec<SwapOutcome>>,
+    /// Why the host's swap did not end cleanly.
+    error: Option<String>,
+}
+
+/// `tend swap --host a --host b …`: the same swap on every host at once,
+/// each through its own daemon (`local` through this one's) as its own job
+/// with its own request key, printed before anything is sent. One host's
+/// failure never stops another's swap; the run fails if any host's did.
+async fn run_hosts(relay: &impl Relay, args: &Args, hosts: &[String]) -> Result<()> {
+    if args.status.is_some() || args.cancel.is_some() || args.retry.is_some() {
+        bail!("--status, --cancel and --retry name one host's job: use one --host");
+    }
+    if args.request_key.is_some() || args.detach || args.local {
+        bail!("--request-key, --detach and --local go with one --host; nothing was sent");
+    }
+    let mut runs = Vec::new();
+    for host in hosts {
+        let remote = tend::work_control::remote_host_alias(Some(host)).map(str::to_owned);
+        let key = (!args.dry_run).then(|| format!("cli-{}", uuid::Uuid::new_v4()));
+        let mut words = remote_argv(args);
+        if let Some(key) = &key {
+            words.push(format!("--request-key={key}"));
+            let at = remote
+                .as_deref()
+                .map_or_else(String::new, |host| format!("--host {host} "));
+            eprintln!(
+                "tend swap: request {key} on {host} (see it with `tend swap {at}--status {key}`)"
+            );
+        }
+        runs.push((host.clone(), remote, key, words));
+    }
+    if !args.dry_run {
+        eprintln!(
+            "tend swap: swapping on {} hosts, up to {HOSTS_AT_ONCE} at once. Ctrl-C stops \
+             this client from waiting; it does not reliably cancel a swap already sent, and \
+             hosts not yet sent to are not started. Check each host by its request key \
+             before retrying.",
+            hosts.len()
         );
+    }
+    // In host order, at most HOSTS_AT_ONCE in flight: every host's swap is
+    // one work command on this daemon, which refuses more than that.
+    let answers: Vec<_> = futures_util::stream::iter(
+        runs.iter()
+            .map(|(_, remote, _, words)| relay.run(remote.as_deref(), words)),
+    )
+    .buffered(HOSTS_AT_ONCE)
+    .collect()
+    .await;
+    let mut reports = Vec::new();
+    for ((host, remote, key, _), answer) in runs.iter().zip(answers) {
+        let at = remote
+            .as_deref()
+            .map_or_else(String::new, |host| format!("--host {host} "));
+        let hint = key.as_deref().map_or_else(
+            || format!("check {host}"),
+            |key| format!("check it with `tend swap {at}--status {key}`"),
+        );
+        let (outcomes, verdict) = match answer {
+            Ok(output) => {
+                for line in output
+                    .stderr
+                    .lines()
+                    .filter(|l| l.starts_with("tend swap:"))
+                {
+                    eprintln!("{host}: {line}");
+                }
+                relayed_outcomes(&output, host, &hint)
+            }
+            Err(error) => (
+                None,
+                Err(anyhow!(error).context(format!(
+                    "the swap on {host} may or may not have been accepted; {hint} before \
+                     trying again"
+                ))),
+            ),
+        };
+        reports.push(HostReport {
+            host: host.clone(),
+            outcomes,
+            error: verdict.err().map(|error| format!("{error:#}")),
+        });
+    }
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({ "hosts": reports }))?
+        );
+    } else {
+        for report in &reports {
+            println!("== {}", report.host);
+            if let Some(outcomes) = &report.outcomes {
+                print!("{}", render(outcomes));
+            }
+        }
+    }
+    let failed: Vec<&HostReport> = reports.iter().filter(|r| r.error.is_some()).collect();
+    for report in &failed {
+        eprintln!(
+            "{}: {}",
+            report.host,
+            report.error.as_deref().unwrap_or_default()
+        );
+    }
+    if !failed.is_empty() {
+        let names: Vec<&str> = failed.iter().map(|r| r.host.as_str()).collect();
+        bail!("the swap did not end cleanly on {}", names.join(", "));
     }
     Ok(())
 }
@@ -2182,16 +2351,18 @@ mod tests {
     struct FakeRelay {
         answer: Answering,
         calls: std::cell::RefCell<Vec<Vec<String>>>,
+        hosts: std::cell::RefCell<Vec<Option<String>>>,
     }
 
     impl Relay for FakeRelay {
         fn run(
             &self,
-            _: &str,
+            host: Option<&str>,
             argv: &[String],
         ) -> impl Future<Output = Result<tend::work_control::WorkCommandOutput, RuntimeError>>
         {
             self.calls.borrow_mut().push(argv.to_vec());
+            self.hosts.borrow_mut().push(host.map(str::to_owned));
             let answer = (self.answer)(argv);
             async move { answer }
         }
@@ -2204,6 +2375,7 @@ mod tests {
         FakeRelay {
             answer: Box::new(answer),
             calls: std::cell::RefCell::new(Vec::new()),
+            hosts: std::cell::RefCell::new(Vec::new()),
         }
     }
 
@@ -2953,5 +3125,102 @@ mod tests {
             assert_eq!(outcome.status, SwapStatus::Skipped);
             assert!(outcome.note.contains("nothing was done"));
         }
+    }
+
+    /// Several hosts: the same swap goes to each (`local` to this host's
+    /// own daemon) with its own key; hosts whose swap failed are named and
+    /// fail the run, and every host still ran.
+    #[tokio::test]
+    async fn a_swap_on_several_hosts_runs_on_each_with_its_own_key() {
+        let fake = relay(|_| Ok(output(0, "[]", "")));
+        let cli = Cli::parse_from([
+            "swap", "--all", "--jobs", "8", "--host", "mini", "--host", "local", "--host", " mini ",
+        ]);
+        run_hosts(&fake, &cli.args, &fleet_hosts(&cli.args.host))
+            .await
+            .unwrap();
+        assert_eq!(*fake.hosts.borrow(), [Some("mini".to_owned()), None]);
+        let calls = fake.calls.borrow().clone();
+        let keys: Vec<String> = calls.iter().map(|argv| sent_key(argv).unwrap()).collect();
+        assert_ne!(keys[0], keys[1], "a key per host");
+        for argv in &calls {
+            assert!(argv.contains(&"--jobs=8".to_owned()), "{argv:?}");
+            tend::work_control::validate_swap_argv(argv).expect("the relay's allowlist takes it");
+        }
+
+        let one_fails = relay(|_| Ok(output(1, "", "boom")));
+        let error = run_hosts(&one_fails, &cli.args, &["a".into(), "b".into()])
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("a, b"), "{error}");
+        assert_eq!(one_fails.calls.borrow().len(), 2, "both hosts ran");
+    }
+
+    /// A job's status or cancel names one host's job.
+    #[tokio::test]
+    async fn a_job_on_several_hosts_is_refused() {
+        let fake = relay(|_| unreachable!("nothing is sent"));
+        let cli = Cli::parse_from(["swap", "--status", "k", "--host", "a", "--host", "b"]);
+        assert!(run_hosts(&fake, &cli.args, &["a".into(), "b".into()])
+            .await
+            .is_err());
+        let cli = Cli::parse_from(["swap", "--all", "--detach", "--host", "a", "--host", "b"]);
+        assert!(run_hosts(&fake, &cli.args, &["a".into(), "b".into()])
+            .await
+            .is_err());
+        assert!(fake.calls.borrow().is_empty());
+    }
+
+    /// A relay whose answers take a while, counting calls in flight.
+    struct SlowRelay {
+        in_flight: std::rc::Rc<std::cell::Cell<usize>>,
+        most: std::rc::Rc<std::cell::Cell<usize>>,
+        order: std::cell::RefCell<Vec<Option<String>>>,
+    }
+
+    impl Relay for SlowRelay {
+        fn run(
+            &self,
+            host: Option<&str>,
+            _argv: &[String],
+        ) -> impl Future<Output = Result<tend::work_control::WorkCommandOutput, RuntimeError>>
+        {
+            self.order.borrow_mut().push(host.map(str::to_owned));
+            let (in_flight, most) = (self.in_flight.clone(), self.most.clone());
+            async move {
+                in_flight.set(in_flight.get() + 1);
+                most.set(most.get().max(in_flight.get()));
+                // The daemon refuses a fifth work command at once.
+                let refused = in_flight.get() > HOSTS_AT_ONCE;
+                for _ in 0..5 {
+                    tokio::task::yield_now().await;
+                }
+                in_flight.set(in_flight.get() - 1);
+                if refused {
+                    return Ok(output(1, "", "at most 4 work commands may run at once"));
+                }
+                Ok(output(0, "[]", ""))
+            }
+        }
+    }
+
+    /// More hosts than the daemon runs work commands at once: never more
+    /// than that in flight, every host still swapped, reports in order.
+    #[tokio::test]
+    async fn a_swap_on_more_hosts_than_the_daemon_runs_at_once_waits_its_turn() {
+        let fake = SlowRelay {
+            in_flight: std::rc::Rc::default(),
+            most: std::rc::Rc::default(),
+            order: std::cell::RefCell::default(),
+        };
+        let hosts: Vec<String> = (1..=6).map(|i| format!("h{i}")).collect();
+        let cli = Cli::parse_from(["swap", "--all"]);
+        run_hosts(&fake, &cli.args, &hosts).await.unwrap();
+        assert_eq!(fake.most.get(), HOSTS_AT_ONCE);
+        assert_eq!(
+            *fake.order.borrow(),
+            hosts.iter().cloned().map(Some).collect::<Vec<_>>()
+        );
     }
 }
