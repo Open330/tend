@@ -333,7 +333,8 @@ struct FleetHomeView: View {
         let folded = filteredDecisions.filter(\.isUnanswerable)
         let exact = hostFilter == nil || hostFilter == homeBoard.localHostAlias ? decisionFeed.unanswerableCount : 0
         let count = FleetCantAnswer.count(listed: folded.count, exact: exact, filtered: projectFilter != nil)
-        guard count > 0 else { return nil }
+        // An emptied group still shows the last Close all's report.
+        guard count > 0 || decisionFeed.closeAllResult != nil else { return nil }
         let feed = decisionFeed
         let model = model
         return FleetCantAnswerGroup(
@@ -345,7 +346,8 @@ struct FleetHomeView: View {
             failures: feed.failures,
             result: feed.closeAllResult,
             keep: { decision in Task { _ = await feed.keep(decision, model: model) } },
-            closeAll: { decisions in Task { await feed.closeAll(decisions, model: model) } }
+            closeAll: { decisions in Task { await feed.closeAll(decisions, model: model) } },
+            dismissResult: { feed.closeAllResult = nil }
         )
     }
 

@@ -1874,12 +1874,12 @@ final class AppModel: ObservableObject {
     func refreshFoldedQuestions(force: Bool) async {
         guard force || Date().timeIntervalSince(lastFoldedRead) >= 60 else { return }
         guard await client.supports(tendSubjectCheckCapability) else {
-            attention.ingestFoldedQuestions([])
+            attention.ingestFoldedQuestions(FleetFoldedQuestions())
             return
         }
         lastFoldedRead = Date()
         guard let queue = try? await client.decisionQueue(limit: 500) else { return }
-        attention.ingestFoldedQuestions(FleetDecisions.foldedIDs(queue, localHost: localHostAlias))
+        attention.ingestFoldedQuestions(FleetDecisions.foldedQuestions(queue, localHost: localHostAlias))
     }
 
     func openOperatorMessage(_ message: TendOperatorMessage) {

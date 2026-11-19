@@ -137,4 +137,67 @@ final class CantAnswerTests: XCTestCase {
         XCTAssertEqual(past[1].text, "Closed, asker gone: Agent exited")
         XCTAssertNotNil(past[0].at)
     }
+
+    private static let foldedQueue = #"{"hosts":[{"alias":"here","local":true,"control":true,"subject_check":true,"close_unanswerable":true,"queue":{"items":[\#(question("gone_a", unanswerable: #"{"cause":"pane_gone","episode":"ep_a","since":"2026-11-16T00:00:00Z"}"#)),\#(question("gone_b", unanswerable: #"{"cause":"ended","episode":"ep_b","since":"2026-11-16T00:00:00Z"}"#))],"unanswerable_count":2}}]}"#
+    private static let emptyQueue = #"{"hosts":[{"alias":"here","local":true,"control":true,"subject_check":true,"close_unanswerable":true,"queue":{"items":[]}}]}"#
+
+    private func eventually(_ timeout: TimeInterval = 5, _ condition: () -> Bool) async {
+        let end = Date().addingTimeInterval(timeout)
+        while !condition(), Date() < end {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+    }
+
+    /// Close all's report outlives the refresh that empties the group; it
+    /// belongs to its pairing (forgetting clears it, a new pairing starts
+    /// without it); a 401 during a close unpairs and leaves nothing behind.
+    func testTheCloseAllReportOutlivesAnEmptiedFoldButNotItsPairing() async {
+        StubProtocol.on("/api/decisions",
+                        .init(status: 200, body: Self.foldedQueue),
+                        .init(status: 200, body: Self.emptyQueue),
+                        .init(status: 200, body: Self.foldedQueue))
+        StubProtocol.on("/api/decisions/history", .init(status: 200, body: #"{"hosts":[]}"#))
+        StubProtocol.on("/api/decisions/close-unanswerable",
+                        .init(status: 200, body: #"{"closed":["gone_a"],"skipped":[{"request_id":"gone_b","reason":"no longer unanswerable"}]}"#),
+                        .init(status: 401, body: #"{"error":"unknown device"}"#))
+        let model = decideModel()
+        await model.refresh()
+        XCTAssertEqual(model.closable.count, 2)
+        await model.closeAll(model.closable)
+        // One closed, one skipped; the refresh left nothing folded.
+        XCTAssertEqual(model.cantAnswerCount, 0)
+        XCTAssertEqual(model.closeAllResult?.text, "Closed 1 question. Skipped 1: gone_b (no longer unanswerable)")
+
+        // Forget and pair again: the new pairing starts clean.
+        model.forgetLocally()
+        XCTAssertNil(model.closeAllResult)
+        StubProtocol.on("/auth/devices/request",
+                        .init(status: 201, body: #"{"device_code":"d2","user_code":"PAIR-AGIN","expires_in":600,"interval":1}"#))
+        StubProtocol.on("/auth/devices/token",
+                        .init(status: 201, body: #"{"device":{"id":"dev_2","name":"phone"},"token":"tdv_2"}"#))
+        model.startPairing(address: "https://tend.test", name: "phone")
+        await eventually { model.pairing != nil }
+        XCTAssertNotNil(model.pairing)
+        await model.refresh()
+        XCTAssertEqual(model.cantAnswerCount, 2, "a new fold on the new pairing")
+        XCTAssertNil(model.closeAllResult, "the old pairing's report is gone")
+
+        // The dashboard forgot this device mid-close: unpaired, no report.
+        await model.closeAll(model.closable)
+        XCTAssertNil(model.pairing)
+        XCTAssertNil(model.closeAllResult)
+    }
+
+    func testDismissClearsTheReport() async {
+        StubProtocol.on("/api/decisions", .init(status: 200, body: Self.foldedQueue))
+        StubProtocol.on("/api/decisions/history", .init(status: 200, body: #"{"hosts":[]}"#))
+        StubProtocol.on("/api/decisions/close-unanswerable", .init(status: 200, body: #"{"closed":[],"skipped":[{"request_id":"gone_a","reason":"kept"}]}"#))
+        let model = decideModel()
+        await model.refresh()
+        await model.closeAll(model.closable)
+        XCTAssertEqual(model.closeAllResult?.text, "Closed 0 questions. Skipped 1: gone_a (kept)")
+        XCTAssertEqual(model.cantAnswerCount, 2)
+        model.dismissCloseAllResult()
+        XCTAssertNil(model.closeAllResult)
+    }
 }

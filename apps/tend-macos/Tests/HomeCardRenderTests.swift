@@ -267,3 +267,15 @@ private extension FleetDecision {
         _ = try snapshot(column.padding(16), name: "home-cant-answer", scheme: scheme, size: CGSize(width: 420, height: 720))
     }
 }
+
+/// After Close all emptied the group, its report stays, every skipped
+/// question in full.
+@MainActor
+@Test func theCloseAllReportOutlivesAnEmptiedGroup() throws {
+    let skipped = (1...8).map { TendCloseOutcome.Skipped(requestID: "rq_\($0)", reason: "no longer unanswerable") }
+    let text = FleetDecisions.closeAllText(TendCloseOutcome(closed: ["rq_0"], skipped: skipped))
+    for scheme in [ColorScheme.light, .dark] {
+        _ = try render(FleetCantAnswerGroup(decisions: [], count: 0, result: (false, text)),
+                       name: "home-cant-answer-report", scheme: scheme)
+    }
+}

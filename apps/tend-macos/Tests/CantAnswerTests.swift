@@ -82,11 +82,12 @@ private func message(id: String) throws -> TendOperatorMessage {
         let merged = FleetDecisions.merge(queue: queue, reviews: [], messages: [], localHost: local)
         #expect(merged.map(\.isUnanswerable) == [false, false, true, true])
         #expect(merged.last?.unanswerable?.episode == "ep_b")
-        #expect(FleetDecisions.foldedIDs(queue, localHost: "mac") == ["mac:rq_a", "mac:rq_b"])
+        let folded = FleetDecisions.foldedQuestions(queue, localHost: "mac")
+        #expect(folded.folded == ["mac:rq_a", "mac:rq_b"])
 
         let summary = TendAttentionSummary.make(
             agents: [], messages: [try message(id: "rq_a"), try message(id: "rq_live")], unread: [],
-            folded: ["mac:rq_a"], paneKey: { $0.id }
+            folded: folded, paneKey: { $0.id }
         )
         #expect(summary.decisions == 1, "the folded question is not counted")
         #expect(summary.dock == 1)
@@ -94,6 +95,47 @@ private func message(id: String) throws -> TendOperatorMessage {
             agents: [], messages: [try message(id: "rq_a"), try message(id: "rq_live")], unread: [], paneKey: { $0.id }
         )
         #expect(before.decisions == 2, "an older daemon folds nothing")
+    }
+
+    /// A cut page of a folding queue: a local question it left out (a folded
+    /// one past the cut) never comes back from the mailbox as live, in Your
+    /// turn or on the badges; another host's question still does. Without
+    /// folded questions, a cut page is filled in from the mailbox as before.
+    @Test func aTruncatedFoldingQueueNeverBringsAnOmittedQuestionBackAsLive() throws {
+        let queue = try JSONDecoder().decode(TendPendingQueue.self, from: Data(foldedQueueJSON.utf8))
+        #expect(queue.truncated && queue.unanswerableCount == 5)
+        #expect(FleetDecisions.omitsFoldedRows(queue))
+        // rq_omitted is folded on the daemon but past the 200-row page.
+        let omitted = try message(id: "rq_omitted")
+        let remote = TendFleetHostIdentity(alias: "mini", local: false, state: "online", mode: "control")
+        let theirs = TendOperatorMessage(host: remote, routePane: .operatorRoute, request: try message(id: "rq_r").request)
+        let merged = FleetDecisions.merge(queue: queue, reviews: [], messages: [omitted, theirs], localHost: local)
+        #expect(!merged.contains { $0.id == "human:mac:rq_omitted" }, "not live in Your turn")
+        #expect(merged.contains { $0.id == "human:mini:rq_r" })
+        #expect(merged.filter { !$0.isUnanswerable }.map(\.id) == ["human:mac:rq_live", "human:mac:rq_c", "human:mini:rq_r"])
+
+        let badge = TendAttentionSummary.make(
+            agents: [], messages: [omitted, try message(id: "rq_live"), theirs], unread: [],
+            folded: FleetDecisions.foldedQuestions(queue, localHost: "mac"), paneKey: { $0.id }
+        )
+        #expect(badge.decisions == 2, "rq_live and the other host's question; not the omitted one")
+
+        // No folded questions: what the cut page left out is live.
+        let plain = TendPendingQueue(items: queue.items.filter {
+            if case .humanRequest(let entry) = $0 { return entry.unanswerable == nil }
+            return true
+        }, truncated: true)
+        #expect(!FleetDecisions.omitsFoldedRows(plain))
+        let filled = FleetDecisions.merge(queue: plain, reviews: [], messages: [omitted], localHost: local)
+        #expect(filled.contains { $0.id == "human:mac:rq_omitted" })
+        #expect(FleetDecisions.foldedQuestions(plain, localHost: "mac").live == nil)
+    }
+
+    @Test func theCloseAllReportListsEverySkippedQuestion() {
+        let skipped = (1...8).map { TendCloseOutcome.Skipped(requestID: "rq_\($0)", reason: "kept") }
+        let text = FleetDecisions.closeAllText(TendCloseOutcome(closed: ["rq_0"], skipped: skipped))
+        #expect(text.hasPrefix("Closed 1 question. Skipped 8: "))
+        #expect((1...8).allSatisfy { text.contains("rq_\($0) (kept)") })
     }
 
     @Test func theGroupCountsExactlyUnderTruncation() {

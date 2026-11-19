@@ -25,7 +25,14 @@ struct CantAnswerGroup: View {
 
     var body: some View {
         let count = model.cantAnswerCount
-        if count > 0 {
+        if count == 0, model.closeAllResult != nil {
+            // The refresh after Close all emptied the group: what it closed
+            // and skipped stays until dismissed.
+            VStack(alignment: .leading, spacing: 10) {
+                Divider()
+                CloseAllReport()
+            }
+        } else if count > 0 {
             VStack(alignment: .leading, spacing: 10) {
                 Divider()
                 Button {
@@ -46,7 +53,7 @@ struct CantAnswerGroup: View {
                 .buttonStyle(.plain)
                 .accessibilityValue(expanded ? String(localized: "Expanded") : String(localized: "Collapsed"))
                 .accessibilityIdentifier("cantAnswer")
-                if expanded { content(count: count) }
+                if expanded { content(count: count) } else { CloseAllReport() }
             }
             .confirmationDialog(confirmTitle, isPresented: $confirming, titleVisibility: .visible) {
                 let closable = model.closable
@@ -76,18 +83,36 @@ struct CantAnswerGroup: View {
                 .buttonStyle(.card)
                 .accessibilityIdentifier("closeAll")
         }
-        if let result = model.closeAllResult {
-            Label(result.text, systemImage: result.ok ? "checkmark.circle" : "exclamationmark.circle")
-                .font(TendType.meta)
-                .foregroundStyle(result.ok ? TendPalette.green : TendPalette.orange)
-                .accessibilityIdentifier("closeAllResult")
-        }
+        CloseAllReport()
         let listed = model.cantAnswer
         ForEach(listed) { CantAnswerRow(decision: $0) }
         if count > listed.count {
             Text("\(count - listed.count) more not listed")
                 .font(TendType.meta)
                 .foregroundStyle(.tertiary)
+        }
+    }
+}
+
+/// What the last Close all closed and skipped, in full, with Dismiss.
+struct CloseAllReport: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        if let result = model.closeAllResult {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Label(result.text, systemImage: result.ok ? "checkmark.circle" : "exclamationmark.circle")
+                    .font(TendType.meta)
+                    .foregroundStyle(result.ok ? TendPalette.green : TendPalette.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("closeAllResult")
+                Button("Dismiss") { model.dismissCloseAllResult() }
+                    .font(TendType.meta.weight(.medium))
+                    .buttonStyle(.borderless)
+                    .accessibilityIdentifier("dismissCloseAllResult")
+            }
         }
     }
 }

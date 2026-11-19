@@ -124,9 +124,14 @@ final class FleetDecisionFeed: ObservableObject {
                 if canKeep != keep { canKeep = keep }
                 if canCloseAll != close { canCloseAll = close }
                 if !reviews.isEmpty { reviews = [] }
-                setProblem(queue.unavailable.isEmpty
-                    ? nil
-                    : String(localized: "Some decisions could not be read: \(queue.unavailable.joined(separator: "; "))"))
+                if !queue.unavailable.isEmpty {
+                    setProblem(String(localized: "Some decisions could not be read: \(queue.unavailable.joined(separator: "; "))"))
+                } else if FleetDecisions.omitsFoldedRows(queue) {
+                    // The mailbox cannot fill in what the cut page left out.
+                    setProblem(String(localized: "Showing the first decisions on this Mac; more are waiting."))
+                } else {
+                    setProblem(nil)
+                }
             } else {
                 if queue != nil { queue = nil }
                 let page = try await client.reviewItems(offset: 0, limit: 200)

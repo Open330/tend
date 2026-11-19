@@ -200,7 +200,7 @@ final class TendAgentAttentionCenter: ObservableObject {
     private var messages: [TendOperatorMessage] = []
     /// Questions the decision queue folded (`host:request`), left out of
     /// every count.
-    private var folded: Set<String> = []
+    private var folded = FleetFoldedQuestions()
     private var coverageObserver: NSObjectProtocol?
     private var humanNotified: [String: Date] = [:]
     /// The receipts as last written to (or read from) the defaults.
@@ -374,7 +374,7 @@ final class TendAgentAttentionCenter: ObservableObject {
     /// and the pane currently visible. Every Fleet client can read the same
     /// request; notification receipts are local to this Mac.
     /// The questions nobody can answer, from this Mac's decision queue.
-    func ingestFoldedQuestions(_ ids: Set<String>) {
+    func ingestFoldedQuestions(_ ids: FleetFoldedQuestions) {
         guard ids != folded else { return }
         folded = ids
         recompute()

@@ -711,6 +711,15 @@ test("questions nobody can answer fold out of Your turn; Keep and Close all send
     by_label: "web",
   });
   assert.match(yourTurn().text, /Closed 1 question\. Skipped 1: rq_b \(no longer unanswerable\)/);
+  // Both rows now leave the fold: rq_a was closed; rq_b is live again.
+  serverBoard.lanes.needs_you.groups = [];
+  serverBoard.decision_hosts[0].unanswerable_count = 0;
+  await home.refresh();
+  assert.doesNotMatch(yourTurn().text, /Can't be answered/, "the empty group is gone");
+  assert.match(yourTurn().text, /Skipped 1: rq_b \(no longer unanswerable\)/,
+    "the result must remain visible when the refreshed fold is empty");
+  find(yourTurn(), (n) => n.tag === "button" && n.text.includes("Dismiss")).click();
+  assert.doesNotMatch(yourTurn().text, /Skipped 1/, "Dismiss clears it");
   status.home = 404;
   serverBoard = null;
   await home.refresh();

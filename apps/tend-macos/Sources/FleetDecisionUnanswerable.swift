@@ -49,6 +49,8 @@ struct FleetCantAnswerGroup: View {
     var result: (ok: Bool, text: String)?
     var keep: (FleetDecision) -> Void = { _ in }
     var closeAll: ([FleetDecision]) -> Void = { _ in }
+    /// Clears the Close all report.
+    var dismissResult: () -> Void = {}
     /// Opens unfolded, for previews and screenshots.
     var initiallyExpanded = false
     @State private var expanded: Bool?
@@ -62,27 +64,12 @@ struct FleetCantAnswerGroup: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Divider().padding(.bottom, 2)
-            Button {
-                withAnimation(.easeOut(duration: 0.15)) { expanded = !isExpanded }
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    Text("Can't be answered (\(count))")
-                        .font(.system(size: 11, weight: .semibold))
-                        .monospacedDigit()
-                    Spacer(minLength: 0)
-                }
-                .foregroundStyle(.secondary)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 4)
-            .help(String(localized: "The agents that asked these are gone, so nobody will read an answer. They stay open until you close them."))
-            .accessibilityValue(isExpanded ? String(localized: "Expanded") : String(localized: "Collapsed"))
-            if isExpanded {
-                expandedBody
+            if count == 0 {
+                // The refresh after Close all emptied the group: what it
+                // closed and skipped stays until dismissed.
+                report
+            } else {
+                group
             }
         }
         .alert(FleetCantAnswer.confirmTitle(closable.count), isPresented: $confirming) {
@@ -90,6 +77,54 @@ struct FleetCantAnswerGroup: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(FleetCantAnswer.confirmMessage)
+        }
+    }
+
+    @ViewBuilder
+    private var group: some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.15)) { expanded = !isExpanded }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                Text("Can't be answered (\(count))")
+                    .font(.system(size: 11, weight: .semibold))
+                    .monospacedDigit()
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(.secondary)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 4)
+        .help(String(localized: "The agents that asked these are gone, so nobody will read an answer. They stay open until you close them."))
+        .accessibilityValue(isExpanded ? String(localized: "Expanded") : String(localized: "Collapsed"))
+        if isExpanded {
+            expandedBody
+        } else {
+            report
+        }
+    }
+
+    /// What the last Close all did, in full (every skipped question and
+    /// why), selectable, with Dismiss.
+    @ViewBuilder
+    private var report: some View {
+        if let result {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Label(result.text, systemImage: result.ok ? "checkmark.circle" : "exclamationmark.circle")
+                    .font(TendType.meta)
+                    .foregroundStyle(result.ok ? Color.green : Color.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button("Dismiss", action: dismissResult)
+                    .buttonStyle(.tendGhost)
+                    .controlSize(.small)
+            }
+            .padding(.horizontal, 4)
         }
     }
 
@@ -107,13 +142,7 @@ struct FleetCantAnswerGroup: View {
                 .disabled(closable.contains { busy.contains($0.id) })
                 .help(String(localized: "Close every question listed here; each asker gets a reply that you dismissed it"))
         }
-        if let result {
-            Label(result.text, systemImage: result.ok ? "checkmark.circle" : "exclamationmark.circle")
-                .font(TendType.meta)
-                .foregroundStyle(result.ok ? Color.green : Color.orange)
-                .lineLimit(4)
-                .padding(.horizontal, 4)
-        }
+        report
         ForEach(decisions) { decision in
             FleetCantAnswerRow(
                 decision: decision,

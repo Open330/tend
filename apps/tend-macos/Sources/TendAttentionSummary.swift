@@ -43,7 +43,7 @@ struct TendAttentionSummary: Equatable, Sendable {
         agents: [TendHostedAgent],
         messages: [TendOperatorMessage],
         unread: Set<String>,
-        folded: Set<String> = [],
+        folded: FleetFoldedQuestions = FleetFoldedQuestions(),
         paneKey: (TendHostedAgent) -> String
     ) -> TendAttentionSummary {
         var summary = TendAttentionSummary()
@@ -60,7 +60,7 @@ struct TendAttentionSummary: Equatable, Sendable {
         }
         for message in messages {
             if message.isHumanRequest && message.needsHumanDecision {
-                guard !folded.contains(message.id) else { continue }
+                guard folded.counts(message) else { continue }
                 summary.decisions += 1
                 dock.insert("message:\(message.id)")
             } else if message.hasUnreadReply {

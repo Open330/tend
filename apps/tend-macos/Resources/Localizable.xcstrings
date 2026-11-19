@@ -3239,6 +3239,16 @@
         }
       }
     },
+    "Showing the first decisions on this Mac; more are waiting." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 Mac의 결정 중 앞부분만 보여 줍니다. 더 기다리는 결정이 있습니다."
+          }
+        }
+      }
+    },
     "Skipped %lld: %@" : {
       "localizations" : {
         "ko" : {

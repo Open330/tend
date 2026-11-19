@@ -640,7 +640,10 @@ function renderLane(lane, data) {
     for (const unit of group.units) body.append(unitCard(unit));
   }
   if (!data.count && !error) body.append(el("div", "lane-empty", S[empty]));
+  // The group, or only what the last Close all did once it emptied the
+  // group: that report stays until the person dismisses it.
   if (data.cantAnswer?.count) body.append(cantAnswerSection(data.cantAnswer));
+  else if (state.results.has(CANT_ANSWER_KEY)) body.append(cantAnswerReport());
   const fold = (list, open, show, hide, toggle) => {
     if (!list?.length) return;
     body.append(button(open ? hide : show(list.length), () => {
@@ -715,11 +718,24 @@ function cantAnswerSection(group) {
       box.append(row);
     }
   }
-  const result = resultLine(CANT_ANSWER_KEY);
-  if (result) box.append(result);
+  const report = cantAnswerReport();
+  if (report) box.append(report);
   for (const unit of group.units) box.append(cantAnswerRow(unit));
   if (group.count > group.units.length) box.append(el("div", "lane-note quiet", S.cantAnswerMore(group.count - group.units.length)));
   if (group.remote) box.append(el("div", "lane-note quiet", S.cantAnswerThere));
+  return box;
+}
+
+/// What the last Close all closed and skipped, with Dismiss. Kept apart
+/// from the group's count: the refresh after a close may empty it.
+function cantAnswerReport() {
+  const result = resultLine(CANT_ANSWER_KEY);
+  if (!result) return null;
+  const box = el("div", "cant-answer-report");
+  box.append(result, button(S.dismissReport, () => {
+    state.results.delete(CANT_ANSWER_KEY);
+    render();
+  }, "btn ghost small"));
   return box;
 }
 

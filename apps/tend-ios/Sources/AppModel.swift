@@ -278,7 +278,9 @@ final class AppModel {
     /// Which pairing the reads and decisions in flight belong to: after a
     /// sign-out or a new pairing, their late answers (a 401 included) are
     /// dropped instead of landing on the new one.
-    private var session = UUID()
+    private var session = UUID() {
+        didSet { closeAllResult = nil }
+    }
     /// Why Sign out could not unpair this device on the dashboard; the key
     /// is kept so it can be retried.
     private(set) var signOutProblem: String?
@@ -397,8 +399,11 @@ final class AppModel {
         return (local?.subjectCheck ?? false, local?.closeUnanswerable ?? false)
     }
 
-    /// What the last Close all did, in words.
+    /// What the last Close all did, in words, until dismissed. It belongs
+    /// to the pairing it was made under: a new session clears it.
     private(set) var closeAllResult: (ok: Bool, text: String)?
+
+    func dismissCloseAllResult() { closeAllResult = nil }
 
     /// "Nothing needs you" only when every host was read in full, every
     /// entry decoded, and none is waiting: an item this app cannot read, a
@@ -624,6 +629,7 @@ final class AppModel {
         problem = nil
         failures = [:]
         outcome = nil
+        closeAllResult = nil
     }
 
     /// The user-facing message for a failed call made under `mine`; a 401
@@ -916,7 +922,10 @@ final class AppModel {
             await refreshHistory()
         } catch {
             guard session == mine else { return }
-            closeAllResult = (false, handle(error, session: mine))
+            let message = handle(error, session: mine)
+            // A 401 unpaired this device: nothing of the old pairing stays.
+            guard session == mine else { return }
+            closeAllResult = (false, message)
         }
     }
 
