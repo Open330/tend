@@ -1595,8 +1595,17 @@ actor TendIPCClient {
     /// A Fleet host's decision queue, read there as its operator console
     /// (`fleet_decision_queue_v1`). Read only: this app decides another
     /// host's review items on the dashboard, never over IPC.
+    /// `limit` is the dashboard's own (`DEFAULT_LIMIT` in dashboard/home.rs
+    /// and decisions.rs), so every item listed here is on the page the
+    /// person is sent to. Each host reads on its own transport: a slow host
+    /// holds up neither another host nor this Mac's decisions.
     func remoteDecisionQueue(host: TendFleetHostIdentity) async throws -> TendPendingQueue? {
-        try await fleetCommand(host: host, operation: ["kind": "decision_queue", "limit": 200], timeout: 8).decisionQueue?.value
+        try await fleetCommand(
+            host: host,
+            operation: ["kind": "decision_queue", "limit": FleetDecisions.dashboardQueueLimit],
+            requestTransport: fleetReadTransport(for: host.alias),
+            timeout: 8
+        ).decisionQueue?.value
     }
 
     func decideReview(id: String, disposition: TendReviewDisposition, note: String?) async throws {

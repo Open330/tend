@@ -151,6 +151,11 @@ struct FleetDecision: Identifiable, Hashable, Sendable {
 }
 
 enum FleetDecisions {
+    /// How many entries of another host's queue the dashboard reads by
+    /// default; Home reads no more, so it never links to an item the
+    /// dashboard does not show.
+    static let dashboardQueueLimit = 100
+
     /// Fleet hosts whose open review items Home lists, to decide on the
     /// dashboard: connected, control mode, and a relay that sends its queue
     /// and takes a decision from the dashboard.

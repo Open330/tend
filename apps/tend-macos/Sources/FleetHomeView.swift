@@ -124,8 +124,16 @@ struct FleetHomeView: View {
             guard homeBoard.isVisible else { return }
             while !Task.isCancelled {
                 await decisionFeed.load(model.client, works: allWorks)
-                await decisionFeed.loadRemote(model.client, hosts: model.fleetHosts)
                 try? await Task.sleep(for: FleetDecisionFeed.refreshEvery)
+            }
+        }
+        .task(id: homeBoard.isVisible) {
+            // Other hosts' review items, on their own loop: a slow host never
+            // holds up this Mac's decisions.
+            guard homeBoard.isVisible else { return }
+            while !Task.isCancelled {
+                await decisionFeed.loadRemote(model.client, hosts: model.fleetHosts)
+                try? await Task.sleep(for: FleetDecisionFeed.remoteEvery)
             }
         }
         .task(id: homeBoard.isVisible) {

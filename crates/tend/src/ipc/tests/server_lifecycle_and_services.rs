@@ -437,7 +437,7 @@ async fn client_disconnect_before_response_is_clean_handler_exit() {
             "/tmp/tend-disconnect-test.sock",
         )),
         config_path: None,
-        dashboard_url: None,
+        dashboard_url: crate::dashboard_link::DashboardLink::default(),
         swap: None,
     };
     let handle = tokio::spawn(handle(server_stream, ctx, stopping_rx));
@@ -3151,8 +3151,9 @@ async fn hello_names_the_dashboard_only_when_there_is_one() {
     async fn hello(url: Option<&str>) -> serde_json::Value {
         let dir = tempdir().unwrap();
         let sock = dir.path().join("tend-hello-dashboard.sock");
-        let server =
-            Server::new(sock.clone(), Store::shared()).with_dashboard_url(url.map(str::to_owned));
+        let server = Server::new(sock.clone(), Store::shared()).with_dashboard_url(
+            crate::dashboard_link::DashboardLink::new(url.map(str::to_owned)),
+        );
         let (tx, rx) = broadcast::channel(1);
         let handle = tokio::spawn(async move { server.run(rx).await.unwrap() });
         wait_for_socket(&sock).await;

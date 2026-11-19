@@ -537,11 +537,13 @@ function workCard(unit) {
 /// long ago (FleetCompactRow). Selecting it opens its details.
 function compactRow(unit) {
   const lane = unit.type === "decision" ? "needsYou" : unit.lane;
-  const row = el("button", `row-c ${lane}${state.selected === unit.id ? " selected" : ""}`);
+  const key = selectionKey(unit);
+  const row = el("button", `row-c ${lane}${state.selected === key ? " selected" : ""}`);
   row.type = "button";
   row.dataset.id = unit.id;
-  row.setAttribute("aria-expanded", String(state.selected === unit.id));
-  row.addEventListener("click", () => select(state.selected === unit.id ? null : unit.id));
+  if (unit.type === "decision") row.dataset.host = unit.host;
+  row.setAttribute("aria-expanded", String(state.selected === key));
+  row.addEventListener("click", () => select(state.selected === key ? null : key));
   row.append(el("span", "dot-c"));
   if (unit.type === "decision") row.append(icon("question", "kind-icon"));
   row.append(el("span", "title", tx(unit.title)), el("span", "host", unit.host), el("span", "when", when(unit.since)));
@@ -1216,11 +1218,26 @@ function findUnit(id, host = null) {
   return findIn(state.board, id, host);
 }
 
-/// The unit with `id`; with `host`, only that host's (a review id is per
-/// host, so two hosts can hold the same one).
+/// What selects a unit on the page: its id, and for a decision its kind and
+/// host too. A request or review id is per host, so two hosts can hold the
+/// same one; the API calls still take the plain id and the unit's host.
+export function selectionKey(unit) {
+  return unit.type === "decision" ? `${unit.decision}\n${unit.host}\n${unit.id}` : unit.id;
+}
+
+/// The unit `state.selected` names.
+function findSelected(key) {
+  return key ? findWhere(state.board, (unit) => selectionKey(unit) === key) : null;
+}
+
+/// The unit with `id`; with `host`, only that host's.
 function findIn(board, id, host = null) {
-  if (!id || !board) return null;
-  const match = (unit) => unit.id === id && (!host || unit.host === host);
+  if (!id) return null;
+  return findWhere(board, (unit) => unit.id === id && (!host || unit.host === host));
+}
+
+function findWhere(board, match) {
+  if (!board) return null;
   for (const lane of LANES) {
     const data = board.lanes[lane];
     for (const group of data.groups) for (const unit of group.units) if (match(unit)) return unit;
@@ -1343,7 +1360,7 @@ function replyComposer(unit, key, target) {
 
 function renderInspector() {
   const box = $("inspector");
-  const unit = findUnit(state.selected);
+  const unit = findSelected(state.selected);
   if (!unit) {
     state.selected = null;
     box.hidden = true;
@@ -1510,7 +1527,7 @@ function setLayout(layout) {
     // A preference only.
   }
   // A decision opens beside the board only from the compact list.
-  if (state.layout === "emphasis" && findUnit(state.selected)?.type !== "work") state.selected = null;
+  if (state.layout === "emphasis" && findSelected(state.selected)?.type !== "work") state.selected = null;
   render();
 }
 
@@ -1788,7 +1805,7 @@ function revealLinkedItem() {
   $("board").dataset.lane = "needsYou";
   for (const tab of document.querySelectorAll("#segments button")) tab.setAttribute("aria-selected", String(tab.dataset.lane === "needsYou"));
   if (state.layout === "compact") {
-    state.selected = id;
+    state.selected = selectionKey(unit);
     render();
   }
   const node = [...document.querySelectorAll(".lane.needsYou [data-id]")].find((n) => n.dataset.id === id && (!host || n.dataset.host === host));

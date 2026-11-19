@@ -43,7 +43,7 @@ pub(super) async fn handle(
                 let mut r = Response::hello(restart.as_deref());
                 r.collaboration_error = collaboration.initialization_error().map(str::to_owned);
                 r.protocol = requested;
-                r.dashboard_url.clone_from(&ctx.dashboard_url);
+                r.dashboard_url = ctx.dashboard_url.get();
                 // Only a service that would take a job now is
                 // advertised; status stays served regardless.
                 if let Some(capabilities) = r.capabilities.as_mut() {

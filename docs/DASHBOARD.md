@@ -521,8 +521,11 @@ Fleet hosts it can read (control mode, `fleet_decision_queue_v1` and
 (a review id is per host), and the person decides it there, under the
 dashboard's sign-in. tendd names the address on `hello` (`dashboard_url`):
 `[sinks.webhook] dashboard_url`, else `[dashboard.login] public_url`'s
-origin, else the running dashboard's bind address (loopback for `0.0.0.0`).
-With no dashboard, the card says the item is decided on its host. On the
+origin, else this dashboard's own address once it is listening (the port it
+got; loopback for `0.0.0.0`), and only when it has a token, since without
+one it takes no decisions. With no dashboard, the card says the item is
+decided on its host. Home reads at most 100 entries of a host's queue, the
+dashboard's own default, so it never links to an item the page leaves out. On the
 board, another host's review is keyed `review:<alias>:<id>`, so the same id
 on two hosts is two items.
 

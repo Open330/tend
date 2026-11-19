@@ -58,6 +58,11 @@ const modeButtons = ["digest", "cards", "inbox"].map((mode) => {
   node.dataset.mode = mode;
   return node;
 });
+const layoutButtons = ["emphasis", "compact"].map((layout) => {
+  const node = new Node("button");
+  node.dataset.layout = layout;
+  return node;
+});
 const dummy = new Node("div");
 globalThis.document = {
   hidden: false,
@@ -71,7 +76,7 @@ globalThis.document = {
   createElement: (tag) => new Node(tag),
   querySelector: (selector) => (selector === ".statusbar" ? dummy : null),
   // Review's mode switch, so a test can pick a mode the way a click does.
-  querySelectorAll: (selector) => (selector === "#review-mode button" ? modeButtons : []),
+  querySelectorAll: (selector) => (selector === "#review-mode button" ? modeButtons : selector === "#layout-toggle button" ? layoutButtons : []),
   addEventListener() {},
 };
 let replaced = null;
@@ -362,6 +367,47 @@ test("a reply goes only to the agent and question it was written for", async () 
   });
   status.home = 404;
   serverBoard = null;
+  await home.refresh();
+});
+
+test("one review id on two hosts: a link and a click open the named host's, and decide it there", async () => {
+  const review = (host, local) => ({
+    type: "decision", id: local ? "review:rv_same" : `review:${host}:rv_same`, host, local, actionable: true, since: recent,
+    entry: { kind: "review", id: "rv_same", summary: `result on ${host}`, requested_at: recent, target: { kind: "session", session_id: "s" } },
+  });
+  serverBoard = {
+    hosts: [{ alias: "mba", local: true, state: "online" }, { alias: "mini", local: false, state: "online" }],
+    decision_hosts: [
+      { alias: "mba", local: true, control: true, decides_reviews: true },
+      { alias: "mini", local: false, control: true, decides_reviews: true },
+    ],
+    backlog: [],
+    lanes: {
+      needs_you: { count: 2, groups: [{ project: null, system: false, items: [review("mba", true), review("mini", false)] }] },
+      running: { groups: [] }, finished: { groups: [] },
+    },
+  };
+  status.home = 200;
+  layoutButtons[1].click();
+  // Tend for Mac's link names the host that holds the item.
+  window.location.hash = "#item=rv_same&host=mini";
+  await home.refresh();
+  const inspector = () => document.getElementById("inspector");
+  assert.match(inspector().text, /result on mini/);
+  assert.doesNotMatch(inspector().text, /result on mba/);
+  find(inspector(), (n) => n.tag === "button" && n.text.includes("Accept")).click();
+  await settle();
+  assert.equal(posts.at(-1).path, "/api/decisions/reviews/rv_same");
+  assert.equal(JSON.parse(posts.at(-1).init.body).host, "mini", "decided on the host the link named");
+  // The other host's row opens that host's item.
+  find(lanes(), (n) => n.dataset?.id === "rv_same" && n.dataset?.host === "mba").click();
+  assert.match(inspector().text, /result on mba/);
+  assert.doesNotMatch(inspector().text, /result on mini/);
+  layoutButtons[0].click();
+  window.location.hash = "";
+  status.home = 404;
+  serverBoard = null;
+  posts.length = 0;
   await home.refresh();
 });
 

@@ -25,6 +25,9 @@ use serde_json::{json, Value};
 use super::server::AppState;
 use crate::home_board::{self, BoardHost};
 
+/// Tend for Mac reads other hosts' queues with the same limit
+/// (`FleetDecisions.dashboardQueueLimit`), so it never links to an item
+/// this page leaves out.
 const DEFAULT_LIMIT: usize = 100;
 const MAX_SUMMARY_BYTES: usize = 1024;
 

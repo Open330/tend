@@ -203,6 +203,10 @@ pub struct DashboardRuntimeConfig {
     /// Pipeline runs, automation rules, swap health and the backlog for
     /// Home's board (`GET /api/home`); absent ones leave their part empty.
     pub home: Option<crate::home_board::HomeSources>,
+    /// Set to this dashboard's address once it is listening, and cleared
+    /// when it stops: the address tendd names on `hello` when nothing more
+    /// specific is configured.
+    pub bound_link: Option<crate::dashboard_link::DashboardLink>,
 }
 
 impl AppState {
@@ -544,6 +548,7 @@ pub async fn serve(
     runtime: DashboardRuntimeConfig,
     mut shutdown: broadcast::Receiver<()>,
 ) -> std::io::Result<()> {
+    let bound_link = runtime.bound_link;
     let collaboration = runtime.collaboration.unwrap_or_else(|| {
         CollaborationStore::in_memory(CollaborationOptions {
             enabled: false,
@@ -579,11 +584,18 @@ pub async fn serve(
     let local = listener.local_addr()?;
     tracing::info!(addr = %local, "dashboard listening");
     log_access_url(&config, local);
-    axum::serve(listener, app)
+    if let Some(link) = &bound_link {
+        link.set(crate::dashboard_link::origin(None, None, Some(local)));
+    }
+    let served = axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             let _ = shutdown.recv().await;
         })
-        .await
+        .await;
+    if let Some(link) = &bound_link {
+        link.set(None);
+    }
+    served
 }
 
 /// DNS-rebinding guard. A page on an attacker-controlled domain can,

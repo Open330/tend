@@ -40,7 +40,7 @@ pub(super) struct ServerCtx {
     pub(super) work_queue: Arc<super::work_queue::QueueRuntime>,
     pub(super) mux_snapshots: Arc<crate::mux_snapshot_control::MuxSnapshotControl>,
     pub(super) config_path: Option<PathBuf>,
-    pub(super) dashboard_url: Option<String>,
+    pub(super) dashboard_url: crate::dashboard_link::DashboardLink,
     pub(super) swap: Option<Arc<dyn crate::swap_api::SwapJobs>>,
 }
 

@@ -23,8 +23,7 @@ final class FleetDecisionFeed: ObservableObject {
     }
     /// The dashboard tendd named, where another host's review is decided.
     @Published private(set) var dashboard: URL?
-    private var lastRemoteLoad = Date.distantPast
-    static let remoteEvery: TimeInterval = 15
+    static let remoteEvery: Duration = .seconds(15)
     /// Bumped with every change of `queue`, `reviews` or `remoteQueues`.
     private var sourceRevision: UInt64 = 0
     /// The last merged decisions and what they were built from: Home asks
@@ -79,18 +78,26 @@ final class FleetDecisionFeed: ObservableObject {
     }
 
     /// Reads the open review items of every Fleet host Home lists them for
-    /// (`FleetDecisions.decidesReviews`), and the dashboard to decide them on.
-    func loadRemote(_ client: TendIPCClient, hosts: [TendFleetHost], force: Bool = false) async {
-        guard force || Date().timeIntervalSince(lastRemoteLoad) >= Self.remoteEvery else { return }
-        lastRemoteLoad = Date()
+    /// (`FleetDecisions.decidesReviews`), all at once, and the dashboard to
+    /// decide them on. Home runs it on its own loop, apart from this Mac's
+    /// decisions.
+    func loadRemote(_ client: TendIPCClient, hosts: [TendFleetHost]) async {
         let link = await client.dashboardURL
         if dashboard != link { dashboard = link }
-        var queues: [(host: TendFleetHostIdentity, queue: TendPendingQueue)] = []
-        for host in hosts where FleetDecisions.decidesReviews(host) {
-            // A host that cannot be read now shows nothing to act on.
-            if let queue = try? await client.remoteDecisionQueue(host: host.identity) {
-                queues.append((host.identity, queue))
+        let read = hosts.filter(FleetDecisions.decidesReviews).map(\.identity)
+        let found = await withTaskGroup(of: (Int, TendPendingQueue?).self) { group in
+            for (index, host) in read.enumerated() {
+                // A host that cannot be read now shows nothing to act on.
+                group.addTask { (index, try? await client.remoteDecisionQueue(host: host)) }
             }
+            var found: [Int: TendPendingQueue] = [:]
+            for await (index, queue) in group {
+                if let queue { found[index] = queue }
+            }
+            return found
+        }
+        let queues = read.enumerated().compactMap { index, host in
+            found[index].map { (host: host, queue: $0) }
         }
         // Nothing before or after: no publish, no rebuilt queue.
         if !(queues.isEmpty && remoteQueues.isEmpty) { remoteQueues = queues }
