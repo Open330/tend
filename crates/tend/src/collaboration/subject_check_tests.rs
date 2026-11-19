@@ -1580,3 +1580,99 @@ async fn reviewer_replacement_answer_after_ten_minutes_is_uncertified() {
     assert_eq!(facts.len(), 1);
     assert!(!facts[0].same_incarnation);
 }
+
+// Bindings stored on the item ("Bindings survive a daemon restart").
+
+/// The asker was seen bound on server A before a daemon restart and never
+/// came back: its pane absent from A still folds the question, while an
+/// absence from a restarted server B says nothing.
+#[tokio::test]
+async fn a_binding_stored_on_the_question_survives_a_daemon_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let options = CollaborationOptions {
+        path: Some(dir.path().join("mailbox.db")),
+        ..CollaborationOptions::default()
+    };
+    let store = CollaborationStore::load(options.clone()).await.unwrap();
+    let q = question(&store, &participant("old", "%3", "default")).await;
+    let present = scan(
+        OffsetDateTime::now_utc(),
+        &[("default", Some(A))],
+        &[pane("%3", "default", "claude", Some(true))],
+    );
+    let memory = bound("old", "%3", "default", A);
+    pass(&store, &[], &memory, Some(&present)).await;
+    let row = get(&store, &q.id).await;
+    assert!(row.subject_check.is_none());
+    assert_eq!(row.subject_bindings.get("old"), memory.get("old"));
+    drop(store);
+
+    // The restarted daemon remembers no binding.
+    let reloaded = CollaborationStore::load(options).await.unwrap();
+    let restarted = scan(OffsetDateTime::now_utc(), &[("default", Some(B))], &[]);
+    pass(&reloaded, &[], &HashMap::new(), Some(&restarted)).await;
+    assert!(get(&reloaded, &q.id).await.subject_check.is_none());
+    let absent = scan(OffsetDateTime::now_utc(), &[("default", Some(A))], &[]);
+    pass(&reloaded, &[], &HashMap::new(), Some(&absent)).await;
+    assert_eq!(
+        get(&reloaded, &q.id).await.subject_check.unwrap().causes,
+        [GoneCause::PaneGone]
+    );
+}
+
+/// A pane id a restarted server reuses never re-stamps the stored
+/// incarnation; a move to another pane replaces the binding.
+#[tokio::test]
+async fn a_stored_binding_keeps_its_first_incarnation_and_follows_a_move() {
+    let store = CollaborationStore::in_memory(CollaborationOptions::default());
+    let q = question(&store, &participant("old", "%3", "default")).await;
+    let inputs_scan = scan(OffsetDateTime::now_utc(), &[("default", Some(A))], &[]);
+    let stored = |row: &CollaborationRequest| row.subject_bindings.get("old").cloned().unwrap();
+    // Judged against the stored binding, before any absence counts.
+    let present = scan(
+        OffsetDateTime::now_utc(),
+        &[("default", Some(A))],
+        &[pane("%3", "default", "claude", Some(true))],
+    );
+    pass(
+        &store,
+        &[],
+        &bound("old", "%3", "default", A),
+        Some(&present),
+    )
+    .await;
+    // A second pass with nothing new writes nothing.
+    let report = store
+        .check_subjects(&SubjectInputs {
+            agents: &[],
+            scan: Some(&present),
+            bindings: &bound("old", "%3", "default", A),
+        })
+        .await
+        .unwrap();
+    assert_eq!(report.written, 0);
+    // The same pane id, now on server B: the stored binding stays on A.
+    let reused = scan(
+        OffsetDateTime::now_utc(),
+        &[("default", Some(B))],
+        &[pane("%3", "default", "claude", Some(true))],
+    );
+    pass(
+        &store,
+        &[],
+        &bound("old", "%3", "default", B),
+        Some(&reused),
+    )
+    .await;
+    assert_eq!(stored(&get(&store, &q.id).await).incarnation, Some(A));
+    // Seen live in another pane: that is where it is bound now.
+    pass(
+        &store,
+        &[],
+        &bound("old", "%4", "default", A),
+        Some(&inputs_scan),
+    )
+    .await;
+    let moved = stored(&get(&store, &q.id).await);
+    assert_eq!((moved.pane.as_str(), moved.incarnation), ("%4", Some(A)));
+}

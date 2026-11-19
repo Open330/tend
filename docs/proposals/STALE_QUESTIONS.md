@@ -195,6 +195,47 @@ then replaced) is the same episode. Only positive *alive* evidence ends an
 episode. Keep therefore holds until the subject is seen alive and then gone
 again; an outage alone never starts a new episode.
 
+### Bindings survive a daemon restart
+
+E3 and E4 on tmux need the server incarnation the subject was bound on: a
+pane id is unique only within one incarnation. tendd learns a binding by
+seeing the session's live row in its pane in a complete scan, and kept it
+only in memory. After a daemon restart, a subject that never reappears had
+no binding, so its absent pane said nothing, and its question never folded
+unless E1, E2 or a stopped tmux server showed it gone.
+
+The binding is therefore also kept on the open item, next to its episode:
+
+```json
+"subject_bindings": {
+  "<session id>": { "pane": "%42", "endpoint": "/tmp/tmux-501/default",
+                    "incarnation": { "pid": 812, "start_time": 1763500000 } }
+}
+```
+
+- **Written** by the subject check pass, for each subject of each open human
+  item, whenever tendd has an in-memory binding for it and the stored one
+  differs. A write happens only when a subject is first seen or moves.
+- **Same pane and endpoint keeps the stored incarnation**, as the in-memory
+  map already does: the first incarnation the session was seen on wins. A
+  row reloaded after a restart into a pane id a new server reuses therefore
+  never re-stamps the old binding with the new incarnation.
+- **Another pane or endpoint replaces it**: the session was seen live
+  elsewhere.
+- **Read** when tendd has no in-memory binding for the subject. It counts
+  only for the pane being judged (the row's or the participant's), exactly
+  as the in-memory one does.
+
+Nothing else changes. A stored binding is a record of where tendd saw the
+session alive, not evidence that it is gone. The pane must still be absent
+from a complete scan of a server with that same incarnation (E3), or hold
+a shell with no agent process (E4), and the 24-hour grace still applies. A
+tmux server restarted since keeps the evidence unknown, as before. An item
+asked before this change has no stored binding until its subject is seen
+again, so only new evidence counts for it.
+
+Old daemons ignore the field. It is skipped when empty.
+
 ## What happens to each kind
 
 ### tend's own items: closed automatically on a schedule, as before

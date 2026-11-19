@@ -886,6 +886,7 @@ fn collaboration_request(
         wake_retry: None,
         system_ask: None,
         subject_check: None,
+        subject_bindings: std::collections::BTreeMap::default(),
         closure: None,
         user_authorized: false,
         task_contract: None,

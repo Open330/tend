@@ -209,6 +209,7 @@ fn recovery_action(
     action.wake_retry = None;
     action.updates.clear();
     action.subject_check = None;
+    action.subject_bindings.clear();
     action.closure = None;
     action.system_ask = Some(super::system_asks::SystemAskState {
         subject_session: parent.to.agent_session_id.clone(),
