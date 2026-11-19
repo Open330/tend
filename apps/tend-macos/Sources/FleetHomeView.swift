@@ -315,12 +315,38 @@ struct FleetHomeView: View {
     /// The decisions Home shows under the same host and project filters as
     /// the cards.
     private var decisions: [FleetDecision] {
+        filteredDecisions.filter { !$0.isUnanswerable }
+    }
+
+    private var filteredDecisions: [FleetDecision] {
         // `homeBoard.decisionsRevision` redraws Home for a new operator message
         // or asker; the feed caches the merge itself.
         decisionFeed.decisions(model).filter { decision in
             (hostFilter == nil || decision.host.alias == hostFilter)
                 && (projectFilter == nil || decision.repo == projectFilter)
         }
+    }
+
+    /// Your turn's Can't be answered group, under the same filters; nil
+    /// when there is nothing in it (always from an older tendd).
+    private var cantAnswerGroup: FleetCantAnswerGroup? {
+        let folded = filteredDecisions.filter(\.isUnanswerable)
+        let exact = hostFilter == nil || hostFilter == homeBoard.localHostAlias ? decisionFeed.unanswerableCount : 0
+        let count = FleetCantAnswer.count(listed: folded.count, exact: exact, filtered: projectFilter != nil)
+        guard count > 0 else { return nil }
+        let feed = decisionFeed
+        let model = model
+        return FleetCantAnswerGroup(
+            decisions: folded,
+            count: count,
+            canKeep: feed.canKeep,
+            canCloseAll: feed.canCloseAll,
+            busy: feed.busy,
+            failures: feed.failures,
+            result: feed.closeAllResult,
+            keep: { decision in Task { _ = await feed.keep(decision, model: model) } },
+            closeAll: { decisions in Task { await feed.closeAll(decisions, model: model) } }
+        )
     }
 
     /// Planned Work under the same filters as the cards: this Mac's backlog,
@@ -531,7 +557,8 @@ struct FleetHomeView: View {
             let queueProblem = queueIsShown ? queueFeed.problem : nil
             let problem = decisionFeed.problem == nil && backlogFeed.problem == nil && queueProblem == nil ? 0 : 1
             let backlog = backlog
-            if FleetBoard.showsEmptyBoard(visible: works.count + decisions.count + backlog.count + queued.count + problem, reviewed: reviewedCount) {
+            let cantAnswer = cantAnswerGroup
+            if FleetBoard.showsEmptyBoard(visible: works.count + decisions.count + backlog.count + queued.count + problem + (cantAnswer == nil ? 0 : 1), reviewed: reviewedCount) {
                 FleetEmptyBoard(
                     isConnected: homeBoard.isConnected,
                     newAgent: { model.presentNewAgent() },
@@ -558,6 +585,7 @@ struct FleetHomeView: View {
                             decisions: lane == .needsYou ? decisions : [],
                             decisionCard: { decisionCard($0) { revisionTarget = $0 } },
                             decisionProblem: lane == .needsYou ? decisionFeed.problem : nil,
+                            cantAnswer: lane == .needsYou ? cantAnswer : nil,
                             selectedID: selectedID,
                             select: { id in selectedID = selectedID == id ? nil : id },
                             open: peek,
@@ -625,6 +653,9 @@ struct FleetLaneColumn: View {
     var decisionCard: ((FleetDecision) -> FleetDecisionCard)?
     /// Why the decisions may be incomplete (a source tendd could not read).
     var decisionProblem: String?
+    /// Questions nobody can answer, folded at the end of Your turn and not
+    /// in its count.
+    var cantAnswer: FleetCantAnswerGroup?
     let selectedID: String?
     let select: (String) -> Void
     let open: (TendHostedAgent) -> Void
@@ -743,6 +774,7 @@ struct FleetLaneColumn: View {
                                 }
                             }
                         }
+                        if let cantAnswer { cantAnswer }
                     } else {
                         let groups = FleetBoard.byProject(shown)
                         ForEach(groups) { group in

@@ -5,7 +5,7 @@
 // Windows app, in which case the page never sees it) or the OIDC operator
 // session cookie. Everything an agent wrote is set with textContent only.
 
-import { boardAttention, buildBoard, byProject, digest, fromServerBoard, hostHue, LANES, productOf, replyTarget, reviewQueue, sameTarget, TEND_PROJECT, withLater } from "./home-board.mjs";
+import { boardAttention, buildBoard, byProject, digest, fromServerBoard, hostHue, keepPayload, LANES, productOf, replyTarget, reviewQueue, sameTarget, TEND_PROJECT, withLater } from "./home-board.mjs";
 import { languageOf, relativeTime, stringsFor, textOf } from "./home-strings.mjs";
 import { itemHash, linkedHostOf, linkedItemOf } from "./needs-model.mjs";
 import { mountExplore } from "./explore.mjs";
@@ -49,6 +49,8 @@ const state = {
   /// Per lane, which of the Mac's folds are open (helpers, empty,
   /// reviewed); `showOlder` is the older fold.
   folds: { needsYou: {}, running: {}, finished: {}, reviewed: false },
+  /// Can't be answered: Close all asked for its one confirmation.
+  confirmCloseAll: false,
   reviewScope: "day",
   /// The review sheet's own state: the mode, what was put off with Later
   /// while it is open, the selection, and whether Send Back is open.
@@ -558,6 +560,14 @@ function compactRow(unit) {
   return row;
 }
 
+/// The outcome in words: what was decided, and for a closure why.
+function outcomeText(unit) {
+  if (unit.outcome === "closedByTend") return `${S.closedByTend}: ${S.closeReasons[unit.reason] || unit.reasonText}`;
+  if (unit.closure) return S.closedAskerGone(S.causes[unit.closure.cause] || S.causes.other);
+  const word = S[unit.outcome] || unit.outcome;
+  return unit.note ? `${word}: ${unit.note}` : word;
+}
+
 /// What was decided, in Finished: the decision, the outcome in the inset,
 /// who decided it on the meta line.
 function decidedCard(unit) {
@@ -566,8 +576,7 @@ function decidedCard(unit) {
   card.append(el("div", "e-title", tx(unit.title)));
   const inset = el("div", "inset");
   const outcome = el("div", "outcome");
-  const word = S[unit.outcome] || unit.outcome;
-  outcome.append(icon(unit.outcome === "accepted" || unit.outcome === "answered" ? "check" : "turn"), el("span", null, unit.note ? `${word}: ${unit.note}` : word));
+  outcome.append(icon(unit.outcome === "accepted" || unit.outcome === "answered" ? "check" : "turn"), el("span", null, outcomeText(unit)));
   inset.append(outcome);
   card.append(inset);
   card.append(metaLine("finished", [
@@ -631,6 +640,7 @@ function renderLane(lane, data) {
     for (const unit of group.units) body.append(unitCard(unit));
   }
   if (!data.count && !error) body.append(el("div", "lane-empty", S[empty]));
+  if (data.cantAnswer?.count) body.append(cantAnswerSection(data.cantAnswer));
   const fold = (list, open, show, hide, toggle) => {
     if (!list?.length) return;
     body.append(button(open ? hide : show(list.length), () => {
@@ -657,6 +667,109 @@ function renderLane(lane, data) {
   }
   section.append(head, body);
   return section;
+}
+
+// ---- Can't be answered (docs/proposals/STALE_QUESTIONS.md) ---------------
+
+const CANT_ANSWER_KEY = "cant-answer";
+
+/// Your turn's folded group: questions whose asker is gone, collapsed by
+/// default, each with why and since when; Keep puts one back in Your turn,
+/// Close all (where the host allows it) declines exactly the listed ones
+/// after one confirmation.
+function cantAnswerSection(group) {
+  const open = Boolean(state.folds.needsYou.cantAnswer);
+  const box = el("div", `cant-answer${open ? " open" : ""}`);
+  const toggle = button(S.cantAnswer(group.count), () => {
+    state.folds.needsYou.cantAnswer = !open;
+    if (open) state.confirmCloseAll = false;
+    render();
+  }, "btn ghost small fold cant-answer-toggle", "chevron");
+  toggle.setAttribute("aria-expanded", String(open));
+  toggle.title = S.cantAnswerHelp;
+  box.append(toggle);
+  if (!open) return box;
+  box.append(el("p", "cant-answer-help", S.cantAnswerHelp));
+  if (group.closeAll && canDecide()) {
+    const n = group.closeAll.items.length;
+    if (state.confirmCloseAll) {
+      const confirm = el("div", "confirm-close");
+      confirm.setAttribute("role", "alertdialog");
+      confirm.append(el("p", null, S.closeAllConfirm(n)));
+      const row = el("div", "row end");
+      row.append(
+        button(S.cancel, () => {
+          state.confirmCloseAll = false;
+          render();
+        }, "btn ghost"),
+        button(S.closeN(n), () => closeAll(group.closeAll), "btn primary danger"),
+      );
+      confirm.append(row);
+      box.append(confirm);
+    } else {
+      const row = el("div", "row");
+      row.append(button(S.closeAll, () => {
+        state.confirmCloseAll = true;
+        render();
+      }, "btn ghost small"));
+      box.append(row);
+    }
+  }
+  const result = resultLine(CANT_ANSWER_KEY);
+  if (result) box.append(result);
+  for (const unit of group.units) box.append(cantAnswerRow(unit));
+  if (group.count > group.units.length) box.append(el("div", "lane-note quiet", S.cantAnswerMore(group.count - group.units.length)));
+  if (group.remote) box.append(el("div", "lane-note quiet", S.cantAnswerThere));
+  return box;
+}
+
+function cantAnswerRow(unit) {
+  const key = cardKey(unit);
+  const busy = state.busy.has(key);
+  const card = el("article", `card cant-answer-item${busy ? " busy" : ""}`);
+  card.dataset.id = unit.id;
+  card.dataset.host = unit.host;
+  card.append(el("div", "d-title", tx(unit.title)));
+  const why = el("div", "why");
+  const cause = S.causes[unit.unanswerable.cause] || S.causes.other;
+  why.append(icon("exclaim"), el("span", null, unit.unanswerable.since ? `${cause} · ${S.since(when(unit.unanswerable.since))}` : cause));
+  card.append(why);
+  const meta = [unit.asker ? el("span", "who", unit.asker) : null, el("span", null, unit.host), el("span", "when", when(unit.since))];
+  const row = metaLine(null, meta);
+  if (unit.keepable && unit.actionable !== false && canDecide()) {
+    const keep = button(S.keep, () => decide(unit, "/api/decisions/keep", keepPayload(unit), S.kept), "btn ghost small");
+    keep.title = S.keepHelp;
+    keep.disabled = busy;
+    row.append(keep);
+  }
+  card.append(row);
+  const result = resultLine(key);
+  if (result) card.append(result);
+  return card;
+}
+
+/// Close all: exactly the listed pairs; what was skipped is said.
+async function closeAll(payload) {
+  state.confirmCloseAll = false;
+  state.busy.add(CANT_ANSWER_KEY);
+  state.results.delete(CANT_ANSWER_KEY);
+  render();
+  try {
+    const outcome = await write("/api/decisions/close-unanswerable", payload);
+    const closed = Array.isArray(outcome?.closed) ? outcome.closed.length : 0;
+    const skipped = Array.isArray(outcome?.skipped) ? outcome.skipped : [];
+    const text = skipped.length
+      ? `${S.closedCount(closed)} ${S.skippedCount(skipped.length)}: ${skipped.map((s) => `${s.request_id} (${s.reason})`).join("; ")}`
+      : S.closedCount(closed);
+    state.results.set(CANT_ANSWER_KEY, { ok: !skipped.length, text });
+    setTimeout(refresh, 400);
+  } catch (error) {
+    if (error.auth) return lostAccess(error);
+    state.results.set(CANT_ANSWER_KEY, { ok: false, text: error.message });
+  } finally {
+    state.busy.delete(CANT_ANSWER_KEY);
+    render();
+  }
 }
 
 // ---- Backlog (FleetBacklog.swift) -----------------------------------------
@@ -1575,8 +1688,7 @@ function renderDecidedDetail(box, unit) {
   head.append(titles, close);
   const body = el("div", "ins-body");
   const now = el("section", "nowbox finished");
-  const word = S[unit.outcome] || unit.outcome;
-  now.append(el("div", "label", S.lastResult), el("div", "text", unit.note ? `${word}: ${unit.note}` : word));
+  now.append(el("div", "label", S.lastResult), el("div", "text", outcomeText(unit)));
   if (unit.by) now.append(el("div", "sub", S.by(unit.by)));
   body.append(now);
   box.replaceChildren(head, body);
@@ -2233,7 +2345,8 @@ async function poll() {
   // laid out here.
   const [home, history, access] = await Promise.allSettled([
     read("/api/home"),
-    read("/api/decisions/history"),
+    // tend's own closures too, with why (`decision_history_closures_v1`).
+    read("/api/decisions/history?closures=true"),
     read("/api/access"),
   ]);
   if (!current()) return;

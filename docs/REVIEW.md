@@ -243,6 +243,18 @@ age, action, cause and since, and never closes one without `--questions
 its own questions; Keep and Close all act on this host only (a Fleet relay
 for them is not built yet).
 
+Tend for Mac, the web Home and Tend for iPhone and iPad list them in a
+collapsed **Can't be answered (N)** group at the end of Your turn (N is
+`unanswerable_count`), out of Your turn's count, the badges and the Mac's
+menu bar and Dock counts. Each row says why and since when and offers
+**Keep** on this host. **Close all** shows only while the host advertises
+`close_unanswerable_v1` (the dashboard's `close_unanswerable` flag), asks
+once ("Close N questions? Each asking agent gets a reply that you dismissed
+it. This can't be undone."), sends exactly the listed pairs and says which
+were skipped. Their history reads ask for closures (`include_closures`,
+`?closures=true`) and show tend's own with their reason. Older daemons send
+none of this, and the surfaces behave as before.
+
 Tend for Mac draws this queue in Home's **Your turn** and at the top of the
 Review sheet; see [MACOS](MACOS.md#workspace-information-architecture). It
 opens commit and range evidence in a read-only Changes view on the person's

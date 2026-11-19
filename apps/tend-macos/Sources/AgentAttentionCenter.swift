@@ -198,6 +198,9 @@ final class TendAgentAttentionCenter: ObservableObject {
     @Published var pendingHumanMessageID: String?
     private var humanRequests: Set<String> = []
     private var messages: [TendOperatorMessage] = []
+    /// Questions the decision queue folded (`host:request`), left out of
+    /// every count.
+    private var folded: Set<String> = []
     private var coverageObserver: NSObjectProtocol?
     private var humanNotified: [String: Date] = [:]
     /// The receipts as last written to (or read from) the defaults.
@@ -370,6 +373,13 @@ final class TendAgentAttentionCenter: ObservableObject {
     /// Explicit human decisions are durable requests, independent of agent state
     /// and the pane currently visible. Every Fleet client can read the same
     /// request; notification receipts are local to this Mac.
+    /// The questions nobody can answer, from this Mac's decision queue.
+    func ingestFoldedQuestions(_ ids: Set<String>) {
+        guard ids != folded else { return }
+        folded = ids
+        recompute()
+    }
+
     func ingestHumanRequests(_ messages: [TendOperatorMessage]) {
         self.messages = messages
         let pending = messages.filter { $0.isHumanRequest && $0.request.needsHumanResponse }
@@ -523,6 +533,7 @@ final class TendAgentAttentionCenter: ObservableObject {
             agents: snapshot.hostedAgents,
             messages: messages,
             unread: Set(unread.map(Self.key)),
+            folded: folded,
             paneKey: { Self.paneIdentity(for: $0).map(Self.key) ?? "agent:\($0.id)" }
         )
         if unreadPanes != unread { unreadPanes = unread }

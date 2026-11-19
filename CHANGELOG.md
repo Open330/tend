@@ -121,6 +121,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`POST /api/decisions/close-unanswerable`) declines exactly the listed
   ones with the reply Dismiss sends, only with `[review] close_unanswerable
   = true` (off by default; `close_unanswerable_v1`). See docs/REVIEW.md.
+- Tend for Mac, the web Home and Tend for iPhone and iPad draw these
+  questions in a collapsed **Can't be answered (N)** group at the end of
+  Your turn, each with why ("Pane gone", "Session ended", …) and since
+  when. They are left out of Your turn's count, the badges and the Mac's
+  menu bar and Dock counts. **Keep** puts one back in Your turn; **Close
+  all** appears only where the host turned it on, asks once, and closes
+  exactly the listed questions, saying which it skipped. Each surface's
+  history now lists tend's own closures with their reason, and a close
+  with its cause. Mac's "Asker not listed" hint stays for questions not
+  yet folded.
 
 ### Changed
 

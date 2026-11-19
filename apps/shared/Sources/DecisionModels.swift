@@ -9,6 +9,16 @@ import Foundation
 
 /// Daemons that serve `decision_queue` and `decision_history`.
 let tendDecisionQueueCapability = "decision_queue_v1"
+/// Daemons that fold questions nobody can answer and keep one on request
+/// (`decision_keep`).
+let tendSubjectCheckCapability = "subject_check_v1"
+/// Daemons that close folded questions on the person's word
+/// (`decision_close_unanswerable`); advertised only while `[review]
+/// close_unanswerable` is on.
+let tendCloseUnanswerableCapability = "close_unanswerable_v1"
+/// Daemons whose `decision_history` lists tend's own closures when asked
+/// (`include_closures`).
+let tendHistoryClosuresCapability = "decision_history_closures_v1"
 
 /// What the asker wants decided and why (`review_decision_v1`,
 /// `collaboration_human_decision_v1`). Every field is optional on the wire.
@@ -188,9 +198,12 @@ struct TendHumanRequestEntry: Decodable, Hashable, Sendable {
     let createdAt: String
     /// tendd opened it itself (peer recovery, a reply for a gone sender).
     var system: Bool?
+    /// Nobody can answer it: its asker has been gone for a day
+    /// (`subject_check_v1`). Folded out of the person's turn.
+    var unanswerable: TendUnanswerable?
 
     enum CodingKeys: String, CodingKey {
-        case action, body, decision, system
+        case action, body, decision, system, unanswerable
         case requestID = "request_id"
         case fromSessionID = "from_session_id"
         case fromPane = "from_pane"
@@ -198,6 +211,114 @@ struct TendHumanRequestEntry: Decodable, Hashable, Sendable {
         case workspaceID = "workspace_id"
         case workID = "work_id"
         case createdAt = "created_at"
+    }
+}
+
+extension TendHumanRequestEntry {
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        requestID = try values.decode(String.self, forKey: .requestID)
+        action = try values.decodeIfPresent(String.self, forKey: .action)
+        body = try values.decode(String.self, forKey: .body)
+        decision = try values.decodeIfPresent(TendDecision.self, forKey: .decision)
+        fromSessionID = try values.decode(String.self, forKey: .fromSessionID)
+        fromPane = try values.decode(String.self, forKey: .fromPane)
+        fromAlias = try values.decodeIfPresent(String.self, forKey: .fromAlias)
+        workspaceID = try values.decodeIfPresent(String.self, forKey: .workspaceID)
+        workID = try values.decodeIfPresent(String.self, forKey: .workID)
+        createdAt = try values.decode(String.self, forKey: .createdAt)
+        system = try values.decodeIfPresent(Bool.self, forKey: .system)
+        // A shape this app cannot read leaves the item where it was.
+        unanswerable = (try? values.decodeIfPresent(TendLenient<TendUnanswerable>.self, forKey: .unanswerable))??.value
+    }
+}
+
+/// Why a question can no longer be answered and since when
+/// (`subject_check_v1`).
+struct TendUnanswerable: Decodable, Hashable, Sendable {
+    enum Cause: Hashable, Sendable {
+        /// The asking session ended.
+        case ended
+        /// Another agent started in its pane.
+        case replaced
+        /// Its pane is gone.
+        case paneGone
+        /// The agent exited; a shell is left in its pane.
+        case agentExited
+        case other(String)
+
+        init(_ raw: String) {
+            switch raw {
+            case "ended": self = .ended
+            case "replaced": self = .replaced
+            case "pane_gone": self = .paneGone
+            case "agent_exited": self = .agentExited
+            default: self = .other(raw)
+            }
+        }
+
+        /// Why, for people.
+        var text: String {
+            switch self {
+            case .ended: String(localized: "Session ended")
+            case .replaced: String(localized: "Replaced by another agent")
+            case .paneGone: String(localized: "Pane gone")
+            case .agentExited: String(localized: "Agent exited")
+            case .other: String(localized: "Asker gone")
+            }
+        }
+    }
+
+    var cause: Cause
+    /// The evidence episode; Keep and Close all name it.
+    var episode: String
+    var since: String
+    var pane: String?
+
+    enum CodingKeys: String, CodingKey { case cause, episode, since, pane }
+
+    init(cause: Cause, episode: String, since: String, pane: String? = nil) {
+        self.cause = cause
+        self.episode = episode
+        self.since = since
+        self.pane = pane
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        cause = Cause(try values.decode(String.self, forKey: .cause))
+        episode = try values.decode(String.self, forKey: .episode)
+        since = try values.decode(String.self, forKey: .since)
+        pane = try? values.decodeIfPresent(String.self, forKey: .pane)
+    }
+}
+
+/// What `decision_close_unanswerable` closed and skipped.
+struct TendCloseOutcome: Decodable, Hashable, Sendable {
+    struct Skipped: Decodable, Hashable, Sendable {
+        var requestID: String
+        var reason: String
+
+        enum CodingKeys: String, CodingKey {
+            case reason
+            case requestID = "request_id"
+        }
+    }
+
+    var closed: [String] = []
+    var skipped: [Skipped] = []
+
+    enum CodingKeys: String, CodingKey { case closed, skipped }
+
+    init(closed: [String] = [], skipped: [Skipped] = []) {
+        self.closed = closed
+        self.skipped = skipped
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        closed = (try? values.decodeIfPresent([String].self, forKey: .closed)) ?? []
+        skipped = ((try? values.decodeIfPresent([TendLenient<Skipped>].self, forKey: .skipped)) ?? []).compactMap(\.value)
     }
 }
 
@@ -245,17 +366,24 @@ struct TendPendingQueue: Decodable, Hashable, Sendable {
     var unavailable: [String] = []
     /// Entries tendd sent that this app could not read.
     var undecoded = 0
+    /// How many open questions nobody can answer, exact even when their
+    /// entries were cut (`subject_check_v1`; 0 from older daemons).
+    var unanswerableCount = 0
 
     /// Every source was read in full and every entry decoded: what the
     /// queue leaves out is not pending.
     var isComplete: Bool { !truncated && unavailable.isEmpty && undecoded == 0 }
 
-    enum CodingKeys: String, CodingKey { case items, truncated, unavailable }
+    enum CodingKeys: String, CodingKey {
+        case items, truncated, unavailable
+        case unanswerableCount = "unanswerable_count"
+    }
 
-    init(items: [TendPendingItem] = [], truncated: Bool = false, unavailable: [String] = []) {
+    init(items: [TendPendingItem] = [], truncated: Bool = false, unavailable: [String] = [], unanswerableCount: Int = 0) {
         self.items = items
         self.truncated = truncated
         self.unavailable = unavailable
+        self.unanswerableCount = unanswerableCount
     }
 
     init(from decoder: Decoder) throws {
@@ -265,6 +393,7 @@ struct TendPendingQueue: Decodable, Hashable, Sendable {
         undecoded = raw.count - items.count
         truncated = (try? values.decodeIfPresent(Bool.self, forKey: .truncated)) ?? false
         unavailable = (try? values.decodeIfPresent([String].self, forKey: .unavailable)) ?? []
+        unanswerableCount = (try? values.decodeIfPresent(Int.self, forKey: .unanswerableCount)) ?? 0
     }
 }
 
@@ -377,17 +506,20 @@ struct TendHumanAnswerEntry: Decodable, Hashable, Sendable {
     let status: String
     let answer: String
     let answeredAt: String
+    /// A person closed it because its asker was gone (Close all).
+    var closure: TendQuestionClosure?
 
     enum CodingKeys: String, CodingKey {
-        case status, answer
+        case status, answer, closure
         case answeredAt = "answered_at"
     }
 
-    init(request: TendHumanRequestEntry, status: String, answer: String, answeredAt: String) {
+    init(request: TendHumanRequestEntry, status: String, answer: String, answeredAt: String, closure: TendQuestionClosure? = nil) {
         self.request = request
         self.status = status
         self.answer = answer
         self.answeredAt = answeredAt
+        self.closure = closure
     }
 
     init(from decoder: Decoder) throws {
@@ -397,12 +529,81 @@ struct TendHumanAnswerEntry: Decodable, Hashable, Sendable {
         status = try values.decode(String.self, forKey: .status)
         answer = try values.decode(String.self, forKey: .answer)
         answeredAt = try values.decode(String.self, forKey: .answeredAt)
+        closure = (try? values.decodeIfPresent(TendLenient<TendQuestionClosure>.self, forKey: .closure))??.value
+    }
+}
+
+/// Why a person closed a question: its asker was gone (Close all).
+struct TendQuestionClosure: Decodable, Hashable, Sendable {
+    var cause: TendUnanswerable.Cause
+    /// `cli`, `web`, `mac` or `ios`.
+    var surface: String
+
+    enum CodingKeys: String, CodingKey { case cause, surface }
+
+    init(cause: TendUnanswerable.Cause, surface: String) {
+        self.cause = cause
+        self.surface = surface
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        cause = TendUnanswerable.Cause((try? values.decode(String.self, forKey: .cause)) ?? "")
+        surface = (try? values.decodeIfPresent(String.self, forKey: .surface)) ?? ""
+    }
+
+    /// `Closed: Pane gone`.
+    var text: String { String(localized: "Closed, asker gone: \(cause.text)") }
+}
+
+/// An item tendd opened itself and closed without an answer, with why
+/// (`decision_history_closures_v1`, only when asked for).
+struct TendClosedByTendEntry: Decodable, Hashable, Sendable {
+    let request: TendHumanRequestEntry
+    /// `parent_missing`, `parent_closed`, `stale` or `collapsed`.
+    let reason: String
+    /// The reason in words, as `tend review cleanup` prints it.
+    let reasonText: String
+    let closedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case reason
+        case reasonText = "reason_text"
+        case closedAt = "closed_at"
+    }
+
+    init(request: TendHumanRequestEntry, reason: String, reasonText: String, closedAt: String) {
+        self.request = request
+        self.reason = reason
+        self.reasonText = reasonText
+        self.closedAt = closedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        request = try TendHumanRequestEntry(from: decoder)
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        reason = try values.decode(String.self, forKey: .reason)
+        reasonText = (try? values.decodeIfPresent(String.self, forKey: .reasonText)) ?? reason
+        closedAt = try values.decode(String.self, forKey: .closedAt)
+    }
+
+    /// Why, for people.
+    var reasonDescription: String {
+        switch reason {
+        case "parent_missing": String(localized: "Closed by tend: the original request is gone")
+        case "parent_closed": String(localized: "Closed by tend: the original request no longer waits")
+        case "stale": String(localized: "Closed by tend: nobody is left to act on it")
+        case "collapsed": String(localized: "Closed by tend: merged into another item")
+        default: String(localized: "Closed by tend: \(reasonText)")
+        }
     }
 }
 
 enum TendDecidedItem: Decodable, Hashable, Sendable {
     case review(TendReviewItem)
     case humanAnswer(TendHumanAnswerEntry)
+    /// Only from a history read with `include_closures`.
+    case closedByTend(TendClosedByTendEntry)
 
     private enum CodingKeys: String, CodingKey { case kind }
 
@@ -411,6 +612,7 @@ enum TendDecidedItem: Decodable, Hashable, Sendable {
         switch kind {
         case "review": self = .review(try TendReviewItem(from: decoder))
         case "human_answer": self = .humanAnswer(try TendHumanAnswerEntry(from: decoder))
+        case "closed_by_tend": self = .closedByTend(try TendClosedByTendEntry(from: decoder))
         default:
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "unknown decided item \(kind)"))
         }

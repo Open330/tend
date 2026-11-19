@@ -41,6 +41,12 @@ final class FleetDecisionFeed: ObservableObject {
     @Published private(set) var problem: String?
     /// Decisions being recorded, by id.
     @Published private(set) var busy: Set<String> = []
+    /// What the daemon lets Can't be answered do: Keep (`subject_check_v1`)
+    /// and Close all (`close_unanswerable_v1`, only while its switch is on).
+    @Published private(set) var canKeep = false
+    @Published private(set) var canCloseAll = false
+    /// What the last Close all closed and skipped, in words.
+    @Published var closeAllResult: (ok: Bool, text: String)?
     /// The last error recording a decision, by id.
     @Published var failures: [String: String] = [:]
     /// The open answer and the text typed so far, per card: a keystroke
@@ -113,6 +119,10 @@ final class FleetDecisionFeed: ObservableObject {
             // changed, so an unchanged queue does not redraw the board.
             if let queue = try await client.decisionQueue() {
                 if self.queue != queue { self.queue = queue }
+                let keep = await client.supports(tendSubjectCheckCapability)
+                let close = await client.supports(tendCloseUnanswerableCapability)
+                if canKeep != keep { canKeep = keep }
+                if canCloseAll != close { canCloseAll = close }
                 if !reviews.isEmpty { reviews = [] }
                 setProblem(queue.unavailable.isEmpty
                     ? nil
@@ -319,6 +329,44 @@ final class FleetDecisionFeed: ObservableObject {
         }
     }
 
+    /// How many questions nobody can answer, exact even when the queue
+    /// was cut (0 from a daemon that does not fold them).
+    var unanswerableCount: Int { queue?.unanswerableCount ?? 0 }
+
+    /// Keep: puts a question nobody can answer back in Your turn until its
+    /// asker is seen again and gone again.
+    func keep(_ decision: FleetDecision, model: AppModel) async -> Bool {
+        guard case .humanRequest(let requestID) = decision.source, let unanswerable = decision.unanswerable else { return false }
+        let succeeded = await record(decision, model: model) {
+            try await model.client.decisionKeep(requestID: requestID, episode: unanswerable.episode)
+        }
+        await model.refreshFoldedQuestions(force: true)
+        return succeeded
+    }
+
+    /// Close all: declines exactly `decisions` as listed, after the
+    /// person's one confirmation; what tendd skipped is said.
+    func closeAll(_ decisions: [FleetDecision], model: AppModel) async {
+        let pairs: [(requestID: String, episode: String)] = decisions.compactMap { decision in
+            guard case .humanRequest(let requestID) = decision.source, let unanswerable = decision.unanswerable else { return nil }
+            return (requestID, unanswerable.episode)
+        }
+        guard !pairs.isEmpty else { return }
+        let ids = Set(decisions.map(\.id))
+        busy.formUnion(ids)
+        closeAllResult = nil
+        defer { busy.subtract(ids) }
+        do {
+            let outcome = try await model.client.decisionCloseUnanswerable(pairs)
+            closeAllResult = (outcome.skipped.isEmpty, FleetDecisions.closeAllText(outcome))
+        } catch {
+            closeAllResult = (false, error.localizedDescription)
+        }
+        await load(model.client)
+        await model.refreshOperatorInbox(force: false, hostAliases: Set(decisions.map(\.host.alias)))
+        await model.refreshFoldedQuestions(force: true)
+    }
+
     /// Accepts, returns or withdraws a review item on this Mac's daemon.
     /// Another host's is decided on the dashboard, never from here.
     func decide(_ decision: FleetDecision, _ disposition: TendReviewDisposition, note: String?, model: AppModel) async -> Bool {
@@ -428,6 +476,16 @@ final class FleetDecisionDrafts {
 }
 
 extension FleetDecisions {
+    /// What a Close all did, in words.
+    static func closeAllText(_ outcome: TendCloseOutcome) -> String {
+        let closed = outcome.closed.count == 1
+            ? String(localized: "Closed 1 question.")
+            : String(localized: "Closed \(outcome.closed.count) questions.")
+        guard !outcome.skipped.isEmpty else { return closed }
+        let reasons = outcome.skipped.map { "\($0.requestID) (\($0.reason))" }.joined(separator: "; ")
+        return closed + " " + String(localized: "Skipped \(outcome.skipped.count): \(reasons)")
+    }
+
     /// The reply a dismissed question gets. In English: it is read by the
     /// asking agent, not shown to the person.
     static let dismissedBody = "The person dismissed this question from Tend Home without answering it. Do not wait for an answer to it; ask again only if it still matters."
@@ -806,7 +864,7 @@ struct FleetDecisionCard: View {
                     Text("Asker not listed")
                         .foregroundStyle(.orange)
                         .lineLimit(1)
-                        .help(String(localized: "The agent that asked is not listed on its host; it may have exited. Dismiss the question if it no longer matters."))
+                        .help(String(localized: "The agent that asked is not listed on its host; it may have exited. Tend folds the question once it is sure the asker is gone."))
                 }
                 Spacer(minLength: 4)
                 if let since = decision.since {
@@ -889,7 +947,7 @@ struct FleetDecisionCard: View {
                 Text("Asker not listed")
                     .foregroundStyle(.orange)
                     .lineLimit(1)
-                    .help(String(localized: "The agent that asked is not listed on its host; it may have exited. Dismiss the question if it no longer matters."))
+                    .help(String(localized: "The agent that asked is not listed on its host; it may have exited. Tend folds the question once it is sure the asker is gone."))
             }
             Spacer(minLength: 4)
             if busy {

@@ -327,6 +327,7 @@ struct LaneContent: View {
         ForEach(model.hosts) { section in
             HostSectionView(section: section)
         }
+        CantAnswerGroup()
     }
 
     // MARK: In progress

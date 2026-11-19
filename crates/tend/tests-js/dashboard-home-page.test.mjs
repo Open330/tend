@@ -107,7 +107,12 @@ globalThis.fetch = async (path, init = {}) => {
   if (init.method === "POST") {
     posts.push({ path, init });
     if (postGate) await postGate;
-    return { ok: true, status: 200, json: async () => ({ request_id: "req_9", status: "completed" }) };
+    const reply = path.includes("close-unanswerable")
+      ? { closed: ["rq_a"], skipped: [{ request_id: "rq_b", reason: "no longer unanswerable" }] }
+      : path.includes("/keep")
+        ? { request_id: "rq_a", episode: "ep_a" }
+        : { request_id: "req_9", status: "completed" };
+    return { ok: true, status: 200, json: async () => reply };
   }
   const name = path.includes("/api/home") ? "home" : path.includes("history") ? "history" : path.includes("decisions") ? "decisions" : path.includes("fleet") ? "fleet" : "access";
   const code = status[name];
@@ -640,4 +645,73 @@ test("consecutive list items share one list, as a browser's elements see it", ()
   } finally {
     document.createElement = make;
   }
+});
+
+test("questions nobody can answer fold out of Your turn; Keep and Close all send the listed pairs", async () => {
+  const old = new Date(Date.now() - 4 * 86400_000).toISOString();
+  const since = new Date(Date.now() - 2 * 86400_000).toISOString();
+  const gone = (id, cause, episode) => ({
+    type: "decision", id: `human:mba:${id}`, host: "mba", local: true, actionable: true, since: old,
+    entry: { kind: "human_request", request_id: id, body: `Deploy ${id}?`, created_at: old, from_session_id: "s",
+      unanswerable: { cause, episode, since } },
+  });
+  const board = (closeUnanswerable) => ({
+    hosts: [{ alias: "mba", local: true, state: "online" }],
+    agent_count: 0,
+    projects: [],
+    decision_hosts: [{ alias: "mba", local: true, control: true, decides_reviews: true, subject_check: true,
+      close_unanswerable: closeUnanswerable, truncated: true, unanswerable_count: 3 }],
+    backlog: [],
+    lanes: {
+      needs_you: { count: 3, groups: [{ project: null, system: false, items: [
+        { type: "decision", id: "human:mba:req_9", host: "mba", local: true, actionable: true, since: recent,
+          entry: { kind: "human_request", request_id: "req_9", body: "Ship it?", created_at: recent } },
+        gone("rq_a", "pane_gone", "ep_a"),
+        gone("rq_b", "replaced", "ep_b"),
+      ] }] },
+      running: { count: 0, groups: [] },
+      finished: { count: 0, groups: [] },
+    },
+  });
+  const yourTurn = () => lanes().children.find((n) => n.className.includes("needsYou"));
+  serverBoard = board(false);
+  status.home = 200;
+  await home.refresh();
+  let section = yourTurn();
+  assert.match(section.text, /Your turn 1 Decide or review/, "the count leaves them out");
+  assert.equal(document.getElementById("rail-badge").textContent, "1");
+  assert.match(section.text, /Can't be answered \(3\)/, "the exact count, not just the listed two");
+  assert.doesNotMatch(section.text, /Deploy rq_a/, "collapsed by default");
+  find(section, (n) => n.tag === "button" && n.text.includes("Can't be answered")).click();
+  section = yourTurn();
+  assert.match(section.text, /Deploy rq_a\?/);
+  assert.match(section.text, /Pane gone · since/);
+  assert.match(section.text, /Replaced by another agent/);
+  assert.match(section.text, /1 more not listed/);
+  assert.equal(find(section, (n) => n.tag === "button" && n.text.includes("Close all")), null, "hidden while the switch is off");
+  const row = find(section, (n) => n.dataset?.id === "rq_a");
+  find(row, (n) => n.tag === "button" && n.text.includes("Keep")).click();
+  await settle();
+  assert.equal(posts.at(-1).path, "/api/decisions/keep");
+  assert.deepEqual(JSON.parse(posts.at(-1).init.body), { request_id: "rq_a", episode: "ep_a" });
+
+  serverBoard = board(true);
+  await home.refresh();
+  section = yourTurn();
+  find(section, (n) => n.tag === "button" && n.text.includes("Close all")).click();
+  section = yourTurn();
+  assert.match(section.text, /Close 2 questions\? Each asking agent gets a reply that you dismissed it\. This can't be undone\./);
+  const sent = posts.length;
+  find(section, (n) => n.tag === "button" && n.text.includes("Close 2")).click();
+  await settle();
+  assert.equal(posts.length, sent + 1, "one request after one confirmation");
+  assert.equal(posts.at(-1).path, "/api/decisions/close-unanswerable");
+  assert.deepEqual(JSON.parse(posts.at(-1).init.body), {
+    items: [{ request_id: "rq_a", episode: "ep_a" }, { request_id: "rq_b", episode: "ep_b" }],
+    by_label: "web",
+  });
+  assert.match(yourTurn().text, /Closed 1 question\. Skipped 1: rq_b \(no longer unanswerable\)/);
+  status.home = 404;
+  serverBoard = null;
+  await home.refresh();
 });

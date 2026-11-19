@@ -9,6 +9,10 @@ struct FleetDecidedRow: Identifiable, Hashable, Sendable {
         case looksGood, sentBack, answered, accepted, returned, withdrawn
         /// A human request's reply status other than `completed`.
         case replied(String)
+        /// The person closed a question whose asker was gone.
+        case closedAskerGone
+        /// tend closed one of its own items.
+        case closedByTend
     }
 
     let id: String
@@ -42,11 +46,25 @@ struct FleetDecidedRow: Identifiable, Hashable, Sendable {
             at = (disposition?.at).flatMap(TendUsageTimestamp.parse)
         case .humanAnswer(let answer):
             id = "human:\(answer.request.requestID)"
-            verdict = answer.status == "completed" ? .answered : .replied(answer.status)
+            var verdict: Verdict = answer.status == "completed" ? .answered : .replied(answer.status)
             title = answer.request.decision?.needed ?? answer.request.body
-            said = answer.answer
+            // A close says why instead of the reply the asker got.
+            if let closure = answer.closure {
+                verdict = .closedAskerGone
+                said = closure.text
+            } else {
+                said = answer.answer
+            }
+            self.verdict = verdict
             context = answer.request.fromAlias.map { "@\($0)" } ?? answer.request.fromPane
             at = TendUsageTimestamp.parse(answer.answeredAt)
+        case .closedByTend(let closed):
+            id = "closed:\(closed.request.requestID)"
+            verdict = .closedByTend
+            title = closed.request.decision?.needed ?? closed.request.body
+            said = closed.reasonDescription
+            context = closed.request.fromAlias.map { "@\($0)" } ?? String(localized: "tend")
+            at = TendUsageTimestamp.parse(closed.closedAt)
         }
     }
 
@@ -59,6 +77,8 @@ struct FleetDecidedRow: Identifiable, Hashable, Sendable {
         case .returned: String(localized: "Returned")
         case .withdrawn: String(localized: "Withdrawn")
         case .replied(let status): collaborationStatusLabel(status)
+        case .closedAskerGone: String(localized: "Closed")
+        case .closedByTend: String(localized: "Closed by tend")
         }
     }
 
@@ -68,7 +88,8 @@ struct FleetDecidedRow: Identifiable, Hashable, Sendable {
         case .sentBack, .returned: "arrow.uturn.backward.circle.fill"
         case .answered: "text.bubble.fill"
         case .withdrawn: "minus.circle.fill"
-        case .replied: "xmark.circle.fill"
+        case .replied, .closedAskerGone: "xmark.circle.fill"
+        case .closedByTend: "gearshape.circle.fill"
         }
     }
 
@@ -77,7 +98,7 @@ struct FleetDecidedRow: Identifiable, Hashable, Sendable {
         case .looksGood, .accepted: .green
         case .sentBack, .returned: .orange
         case .answered: .blue
-        case .withdrawn, .replied: .secondary
+        case .withdrawn, .replied, .closedAskerGone, .closedByTend: .secondary
         }
     }
 }

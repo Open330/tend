@@ -10,7 +10,7 @@ struct HostSectionView: View {
     let section: HostQueue
 
     var body: some View {
-        let decisions = PendingDecision.from(section)
+        let decisions = PendingDecision.from(section).filter { $0.unanswerable == nil }
         VStack(alignment: .leading, spacing: 10) {
             ForEach(section.unavailable, id: \.self) { reason in
                 Label(String(localized: "\(section.alias): not everything could be read: \(reason)"), systemImage: "exclamationmark.triangle")

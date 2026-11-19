@@ -33,6 +33,12 @@ struct PendingDecision: Identifiable, Hashable, Sendable {
 
     var isQuestion: Bool { if case .question = kind { true } else { false } }
 
+    /// Nobody can answer it: its asker is gone (`subject_check_v1`).
+    var unanswerable: TendUnanswerable? {
+        if case .question(let entry) = kind { return entry.unanswerable }
+        return nil
+    }
+
     var decision: TendDecision? {
         switch kind {
         case .question(let entry): entry.decision
@@ -148,6 +154,7 @@ struct PastDecision: Identifiable, Hashable, Sendable {
         switch item {
         case .review(let review): "\(host)/r/\(review.id)"
         case .humanAnswer(let answer): "\(host)/q/\(answer.request.requestID)"
+        case .closedByTend(let closed): "\(host)/c/\(closed.request.requestID)"
         }
     }
 
@@ -155,6 +162,7 @@ struct PastDecision: Identifiable, Hashable, Sendable {
         switch item {
         case .review(let review): review.decision?.needed?.nonEmpty ?? review.summary
         case .humanAnswer(let answer): answer.request.decision?.needed?.nonEmpty ?? answer.request.body
+        case .closedByTend(let closed): closed.request.decision?.needed?.nonEmpty ?? closed.request.body
         }
     }
 
@@ -169,7 +177,9 @@ struct PastDecision: Identifiable, Hashable, Sendable {
             default: review.disposition?.kind ?? String(localized: "Decided")
             }
         case .humanAnswer(let answer):
-            answer.status == "completed" ? String(localized: "Answered") : String(localized: "Declined")
+            answer.closure != nil ? String(localized: "Closed")
+                : answer.status == "completed" ? String(localized: "Answered") : String(localized: "Declined")
+        case .closedByTend: String(localized: "Closed by tend")
         }
     }
 
@@ -177,6 +187,7 @@ struct PastDecision: Identifiable, Hashable, Sendable {
         switch item {
         case .review(let review): review.disposition?.kind == "accepted"
         case .humanAnswer(let answer): answer.status == "completed"
+        case .closedByTend: false
         }
     }
 
@@ -184,7 +195,8 @@ struct PastDecision: Identifiable, Hashable, Sendable {
     var text: String? {
         switch item {
         case .review(let review): review.disposition?.note?.nonEmpty
-        case .humanAnswer(let answer): answer.answer.nonEmpty
+        case .humanAnswer(let answer): answer.closure?.text ?? answer.answer.nonEmpty
+        case .closedByTend(let closed): closed.reasonDescription
         }
     }
 
@@ -197,6 +209,7 @@ struct PastDecision: Identifiable, Hashable, Sendable {
         switch item {
         case .review(let review): review.disposition.flatMap { Timestamp.parse($0.at) }
         case .humanAnswer(let answer): Timestamp.parse(answer.answeredAt)
+        case .closedByTend(let closed): Timestamp.parse(closed.closedAt)
         }
     }
 }
@@ -347,13 +360,58 @@ final class AppModel {
         pairing.map { DashboardClient(origin: $0.origin, token: $0.token) }
     }
 
-    var pending: [PendingDecision] { visibleBoard?.decisions ?? hosts.flatMap(PendingDecision.from) }
+    var pending: [PendingDecision] {
+        visibleBoard?.decisions ?? hosts.flatMap(PendingDecision.from).filter { $0.unanswerable == nil }
+    }
+
+    /// Your turn's Can't be answered group: questions whose asker is gone,
+    /// not in Your turn and not counted on the badge.
+    var cantAnswer: [PendingDecision] {
+        visibleBoard?.cantAnswer ?? hosts.flatMap(PendingDecision.from).filter { $0.unanswerable != nil }
+    }
+
+    /// The group's count: every host's exact count, never less than listed.
+    var cantAnswerCount: Int {
+        if let board = visibleBoard { return board.cantAnswerCount }
+        return max(cantAnswer.count, hosts.reduce(0) { $0 + $1.queue.unanswerableCount })
+    }
+
+    /// Keep and Close all act on the host this app is paired with, where
+    /// it advertises them.
+    func canKeep(_ decision: PendingDecision) -> Bool {
+        decision.hostIsLocal && decision.decidable && localFlags.keep
+    }
+
+    /// The questions Close all would close, empty while the switch is off.
+    var closable: [PendingDecision] {
+        guard localFlags.close else { return [] }
+        return cantAnswer.filter { $0.hostIsLocal && $0.decidable }
+    }
+
+    private var localFlags: (keep: Bool, close: Bool) {
+        if let board = visibleBoard {
+            let local = board.decisionHosts.first(where: \.local)
+            return (local?.subjectCheck ?? false, local?.closeUnanswerable ?? false)
+        }
+        let local = hosts.first(where: \.local)
+        return (local?.subjectCheck ?? false, local?.closeUnanswerable ?? false)
+    }
+
+    /// What the last Close all did, in words.
+    private(set) var closeAllResult: (ok: Bool, text: String)?
 
     /// "Nothing needs you" only when every host was read in full, every
     /// entry decoded, and none is waiting: an item this app cannot read, a
     /// cut-off list or a host that could not be read is never all clear.
     static func allClear(_ hosts: [HostQueue]) -> Bool {
-        hosts.allSatisfy { $0.queue.isComplete && $0.unavailable.isEmpty && $0.queue.items.isEmpty }
+        // Questions nobody can answer wait in their own group, not here.
+        hosts.allSatisfy { section in
+            section.queue.isComplete && section.unavailable.isEmpty
+                && section.queue.items.allSatisfy { item in
+                    if case .humanRequest(let entry) = item { return entry.unanswerable != nil }
+                    return false
+                }
+        }
     }
 
     /// What the person can act on from here, for the badge.
@@ -826,6 +884,49 @@ final class AppModel {
         return await act(decision, done: declined ? String(localized: "Declined.") : String(localized: "Answered.")) {
             try await $0.answer(requestID: entry.requestID, answer: text, declined: declined, host: host)
         }
+    }
+
+    /// Keep: back in Your turn until its asker is seen again and gone again.
+    func keep(_ decision: PendingDecision) async -> Bool {
+        guard case .question(let entry) = decision.kind, let unanswerable = entry.unanswerable else { return false }
+        return await act(decision, done: String(localized: "Back in Your turn.")) {
+            try await $0.keep(requestID: entry.requestID, episode: unanswerable.episode)
+        }
+    }
+
+    /// Close all: exactly the listed questions, after the person's one
+    /// confirmation; what was skipped is said.
+    func closeAll(_ decisions: [PendingDecision]) async {
+        guard let client else { return }
+        let pairs: [(requestID: String, episode: String)] = decisions.compactMap { decision in
+            guard case .question(let entry) = decision.kind, let unanswerable = entry.unanswerable else { return nil }
+            return (entry.requestID, unanswerable.episode)
+        }
+        guard !pairs.isEmpty else { return }
+        let mine = session
+        let ids = Set(decisions.map(\.id))
+        busy.formUnion(ids)
+        closeAllResult = nil
+        defer { busy.subtract(ids) }
+        do {
+            let outcome = try await client.closeUnanswerable(pairs)
+            guard session == mine else { return }
+            closeAllResult = (outcome.skipped.isEmpty, Self.closeAllText(outcome))
+            await refresh()
+            await refreshHistory()
+        } catch {
+            guard session == mine else { return }
+            closeAllResult = (false, handle(error, session: mine))
+        }
+    }
+
+    static func closeAllText(_ outcome: TendCloseOutcome) -> String {
+        let closed = outcome.closed.count == 1
+            ? String(localized: "Closed 1 question.")
+            : String(localized: "Closed \(outcome.closed.count) questions.")
+        guard !outcome.skipped.isEmpty else { return closed }
+        let reasons = outcome.skipped.map { "\($0.requestID) (\($0.reason))" }.joined(separator: "; ")
+        return closed + " " + String(localized: "Skipped \(outcome.skipped.count): \(reasons)")
     }
 
     func review(_ decision: PendingDecision, _ disposition: TendReviewDisposition, note: String? = nil, option: String? = nil) async -> Bool {

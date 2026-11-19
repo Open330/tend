@@ -270,8 +270,19 @@ struct BoardDecisionHost: Decodable, Hashable, Sendable {
     let control: Bool
     let truncated: Bool
     let unavailable: [String]
+    /// `subject_check_v1`: questions nobody can answer can be kept here,
+    /// closed while `close_unanswerable` is on, and how many there are,
+    /// exact even when the list was cut.
+    var subjectCheck = false
+    var closeUnanswerable = false
+    var unanswerableCount = 0
 
-    enum CodingKeys: String, CodingKey { case alias, local, control, truncated, unavailable }
+    enum CodingKeys: String, CodingKey {
+        case alias, local, control, truncated, unavailable
+        case subjectCheck = "subject_check"
+        case closeUnanswerable = "close_unanswerable"
+        case unanswerableCount = "unanswerable_count"
+    }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -280,6 +291,9 @@ struct BoardDecisionHost: Decodable, Hashable, Sendable {
         control = (try? values.decodeIfPresent(Bool.self, forKey: .control)) ?? nil ?? local
         truncated = (try? values.decodeIfPresent(Bool.self, forKey: .truncated)) ?? nil ?? false
         unavailable = (try? values.decodeIfPresent([String].self, forKey: .unavailable)) ?? nil ?? []
+        subjectCheck = (try? values.decodeIfPresent(Bool.self, forKey: .subjectCheck)) ?? nil ?? false
+        closeUnanswerable = (try? values.decodeIfPresent(Bool.self, forKey: .closeUnanswerable)) ?? nil ?? false
+        unanswerableCount = (try? values.decodeIfPresent(Int.self, forKey: .unanswerableCount)) ?? nil ?? 0
     }
 }
 
@@ -394,6 +408,7 @@ struct DeviceHome: Decodable, Hashable, Sendable {
             .merging(hosts.map { ($0.alias, $0.local) }, uniquingKeysWith: { first, _ in first })
         var lanes: [Lane: [BoardGroup]] = [:]
         var undecoded: [Lane: Int] = [:]
+        var cantAnswer: [PendingDecision] = []
         for (lane, rawLane) in [(Lane.yourTurn, raw.needsYou), (.inProgress, raw.running), (.finished, raw.finished)] {
             var groups: [BoardGroup] = []
             for group in rawLane?.groups ?? [] {
@@ -403,17 +418,35 @@ struct DeviceHome: Decodable, Hashable, Sendable {
                     case .unit(let unit):
                         items.append(.unit(unit))
                     case .decision(let pending, let host, let actionable):
-                        items.append(.decision(PendingDecision(pending, host: host, hostIsLocal: local[host] ?? false, decidable: actionable)))
+                        let decision = PendingDecision(pending, host: host, hostIsLocal: local[host] ?? false, decidable: actionable)
+                        // Questions nobody can answer leave Your turn for
+                        // their own group.
+                        if lane == .yourTurn, decision.unanswerable != nil {
+                            cantAnswer.append(decision)
+                        } else {
+                            items.append(.decision(decision))
+                        }
                     case nil:
                         undecoded[lane, default: 0] += 1
                     }
                 }
-                groups.append(BoardGroup(project: group.project, system: group.system ?? false, items: items))
+                if !items.isEmpty || group.items?.isEmpty != false {
+                    groups.append(BoardGroup(project: group.project, system: group.system ?? false, items: items))
+                }
             }
             lanes[lane] = groups
         }
         self.lanes = lanes
         self.undecoded = undecoded
+        self.cantAnswer = cantAnswer
+    }
+
+    /// Your turn's Can't be answered group, in the queue's order.
+    let cantAnswer: [PendingDecision]
+
+    /// Its count: every host's exact count, never less than listed.
+    var cantAnswerCount: Int {
+        max(cantAnswer.count, decisionHosts.reduce(0) { $0 + $1.unanswerableCount })
     }
 
     /// Every item in a lane, in order.

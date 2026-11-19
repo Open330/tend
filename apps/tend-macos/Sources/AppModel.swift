@@ -292,6 +292,8 @@ final class AppModel: ObservableObject {
     private var pendingInboxHosts = Set<String>()
     private var shellNumber = 1
     private var lastInboxRefresh = Date.distantPast
+    /// When the folded questions were last read (`refreshFoldedQuestions`).
+    private var lastFoldedRead = Date.distantPast
     private var inboxReadTokens: [String: String] = [:]
 
     var isConnected: Bool {
@@ -1863,6 +1865,21 @@ final class AppModel: ObservableObject {
         }
         attention.ingestHumanRequests(updatedMessages)
         if inboxHostFailures != failures { inboxHostFailures = failures }
+        await refreshFoldedQuestions(force: false)
+    }
+
+    /// Which of this Mac's questions nobody can answer, so no badge counts
+    /// them (`subject_check_v1`). Folding takes a day, so a read a minute
+    /// old is fresh enough; Keep and Close all read at once.
+    func refreshFoldedQuestions(force: Bool) async {
+        guard force || Date().timeIntervalSince(lastFoldedRead) >= 60 else { return }
+        guard await client.supports(tendSubjectCheckCapability) else {
+            attention.ingestFoldedQuestions([])
+            return
+        }
+        lastFoldedRead = Date()
+        guard let queue = try? await client.decisionQueue(limit: 500) else { return }
+        attention.ingestFoldedQuestions(FleetDecisions.foldedIDs(queue, localHost: localHostAlias))
     }
 
     func openOperatorMessage(_ message: TendOperatorMessage) {

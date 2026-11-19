@@ -38,6 +38,12 @@ struct FleetDecision: Identifiable, Hashable, Sendable {
     /// read it. Not proof that it exited (a new asker can be missing from a
     /// board read before it started), so see `asksUnlisted(at:)`.
     var askerUnlisted = false
+    /// Nobody can answer it: tendd established its asker gone for a day
+    /// (`subject_check_v1`). Listed under Can't be answered, not in Your
+    /// turn, and not counted.
+    var unanswerable: TendUnanswerable?
+
+    var isUnanswerable: Bool { unanswerable != nil }
 
     /// How long a question must have waited before an unlisted asker is
     /// shown: longer than any board refresh, so a fresh asker is not
@@ -47,7 +53,7 @@ struct FleetDecision: Identifiable, Hashable, Sendable {
     /// Whether to tell the person the asker is not listed: unlisted, and
     /// asked longer ago than any board refresh takes.
     func asksUnlisted(at now: Date) -> Bool {
-        guard askerUnlisted, let since else { return false }
+        guard askerUnlisted, unanswerable == nil, let since else { return false }
         return now.timeIntervalSince(since) >= Self.unlistedGrace
     }
 
@@ -118,6 +124,7 @@ struct FleetDecision: Identifiable, Hashable, Sendable {
         since = TendUsageTimestamp.parse(entry.createdAt)
         evidence = entry.decision?.evidence ?? []
         isSystemAsk = entry.system == true || Self.tendServices.contains(entry.fromSessionID)
+        unanswerable = entry.unanswerable
     }
 
     /// The services an older tendd's own items come from.
@@ -212,8 +219,20 @@ enum FleetDecisions {
             .sorted { $0.request.createdAt < $1.request.createdAt }
         pending.forEach { add(FleetDecision(humanRequest: $0)) }
         // tendd's own items after everything an agent asked or handed in,
-        // whichever host or daemon version listed them.
-        return result.filter { !$0.isSystemAsk } + result.filter(\.isSystemAsk)
+        // whichever host or daemon version listed them; questions nobody
+        // can answer last.
+        let live = result.filter { !$0.isUnanswerable }
+        return live.filter { !$0.isSystemAsk } + live.filter(\.isSystemAsk) + result.filter(\.isUnanswerable)
+    }
+
+    /// The console-mailbox ids (`host:request`) of the questions the queue
+    /// folded, which no badge or count includes.
+    static func foldedIDs(_ queue: TendPendingQueue?, localHost: String) -> Set<String> {
+        var ids = Set<String>()
+        for case .humanRequest(let entry) in queue?.items ?? [] where entry.unanswerable != nil {
+            ids.insert("\(localHost):\(entry.requestID)")
+        }
+        return ids
     }
 }
 

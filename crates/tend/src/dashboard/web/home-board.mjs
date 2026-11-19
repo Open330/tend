@@ -168,6 +168,15 @@ function decisionFields(decision, verification) {
   };
 }
 
+/// Why a question can no longer be answered (`subject_check_v1`):
+/// `ended`, `replaced`, `pane_gone` or `agent_exited`, and since when.
+/// Null for a live question, and for anything an older daemon sends.
+export function unanswerableOf(item) {
+  const u = item?.unanswerable;
+  if (!u || typeof u !== "object" || !u.episode) return null;
+  return { cause: String(u.cause || ""), episode: String(u.episode), since: u.since || null, pane: u.pane || null };
+}
+
 /// A question or a result to review: the Mac's decision card.
 function decisionUnit(item, host, index) {
   const remote = !host.local;
@@ -194,6 +203,10 @@ function decisionUnit(item, host, index) {
       pane: remote ? null : item.from_pane || null,
       socket: remote ? null : found?.agent?.tmux_socket || null,
       agentKind: found?.agent?.kind || null,
+      unanswerable: unanswerableOf(item),
+      // Keep and Close all act on this host only (no Fleet relay for them).
+      keepable: !remote && host.subject_check === true,
+      closable: !remote && host.close_unanswerable === true,
       ...decisionFields(item.decision, null),
     };
   }
@@ -264,6 +277,25 @@ function waitingUnit(item, host, index) {
 function decidedUnit(item, host, now) {
   const card = decidedCard(item, now);
   if (!card) return null;
+  if (item.kind === "closed_by_tend") {
+    // tend closed one of its own items, with why (`?closures=true`).
+    return {
+      type: "decided",
+      lane: "finished",
+      id: `${item.kind}:${card.id}`,
+      host: host.alias,
+      remote: host.local !== true,
+      decision: "question",
+      title: item.decision?.needed ? String(item.decision.needed) : String(card.title || ""),
+      outcome: "closedByTend",
+      reason: String(item.reason || ""),
+      reasonText: String(item.reason_text || item.reason || ""),
+      note: "",
+      by: null,
+      since: item.closed_at || null,
+      project: "",
+    };
+  }
   const disposition = item.kind === "review" ? item.disposition || {} : null;
   const outcome = item.kind === "review" ? disposition.kind || "decided" : item.status === "completed" ? "answered" : item.status || "answered";
   return {
@@ -279,7 +311,44 @@ function decidedUnit(item, host, now) {
     by: disposition?.by?.label || null,
     since: (item.kind === "review" ? disposition.at : item.answered_at) || null,
     project: "",
+    // A person closed it from Can't be answered: why (the asker's cause).
+    closure: item.kind === "human_answer" && item.closure ? { cause: String(item.closure.cause || ""), surface: item.closure.surface || null } : null,
   };
+}
+
+/// Your turn's folded group, **Can't be answered**: questions whose asker
+/// is gone (`subject_check_v1`), out of Your turn and its count. The count
+/// is the hosts' exact `unanswerable_count` (their lists may be cut), never
+/// less than what is listed; under a project filter only what is listed
+/// can be counted. Close all offers exactly the listed pairs on a host that
+/// allows it (`close_unanswerable`).
+export function cantAnswerGroup(units, sections = [], filter = {}) {
+  const listed = units.filter((u) => u.unanswerable);
+  let count = listed.length;
+  if (!filter.project) {
+    const exact = sections
+      .filter((s) => !filter.host || s.alias === filter.host)
+      .reduce((sum, s) => sum + (Number(s?.queue?.unanswerable_count ?? s?.unanswerable_count) || 0), 0);
+    count = Math.max(count, exact);
+  }
+  const closable = listed.filter((u) => u.closable && u.actionable !== false);
+  return {
+    count,
+    units: listed,
+    remote: listed.some((u) => u.remote),
+    closeAll: closable.length ? closeAllPayload(closable) : null,
+  };
+}
+
+/// `POST /api/decisions/keep`: this question, in this episode, back in
+/// Your turn.
+export function keepPayload(unit) {
+  return { request_id: unit.id, episode: unit.unanswerable.episode };
+}
+
+/// `POST /api/decisions/close-unanswerable`: exactly these pairs.
+export function closeAllPayload(units) {
+  return { items: units.map((u) => ({ request_id: u.id, episode: u.unanswerable.episode })), by_label: "web" };
 }
 
 function ordered(hosts) {
@@ -358,13 +427,15 @@ export function buildBoard({ decisions = null, history = null, fleet = null, now
   const keep = (unit) => (!filter.host || unit.host === filter.host) && (!filter.project || unit.project === filter.project);
   const result = {};
   for (const lane of LANES) {
-    const visible = lanes[lane].filter(keep);
+    const all = lanes[lane].filter(keep);
+    const visible = all.filter((u) => !u.unanswerable);
     result[lane] = {
       count: visible.filter((u) => !u.older).length,
       groups: groupByProject(visible.filter((u) => !u.older)),
       older: visible.filter((u) => u.older),
       notes: notes[lane],
     };
+    if (lane === "needsYou") result[lane].cantAnswer = cantAnswerGroup(all, queueHosts, filter);
   }
   return {
     lanes: result,
@@ -462,7 +533,14 @@ function serverUnit(item) {
 
 function serverDecision(item, sections) {
   const section = sections.find((s) => s.alias === item.host) || {};
-  const host = { alias: item.host, local: item.local === true, control: section.control !== false, decides_reviews: section.decides_reviews === true };
+  const host = {
+    alias: item.host,
+    local: item.local === true,
+    control: section.control !== false,
+    decides_reviews: section.decides_reviews === true,
+    subject_check: section.subject_check === true,
+    close_unanswerable: section.close_unanswerable === true,
+  };
   const unit = decisionUnit(item.entry || {}, host, agentIndex(null));
   if (!unit) return null;
   // The asker as the daemon found it: its pane on its own socket.
@@ -512,7 +590,8 @@ export function fromServerBoard(server, { history = null, filter = {}, now = Dat
     (!filter.host || unit.host === filter.host || unit.hosts?.includes(filter.host)) && (!filter.project || unit.project === filter.project);
   const result = {};
   for (const lane of LANES) {
-    const visible = lanes[lane].filter(keep);
+    const all = lanes[lane].filter(keep);
+    const visible = all.filter((u) => !u.unanswerable);
     // The Mac's folds, outside Your turn: possible helpers, empty
     // sessions, then older than a day; reviewed units hide behind
     // "Show N reviewed".
@@ -533,6 +612,7 @@ export function fromServerBoard(server, { history = null, filter = {}, now = Dat
       folds,
       notes: notes[lane],
     };
+    if (lane === "needsYou") result[lane].cantAnswer = cantAnswerGroup(all, sections, filter);
   }
   const reviewedCount = result.finished.folds.reviewed.length;
   return {

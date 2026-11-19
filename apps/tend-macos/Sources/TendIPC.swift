@@ -1033,6 +1033,8 @@ struct TendIPCResponse: Decodable, Sendable {
     let reviewItem: TendReviewItem?
     let decisionQueue: TendLenient<TendPendingQueue>?
     let decisionHistory: TendLenient<TendDecisionHistory>?
+    /// `decision_close_unanswerable`'s answer: what was closed and skipped.
+    let decisionCloseUnanswerable: TendLenient<TendCloseOutcome>?
     let workRecords: [TendLenient<TendWorkRecord>]?
     /// `swap_health`'s answer. Swap job requests also answer in `swap`,
     /// with another shape: that reads as nil rather than failing the reply.
@@ -1054,6 +1056,7 @@ struct TendIPCResponse: Decodable, Sendable {
         case reviewItem = "review_item"
         case decisionQueue = "decision_queue"
         case decisionHistory = "decision_history"
+        case decisionCloseUnanswerable = "decision_close_unanswerable"
         case workRecords = "work_records"
         case workOperation = "work_operation"
         case askEntries = "ask_entries"
@@ -1667,16 +1670,51 @@ actor TendIPCClient {
     /// human requests are included. nil from a daemon without it.
     func decisionHistory(limit: Int = 500) async throws -> TendDecisionHistory? {
         guard capabilities.contains(tendDecisionQueueCapability) else { return nil }
-        let response = try await call([
+        var request: [String: Any] = [
             "protocol": Self.protocolVersion,
             "kind": "decision_history",
             "limit": limit,
             "origin": ["pane": "", "console": true],
-        ], timeout: 10)
+        ]
+        // tend's own closures too, with why, from a daemon that lists them.
+        if capabilities.contains(tendHistoryClosuresCapability) { request["include_closures"] = true }
+        let response = try await call(request, timeout: 10)
         guard let history = response.decisionHistory?.value else {
             throw TendIPCError.server(String(localized: "tendd sent a decision history this app cannot read"))
         }
         return history
+    }
+
+    /// Keeps one question nobody can answer in the person's turn through
+    /// its current evidence episode (`subject_check_v1`), as the person.
+    func decisionKeep(requestID: String, episode: String) async throws {
+        guard capabilities.contains(tendSubjectCheckCapability) else {
+            throw TendIPCError.server(String(localized: "Keeping a question needs an updated tendd; update tend and restart tendd"))
+        }
+        _ = try await call([
+            "protocol": Self.protocolVersion,
+            "kind": "decision_keep",
+            "request_id": requestID,
+            "episode": episode,
+            "origin": ["pane": "", "console": true],
+        ], timeout: 10)
+    }
+
+    /// Closes exactly these `(request id, episode)` pairs as the person
+    /// (`close_unanswerable_v1`): each still unanswerable in that episode
+    /// gets the reply Dismiss sends; the rest are skipped and said so.
+    func decisionCloseUnanswerable(_ items: [(requestID: String, episode: String)]) async throws -> TendCloseOutcome {
+        guard capabilities.contains(tendCloseUnanswerableCapability) else {
+            throw TendIPCError.server(String(localized: "Closing these questions is turned off on this Mac's tendd"))
+        }
+        let response = try await call([
+            "protocol": Self.protocolVersion,
+            "kind": "decision_close_unanswerable",
+            "items": items.map { ["request_id": $0.requestID, "episode": $0.episode] },
+            "origin": ["pane": "", "console": true],
+            "by_label": "mac",
+        ], timeout: 20)
+        return response.decisionCloseUnanswerable?.value ?? TendCloseOutcome()
     }
 
     /// The calls a local agent session made since `since` and their

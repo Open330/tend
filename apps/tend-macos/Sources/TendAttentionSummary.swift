@@ -12,7 +12,9 @@ import Foundation
 /// - **Dock** — both, each item counted once.
 ///
 /// Commands still waiting on an agent's reply are shown in the Inbox but
-/// never counted: nothing about them is the person's to do.
+/// never counted: nothing about them is the person's to do. Neither are
+/// questions nobody can answer (`folded`): their askers are gone, so they
+/// wait under Home's Can't be answered instead.
 struct TendAttentionSummary: Equatable, Sendable {
     /// Agents whose state needs the person; capped ones only when no limit
     /// policy acts on them.
@@ -41,6 +43,7 @@ struct TendAttentionSummary: Equatable, Sendable {
         agents: [TendHostedAgent],
         messages: [TendOperatorMessage],
         unread: Set<String>,
+        folded: Set<String> = [],
         paneKey: (TendHostedAgent) -> String
     ) -> TendAttentionSummary {
         var summary = TendAttentionSummary()
@@ -57,6 +60,7 @@ struct TendAttentionSummary: Equatable, Sendable {
         }
         for message in messages {
             if message.isHumanRequest && message.needsHumanDecision {
+                guard !folded.contains(message.id) else { continue }
                 summary.decisions += 1
                 dock.insert("message:\(message.id)")
             } else if message.hasUnreadReply {
