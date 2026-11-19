@@ -5,7 +5,7 @@
 // Windows app, in which case the page never sees it) or the OIDC operator
 // session cookie. Everything an agent wrote is set with textContent only.
 
-import { buildBoard, byProject, digest, fromServerBoard, hostHue, LANES, productOf, replyTarget, reviewQueue, sameTarget, TEND_PROJECT, withLater } from "./home-board.mjs";
+import { boardAttention, buildBoard, byProject, digest, fromServerBoard, hostHue, LANES, productOf, replyTarget, reviewQueue, sameTarget, TEND_PROJECT, withLater } from "./home-board.mjs";
 import { languageOf, relativeTime, stringsFor, textOf } from "./home-strings.mjs";
 import { linkedItemOf } from "./needs-model.mjs";
 import { mountExplore } from "./explore.mjs";
@@ -1705,7 +1705,7 @@ function renderRoute() {
       access: () => state.data.access,
       fleetSettled: () => state.fleetSettled,
     });
-    state.explore.update(state.data.fleet);
+    state.explore.update(state.data.fleet, boardAttention(state.data.server));
   }
   if (route === "settings") renderSettings();
 }
@@ -2071,7 +2071,7 @@ export function start() {
     state.revealed = null;
     revealLinkedItem();
     // A pasted pane or message link in Explore opens what it names.
-    if (state.route === "explore") state.explore?.update(state.data.fleet);
+    if (state.route === "explore") state.explore?.update(state.data.fleet, boardAttention(state.data.server));
   });
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) refresh();

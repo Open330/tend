@@ -37,7 +37,7 @@ function storeSort(sort) {
 
 export function mountExplore(root, deps) {
   const { S, el, icon, button, logo, hostBadge, when, read, write, authHeaders, canWrite } = deps;
-  const view = { show: "all", query: "", grouping: "host", sort: storedSort(), fleet: null, open: null, stream: null, poll: null, sending: new Set(), drafts: new Map(), collapsed: new Set(), closed: false, syncComposer: null, hash: null, mode: null, messages: null };
+  const view = { attention: null, show: "all", query: "", grouping: "host", sort: storedSort(), fleet: null, open: null, stream: null, poll: null, sending: new Set(), drafts: new Map(), collapsed: new Set(), closed: false, syncComposer: null, hash: null, mode: null, messages: null };
 
   const sidebar = el("aside", "ex-side");
   const viewer = el("section", "ex-view");
@@ -186,7 +186,7 @@ export function mountExplore(root, deps) {
     }
     grouping.value = view.grouping;
     summary.title = S.exploreMenuHelp(grouping.value === "status" ? S.groupStatus : S.groupHost, S.exploreSorts[view.sort]);
-    const model = exploreSections(view.fleet, { show: view.show, query: view.query, grouping: view.grouping, sort: view.sort });
+    const model = exploreSections(view.fleet, { show: view.show, query: view.query, grouping: view.grouping, sort: view.sort, attention: view.attention });
     // "shown/all" while a filter is on, as the Mac's count.
     count.textContent = model.filtering ? `${model.total}/${model.all}` : String(model.all);
     if (model.empty) {
@@ -452,9 +452,12 @@ export function mountExplore(root, deps) {
   sync();
 
   return {
-    update(fleet) {
+    /// `attention`: the daemon board's needs-attention per agent, when it
+    /// sent one (boardAttention).
+    update(fleet, attention = null) {
       if (view.closed) return;
       view.fleet = fleet;
+      view.attention = attention;
       sync();
     },
     /// Off screen (another page of the shell): no live stream or poll for a

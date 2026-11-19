@@ -633,3 +633,25 @@ export function digest(text, limit = 320) {
   if (space >= 0) return `${head.slice(0, space).join("")}…`;
   return `${head.join("")}…`;
 }
+
+/// What the daemon's board says about each agent at a usage cap, keyed by
+/// host and session: whether it still needs the person, which is whether
+/// a limit policy covers it (AgentStatus.needsAttention). Only caps: every
+/// other status is read from the live agent, which may be newer than the
+/// board.
+export function boardAttention(server) {
+  if (!server?.lanes) return null;
+  const attention = new Map();
+  for (const lane of Object.values(server.lanes)) {
+    for (const group of lane?.groups || []) {
+      for (const item of group.items || []) {
+        for (const ref of [...(item.agents || []), ...(item.helpers || []), ...(item.focus ? [item.focus] : [])]) {
+          if (!ref?.host || !ref.session_id || typeof ref.needs_attention !== "boolean") continue;
+          if (ref.status?.status !== "limited") continue;
+          attention.set(`${ref.host}\u0000${ref.session_id}`, { needs: ref.needs_attention, until: ref.status.until || null });
+        }
+      }
+    }
+  }
+  return attention;
+}

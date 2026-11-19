@@ -17,7 +17,8 @@ function statusOf(agent) {
     if (!Number.isFinite(until) || until > Date.now()) return "limited";
   }
   if (state === "idle" && agent.awaiting_reply) return "asked";
-  if (ATTENTION.has(state)) return state === "waiting_input" || state === "waiting_choice" ? "needs_input" : "error";
+  // Blocked waits on the person like a question (AgentStatus: needsInput).
+  if (ATTENTION.has(state)) return state === "waiting_input" || state === "waiting_choice" || state === "blocked" ? "needs_input" : "error";
   if (ACTIVE.has(state)) return "working";
   if (state === "idle") return "idle";
   return state || "other";
@@ -26,8 +27,10 @@ function statusOf(agent) {
 /// The Mac's sidebar status groups, in their order.
 export const STATUS_GROUPS = ["attention", "limited", "active", "idle", "shell"];
 
+/// The sidebar's status group (SidebarViews `statusBucket`): an agent that
+/// asked sits with the idle ones; it is pinned through `attention`.
 function groupOf(status) {
-  if (status === "needs_input" || status === "error" || status === "asked") return "attention";
+  if (status === "needs_input" || status === "error") return "attention";
   if (status === "limited") return "limited";
   if (status === "working") return "active";
   if (status === "shell") return "shell";
@@ -43,8 +46,22 @@ function firstLine(text) {
   return String(text || "").split("\n").find((line) => line.trim())?.trim() || "";
 }
 
+/// Whether an agent needs the person (AgentStatus.needsAttention): an
+/// error, a question, input it waits for, or a usage cap no limit policy
+/// covers. Whether a policy covers a cap is the daemon's to say
+/// (`attention`, its board's word on each capped agent); it counts only
+/// for the same cap (same reset time) the live agent shows, and without it
+/// a cap counts, as on a Mac whose daemon sent no rules.
+function needsAttention(status, attention, key, agent) {
+  if (status !== "limited") return status === "error" || status === "needs_input" || status === "asked";
+  const word = attention?.get(key);
+  if (!word) return true;
+  const live = agent?.rate_limited_until || null;
+  return (word.until || null) !== live ? true : word.needs;
+}
+
 /// One row per pane on every host, with the agent in it if any.
-export function paneRows(fleet) {
+export function paneRows(fleet, attention = null) {
   const rows = [];
   for (const host of Array.isArray(fleet?.hosts) ? fleet.hosts : []) {
     const remote = host.remote || {};
@@ -86,7 +103,7 @@ export function paneRows(fleet) {
           : null,
         status,
         group: groupOf(status),
-        attention: groupOf(status) === "attention",
+        attention: agent ? needsAttention(status, attention, `${host.alias}\u0000${agent.agent_session_id || ""}`, agent) : false,
         since: agent?.state_entered_at || agent?.last_activity_at || null,
       });
     }
@@ -208,9 +225,9 @@ export const PINNED_ATTENTION_LIMIT = 5;
 /// hosts → sessions → windows → panes, or the status groups, each in the
 /// chosen order. `empty` says why nothing is listed: "none" when no host
 /// has a pane, "noMatch" when the filter hides them all.
-export function exploreSections(fleet, { show = "all", query = "", grouping = "host", sort = DEFAULT_EXPLORE_SORT } = {}) {
+export function exploreSections(fleet, { show = "all", query = "", grouping = "host", sort = DEFAULT_EXPLORE_SORT, attention = null } = {}) {
   sort = exploreSortOf(sort);
-  const every = paneRows(fleet);
+  const every = paneRows(fleet, attention);
   const rows = every
     .filter((row) => paneMatches(row, query))
     // Active is the working panes only (SidebarViews `.active`).

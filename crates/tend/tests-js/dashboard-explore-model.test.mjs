@@ -219,3 +219,62 @@ test("what needs you: errors first, then the waiting, and only without a status 
   assert.deepEqual(exploreSections(waiting).attention.map((r) => r.pane), ["%2", "%1"]);
   assert.deepEqual(exploreSections(waiting, { show: "attention" }).attention, []);
 });
+
+test("needing attention is the board's one rule; an agent that asked groups as idle", async () => {
+  const { boardAttention } = await import("../src/dashboard/web/home-board.mjs");
+  const later = new Date(Date.now() + 3600_000).toISOString();
+  const capped = {
+    hosts: [{ alias: "mba", local: true, state: "online", remote: {
+      agents: [
+        { agent_session_id: "cap", kind: "codex", pane: "%1", tmux_socket: "s", state: "idle", rate_limit_scope: "five_hour", rate_limited_until: later },
+        { agent_session_id: "ask", kind: "claude_code", pane: "%2", tmux_socket: "s", state: "idle", awaiting_reply: { question: "Ship?" } },
+      ],
+      panes: ["%1", "%2"].map((id, i) => ({ pane_id: id, socket: "s", session: "w", window_index: "0", window_name: "w", pane_index: String(i) })),
+    } }],
+  };
+  // Without the board, a cap counts, as on a Mac whose daemon sent no rules.
+  let rows = paneRows(capped);
+  assert.deepEqual(rows.map((r) => [r.agent.session, r.group, r.attention]), [["cap", "limited", true], ["ask", "idle", true]]);
+  // The board says a limit policy covers the cap: it keeps working.
+  const capRef = (needs, until = later) => ({ host: "mba", session_id: "cap", needs_attention: needs, status: { key: "status", status: "limited", until } });
+  const board = { lanes: { running: { groups: [{ items: [{ agents: [capRef(false)], helpers: [], focus: null }] }] } } };
+  rows = paneRows(capped, boardAttention(board));
+  assert.equal(rows[0].attention, false);
+  assert.equal(rows[1].attention, true, "an agent the board does not list falls back to the rule");
+  assert.deepEqual(exploreSections(capped, { attention: boardAttention(board) }).attention.map((r) => r.agent.session), ["ask"]);
+  assert.equal(boardAttention(null), null);
+});
+
+test("only a cap takes the board's word, and only for the same cap", async () => {
+  const { boardAttention } = await import("../src/dashboard/web/home-board.mjs");
+  const later = new Date(Date.now() + 3600_000).toISOString();
+  const other = new Date(Date.now() + 7200_000).toISOString();
+  const fleetWith = (agent) => ({ hosts: [{ alias: "mba", local: true, state: "online", remote: {
+    agents: [{ agent_session_id: "a", kind: "codex", pane: "%1", tmux_socket: "s", ...agent }],
+    panes: [{ pane_id: "%1", socket: "s", session: "w", window_index: "0", window_name: "w", pane_index: "0" }],
+  } }] });
+  const boardSays = (needs, status, until = later) => boardAttention({ lanes: { running: { groups: [{ items: [{ agents: [{ host: "mba", session_id: "a", needs_attention: needs, status: { key: "status", status, until } }] }] }] } } });
+  // A board from before the agent asked: the live question counts.
+  assert.equal(paneRows(fleetWith({ state: "waiting_input" }), boardSays(false, "working"))[0].attention, true);
+  // A board from before it resumed: working does not.
+  assert.equal(paneRows(fleetWith({ state: "working" }), boardSays(true, "limited"))[0].attention, false);
+  // The covered cap, and a later cap the board has not seen.
+  const capped = (until) => fleetWith({ state: "idle", rate_limit_scope: "five_hour", rate_limited_until: until });
+  assert.equal(paneRows(capped(later), boardSays(false, "limited"))[0].attention, false);
+  assert.equal(paneRows(capped(other), boardSays(false, "limited"))[0].attention, true);
+  // A reset known on one side only is not the same cap either.
+  assert.equal(paneRows(capped(later), boardSays(false, "limited", null))[0].attention, true);
+  assert.equal(paneRows(capped(undefined), boardSays(false, "limited"))[0].attention, true);
+});
+
+test("blocked waits on the person, after an error, as the Mac orders them", () => {
+  const two = { hosts: [{ alias: "mba", local: true, state: "online", remote: {
+    agents: [
+      { agent_session_id: "b", kind: "codex", pane: "%1", tmux_socket: "s", state: "blocked" },
+      { agent_session_id: "e", kind: "codex", pane: "%2", tmux_socket: "s", state: "error" },
+    ],
+    panes: ["%1", "%2"].map((id, i) => ({ pane_id: id, socket: "s", session: "w", window_index: String(i), window_name: "w", pane_index: "0" })),
+  } }] };
+  assert.equal(paneRows(two)[0].status, "needs_input");
+  assert.deepEqual(exploreSections(two).attention.map((r) => r.agent.session), ["e", "b"]);
+});
