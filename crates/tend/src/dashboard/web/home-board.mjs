@@ -13,13 +13,25 @@
 // client instead of a second time here.
 
 import { checksOf, decidedCard, isSystemAsk, safeHref } from "./needs-model.mjs";
-import { isPaneless, needsAttention } from "./fleet-view.mjs";
 
 export const FINISHED_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const LANES = ["needsYou", "running", "finished"];
 const RUNNING = new Set(["working", "starting"]);
+const WAITING = new Set(["waiting_input", "waiting_choice"]);
 /// tendd's own asks group last, under their own heading.
 export const TEND_PROJECT = "\u0000tend";
+
+/// A registry row with no pane: a headless run (a script or bridge driving
+/// an agent CLI without a terminal) whose hooks still reach tendd. The TUIs
+/// hide these by default (`[watch] hide_paneless`), and so does the board.
+export function isPaneless(agent) {
+  return !agent?.pane;
+}
+
+/// An agent needs the operator when it waits on input or a choice, or failed.
+export function needsAttention(agent) {
+  return WAITING.has(agent?.state) || agent?.state === "error";
+}
 
 function firstLine(text) {
   return String(text || "").split("\n").find((line) => line.trim())?.trim() || "";

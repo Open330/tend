@@ -247,8 +247,8 @@ export function sequenceParticipants(requests) {
 }
 
 /// The tmux session a participant's pane lives in, `{ session, socket }`, or
-/// null. `resolvePane(paneId, socket)` is the live pane scan's answer
-/// (topology-model.mjs paneSessionResolver); a pane the scan no longer knows
+/// null. `resolvePane(paneId, socket)` is the live pane scan's answer; a
+/// pane the scan no longer knows
 /// falls back to the session name the request recorded. The operator console
 /// and agents without a pane have no session.
 export function participantSession(participant, resolvePane = () => null) {
@@ -260,8 +260,8 @@ export function participantSession(participant, resolvePane = () => null) {
   return name ? { session: baseSessionName(name), socket: socket ? shortSocket(socket) : null } : null;
 }
 
-/// Requests inside a rail scope (`{ session, socket, workspace }` from
-/// workspace-rail.mjs railScope; `null` = everything). For a session scope a
+/// Requests inside a scope (`{ session, socket, workspace }`; `null` =
+/// everything). For a session scope a
 /// request is kept when its sender or recipient pane belongs to that session,
 /// so a participant without a pane (the console, an agent outside tmux)
 /// appears only through a message exchanged with an in-scope participant. A
@@ -315,8 +315,8 @@ export function collaborationStatusClass(status) {
 }
 
 // ---- Graph and sequence geometry -----------------------------------------
-// The layout both readers draw (the workbench as markup, Explore with DOM
-// nodes): positions, paths and labels, no elements.
+// The layout Explore -> Messages draws: positions, paths and labels, no
+// elements.
 
 // Nodes sit on an ellipse whose perimeter leaves roughly one node box of
 // room per participant; the canvas is sized around it so every node is on

@@ -48,11 +48,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   session or window in the same link; `workspace` narrows Explore to that
   workspace and says so when no live session matches. A `#token=` or
   `?token=` credential is stored and scrubbed first, never carried into
-  the new address. The same adapter is ready for `/workbench#…`, which
-  still serves the workbench for now.
+  the new address. `/workbench#…` goes through the same adapter (see
+  Removed).
 - Dashboard: a visitor who is not an operator opening `/` is no longer
   sent to `/workbench`, but to `/welcome` or the read-only shell (above).
-  `/workbench` itself still works, until phase 3.
+- Web: Explore's pane view has *Share…* for operators where pane sharing
+  is configured, the invitation dialog the workbench's pane drawer had
+  (this pane or its window, view or prompt). Settings keeps *Manage
+  shares…* for the list and revoking. Explore's pane output also falls
+  back to the bundled Nerd Font symbols, as the workbench's did, and
+  Settings has *Forget token* for a token this browser keeps (the
+  workbench's *lock edit*).
+
+### Removed
+
+- Dashboard: the classic workbench (wave 9, phase 3 of
+  docs/proposals/WEB_HOME.md). `index.html`, `main.js`, `style.css` and
+  the modules only it used (`pane-drawer.mjs`, `topology-model.mjs`,
+  `work-model.mjs`, `workspace-rail.mjs`, `fleet-view.mjs`) are gone from
+  the binary. `/workbench` now serves the shell under its strict content
+  policy, for every principal: its old links open in Explore or Messages,
+  and anything else goes to Home; a visitor whose reads answer 401 goes to
+  `/welcome`, and one who may only read gets the read-only shell. What the
+  shell does not carry over has a CLI or API: the Work metadata editor
+  (`tend work plan`), Abort all agents of a Work (`POST
+  /api/work-control/abort`; Explore interrupts one pane), the timeline
+  (`tend timeline`, `tend stats --timeline`, `/api/timeline`) and the
+  Terminals tab (`tend proc`, `/api/terminal-sessions`). Settings no longer
+  links to the workbench.
 
 ### Fixed
 

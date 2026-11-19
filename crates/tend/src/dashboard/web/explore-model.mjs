@@ -87,8 +87,8 @@ export function paneRows(fleet, attention = null) {
         agentAlias: pane.agent_alias || "",
         windowId: pane.window_id || "",
         sessionId: pane.session_id || "",
-        // The Work identity tmux records on a managed pane (workspace-rail's
-        // `#workspace=` names a session or such a workspace).
+        // The Work identity tmux records on a managed pane (an old
+        // `#workspace=` link names a session or such a workspace).
         workspaceId: pane.tend?.workspace_id || "",
         workId: pane.tend?.work_id || "",
         command: pane.current_command || "",
@@ -237,7 +237,7 @@ export const PINNED_ATTENTION_LIMIT = 5;
 /// chosen order. `empty` says why nothing is listed: "none" when no host
 /// has a pane, "noMatch" when the filter hides them all.
 ///
-/// `workspace` ({ workspace, socket }, the workbench's `#workspace=` and
+/// `workspace` ({ workspace, socket }, the old workbench's `#workspace=` and
 /// `&wsocket=`) narrows it to that workspace's session; `empty` is then
 /// "noWorkspace" when no live session matches, so a stale link never
 /// silently shows everything.
@@ -328,7 +328,7 @@ export function paneHash(row) {
 // carries the host and the tmux server, so the same names on two servers
 // never collide.
 
-/// The tmux server's short name: links (main.js `socketShort`) write the
+/// The tmux server's short name: old workbench links wrote the
 /// socket file's name, the Fleet reports its path.
 function shortSocket(socket) {
   return String(socket || "default").split("/").pop() || "default";
@@ -337,7 +337,7 @@ function shortSocket(socket) {
 /// Whether a pane's socket is the one a link names (any, when it names
 /// none). A full path must match exactly: two servers can share a file
 /// name in different directories. Only a bare name (the short form
-/// main.js's `socketShort` and workspace-rail's `wsocket` wrote) matches
+/// the old workbench's `socket` and `wsocket` keys wrote) matches
 /// by file name.
 export function sameSocket(have, want) {
   if (!want) return true;
@@ -358,7 +358,7 @@ function hashParams(hash) {
 }
 
 /// What Explore's address selects: a pane, a window or a session (a pane
-/// wins over a window, a window over a session, as the workbench read
+/// wins over a window, a window over a session, as the old workbench read
 /// them), or null.
 ///   `#pane=%1&socket=…&host=…`
 ///   `#window=@3&session=…&socket=…&host=…` (or `window=<session>:<index>`)
@@ -414,7 +414,7 @@ export function sessionSelection(section, session) {
 
 export function windowSelection(section, session, window) {
   // A tmux window id (`@3`) when the Fleet has one, else `session:index`
-  // as main.js wrote it.
+  // as the old workbench wrote it.
   const id = String(window.id || "").startsWith("@") ? window.id : `${session.name}:${window.index}`;
   return { kind: "window", window: id, session: session.name, socket: session.socket || null, host: section.local ? null : section.title };
 }
@@ -529,7 +529,7 @@ export function windowDetail(section, session, window) {
 }
 
 /// The detail a session or window selection opens in the current Fleet: a
-/// window, or its session when the window is gone (as main.js fell back,
+/// window, or its session when the window is gone (as the workbench fell back,
 /// marked `fallback`), or `{ kind: "gone" }` when neither is live. Null for
 /// a pane or nothing.
 export function exploreDetail(fleet, selection, { sort = DEFAULT_EXPLORE_SORT, attention = null } = {}) {

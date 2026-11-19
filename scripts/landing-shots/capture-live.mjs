@@ -7,7 +7,7 @@
 // {board,agents,collaboration}-{light,dark}.webp:
 //   board          Home: Your turn, In progress, Finished
 //   agents         Explore: every pane of the host in its topology
-//   collaboration  the workbench's collaboration history
+//   collaboration  Explore → Messages: the collaboration history
 // Playwright: TEND_PLAYWRIGHT_PACKAGE (default `playwright-core`), with
 // Chrome (channel "chrome") unless TEND_TEST_CHROMIUM names a browser.
 import { createRequire } from "node:module";
@@ -46,14 +46,12 @@ const SHOTS = [
   },
   {
     name: "collaboration",
-    path: "/workbench",
+    path: "/explore/messages",
     viewport: { width: 1440, height: 1000 },
     ready: async (page) => {
-      await page.locator("#session-tab-collaboration").click();
-      await page.locator("#collaboration-panel").waitFor({ state: "visible", timeout: 15000 });
+      await page.locator("#view-explore .mx-row").first().waitFor({ timeout: 15000 });
       await page.waitForTimeout(1200);
     },
-    target: "#collaboration-panel",
   },
 ];
 

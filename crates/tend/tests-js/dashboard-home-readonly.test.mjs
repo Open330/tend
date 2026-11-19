@@ -235,6 +235,22 @@ test("a wrong token stays out of storage; the right one makes this browser an op
   assert.equal(posts.filter((p) => p.path === "/auth/enroll").length, 0, "no account to enroll");
 });
 
+test("Settings forgets the token this browser keeps, as the workbench's lock edit did", async () => {
+  assert.equal(stored.get("tend.token"), "good");
+  rail[2].click();
+  await settle();
+  const forget = find($("view-settings"), (n) => n.tag === "button" && /Forget token/.test(n.text));
+  assert.ok(forget, "offered while a token is kept");
+  const before = reloads;
+  forget.click();
+  assert.equal(stored.has("tend.token"), false);
+  assert.equal(reloads, before + 1, "starts over without it");
+  reloads = before;
+  stored.set("tend.token", "good");
+  rail[0].click();
+  await settle();
+});
+
 test("an operator coming down to a viewer keeps nothing private, and sees the notice and the upgrade", async () => {
   stored.clear();
   principal = "operator";

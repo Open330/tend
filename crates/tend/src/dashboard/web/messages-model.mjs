@@ -1,9 +1,8 @@
 // Explore → Messages, the collaboration reader, as data: what a link names
 // (`/explore/messages#…`), the /api/collaboration query a reader state
-// asks for, the scope a pane or session in Explore gives it, and the
-// adapter that sends the old workbench's collaboration links here. Pure:
-// no DOM, no fetch; explore-messages.mjs draws it and the workbench
-// (main.js) shares the query and link rules.
+// asks for, and the scope a pane or session in Explore gives it. Pure: no
+// DOM, no fetch; explore-messages.mjs draws it. Old `#message=` links reach
+// it through the shell's link adapter (legacy-link.mjs).
 
 import { requestsTouchingPane, roomKey, scopeCollaborationRequests } from "./collaboration-model.mjs";
 import { baseSessionName } from "./session-model.mjs";
@@ -281,27 +280,6 @@ export function participantPaneLink(participant, fleet) {
   const params = new URLSearchParams({ pane: pane.pane_id });
   if (pane.socket) params.set("socket", pane.socket);
   return `/explore#${params}`;
-}
-
-// ---- The workbench's links --------------------------------------------------
-
-const COLLABORATION_KEYS = new Set(["message", "thread"]);
-
-/// Where an old workbench collaboration link (`/workbench#message=…`,
-/// `/#message=…`, `#thread=…`) opens now: Explore → Messages, or null for
-/// anything else. A fragment that also names a pane, a workspace or any
-/// other workbench selection is not only a collaboration link and stays
-/// where it is (the workbench still opens it), so nothing bounces back and
-/// forth. Fragments never reach the server, so this is the page's job.
-export function collaborationLinkTarget(pathname, hash) {
-  if (pathname !== "/workbench" && pathname !== "/") return null;
-  const params = new URLSearchParams(String(hash || "").replace(/^#/, ""));
-  const keys = [...params.keys()];
-  if (!keys.length || keys.some((key) => !COLLABORATION_KEYS.has(key))) return null;
-  const message = (params.get("message") || "").trim();
-  const thread = (params.get("thread") || "").trim();
-  if (!message && !thread) return null;
-  return messagesLink({ message, thread });
 }
 
 /// Where sign-in brings a messages link back to, with only the reader's own

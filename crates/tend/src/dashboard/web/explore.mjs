@@ -53,6 +53,8 @@ function storeSort(sort) {
 
 export function mountExplore(root, deps) {
   const { S, el, icon, button, logo, hostBadge, when, read, write, authHeaders, canWrite } = deps;
+  /// Whether this dashboard offers pane sharing (operators only).
+  const canShare = () => canWrite() && Boolean(deps.access?.()?.capabilities?.pane_sharing) && typeof deps.share === "function";
   const view = { attention: null, show: "all", query: "", grouping: "host", sort: storedSort(), fleet: null, open: null, stream: null, poll: null, sending: new Set(), drafts: new Map(), collapsed: new Set(), closed: false, syncComposer: null, hash: null, mode: null, messages: null, detail: null, detailKey: null, facts: null, workspace: null };
 
   const sidebar = el("aside", "ex-side");
@@ -490,6 +492,9 @@ export function mountExplore(root, deps) {
     top.append(titles);
     if (item.agent) top.append(el("span", `ex-state ${item.group}`, S.stateLabels[item.agent.state] || item.agent.state));
     if (item.local) top.append(button(S.paneMessages, () => go(messagesLink(paneMessagesState(item))), "btn small", "people"));
+    // Invite someone to this pane or its window (they land on share.html);
+    // the dialog is sharing-admin.mjs's.
+    if (item.local && canShare()) top.append(button(S.sharePane, () => deps.share({ pane: item.pane, socket: item.socket || null, label: item.window || "" }), "btn small"));
     const output = el("pre", "ex-output");
     output.setAttribute("aria-live", "off");
     const status = el("p", "ex-status");

@@ -4863,18 +4863,19 @@ mod tests {
         let response = get(app.clone(), "/api/decisions/history", Some("s3cret")).await;
         assert_eq!(response.status(), StatusCode::OK);
         // The page itself is a static asset, like `/`.
-        for uri in [
-            "/workbench",
-            "/static/v/any/index.html",
-            "/static/index.html",
-        ] {
+        for uri in ["/workbench", "/static/v/any/home.html", "/static/home.html"] {
             let page = get(app.clone(), uri, None).await;
             assert_eq!(page.headers()[header::X_FRAME_OPTIONS], "DENY", "{uri}");
             assert_eq!(
                 page.headers()[header::CONTENT_SECURITY_POLICY],
-                "frame-ancestors 'none'",
+                assets::HOME_POLICY,
                 "{uri}"
             );
+        }
+        // The retired workbench's files are gone.
+        for uri in ["/static/index.html", "/static/main.js", "/static/style.css"] {
+            let page = get(app.clone(), uri, None).await;
+            assert_eq!(page.status(), StatusCode::NOT_FOUND, "{uri}");
         }
     }
 
@@ -5394,9 +5395,10 @@ mod tests {
     }
 
     /// The pages hold no data: everyone gets them, under the same headers.
-    /// Home's names serve `home.html` under the strict policy, and so does
-    /// `/welcome` (`welcome.html`, the landing without the workbench); the
-    /// workbench keeps the framing-only one. All revalidate (`no-cache`),
+    /// Home's names serve `home.html` under the strict policy, and so do
+    /// `/welcome` (`welcome.html`, the landing) and `/workbench` (the shell,
+    /// whose link adapter maps the retired workbench's fragments). All
+    /// revalidate (`no-cache`),
     /// for every principal: anonymous in `public_read` and with auth off
     /// included, since a page holds no data.
     #[tokio::test]
@@ -5410,7 +5412,7 @@ mod tests {
             ("/explore/messages", assets::HOME_POLICY, "home.mjs"),
             ("/settings", assets::HOME_POLICY, "home.mjs"),
             ("/welcome", assets::HOME_POLICY, "welcome.mjs"),
-            ("/workbench", assets::FRAME_POLICY, "main.js"),
+            ("/workbench", assets::HOME_POLICY, "home.mjs"),
         ];
         let mut apps = Vec::new();
         for auth in [DashboardAuthMode::Token, DashboardAuthMode::PublicRead] {
@@ -5442,9 +5444,9 @@ mod tests {
                 let body = response.into_body().collect().await.unwrap().to_bytes();
                 let html = String::from_utf8(body.to_vec()).unwrap();
                 assert!(html.contains(&format!("/{script}\"")), "{at}");
+                assert!(!html.contains("main.js"), "{at}");
+                assert!(!html.contains("style.css"), "{at}");
                 if uri == "/welcome" {
-                    assert!(!html.contains("main.js"), "{at}");
-                    assert!(!html.contains("style.css"), "{at}");
                     assert!(html.contains("landing.css"), "{at}");
                 }
             }

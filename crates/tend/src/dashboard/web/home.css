@@ -3,6 +3,10 @@
    the page's CSP allows only this file. */
 
 *, *::before, *::after { box-sizing: border-box; }
+
+/* Nerd Font glyphs in pane output (prompts, agent status lines). Only the
+   Private Use Areas, so normal text never touches it; see fonts/README.md. */
+@font-face { font-family: "tend-nerd-symbols"; src: url("/static/fonts/tend-nerd-symbols.woff2") format("woff2"); unicode-range: U+E000-F8FF, U+F0000-FFFFF; font-display: swap; }
 html, body { height: 100%; }
 body {
   margin: 0;
@@ -594,7 +598,7 @@ dialog input.rv-check { flex: none; width: auto; min-height: 0; margin: 0; paddi
 .ex-state { font-size: var(--size-meta); font-weight: 600; color: var(--text-secondary); }
 .ex-state.attention { color: var(--orange); }
 .ex-state.active { color: var(--blue); }
-.ex-output { flex: 1; min-height: 0; margin: 0; padding: 12px 16px; overflow: auto; background: var(--terminal); color: var(--text); font: 12px / 1.4 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.ex-output { flex: 1; min-height: 0; margin: 0; padding: 12px 16px; overflow: auto; background: var(--terminal); color: var(--text); font: 12px / 1.4 ui-monospace, "SF Mono", Menlo, Consolas, "Cascadia Mono", "tend-nerd-symbols", monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .ex-status:empty { display: none; }
 .ex-status { margin: 0; padding: 6px 16px; font-size: var(--size-meta); color: var(--text-secondary); border-top: 1px solid var(--border); }
 .ex-composer { padding: 10px 16px 12px; border-top: 1px solid var(--border); }
@@ -606,7 +610,7 @@ dialog input.rv-check { flex: none; width: auto; min-height: 0; margin: 0; paddi
 .set-row { display: flex; gap: 12px; font-size: var(--size-detail); }
 .set-label { width: 160px; flex: none; color: var(--text-secondary); }
 .set-help { margin: 0; font-size: var(--size-detail); color: var(--text-secondary); }
-/* The workbench's admin dialogs, opened from Settings. */
+/* The admin dialogs (operators-admin.mjs, sharing-admin.mjs), opened from Settings. */
 dialog.share-dialog { display: grid; gap: 10px; }
 dialog.share-dialog:not([open]) { display: none; }
 dialog.share-dialog form, dialog.share-dialog section { display: grid; gap: 8px; }

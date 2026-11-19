@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildBoard, evidenceChip, groupByProject, hostHue, productOf, TEND_PROJECT } from "../src/dashboard/web/home-board.mjs";
+import { buildBoard, evidenceChip, groupByProject, hostHue, isPaneless, needsAttention, productOf, TEND_PROJECT } from "../src/dashboard/web/home-board.mjs";
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "../../../apps/shared/Fixtures");
 const load = (name) => JSON.parse(readFileSync(join(fixtures, name), "utf8"));
@@ -211,4 +211,18 @@ test("Review's Later, project groups and digest follow the Mac", async () => {
   assert.equal(digest("  \n---\n"), null);
   assert.equal(digest(`${"a".repeat(40)}. ${"b ".repeat(40)}`, 50), `${"a".repeat(40)}.`);
   assert.equal(digest("word word word", 9), "word…");
+});
+
+test("waiting on input or a choice, or an error, needs the operator", () => {
+  assert.equal(needsAttention({ state: "waiting_input" }), true);
+  assert.equal(needsAttention({ state: "waiting_choice" }), true);
+  assert.equal(needsAttention({ state: "error" }), true);
+  assert.equal(needsAttention({ state: "working" }), false);
+  assert.equal(needsAttention(null), false);
+});
+
+test("a registry row without a pane is headless", () => {
+  assert.equal(isPaneless({ pane: "%1" }), false);
+  assert.equal(isPaneless({}), true);
+  assert.equal(isPaneless(null), true);
 });

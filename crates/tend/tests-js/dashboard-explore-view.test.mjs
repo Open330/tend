@@ -166,6 +166,30 @@ test("a pane link names the host: the same pane id on another host opens that on
   window.location.hash = "";
 });
 
+test("Share… opens the invitation for this pane, only where sharing is offered to an operator", () => {
+  const shares = [];
+  const shareButton = (node) => find(node, (n) => n.tag === "button" && n.textContent === "sharePane");
+  const open = (extra) => {
+    const box = new Node("div");
+    const mounted = mountExplore(box, { ...deps, share: (target) => shares.push(target), ...extra });
+    mounted.update(fleet);
+    find(box, (n) => n.dataset?.id === "mba:s:%2").click();
+    return { box, mounted };
+  };
+  const offered = open({ access: () => ({ capabilities: { pane_sharing: true } }) });
+  shareButton(offered.box).click();
+  assert.deepEqual(shares, [{ pane: "%2", socket: "s", label: "1:two" }]);
+  offered.mounted.destroy();
+  for (const extra of [
+    { access: () => ({ capabilities: { pane_sharing: false } }) },
+    { access: () => ({ capabilities: { pane_sharing: true } }), canWrite: () => false },
+  ]) {
+    const other = open(extra);
+    assert.equal(shareButton(other.box), null, JSON.stringify(Object.keys(extra)));
+    other.mounted.destroy();
+  }
+});
+
 test("destroy leaves nothing private behind", () => {
   view.destroy();
   assert.equal(root.children.length, 0);
