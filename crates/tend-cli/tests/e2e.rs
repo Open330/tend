@@ -42,19 +42,58 @@ fn toml_path(path: &Path) -> String {
     format!("'{text}'")
 }
 
-fn wait_for_socket(path: &Path, deadline: Duration) {
+/// Ceiling on a fresh tendd's start, not its expected time: it serves its
+/// endpoint in well under a second on an idle machine, but a loaded Windows
+/// runner (a dozen e2e daemons starting at once, freshly linked binaries
+/// being scanned) has taken longer than 3 s. [`wait_for_daemon`] returns as
+/// soon as the endpoint is live and fails as soon as the daemon exits, so a
+/// generous ceiling costs nothing except on a hung start.
+const DAEMON_READY_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Wait until the daemon `child` serves `path`. Panics at once if it exits
+/// first, and after [`DAEMON_READY_TIMEOUT`] if it never serves (killing it
+/// so the test leaves nothing behind). `log` is the file its stderr goes to,
+/// quoted in the panic.
+fn wait_for_daemon(child: &mut Child, path: &Path, log: Option<&Path>) {
     let start = Instant::now();
-    while start.elapsed() < deadline {
+    loop {
         if endpoint_exists(path) {
             return;
         }
+        if let Some(status) = child.try_wait().expect("poll tendd") {
+            panic!(
+                "tendd exited ({status}) before serving {}{}",
+                path.display(),
+                log_tail(log)
+            );
+        }
+        if start.elapsed() >= DAEMON_READY_TIMEOUT {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!(
+                "tendd did not serve {} within {:?}{}",
+                path.display(),
+                DAEMON_READY_TIMEOUT,
+                log_tail(log)
+            );
+        }
         std::thread::sleep(Duration::from_millis(20));
     }
-    panic!(
-        "socket {} did not appear within {:?}",
-        path.display(),
-        deadline
-    );
+}
+
+/// The end of a daemon's stderr log, for a failure message.
+fn log_tail(log: Option<&Path>) -> String {
+    let Some(text) = log.and_then(|p| std::fs::read_to_string(p).ok()) else {
+        return String::new();
+    };
+    let lines: Vec<&str> = text.lines().collect();
+    let tail = lines[lines.len().saturating_sub(40)..].join("\n");
+    format!("\n--- tendd stderr (last 40 lines) ---\n{tail}")
+}
+
+/// A file for a daemon's stderr, so a failed start can show why.
+fn stderr_log(path: &Path) -> Stdio {
+    Stdio::from(std::fs::File::create(path).expect("create tendd stderr log"))
 }
 
 /// Private data/state homes under `dir`, created.
@@ -156,7 +195,8 @@ enabled = false
         let cfg_path = dir.join("tend-e2e.toml");
         std::fs::write(&cfg_path, &toml).expect("write test config");
 
-        let child = Command::new(bin("tendd"))
+        let stderr_path = dir.join("tendd.stderr");
+        let mut child = Command::new(bin("tendd"))
             .envs(env.iter().map(|(k, v)| (*k, v)))
             .arg("--socket")
             .arg(&socket)
@@ -171,10 +211,10 @@ enabled = false
             .env_remove("TMUX_PANE")
             .env("TMUX_TMPDIR", &tmux_tmpdir)
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(stderr_log(&stderr_path))
             .spawn()
             .expect("spawn tendd");
-        wait_for_socket(&socket, Duration::from_secs(3));
+        wait_for_daemon(&mut child, &socket, Some(&stderr_path));
         Self {
             child,
             socket,
@@ -772,9 +812,9 @@ path = {}
     });
 
     let port = rx
-        .recv_timeout(Duration::from_secs(5))
+        .recv_timeout(DAEMON_READY_TIMEOUT)
         .expect("dashboard never logged its bound port");
-    wait_for_socket(&socket, Duration::from_secs(3));
+    wait_for_daemon(&mut child, &socket, None);
 
     Some(DashboardDaemon {
         daemon: Daemon {
@@ -1387,7 +1427,7 @@ fn a_daemon_on_its_own_socket_and_config_leaves_the_default_data_dir_alone() {
         .stderr(Stdio::null())
         .spawn()
         .expect("spawn tendd");
-    wait_for_socket(&socket, Duration::from_secs(5));
+    wait_for_daemon(&mut child, &socket, None);
     // The spool drain runs before the socket appears; the storage sweep on
     // the GC task's first, immediate tick. Give both ample time.
     std::thread::sleep(Duration::from_secs(2));
