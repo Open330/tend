@@ -198,6 +198,7 @@ pub(super) fn gone_sender_action(
     action.human_action = Some(HumanAction::Information);
     action.body = gone_sender_body(parent);
     action.subject_check = None;
+    action.subject_bindings.clear();
     action.closure = None;
     action.system_ask = Some(super::system_asks::SystemAskState {
         subject_session: parent.from.agent_session_id.clone(),

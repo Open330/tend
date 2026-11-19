@@ -50,7 +50,7 @@ use crate::state::Agent;
 use crate::subject_evidence::{FactKind, PaneScan, SubjectBinding, SubjectFact};
 use crate::{AgentKind, AgentState};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use time::OffsetDateTime;
 
 /// `hello` capability: queue entries carry `unanswerable`, the queue
@@ -430,6 +430,7 @@ fn recognized(kind: AgentKind) -> bool {
 /// One subject's verdict this pass.
 fn judge(
     subject: &Participant,
+    stored: &BTreeMap<String, SubjectBinding>,
     inputs: &SubjectInputs<'_>,
     facts: &[SubjectFact],
     now: OffsetDateTime,
@@ -475,7 +476,8 @@ fn judge(
     if let (Some(pane), Some(socket), Some(scan)) =
         (pane.as_deref(), socket.as_deref(), inputs.scan)
     {
-        if let Some(cause) = scan_evidence(session, pane, socket, row, inputs, scan, now) {
+        let binding = merged_binding(stored.get(session), inputs.bindings.get(session));
+        if let Some(cause) = scan_evidence(pane, socket, row, binding.as_ref(), scan, now) {
             causes.push(cause);
         }
     }
@@ -490,11 +492,10 @@ fn judge(
 
 /// E3 or E4 from the newest scan, if it shows either.
 fn scan_evidence(
-    session: &str,
     pane: &str,
     socket: &str,
     row: Option<&Agent>,
-    inputs: &SubjectInputs<'_>,
+    binding: Option<&SubjectBinding>,
     scan: &PaneScan,
     now: OffsetDateTime,
 ) -> Option<GoneCause> {
@@ -512,9 +513,7 @@ fn scan_evidence(
         .servers
         .iter()
         .find(|server| server.endpoint == endpoint)?;
-    let bound = inputs
-        .bindings
-        .get(session)
+    let bound = binding
         .filter(|binding| binding.pane == pane && binding.endpoint == endpoint)
         .and_then(|binding| binding.incarnation);
     let current = server.incarnation;
@@ -561,6 +560,59 @@ fn scan_evidence(
     .then_some(GoneCause::AgentExited)
 }
 
+/// The binding to judge a subject by: the one stored on the item, or the
+/// one tendd holds in memory. On the same pane and endpoint the stored
+/// incarnation wins, as in `stamp_bindings`: the first incarnation the
+/// session was seen on, so a pane id a restarted server reuses never
+/// re-stamps it. Another pane or endpoint in memory means the session was
+/// seen live elsewhere since.
+fn merged_binding(
+    stored: Option<&SubjectBinding>,
+    memory: Option<&SubjectBinding>,
+) -> Option<SubjectBinding> {
+    match (stored, memory) {
+        (Some(stored), Some(memory))
+            if stored.pane == memory.pane && stored.endpoint == memory.endpoint =>
+        {
+            Some(SubjectBinding {
+                incarnation: stored.incarnation.or(memory.incarnation),
+                ..stored.clone()
+            })
+        }
+        (_, Some(memory)) => Some(memory.clone()),
+        (stored, None) => stored.cloned(),
+    }
+}
+
+/// The bindings an open item should store: one per subject tendd has seen
+/// bound, from memory merged over what the item already stores. A daemon
+/// restart then keeps where each subject was bound
+/// (`docs/proposals/STALE_QUESTIONS.md`, "Bindings survive a daemon
+/// restart").
+fn stored_bindings(
+    request: &CollaborationRequest,
+    requests: &HashMap<String, CollaborationRequest>,
+    inputs: &SubjectInputs<'_>,
+) -> BTreeMap<String, SubjectBinding> {
+    let mut out = BTreeMap::new();
+    let Some(subjects) = subjects(request, requests) else {
+        return out;
+    };
+    for subject in subjects.into_iter().flatten() {
+        let session = subject.agent_session_id.as_str();
+        if subject.console || session.is_empty() {
+            continue;
+        }
+        if let Some(binding) = merged_binding(
+            request.subject_bindings.get(session),
+            inputs.bindings.get(session),
+        ) {
+            out.insert(session.to_owned(), binding);
+        }
+    }
+    out
+}
+
 /// One item's verdict: alive if any subject is, gone if every subject is.
 pub(super) fn evaluate(
     request: &CollaborationRequest,
@@ -578,7 +630,7 @@ pub(super) fn evaluate(
             all_gone = false;
             continue;
         };
-        match judge(subject, inputs, facts, now) {
+        match judge(subject, &request.subject_bindings, inputs, facts, now) {
             Verdict::Alive => return Some(Verdict::Alive),
             Verdict::Gone {
                 causes: these,
@@ -780,7 +832,7 @@ impl CollaborationStore {
                 report.gone += 1;
                 confirmed.insert(request.id.clone(), (next.episode.clone(), now));
             }
-            let write = match (old, next.as_ref()) {
+            let check_changed = match (old, next.as_ref()) {
                 (None, None) => false,
                 (Some(old), Some(next)) => {
                     let mut same = next.clone();
@@ -789,9 +841,11 @@ impl CollaborationStore {
                 }
                 _ => true,
             };
-            if write {
+            let bindings = stored_bindings(request, &snapshot, inputs);
+            if check_changed || bindings != request.subject_bindings {
                 let mut row = request.clone();
                 row.subject_check = next;
+                row.subject_bindings = bindings;
                 changed.push(row);
             }
         }

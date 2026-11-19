@@ -184,7 +184,7 @@ into another pane or `tend restore`) means alive. Otherwise only these count:
 | --- | --- |
 | `ended` | the provider's own `SessionEnded` hook, recorded when tendd ingests it |
 | `replaced` | a real provider `Started` hook for another session in the pane, recorded before the old row changes; it counts only if the first scan after the hook finds the tmux server on the incarnation the old session was bound on |
-| `pane_gone` | the pane is absent from a complete scan of a socket that answered: for tmux, on the incarnation the session was bound on (not known after a daemon restart until the session is seen again, and then unknown); for rmux, which reports none, from its running endpoint; or the socket answers that no server runs there |
+| `pane_gone` | the pane is absent from a complete scan of a socket that answered: for tmux, on the incarnation the session was bound on (kept on the question, so it survives a daemon restart; a question from before the binding was stored has none until its asker is seen again); for rmux, which reports none, from its running endpoint; or the socket answers that no server runs there |
 | `agent_exited` | what tendd already requires to stop a row with no agent process (a complete host, a recognized agent, an hour idle, no agent process, a shell in the foreground), on the same server incarnation |
 
 Nothing else is evidence: not a missing row, `binding_unavailable`, a rate

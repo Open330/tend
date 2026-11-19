@@ -953,6 +953,12 @@ pub struct CollaborationRequest {
     /// unjudged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject_check: Option<subject_check::SubjectCheck>,
+    /// On an open human item: where each of its subjects was last seen
+    /// live, by session id, so E3 and E4 still have the server incarnation
+    /// after a daemon restart (`subject_check.rs`).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub subject_bindings:
+        std::collections::BTreeMap<String, crate::subject_evidence::SubjectBinding>,
     /// On a question a person closed because its subject was gone: why,
     /// which episode, and from where (`subject_check.rs`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3353,6 +3359,7 @@ impl CollaborationStore {
             wake_retry: None,
             system_ask: None,
             subject_check: None,
+            subject_bindings: std::collections::BTreeMap::default(),
             closure: None,
             dispatch_id: input.dispatch_id,
             source_node_id: input.source_node_id,

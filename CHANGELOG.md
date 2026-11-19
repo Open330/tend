@@ -114,6 +114,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A question whose asker never came back after a tendd restart now still
+  folds into "Can't be answered" when the asker's tmux pane is gone. Where
+  each asker was last seen bound (pane, socket, server incarnation) is kept
+  on the open question (`subject_bindings`) instead of only in memory. The
+  same evidence rules apply: a tmux server restarted since still leaves the
+  question listed.
+
 - Fewer items for the person, at the source. A recipient interrupted by a
   usage limit or an error now counts as resumed only after ten minutes of
   work or idle: a capped agent that the `resume-after-limit` rule sends back
