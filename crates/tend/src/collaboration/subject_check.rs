@@ -57,6 +57,13 @@ use time::OffsetDateTime;
 /// `unanswerable_count`, and `decision_keep` is served.
 pub const SUBJECT_CHECK_CAPABILITY: &str = "subject_check_v1";
 
+/// `hello` capability: the daemon takes `fleet_decision_keep` and
+/// `fleet_decision_close_unanswerable`, Keep and Close all sent over Fleet,
+/// and records the person's actor and the controller they came through. A
+/// daemon without it refuses those kinds as unknown, so an updated relay
+/// over an older daemon fails closed instead of closing without them.
+pub const DECISION_VIA_FLEET_CAPABILITY: &str = "decision_via_fleet_v1";
+
 /// `hello` capability, only while `[review] close_unanswerable` is on:
 /// `decision_close_unanswerable` closes what it is given.
 pub const CLOSE_UNANSWERABLE_CAPABILITY: &str = "close_unanswerable_v1";

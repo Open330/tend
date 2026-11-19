@@ -227,7 +227,7 @@ impl Client {
     ) -> Result<crate::collaboration::subject_check::KeepOutcome, RuntimeError> {
         let req = serde_json::json!({
             "protocol": PROTOCOL_VERSION,
-            "kind": "decision_keep",
+            "kind": "fleet_decision_keep",
             "request_id": keep.id,
             "episode": keep.episode,
             "origin": crate::decision_queue::operator_origin(),
@@ -249,7 +249,7 @@ impl Client {
     ) -> Result<crate::collaboration::subject_check::CloseOutcome, RuntimeError> {
         let req = serde_json::json!({
             "protocol": PROTOCOL_VERSION,
-            "kind": "decision_close_unanswerable",
+            "kind": "fleet_decision_close_unanswerable",
             "items": close.items,
             "origin": crate::decision_queue::operator_origin(),
             "by_label": close.surface,

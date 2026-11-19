@@ -544,7 +544,9 @@ async fn handle_request(
             let kept = client
                 .decision_keep_from_fleet(&keep)
                 .await
-                .context("keeping the question")?;
+                // The holding daemon's own reason (not found, not in that
+                // episode) is what the person needs to see.
+                .map_err(|error| anyhow::anyhow!("keeping the question: {error}"))?;
             Ok(RelayFrame::Result {
                 request_id,
                 result: Box::new(FleetCommandResult::decision_keep(kept)),
@@ -556,7 +558,8 @@ async fn handle_request(
             let outcome = client
                 .decision_close_unanswerable_from_fleet(&close)
                 .await
-                .context("closing the questions")?;
+                // Including Close all switched off since this relay's hello.
+                .map_err(|error| anyhow::anyhow!("closing the questions: {error}"))?;
             Ok(RelayFrame::Result {
                 request_id,
                 result: Box::new(FleetCommandResult::decision_close_unanswerable(outcome)),
@@ -1132,20 +1135,21 @@ pub(crate) fn remote_attach(token: &str, fit: bool) -> Result<()> {
 }
 
 /// Keep and Close all are offered over Fleet only as this host's daemon
-/// offers them: Keep with `subject_check_v1`, Close all with
+/// offers them: both need `decision_via_fleet_v1` (it records the person
+/// and the controller), Keep `subject_check_v1`, Close all
 /// `close_unanswerable_v1` (on only while `[review] close_unanswerable`
 /// is). Every other capability passes.
 fn relays_unanswerable(capability: &str, daemon: &[String]) -> bool {
+    use tend::collaboration::subject_check::{
+        CLOSE_UNANSWERABLE_CAPABILITY, DECISION_VIA_FLEET_CAPABILITY, SUBJECT_CHECK_CAPABILITY,
+    };
     let needs = match capability {
-        tend::fleet::FLEET_DECISION_UNANSWERABLE_CAPABILITY => {
-            tend::collaboration::subject_check::SUBJECT_CHECK_CAPABILITY
-        }
-        tend::fleet::FLEET_CLOSE_UNANSWERABLE_CAPABILITY => {
-            tend::collaboration::subject_check::CLOSE_UNANSWERABLE_CAPABILITY
-        }
+        tend::fleet::FLEET_DECISION_UNANSWERABLE_CAPABILITY => SUBJECT_CHECK_CAPABILITY,
+        tend::fleet::FLEET_CLOSE_UNANSWERABLE_CAPABILITY => CLOSE_UNANSWERABLE_CAPABILITY,
         _ => return true,
     };
-    daemon.iter().any(|d| d == needs)
+    let has = |c: &str| daemon.iter().any(|d| d == c);
+    has(needs) && has(DECISION_VIA_FLEET_CAPABILITY)
 }
 
 #[cfg(test)]
@@ -1313,15 +1317,30 @@ mod tests {
     #[test]
     fn keep_and_close_all_are_relayed_only_as_the_daemon_offers_them() {
         use tend::collaboration::subject_check::{
-            CLOSE_UNANSWERABLE_CAPABILITY, SUBJECT_CHECK_CAPABILITY,
+            CLOSE_UNANSWERABLE_CAPABILITY, DECISION_VIA_FLEET_CAPABILITY, SUBJECT_CHECK_CAPABILITY,
         };
         use tend::fleet::{
             FLEET_CLOSE_UNANSWERABLE_CAPABILITY, FLEET_DECISION_UNANSWERABLE_CAPABILITY,
         };
         let daemon = |caps: &[&str]| caps.iter().map(|c| (*c).to_owned()).collect::<Vec<_>>();
         let older = daemon(&[]);
-        let keep_only = daemon(&[SUBJECT_CHECK_CAPABILITY]);
-        let both = daemon(&[SUBJECT_CHECK_CAPABILITY, CLOSE_UNANSWERABLE_CAPABILITY]);
+        // Folding and Close all, but from before Fleet provenance: an
+        // updated relay over it offers neither.
+        let before_fleet = daemon(&[SUBJECT_CHECK_CAPABILITY, CLOSE_UNANSWERABLE_CAPABILITY]);
+        assert!(!super::relays_unanswerable(
+            FLEET_DECISION_UNANSWERABLE_CAPABILITY,
+            &before_fleet
+        ));
+        assert!(!super::relays_unanswerable(
+            FLEET_CLOSE_UNANSWERABLE_CAPABILITY,
+            &before_fleet
+        ));
+        let keep_only = daemon(&[SUBJECT_CHECK_CAPABILITY, DECISION_VIA_FLEET_CAPABILITY]);
+        let both = daemon(&[
+            SUBJECT_CHECK_CAPABILITY,
+            CLOSE_UNANSWERABLE_CAPABILITY,
+            DECISION_VIA_FLEET_CAPABILITY,
+        ]);
         assert!(!super::relays_unanswerable(
             FLEET_DECISION_UNANSWERABLE_CAPABILITY,
             &older
@@ -1347,5 +1366,48 @@ mod tests {
             &both
         ));
         assert!(super::relays_unanswerable("snapshot_watch", &older));
+    }
+
+    /// A relay whose hello still offers Close all, over a host that turned
+    /// it off since: the holding daemon refuses, and its reason reaches the
+    /// controller. Nothing is closed.
+    #[tokio::test]
+    async fn close_all_switched_off_since_the_hello_is_refused_with_the_hosts_reason() {
+        use tend::collaboration::{CollaborationOptions, CollaborationStore};
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("relay-close-off.sock");
+        let mailbox = CollaborationStore::in_memory(CollaborationOptions::default());
+        mailbox.set_close_unanswerable(false);
+        let server = tend::ipc::Server::new(socket.clone(), tend::Store::shared())
+            .with_collaboration(mailbox);
+        let (shutdown, rx) = tokio::sync::broadcast::channel(1);
+        let handle = tokio::spawn(async move { server.run(rx).await.unwrap() });
+        for _ in 0..300 {
+            if socket.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let error = handle_request(
+            RelayRequest::DecisionCloseUnanswerable {
+                request_id: "transport-1".into(),
+                close: tend::fleet::FleetCloseUnanswerable {
+                    items: Vec::new(),
+                    actor: "web:owner".into(),
+                    surface: "web".into(),
+                    controller: "controller".into(),
+                },
+            },
+            Client::new(socket),
+            Vec::new(),
+            Arc::new(AtomicU64::new(0)),
+        )
+        .await
+        .unwrap_err();
+        // What `run` puts in the error frame.
+        let message = error.to_string();
+        shutdown.send(()).unwrap();
+        handle.await.unwrap();
+        assert!(message.contains("turned off"), "{message}");
     }
 }
