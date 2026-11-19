@@ -838,10 +838,11 @@ struct FleetDecisionCard: View {
                 Spacer(minLength: 4)
                 if busy { ProgressView().controlSize(.mini) }
             }
-            .font(.system(size: 11, weight: .bold))
-            .foregroundStyle(.orange)
+            .font(TendType.label)
+            .foregroundStyle(TendInk.state(.orange, colorScheme))
             Text(verbatim: decision.title)
-                .font(.system(size: 14.5, weight: .bold))
+                .font(TendType.cardTitle)
+                .foregroundStyle(TendInk.label(colorScheme))
                 .lineLimit(4)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
@@ -867,7 +868,7 @@ struct FleetDecisionCard: View {
                 }
                 if decision.asksUnlisted(at: Date()) {
                     Text("Asker not listed")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(TendInk.state(.orange, colorScheme))
                         .lineLimit(1)
                         .help(String(localized: "The agent that asked is not listed on its host; it may have exited. Tend folds the question once it is sure the asker is gone."))
                 }
@@ -879,9 +880,9 @@ struct FleetDecisionCard: View {
                 }
             }
             .font(TendType.meta)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(TendInk.secondary(colorScheme))
         }
-        .padding(12)
+        .padding(TendSpace.m)
         .modifier(FleetEmphasisCardFrame(lane: .needsYou))
     }
 
@@ -897,15 +898,16 @@ struct FleetDecisionCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         if let recommendation = decision.recommendation {
+            // Decision-bearing prose: Body, label ink.
             Label {
                 Text(verbatim: recommendation)
                     .lineLimit(3)
             } icon: {
                 Image(systemName: "lightbulb")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(TendInk.state(.orange, colorScheme))
             }
-            .font(TendType.detail)
-            .foregroundStyle(.secondary)
+            .font(TendType.body)
+            .foregroundStyle(TendInk.label(colorScheme))
             .frame(maxWidth: .infinity, alignment: .leading)
             .help(String(localized: "What the asker recommends"))
         }
@@ -1078,6 +1080,7 @@ struct FleetDecisionOptionRow: View {
     let text: String
     let choose: () -> Void
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.isEnabled) private var isEnabled
     @State private var hovering = false
 
@@ -1085,10 +1088,10 @@ struct FleetDecisionOptionRow: View {
         Button(action: choose) {
             HStack(alignment: .top, spacing: 8) {
                 Text(verbatim: "\(number)")
-                    .font(.system(size: 11, weight: .bold).monospacedDigit())
-                    .foregroundStyle(Color.accentColor)
+                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(TendInk.label(colorScheme))
                     .frame(width: 18, height: 18)
-                    .background(Color.accentColor.opacity(0.15), in: Circle())
+                    .background(TendInk.control(colorScheme), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
                 Text(verbatim: text)
                     .font(TendType.body)
                     .foregroundStyle(.primary)
@@ -1104,13 +1107,15 @@ struct FleetDecisionOptionRow: View {
             .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
         .buttonStyle(.plain)
+        // A soft fill, no outline (an outline again under Increase
+        // Contrast), so the options read as one group of choices.
         .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(hovering ? TendTheme.hover(colorScheme) : Color.secondary.opacity(0.08))
+            RoundedRectangle(cornerRadius: TendRadius.group, style: .continuous)
+                .fill(hovering ? TendInk.selection(colorScheme) : TendInk.control(colorScheme))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .strokeBorder(TendTheme.inputBorder(colorScheme), lineWidth: 1)
+            RoundedRectangle(cornerRadius: TendRadius.group, style: .continuous)
+                .strokeBorder(contrast == .increased ? TendTheme.inputBorder(colorScheme) : .clear, lineWidth: 1)
         )
         .opacity(isEnabled ? 1 : 0.45)
         .onHover { hovering = $0 && isEnabled }

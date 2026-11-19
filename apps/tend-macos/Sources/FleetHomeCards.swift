@@ -47,6 +47,15 @@ extension FleetLane {
         }
     }
 
+    /// The hue whose ink a state word in this lane wears (4.5:1 or more).
+    var stateHue: TendStateHue {
+        switch self {
+        case .needsYou: .orange
+        case .running: .blue
+        case .finished: .green
+        }
+    }
+
     var statusImage: String {
         switch self {
         case .needsYou: "hand.raised.fill"
@@ -65,65 +74,47 @@ extension FleetBoard {
 
 // MARK: - Surfaces
 
-enum FleetCardSurface {
-    /// A card's ground: Your turn tinted so it stands out at a glance.
-    static func fill(_ lane: FleetLane, emphasis: Bool, _ scheme: ColorScheme) -> Color {
-        let base = TendSurfacePalette.workspace(for: scheme)
-        guard emphasis, lane == .needsYou else { return base }
-        return scheme == .dark
-            ? Color(red: 0.20, green: 0.16, blue: 0.11)
-            : Color(red: 1.0, green: 0.965, blue: 0.92)
-    }
-
-    /// The inset box that holds the question and its choices.
-    static func inset(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color.white.opacity(0.05) : Color.black.opacity(0.035)
-    }
-
-    static func insetBorder(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color.white.opacity(0.07) : Color.black.opacity(0.06)
-    }
-}
-
-/// Draws a card in the status-emphasis style: the lane's stripe on the
-/// leading edge, its ground, a border (the accent when selected).
+/// Draws a card (docs/proposals/MAC_DESIGN.md): one container, lifted off
+/// its lane by the card fill and a hairline. A card that waits for the
+/// person carries a 3pt orange bar at its leading edge (its status word
+/// says so too); no tinted border or fill. Selected: an accent border.
 struct FleetEmphasisCardFrame: ViewModifier {
     let lane: FleetLane
     var isSelected = false
     @Environment(\.colorScheme) private var colorScheme
 
     func body(content: Content) -> some View {
-        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: TendRadius.card, style: .continuous)
         content
-            .padding(.leading, 5)
-            .background(FleetCardSurface.fill(lane, emphasis: true, colorScheme), in: shape)
+            .padding(.leading, lane == .needsYou ? 4 : 0)
+            .background(TendSurface.card(colorScheme), in: shape)
             .overlay(alignment: .leading) {
-                Rectangle()
-                    .fill(lane.tint)
-                    .frame(width: 5)
-                    .allowsHitTesting(false)
+                if lane == .needsYou {
+                    Capsule()
+                        .fill(lane.tint)
+                        .frame(width: 3)
+                        .padding(.vertical, TendSpace.m)
+                        .padding(.leading, 5)
+                        .allowsHitTesting(false)
+                }
             }
-            .clipShape(shape)
             .overlay(
                 shape.strokeBorder(
-                    isSelected ? Color.accentColor : (lane == .needsYou ? lane.tint.opacity(0.35) : TendTheme.border(colorScheme)),
+                    isSelected ? Color.accentColor : TendInk.hairline(colorScheme),
                     lineWidth: isSelected ? 1.5 : 1
                 )
             )
     }
 }
 
-/// The inset box a card's question and choices sit in.
+/// A card's question and choices, grouped. No box of its own: the card is
+/// the one container (docs/proposals/MAC_DESIGN.md).
 struct FleetInsetBox<Content: View>: View {
     @ViewBuilder var content: () -> Content
-    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7, content: content)
-            .padding(9)
+        VStack(alignment: .leading, spacing: TendSpace.s, content: content)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(FleetCardSurface.inset(colorScheme), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(FleetCardSurface.insetBorder(colorScheme)))
     }
 }
 
@@ -164,17 +155,17 @@ struct FleetWorkCard: View {
                         .help("Working on another agent's request; that agent is no longer running")
                 }
                 Text(work.title)
-                    .font(.system(size: 14.5, weight: .bold))
-                    .foregroundStyle(work.lane == .finished ? Color.primary.opacity(0.82) : Color.primary)
-                    .lineLimit(2)
+                    .font(TendType.cardTitle)
+                    .foregroundStyle(TendInk.label(colorScheme))
+                    .lineLimit(3)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if let movedFrom {
                     Label(String(localized: "From \(movedFrom.title)"), systemImage: "arrow.turn.down.right")
                         .font(.system(size: 10, weight: .semibold))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(work.lane.tint.opacity(0.18), in: Capsule())
-                        .foregroundStyle(work.lane.tint)
+                        .background(TendInk.control(colorScheme), in: Capsule())
+                        .foregroundStyle(TendInk.state(work.lane.stateHue, colorScheme))
                         .fixedSize()
                         .transition(.opacity)
                 }
@@ -184,11 +175,15 @@ struct FleetWorkCard: View {
                 FleetStageBar(work: work)
             }
             FleetInsetBox {
-                Text(work.headline)
-                    .font(work.lane == .needsYou ? TendType.body.weight(.medium) : TendType.body)
-                    .foregroundStyle(work.lane == .needsYou ? Color.primary : Color.secondary)
-                    .lineLimit(work.lane == .needsYou ? 4 : 2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                // The headline only when it says more than the state the
+                // meta line already names ("Working", "Idle").
+                if !headlineRepeatsState {
+                    Text(work.headline)
+                        .font(work.lane == .needsYou ? TendType.body.weight(.medium) : TendType.body)
+                        .foregroundStyle(work.lane == .needsYou ? TendInk.label(colorScheme) : TendInk.secondary(colorScheme))
+                        .lineLimit(work.lane == .needsYou ? 4 : 2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
                 if work.handledLimit {
                     Label("Rate limited · the limit policy will resume it", systemImage: "arrow.triangle.2.circlepath")
                         .font(TendType.meta)
@@ -197,25 +192,33 @@ struct FleetWorkCard: View {
                 if work.lane == .needsYou, FleetBoard.waiting(work).count > 1 {
                     Label(String(localized: "\(FleetBoard.waiting(work).count) agents wait on you"), systemImage: "person.2.badge.gearshape")
                         .font(TendType.meta)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(TendInk.state(.orange, colorScheme))
                 }
             }
             meta
         }
-        .padding(12)
+        .padding(TendSpace.m)
         .modifier(FleetEmphasisCardFrame(lane: work.lane, isSelected: isSelected))
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: TendRadius.card, style: .continuous)
                 .strokeBorder(work.lane.tint, lineWidth: 2)
                 .opacity(movedFrom == nil ? 0 : 0.9)
                 .animation(FleetBoard.moveMarkAnimation(movedFrom), value: movedFrom)
                 .allowsHitTesting(false)
         )
-        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: TendRadius.card, style: .continuous))
         .onTapGesture(perform: select)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityAction(named: Text("Inspect"), select)
+    }
+
+    /// The headline is only the focus agent's state label: the meta line
+    /// says that already.
+    private var headlineRepeatsState: Bool {
+        guard let focus = work.focus else { return false }
+        let now = Date()
+        return work.headline == focus.agent.status(at: now).label(now: now)
     }
 
     /// The state, then who and where, then when, on one subdued line.
@@ -224,7 +227,7 @@ struct FleetWorkCard: View {
             Label(work.lane.statusLabel, systemImage: work.lane.statusImage)
                 .labelStyle(TendButtonLabelStyle())
                 .fontWeight(.semibold)
-                .foregroundStyle(work.lane.tint)
+                .foregroundStyle(TendInk.state(work.lane.stateHue, colorScheme))
                 .lineLimit(1)
                 .fixedSize()
             if !work.agentKinds.isEmpty {
@@ -249,7 +252,7 @@ struct FleetWorkCard: View {
             }
         }
         .font(TendType.meta)
-        .foregroundStyle(.secondary)
+        .foregroundStyle(TendInk.secondary(colorScheme))
     }
 }
 
