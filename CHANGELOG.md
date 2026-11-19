@@ -58,6 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `tend swap` moving many agents onto one Claude account is about three
+  times faster: up to four of them are stopped and started on that account
+  home at once (Codex homes stay one at a time). 20 idle agents took ~27 s
+  instead of ~89 s on a scratch bench; `--jobs 1` keeps the old order.
 - Web: links the old workbench made (`/#pane=…`, `#window=…`,
   `#session=…`, `#workspace=…&wsocket=…`, `#message=…`, `#thread=…`) now
   open in Explore or Messages instead of the workbench. A pane wins over a

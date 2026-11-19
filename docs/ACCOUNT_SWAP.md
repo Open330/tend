@@ -323,15 +323,25 @@ any agent is touched. A target that fails does not hold up or change the
 others. Across all of a host's swap jobs at most 16 agents are in progress at
 once.
 
-What runs at the same time is limited per account home (the provider's
+What runs at the same time is also limited per account home (the provider's
 `CLAUDE_CONFIG_DIR` / `CODEX_HOME`, from the account's profile or
-`aas export`): Tend's own bursts of activity on one home — carrying Codex hook
-trust there, quitting an agent that runs on it, and starting a relaunch on it
-until it first draws its prompt — go one at a time. So moving twenty agents
-onto one account overlaps their waits and checks but not their boots. A home
-that cannot be told shares one gate per provider with every other unknown
-home. This keeps a swap from adding a burst of simultaneous starts on one
-home; the agents already running there keep writing to it as they always do.
+`aas export`). A target takes the homes it touches — the stopped agent's and
+the relaunch's — before it starts, and lets them go once the old agent has
+exited and the relaunch has drawn its own prompt (or readiness has ended):
+
+- a Claude home takes up to four targets at once. Claude writes its config
+  all through a session, so no gate can keep two sessions' writes apart;
+  measured with real Claude on a disposable home, eight simultaneous starts
+  and exits lost nothing, sixteen lost some of Claude's own counters. Four
+  keeps a swap well inside that.
+- a Codex home takes one at a time: Tend itself prepares hook trust there
+  (see below), and Codex's own behaviour on a shared home has not been
+  measured.
+
+A home that cannot be told shares one gate per provider with every other
+unknown home. Moving twenty idle agents onto one Claude account took about
+27 s instead of about 89 s on a scratch bench (four at a time). To go back to
+one agent at a time, pass `--jobs 1` or set `[swap] jobs = 1`.
 
 While a daemon job runs, `tend swap` prints a line as each agent settles
 (`tend swap: [3/20] swapped %5 a@claude -> b@claude`) and the full report at

@@ -155,18 +155,79 @@ pub(crate) fn destination_home(
     )
 }
 
-/// Which homes are held, by whom (pane), since when.
-type Gates = HashMap<HomeKey, (String, Instant)>;
+/// Who holds a home: a target's own token, its pane, since when.
+struct Holder {
+    token: u64,
+    pane: String,
+    since: Instant,
+}
+
+/// Which homes are held, and by whom.
+type Gates = HashMap<HomeKey, Vec<Holder>>;
+
+fn next_token() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// How many targets may hold one Claude home at once. Claude itself writes
+/// its config all through a session; with real claude 2.1.328 on a
+/// disposable home, eight simultaneous boots and exits lost no update in
+/// ten trials, sixteen lost some of its own counters in four. Four stays
+/// well inside what was measured exact.
+pub(crate) const CLAUDE_HOME_HOLDERS: usize = 4;
+
+/// How many targets may hold `key` at once: [`CLAUDE_HOME_HOLDERS`] for a
+/// Claude home (known or not), one for any other — Codex, whose hook
+/// trust Tend itself prepares in the home, and whose own behaviour on a
+/// shared home has not been measured.
+fn capacity(key: &HomeKey) -> usize {
+    if key.0.starts_with("claude:") {
+        CLAUDE_HOME_HOLDERS
+    } else {
+        1
+    }
+}
+
+/// Whether `pane` may take `keys` (distinct) now.
+fn room(held: &Gates, keys: &[HomeKey]) -> bool {
+    keys.iter()
+        .all(|key| held.get(key).map_or(0, Vec::len) < capacity(key))
+}
+
+fn take(held: &mut Gates, keys: &[HomeKey], token: u64, pane: &str) {
+    let since = Instant::now();
+    for key in keys {
+        held.entry(key.clone()).or_default().push(Holder {
+            token,
+            pane: pane.to_owned(),
+            since,
+        });
+    }
+}
+
+fn distinct(source: &HomeKey, destination: &HomeKey) -> Vec<HomeKey> {
+    let mut keys = vec![source.clone(), destination.clone()];
+    keys.dedup();
+    keys
+}
 
 fn gates() -> &'static (Mutex<Gates>, std::sync::Condvar) {
     static GATES: OnceLock<(Mutex<Gates>, std::sync::Condvar)> = OnceLock::new();
     GATES.get_or_init(|| (Mutex::default(), std::sync::Condvar::new()))
 }
 
-fn release(key: &HomeKey, because: &str) {
+fn release(key: &HomeKey, token: u64, because: &str) {
     let (held, freed) = gates();
     let mut held = held.lock().unwrap_or_else(PoisonError::into_inner);
-    if let Some((pane, since)) = held.remove(key) {
+    let taken = held.get_mut(key).and_then(|holders| {
+        let at = holders.iter().position(|holder| holder.token == token)?;
+        Some(holders.remove(at))
+    });
+    if held.get(key).is_some_and(Vec::is_empty) {
+        held.remove(key);
+    }
+    if let Some(Holder { pane, since, .. }) = taken {
         tracing::info!(
             home = key.as_str(),
             pane = %pane,
@@ -185,6 +246,7 @@ fn release(key: &HomeKey, because: &str) {
 pub struct HeldHomes(Option<Arc<Held>>);
 
 struct Held {
+    token: u64,
     source: HomeKey,
     destination: HomeKey,
     /// Still held, of `source` and `destination`.
@@ -199,7 +261,7 @@ impl Drop for Held {
             .unwrap_or_else(PoisonError::into_inner)
             .drain(..)
         {
-            release(&key, "the target ended");
+            release(&key, self.token, "the target ended");
         }
     }
 }
@@ -216,7 +278,7 @@ impl HeldHomes {
             if let Some(at) = keys.iter().position(|k| k == key) {
                 keys.remove(at);
                 drop(keys);
-                release(key, because);
+                release(key, held.token, because);
             }
         }
     }
@@ -258,49 +320,48 @@ impl HeldHomes {
     }
 }
 
-fn holding(source: &HomeKey, destination: &HomeKey, pane: &str) -> HeldHomes {
-    let mut keys = vec![source.clone(), destination.clone()];
-    keys.dedup();
-    let held = gates().0.lock().unwrap_or_else(PoisonError::into_inner);
+fn holding(source: &HomeKey, destination: &HomeKey, token: u64, pane: &str) -> HeldHomes {
+    let keys = distinct(source, destination);
     for key in &keys {
         tracing::info!(home = key.as_str(), pane, "swap home gate acquired");
     }
-    drop(held);
     HeldHomes(Some(Arc::new(Held {
+        token,
         source: source.clone(),
         destination: destination.clone(),
         keys: Mutex::new(keys),
     })))
 }
 
-/// Both homes for `pane` if neither is held, else `None` with nothing held.
+/// Both homes for `pane` if each has room ([`capacity`]), else `None` with
+/// nothing held.
 pub fn try_acquire_all(source: &HomeKey, destination: &HomeKey, pane: &str) -> Option<HeldHomes> {
+    let keys = distinct(source, destination);
+    let token = next_token();
     {
         let mut held = gates().0.lock().unwrap_or_else(PoisonError::into_inner);
-        if held.contains_key(source) || held.contains_key(destination) {
+        if !room(&held, &keys) {
             return None;
         }
-        let now = Instant::now();
-        held.insert(source.clone(), (pane.to_owned(), now));
-        held.insert(destination.clone(), (pane.to_owned(), now));
+        take(&mut held, &keys, token, pane);
     }
-    Some(holding(source, destination, pane))
+    Some(holding(source, destination, token, pane))
 }
 
-/// Both homes for `pane`, waiting until neither is held; taken together, so
+/// Both homes for `pane`, waiting until each has room; taken together, so
 /// two waiters can never hold one each.
 pub(crate) fn acquire_all(source: &HomeKey, destination: &HomeKey, pane: &str) -> HeldHomes {
+    let keys = distinct(source, destination);
+    let token = next_token();
     {
         let (held, freed) = gates();
         let mut held = held.lock().unwrap_or_else(PoisonError::into_inner);
-        while held.contains_key(source) || held.contains_key(destination) {
+        while !room(&held, &keys) {
             held = freed.wait(held).unwrap_or_else(PoisonError::into_inner);
         }
-        let now = Instant::now();
-        held.insert(source.clone(), (pane.to_owned(), now));
-        held.insert(destination.clone(), (pane.to_owned(), now));
+        take(&mut held, &keys, token, pane);
     }
-    holding(source, destination, pane)
+    holding(source, destination, token, pane)
 }
 
 #[cfg(test)]
@@ -333,6 +394,29 @@ mod tests {
         held.booted("test");
         assert!(!held.holding());
         assert!(try_acquire_all(&b, &b, "%6").is_some());
+    }
+
+    #[test]
+    fn a_claude_home_takes_up_to_four_holders_and_any_other_one() {
+        let claude = HomeKey(format!("claude:/tmp/gate-test-{}", std::process::id()));
+        let codex = HomeKey(format!("codex:/tmp/gate-test-{}", std::process::id()));
+        let held: Vec<HeldHomes> = (0..CLAUDE_HOME_HOLDERS)
+            .map(|i| try_acquire_all(&claude, &claude, &format!("%{i}")).expect("room"))
+            .collect();
+        assert!(try_acquire_all(&claude, &claude, "%9").is_none(), "full");
+        // One pane name on two servers is two holders.
+        let mut held = held;
+        drop(held.remove(0));
+        let again = try_acquire_all(&claude, &claude, "%0").expect("a holder left");
+        assert!(try_acquire_all(&claude, &claude, "%0").is_none());
+        drop(again);
+        drop(held);
+        let one = try_acquire_all(&codex, &codex, "%1").expect("free");
+        assert!(
+            try_acquire_all(&codex, &codex, "%2").is_none(),
+            "codex: one at a time"
+        );
+        drop(one);
     }
 
     #[test]
