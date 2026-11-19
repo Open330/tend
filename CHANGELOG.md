@@ -23,6 +23,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   own count. Builds carry the `aps-environment` entitlement (development
   for Debug, production for Release).
 
+### Changed
+
+- `tend swap` waits on what the pane shows instead of fixed pauses: each
+  key that must be read before the next (Esc, Ctrl-C) goes once the screen
+  changes, the agent's exit is checked every 100 ms, the relaunch is typed
+  once the shell's screen holds still for 200 ms, and a relaunched agent
+  whose own prompt is on screen, bound to this launch, counts as ready
+  after 0.5 s of quiet instead of 1.5 s. The old pauses stay as ceilings.
+  One agent's stop-to-ready time went from ~4.3 s to ~2.5 s on a scratch
+  bench (fake agents, 0.8 s boot).
+
 ### Fixed
 
 - Tend for iOS: the **Can't be answered** group, its Close all report and

@@ -2107,3 +2107,121 @@ fn an_unreadable_screen_before_the_relaunch_keeps_the_home_until_readiness_ends(
     );
     assert!(!homes.holding());
 }
+
+/// How long (virtual time) a Codex swap of a pane whose screen is cleared
+/// with the old agent takes, when the relaunched process carries `mark`.
+fn fresh_prompt_swap_takes(mark: &str) -> Duration {
+    let io = FakeIo::new(
+        CODEX_IDLE,
+        Box::new(|io: &FakeIo, line: &str| {
+            if line.starts_with("signal TERM") {
+                io.kill(AGENT);
+                io.show("$ ");
+            }
+            if line == "text \"\\r\""
+                && io
+                    .previous()
+                    .is_some_and(|typed| typed.contains("RELAUNCH"))
+            {
+                io.agent_appears_in(Duration::from_secs(1));
+                io.show(CODEX_IDLE);
+            }
+        }),
+    );
+    *io.launch_mark.borrow_mut() = Some(mark.into());
+    let mut target = target(AgentKind::Codex, false, false);
+    target.launch_id = Some("L1".into());
+    let (result, _, _) = run(&io, &target, &launch(), None, &mut NoObserver);
+    assert!(result.is_ok(), "{result:?}");
+    io.now.get()
+}
+
+/// This launch's own prompt, bound to its id, counts as drawn after a
+/// shorter quiet; any other screen still needs the full one.
+#[test]
+fn this_launch_s_own_prompt_settles_sooner_than_any_other_screen() {
+    let ours = fresh_prompt_swap_takes("L1");
+    let other = fresh_prompt_swap_takes("someone-else");
+    let saved = other.saturating_sub(ours);
+    assert!(
+        saved + super::READY_QUIET_EVIDENT + super::POLL >= super::READY_QUIET,
+        "ours {ours:?}, another launch's {other:?}"
+    );
+}
+
+/// Each key that must be read before the next goes as soon as the screen
+/// shows it was: `/exit` follows Ctrl-C at the first changed screen, and
+/// Esc's interrupt is waited on until the turn is seen to stop.
+#[test]
+fn claude_keys_follow_each_other_once_the_screen_shows_them_read() {
+    let typed_at = std::rc::Rc::new(RefCell::new(Vec::new()));
+    let seen = typed_at.clone();
+    let io = FakeIo::new(
+        "✻ Thinking… (3s · esc to interrupt)\n❯ \n  ⏵⏵ auto mode on\n",
+        Box::new(move |io: &FakeIo, line: &str| {
+            seen.borrow_mut().push((line.to_owned(), io.now.get()));
+            match line {
+                "text \"\\u{1b}\"" => io.show("Interrupted\n❯ \n  ⏵⏵ auto mode on\n"),
+                "text \"\\u{3}\"" => io.show("❯ \n  Press Ctrl-C again to exit\n"),
+                "text \"\\r\"" if io.previous().as_deref() == Some("prompt \"/exit\"") => {
+                    io.kill(AGENT);
+                    io.kill(WRAPPER);
+                    io.show("$ ");
+                }
+                _ => {}
+            }
+        }),
+    );
+    let mut target = target(AgentKind::ClaudeCode, false, true);
+    target.launch_id = Some("L1".into());
+    let _ = run(&io, &target, &claude_launch(), None, &mut NoObserver);
+    let at = |key: &str| {
+        typed_at
+            .borrow()
+            .iter()
+            .find(|(line, _)| line == key)
+            .map_or_else(
+                || panic!("{key} never typed: {:?}", typed_at.borrow()),
+                |(_, at)| *at,
+            )
+    };
+    let esc = at("text \"\\u{1b}\"");
+    let ctrl_c = at("text \"\\u{3}\"");
+    let exit = at("prompt \"/exit\"");
+    assert!(ctrl_c > esc, "Ctrl-C waits for the interrupt to be read");
+    assert!(
+        ctrl_c.saturating_sub(esc) < super::INTERRUPT_SETTLE,
+        "but not the whole ceiling: {:?}",
+        ctrl_c.saturating_sub(esc)
+    );
+    assert!(
+        exit > ctrl_c && exit.saturating_sub(ctrl_c) < super::KEY_READ,
+        "/exit {:?} after Ctrl-C",
+        exit.saturating_sub(ctrl_c)
+    );
+}
+
+/// A screen that never shows the key read still gets the old ceilings.
+#[test]
+fn keys_on_a_screen_that_never_changes_wait_the_full_ceiling() {
+    let typed_at = std::rc::Rc::new(RefCell::new(Vec::new()));
+    let seen = typed_at.clone();
+    let io = FakeIo::new(
+        "✻ Thinking… (3s · esc to interrupt)\n❯ \n  ⏵⏵ auto mode on\n",
+        Box::new(move |io: &FakeIo, line: &str| {
+            seen.borrow_mut().push((line.to_owned(), io.now.get()));
+            if line == "text \"\\r\"" && io.previous().as_deref() == Some("prompt \"/exit\"") {
+                io.kill(AGENT);
+                io.kill(WRAPPER);
+            }
+        }),
+    );
+    let target = target(AgentKind::ClaudeCode, false, true);
+    let _ = run(&io, &target, &claude_launch(), None, &mut NoObserver);
+    let typed = typed_at.borrow();
+    let at = |key: &str| typed.iter().find(|(line, _)| line == key).unwrap().1;
+    assert!(
+        at("text \"\\u{3}\"").saturating_sub(at("text \"\\u{1b}\"")) >= super::INTERRUPT_SETTLE
+    );
+    assert!(at("prompt \"/exit\"").saturating_sub(at("text \"\\u{3}\"")) >= super::KEY_READ);
+}
