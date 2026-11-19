@@ -218,8 +218,9 @@ pub struct SubjectObservations {
     unverified: std::sync::Mutex<Vec<SubjectFact>>,
 }
 
-/// A replacement no complete scan of its socket could settle within this
-/// long is recorded as not on the same incarnation (it never counts).
+/// A replacement no complete scan of its socket settled within this long
+/// of its hook is recorded as not on the same incarnation (it never
+/// counts), even if an answering scan comes later.
 const UNVERIFIED_FOR: time::Duration = time::Duration::minutes(10);
 
 /// Facts waiting to be taken are bounded: a collaboration store that never
@@ -252,14 +253,18 @@ impl SubjectObservations {
                             .iter()
                             .find(|server| server.endpoint == endpoint)
                     });
+                    let late = scan.at - fact.observed_at > UNVERIFIED_FOR;
                     match answer {
-                        Some(server) => {
+                        // Only a scan within the window settles it as the
+                        // same server; a later answer could follow a
+                        // restart and a second binding in between.
+                        Some(server) if !late => {
                             fact.same_incarnation = server.running
                                 && fact.incarnation.is_some()
                                 && server.incarnation == fact.incarnation;
                         }
-                        None if scan.at - fact.observed_at < UNVERIFIED_FOR => return true,
-                        None => fact.same_incarnation = false,
+                        None if !late => return true,
+                        _ => fact.same_incarnation = false,
                     }
                     settled.push(fact.clone());
                     false

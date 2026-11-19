@@ -909,10 +909,14 @@ impl CollaborationStore {
             )));
         }
         let _transaction = self.transaction_lock.lock().await;
-        // The evidence as it is now, read after taking the lock: a resume
-        // or a hook that landed while this call waited is seen.
-        let agents = registry.snapshot().await;
-        let observations = registry.subject_observations();
+        let snapshot = self.requests.read().await;
+        // Lock order: the mailbox's, then the registry's. The registry is
+        // held still from this read through the commit below, so a resume,
+        // a hook or a scan lands either before this evaluation or after the
+        // commit, never in between.
+        let hold = registry.hold().await;
+        let agents = hold.agents();
+        let observations = hold.observations();
         let scan = observations.scan();
         let bindings = observations.bindings();
         let mut facts = self.subject.facts();
@@ -923,7 +927,6 @@ impl CollaborationStore {
             bindings: &bindings,
         };
         let now = OffsetDateTime::now_utc();
-        let snapshot = self.requests.read().await;
         let mut outcome = CloseOutcome::default();
         let mut rows = Vec::new();
         let mut seen = std::collections::HashSet::new();
@@ -997,6 +1000,7 @@ impl CollaborationStore {
         drop(snapshot);
         if !rows.is_empty() {
             self.commit_request_rows(&rows).await?;
+            drop(hold);
             self.publish_change();
             for row in &rows {
                 tracing::info!(

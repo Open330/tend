@@ -1478,3 +1478,105 @@ async fn facts_survive_a_failed_write() {
     assert!(observations.peek_facts().is_empty());
     assert_eq!(recovered.subject_facts()[0].session_id, "s1");
 }
+
+/// A resume that lands while Close all waits for the mailbox wins: the
+/// registry is read only once the mailbox is held, and held still through
+/// the commit.
+#[tokio::test]
+async fn reviewer_resume_after_registry_read_before_commit_must_win() {
+    let store = CollaborationStore::in_memory(CollaborationOptions::default());
+    store.set_close_unanswerable(true);
+    let q = question(&store, &participant("s9", "%9", "default")).await;
+    let episode = store.fold_for_test(&q.id, GoneCause::PaneGone).await;
+    let registry = registry(&[]).await;
+    let items = [CloseItem {
+        request_id: q.id.clone(),
+        episode,
+    }];
+    let requests_guard = store.requests.write().await;
+    let mut closing = Box::pin(store.close_unanswerable(&items, &registry, "cli", None));
+    tokio::select! {
+        biased;
+        _ = &mut closing => panic!("must wait for the held requests lock"),
+        () = std::future::ready(()) => {}
+    }
+    registry
+        .apply(&AgentEvent::Started {
+            id: AgentId {
+                kind: AgentKind::ClaudeCode,
+                session_id: "s9".into(),
+                surface: None,
+                pane: Some("%30".into()),
+                tmux_socket: Some("default".into()),
+                cwd: None,
+            },
+            at: OffsetDateTime::now_utc(),
+        })
+        .await;
+    drop(requests_guard);
+    let outcome = closing.await.unwrap();
+    assert!(outcome.closed.is_empty());
+    assert_eq!(outcome.skipped[0].reason, "its subject is back");
+    assert!(get(&store, &q.id).await.needs_human_response());
+}
+
+/// While Close all holds the registry, a hook waits for its commit.
+#[tokio::test]
+async fn a_hook_waits_for_close_alls_commit() {
+    let store = CollaborationStore::in_memory(CollaborationOptions::default());
+    store.set_close_unanswerable(true);
+    let q = question(&store, &participant("s9", "%9", "default")).await;
+    let episode = store.fold_for_test(&q.id, GoneCause::PaneGone).await;
+    let registry = registry(&[]).await;
+    let hold = registry.hold().await;
+    let resume = AgentEvent::Started {
+        id: AgentId {
+            kind: AgentKind::ClaudeCode,
+            session_id: "s9".into(),
+            surface: None,
+            pane: Some("%30".into()),
+            tmux_socket: Some("default".into()),
+            cwd: None,
+        },
+        at: OffsetDateTime::now_utc(),
+    };
+    let mut hook = Box::pin(registry.apply(&resume));
+    tokio::select! {
+        biased;
+        () = &mut hook => panic!("a hook must wait while the registry is held"),
+        () = std::future::ready(()) => {}
+    }
+    drop(hold);
+    hook.await;
+    // The resume landed before the close read the registry: it wins.
+    let outcome = store
+        .close_unanswerable(
+            &[CloseItem {
+                request_id: q.id.clone(),
+                episode,
+            }],
+            &registry,
+            "cli",
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(outcome.skipped[0].reason, "its subject is back");
+}
+
+/// An answering scan that first arrives after the ten-minute window does
+/// not certify a replacement.
+#[tokio::test]
+async fn reviewer_replacement_answer_after_ten_minutes_is_uncertified() {
+    let registry = replaced_after_an_old_scan().await;
+    registry
+        .record_pane_scan(scan(
+            OffsetDateTime::now_utc() + Duration::minutes(11),
+            &[("default", Some(A))],
+            &[pane("%4", "default", "claude", Some(true))],
+        ))
+        .await;
+    let facts = registry.subject_observations().take_facts();
+    assert_eq!(facts.len(), 1);
+    assert!(!facts[0].same_incarnation);
+}

@@ -671,6 +671,24 @@ pub struct Store {
     subject: crate::subject_evidence::SubjectObservations,
 }
 
+/// The registry held still ([`Store::hold`]).
+pub struct RegistryHold<'a> {
+    agents: tokio::sync::RwLockReadGuard<'a, HashMap<String, Agent>>,
+    subject: &'a crate::subject_evidence::SubjectObservations,
+}
+
+impl RegistryHold<'_> {
+    #[must_use]
+    pub fn agents(&self) -> Vec<Agent> {
+        self.agents.values().cloned().collect()
+    }
+
+    #[must_use]
+    pub fn observations(&self) -> &crate::subject_evidence::SubjectObservations {
+        self.subject
+    }
+}
+
 impl std::fmt::Debug for Store {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Store")
@@ -726,6 +744,21 @@ impl Store {
         }
     }
 
+    /// Keep the registry still: no hook is applied, and no scan, binding or
+    /// fact is recorded (each does so under the registry's write guard)
+    /// until the hold is dropped. Only Close all of unanswerable questions
+    /// takes it, after the collaboration locks, and keeps it through its one
+    /// durable commit, so a resume or new evidence either lands before its
+    /// evaluation or after its commit. An exception to the rule that the
+    /// registry guard is never held across an `.await`: the commit awaits
+    /// only the mailbox's own lock and write, never the registry.
+    pub async fn hold(&self) -> RegistryHold<'_> {
+        RegistryHold {
+            agents: self.agents.read().await,
+            subject: &self.subject,
+        }
+    }
+
     /// The evidence the subject check of human items reads: the newest
     /// scan, each session's binding, and facts recorded at ingestion.
     #[must_use]
@@ -736,7 +769,9 @@ impl Store {
     /// Keep the newest reconcile scan for the subject check, and stamp each
     /// live row present in a complete scan with the binding it is seen on.
     pub async fn record_pane_scan(&self, scan: crate::subject_evidence::PaneScan) {
-        let agents = self.agents.read().await;
+        // Under the write guard, like every hook: evidence never changes
+        // while a [`RegistryHold`] keeps the registry still.
+        let agents = self.agents.write().await;
         let rows: HashSet<String> = agents.keys().cloned().collect();
         let mut live = Vec::new();
         for agent in agents.values() {
@@ -770,9 +805,9 @@ impl Store {
                 },
             ));
         }
-        drop(agents);
         self.subject.stamp_bindings(live, &rows);
         self.subject.set_scan(scan);
+        drop(agents);
     }
 
     /// Borrow the runtime metrics handle. Daemon hands this off to the
