@@ -8,6 +8,10 @@
 
 use anyhow::{bail, Context, Result};
 use std::fmt::Write as _;
+use tend::collaboration::subject_check::{
+    CloseItem, CloseOutcome, GoneCause as SubjectGoneCause, CLOSE_UNANSWERABLE_CAPABILITY,
+    CLOSE_UNANSWERABLE_OFF, SUBJECT_CHECK_CAPABILITY,
+};
 use tend::collaboration::system_asks::{
     SystemAskCleanup, SystemAskCloseReason, SystemAskKind, SYSTEM_ASK_CLEANUP_CAPABILITY,
 };
@@ -336,10 +340,27 @@ enum Action {
     /// act on it, are closed with the reason recorded. tendd does the same
     /// every hour; this shows it now. Agents' own questions are never
     /// touched. Prints what it would close; --apply closes it.
+    ///
+    /// Also lists the questions nobody can answer any more (their asker or
+    /// subject established gone for a day), which are never closed for age;
+    /// --questions --apply closes exactly the ones listed, each with the
+    /// reply Dismiss sends, when `[review] close_unanswerable` is on.
     Cleanup {
         /// Close them. Without it, nothing changes.
         #[arg(long)]
         apply: bool,
+        /// With --apply, also close the unanswerable questions listed.
+        /// Without --apply it only lists them, as a dry run always does.
+        #[arg(long)]
+        questions: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Keep one unanswerable question in your turn: it stays listed until
+    /// its subject is seen alive and then gone again.
+    Keep {
+        /// The request id, as `tend review queue` prints it.
+        id: String,
         #[arg(long)]
         json: bool,
     },
@@ -441,7 +462,12 @@ pub(crate) async fn run(args: Args, client: &Client) -> Result<()> {
             json,
             closures,
         } => history(client, limit, json, closures).await,
-        Action::Cleanup { apply, json } => cleanup(client, apply, json).await,
+        Action::Cleanup {
+            apply,
+            questions,
+            json,
+        } => cleanup(client, apply, questions, json).await,
+        Action::Keep { id, json } => keep(client, &id, json).await,
         Action::Show { id, json } => show(client, &id, json).await,
         Action::Accept(a) => dispose(client, DispositionKind::Accepted, a).await,
         Action::Return(a) => dispose(client, DispositionKind::Returned, a).await,
@@ -559,14 +585,33 @@ pub(crate) fn render_human_request(entry: &HumanRequestEntry, now: OffsetDateTim
 
 fn render_queue(queue: &PendingQueue, now: OffsetDateTime) -> String {
     let mut out = String::new();
-    if queue.items.is_empty() {
+    let folded = queue
+        .items
+        .iter()
+        .filter(
+            |item| matches!(item, PendingItem::HumanRequest(entry) if entry.unanswerable.is_some()),
+        )
+        .count();
+    let live = queue.items.len() - folded;
+    if live == 0 {
         out.push_str("nothing is waiting on you\n");
     } else {
-        let n = queue.items.len();
-        let _ = writeln!(out, "{n} waiting on you:");
+        let _ = writeln!(out, "{live} waiting on you:");
     }
+    let mut group = false;
     for item in &queue.items {
         match item {
+            PendingItem::HumanRequest(entry) if entry.unanswerable.is_some() => {
+                if !group {
+                    group = true;
+                    let _ = writeln!(
+                        out,
+                        "can't be answered ({}): subject gone 24h+; `tend review cleanup` lists them",
+                        queue.unanswerable_count.max(folded),
+                    );
+                }
+                let _ = writeln!(out, "  ✕ gone    {}", render_unanswerable(entry, now));
+            }
             PendingItem::HumanRequest(entry) if entry.system => {
                 let _ = writeln!(out, "  · tend    {}", render_human_request(entry, now));
             }
@@ -620,7 +665,167 @@ fn render_queue(queue: &PendingQueue, now: OffsetDateTime) -> String {
     out
 }
 
-async fn cleanup(client: &Client, apply: bool, json: bool) -> Result<()> {
+/// What `tend review cleanup` reports: tend's own items as before, plus the
+/// questions nobody can answer, and what `--questions --apply` did to them.
+#[derive(Debug, serde::Serialize)]
+struct CleanupReport {
+    #[serde(flatten)]
+    tend_items: SystemAskCleanup,
+    /// Unanswerable questions, each with its episode, oldest first.
+    questions: Vec<HumanRequestEntry>,
+    /// All of them, even past what was read.
+    unanswerable_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    questions_closed: Option<CloseOutcome>,
+}
+
+async fn cleanup(client: &Client, apply: bool, questions: bool, json: bool) -> Result<()> {
+    let hello = client
+        .hello(std::time::Duration::from_secs(3))
+        .await
+        .context("asking tendd what it supports")?;
+    let has = |cap: &str| hello.capabilities.iter().any(|c| c == cap);
+    if !has(SYSTEM_ASK_CLEANUP_CAPABILITY) {
+        bail!("this tendd cannot clean up its own items ({SYSTEM_ASK_CLEANUP_CAPABILITY}); restart it with the same tend build");
+    }
+    let close_questions = questions && apply;
+    if close_questions && !has(SUBJECT_CHECK_CAPABILITY) {
+        bail!("this tendd does not judge questions' subjects ({SUBJECT_CHECK_CAPABILITY}); restart it with the same tend build");
+    }
+    if close_questions && !has(CLOSE_UNANSWERABLE_CAPABILITY) {
+        bail!("{CLOSE_UNANSWERABLE_OFF}");
+    }
+    // The list is read first: --questions --apply closes exactly it.
+    let (listed, unanswerable_count) = if has(SUBJECT_CHECK_CAPABILITY) {
+        let queue = client
+            .decision_queue(
+                &tend::decision_queue::operator_origin(),
+                tend::decision_queue::MAX_QUEUE_LIMIT,
+            )
+            .await?;
+        (unanswerable_entries(&queue), queue.unanswerable_count)
+    } else {
+        (Vec::new(), 0)
+    };
+    let cleanup = client.system_ask_cleanup(apply).await?;
+    let questions_closed = if close_questions && !listed.is_empty() {
+        let pairs: Vec<CloseItem> = listed
+            .iter()
+            .filter_map(|entry| {
+                entry.unanswerable.as_ref().map(|u| CloseItem {
+                    request_id: entry.request_id.clone(),
+                    episode: u.episode.clone(),
+                })
+            })
+            .collect();
+        Some(client.decision_close_unanswerable(&pairs, "cli").await?)
+    } else {
+        None
+    };
+    let report = CleanupReport {
+        tend_items: cleanup,
+        questions: listed,
+        unanswerable_count,
+        questions_closed,
+    };
+    if json {
+        println!("{}", serde_json::to_string(&report)?);
+    } else {
+        let now = OffsetDateTime::now_utc();
+        print!("{}", render_cleanup(&report.tend_items, now));
+        print!("{}", render_questions(&report, now));
+    }
+    Ok(())
+}
+
+/// The queue's unanswerable questions, in queue order.
+fn unanswerable_entries(queue: &PendingQueue) -> Vec<HumanRequestEntry> {
+    queue
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            PendingItem::HumanRequest(entry) if entry.unanswerable.is_some() => Some(entry.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn action_label(entry: &HumanRequestEntry) -> String {
+    entry.action.map_or_else(
+        || "question".to_owned(),
+        |action| {
+            serde_json::to_value(action)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_else(|| "question".into())
+        },
+    )
+}
+
+/// One line per unanswerable question: id, age, what it asks for, why
+/// nobody can answer it and since when, and who asked.
+fn render_unanswerable(entry: &HumanRequestEntry, now: OffsetDateTime) -> String {
+    let Some(gone) = &entry.unanswerable else {
+        return String::new();
+    };
+    let since = gone
+        .since
+        .format(&time::macros::format_description!("[year]-[month]-[day]"))
+        .unwrap_or_default();
+    let what = match &gone.pane {
+        Some(pane) if gone.cause != SubjectGoneCause::Ended => {
+            format!("{} {pane}", gone.cause.as_str())
+        }
+        _ => gone.cause.as_str().to_owned(),
+    };
+    format!(
+        "{}  {:>4}  {}  {what} since {since}  ({})",
+        entry.request_id,
+        crate::attend::humanize_since(entry.created_at, now),
+        action_label(entry),
+        asker(entry),
+    )
+}
+
+fn render_questions(report: &CleanupReport, now: OffsetDateTime) -> String {
+    let mut out = String::new();
+    if report.unanswerable_count == 0 {
+        return out;
+    }
+    let n = report.unanswerable_count;
+    let plural = if n == 1 { "question" } else { "questions" };
+    if let Some(closed) = &report.questions_closed {
+        let _ = writeln!(
+                out,
+                "closed {} of {n} {plural} that can't be answered (subject gone 24h+); each asker got the reply Dismiss sends",
+                closed.closed.len(),
+            );
+        for skipped in &closed.skipped {
+            let _ = writeln!(out, "  skipped {}: {}", skipped.request_id, skipped.reason);
+        }
+    } else {
+        let _ = writeln!(
+            out,
+            "{n} {plural} can't be answered (subject gone 24h+); not closed:"
+        );
+        for entry in &report.questions {
+            let _ = writeln!(out, "  {}", render_unanswerable(entry, now));
+        }
+        if report.questions.len() < n {
+            let _ = writeln!(out, "  … and {} more", n - report.questions.len());
+        }
+        let _ = writeln!(
+                out,
+                "add --questions --apply to close these {} (each asker gets a declined reply), or `tend review keep <id>` to keep one",
+                report.questions.len(),
+            );
+    }
+    out
+}
+
+/// `tend review keep <id>`: keep the question through its current episode.
+async fn keep(client: &Client, id: &str, json: bool) -> Result<()> {
+    require_queue_capability(client).await?;
     let hello = client
         .hello(std::time::Duration::from_secs(3))
         .await
@@ -628,15 +833,31 @@ async fn cleanup(client: &Client, apply: bool, json: bool) -> Result<()> {
     if !hello
         .capabilities
         .iter()
-        .any(|c| c == SYSTEM_ASK_CLEANUP_CAPABILITY)
+        .any(|c| c == SUBJECT_CHECK_CAPABILITY)
     {
-        bail!("this tendd cannot clean up its own items ({SYSTEM_ASK_CLEANUP_CAPABILITY}); restart it with the same tend build");
+        bail!("this tendd does not judge questions' subjects ({SUBJECT_CHECK_CAPABILITY}); restart it with the same tend build");
     }
-    let cleanup = client.system_ask_cleanup(apply).await?;
+    let queue = client
+        .decision_queue(
+            &tend::decision_queue::operator_origin(),
+            tend::decision_queue::MAX_QUEUE_LIMIT,
+        )
+        .await?;
+    let Some(episode) = unanswerable_entries(&queue)
+        .into_iter()
+        .find(|entry| entry.request_id == id)
+        .and_then(|entry| entry.unanswerable.map(|u| u.episode))
+    else {
+        bail!("{id} is not listed as a question that can't be answered; nothing to keep");
+    };
+    let kept = client.decision_keep(id, &episode).await?;
     if json {
-        println!("{}", serde_json::to_string(&cleanup)?);
+        println!("{}", serde_json::to_string(&kept)?);
     } else {
-        print!("{}", render_cleanup(&cleanup, OffsetDateTime::now_utc()));
+        println!(
+            "kept {}: it stays in your turn until its subject comes back and goes again",
+            kept.request_id
+        );
     }
     Ok(())
 }
@@ -1113,11 +1334,13 @@ mod tests {
             work_id: Some("storage".into()),
             created_at: datetime!(2026-11-12 11:00 UTC),
             system: false,
+            unanswerable: None,
         };
         let queue = PendingQueue {
             items: vec![PendingItem::HumanRequest(entry.clone())],
             truncated: true,
             unavailable: vec!["review items: closed".into()],
+            unanswerable_count: 0,
         };
         let out = render_queue(&queue, now);
         assert!(out.contains("1 waiting on you:"), "{out}");
@@ -1137,6 +1360,7 @@ mod tests {
                     status: tend::collaboration::RequestStatus::Completed,
                     answer: "merge it".into(),
                     answered_at: datetime!(2026-11-12 11:30 UTC),
+                    closure: None,
                 },
             ))],
             ..DecisionHistory::default()
@@ -1161,6 +1385,70 @@ mod tests {
         )
         .unwrap();
         assert_eq!(describe_target(&t), "work tend/review @impl");
+    }
+
+    fn gone_entry(id: &str) -> HumanRequestEntry {
+        serde_json::from_value(serde_json::json!({
+            "request_id": id, "action": "information", "body": "Which branch?",
+            "from_session_id": "s", "from_pane": "%42", "from_alias": "otpeek",
+            "created_at": "2026-11-10T12:00:00Z",
+            "unanswerable": {"cause": "pane_gone", "episode": "ep_1",
+                             "since": "2026-11-16T03:00:00Z", "pane": "%42"}
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn unanswerable_questions_are_folded_last_and_listed_by_cleanup() {
+        let now = datetime!(2026-11-19 00:00 UTC);
+        let queue = PendingQueue {
+            items: vec![PendingItem::HumanRequest(gone_entry("rq_gone"))],
+            unanswerable_count: 3,
+            ..PendingQueue::default()
+        };
+        let out = render_queue(&queue, now);
+        assert!(out.starts_with("nothing is waiting on you\n"), "{out}");
+        assert!(out.contains("can't be answered (3)"), "{out}");
+        assert!(
+            out.contains(
+                "✕ gone    rq_gone    8d  information  pane gone %42 since 2026-11-16  (@otpeek)"
+            ),
+            "{out}"
+        );
+        let report = CleanupReport {
+            tend_items: SystemAskCleanup {
+                dry_run: true,
+                ..SystemAskCleanup::default()
+            },
+            questions: vec![gone_entry("rq_gone")],
+            unanswerable_count: 1,
+            questions_closed: None,
+        };
+        let out = render_questions(&report, now);
+        assert!(
+            out.starts_with("1 question can't be answered (subject gone 24h+); not closed:\n"),
+            "{out}"
+        );
+        assert!(out.contains("add --questions --apply"), "{out}");
+        // --json: tend's items as before, plus the questions.
+        let json = serde_json::to_value(&report).unwrap();
+        assert_eq!(json["dry_run"], true);
+        assert_eq!(json["questions"][0]["unanswerable"]["episode"], "ep_1");
+        assert_eq!(json["unanswerable_count"], 1);
+        let closed = CleanupReport {
+            questions_closed: Some(CloseOutcome {
+                closed: vec!["rq_gone".into()],
+                skipped: vec![tend::collaboration::subject_check::SkippedClose {
+                    request_id: "rq_b".into(),
+                    reason: "kept".into(),
+                }],
+            }),
+            unanswerable_count: 2,
+            ..report
+        };
+        let out = render_questions(&closed, now);
+        assert!(out.contains("closed 1 of 2 questions"), "{out}");
+        assert!(out.contains("skipped rq_b: kept"), "{out}");
     }
 
     #[test]

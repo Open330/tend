@@ -1,6 +1,6 @@
 # Questions nobody can be answered
 
-Status: agreed design (wave 8, 2026-11-19, Codex agreed on 43531a1a). Part 1, tend's own items, is built (`feat/stale-system-asks`); the rest is not yet.
+Status: agreed design (wave 8, 2026-11-19, Codex agreed on 43531a1a). Part 1, tend's own items, is built (#638). The rest of build-plan step 1 (evidence, episodes, folding, Keep, and Close all off behind `[review] close_unanswerable`) is built in daemon, IPC, dashboard and CLI (`feat/unanswerable-questions`); the surfaces (step 2) are not yet.
 
 ## The complaint
 

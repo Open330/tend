@@ -23,6 +23,30 @@ fn decision_audit(body: &RequestBody) -> Option<CollaborationAuditContext> {
                 context.query_limit = Some(*limit);
                 context
             }),
+        RequestBody::DecisionKeep {
+            origin, request_id, ..
+        } => origin
+            .as_ref()
+            .filter(|origin| origin.console)
+            .map(|origin| {
+                let mut context = CollaborationAuditContext::new(
+                    CollaborationAuditOperation::DecisionKeep,
+                    origin.clone(),
+                );
+                context.request_id = Some(request_id.clone());
+                context
+            }),
+        RequestBody::DecisionCloseUnanswerable { origin, .. } => origin
+            .as_ref()
+            .filter(|origin| origin.console)
+            .map(|origin| {
+                let mut context = CollaborationAuditContext::new(
+                    CollaborationAuditOperation::DecisionCloseUnanswerable,
+                    origin.clone(),
+                );
+                context.scope = Some(MailboxScope::All);
+                context
+            }),
         RequestBody::SystemAskCleanup {
             apply: true,
             origin,
@@ -108,7 +132,9 @@ pub(super) async fn handle(
         }
         body @ (RequestBody::DecisionQueue { .. }
         | RequestBody::DecisionHistory { .. }
-        | RequestBody::SystemAskCleanup { .. }) => {
+        | RequestBody::SystemAskCleanup { .. }
+        | RequestBody::DecisionKeep { .. }
+        | RequestBody::DecisionCloseUnanswerable { .. }) => {
             let audit = decision_audit(&body);
             let (name, response) = Box::pin(super::review::decision_response(
                 reviews,

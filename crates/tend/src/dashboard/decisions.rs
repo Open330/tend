@@ -280,6 +280,10 @@ pub(super) async fn queue_sections(state: &AppState, limit: usize) -> Vec<serde_
     let mut hosts = vec![json!({
         "alias": local_alias(&fleet_hosts), "local": true, "control": true,
         "decides_reviews": true,
+        // Unanswerable questions are folded (`subject_check_v1`) and can be
+        // kept here; Close all only while `[review] close_unanswerable` is on.
+        "subject_check": true,
+        "close_unanswerable": state.collaboration.close_unanswerable_enabled(),
         "covers": ["questions", "waiting agents", "review items"],
         "unavailable": local.unavailable.clone(), "queue": local,
     })];
@@ -913,4 +917,114 @@ async fn answer_remote(
         Err(error) if error.contains("already") => (StatusCode::CONFLICT, error),
         Err(error) => (StatusCode::BAD_GATEWAY, format!("{alias}: {error}")),
     }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct KeepRequest {
+    request_id: String,
+    episode: String,
+}
+
+/// `POST /api/decisions/keep`: keep one unanswerable question on this host
+/// in the person's turn through its current episode (`decision_keep`).
+pub(super) async fn keep_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    device: Option<axum::Extension<super::devices::DeviceAuth>>,
+    Json(keep): Json<KeepRequest>,
+) -> Response {
+    let (by, account) = operator_identity(&state, &headers, device.as_deref());
+    let result = state
+        .collaboration
+        .keep_unanswerable(&keep.request_id, &keep.episode)
+        .await;
+    let (code, outcome) = match &result {
+        Ok(_) => (StatusCode::OK, "kept".to_owned()),
+        Err(e) => subject_error(e),
+    };
+    audit(
+        state.decision_audit.as_ref(),
+        json!({
+            "at": time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).ok(),
+            "by": by, "account": account, "action": "keep", "id": keep.request_id,
+            "episode": keep.episode, "outcome": outcome, "status": code.as_u16(),
+        }),
+    )
+    .await;
+    match result {
+        Ok(kept) => Json(kept).into_response(),
+        Err(_) => error(code, outcome),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct CloseUnanswerableRequest {
+    items: Vec<crate::collaboration::subject_check::CloseItem>,
+    /// The surface: `web` or `ios` (`mac` from Tend for Mac); defaults to
+    /// `ios` for a paired device and `web` otherwise.
+    #[serde(default)]
+    by_label: Option<String>,
+}
+
+/// `POST /api/decisions/close-unanswerable`: close exactly the listed
+/// `(request id, episode)` pairs on this host as the person
+/// (`decision_close_unanswerable`). Refused (403) while `[review]
+/// close_unanswerable` is off.
+pub(super) async fn close_unanswerable_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    device: Option<axum::Extension<super::devices::DeviceAuth>>,
+    Json(close): Json<CloseUnanswerableRequest>,
+) -> Response {
+    let (by, account) = operator_identity(&state, &headers, device.as_deref());
+    let surface = close
+        .by_label
+        .clone()
+        .unwrap_or_else(|| if device.is_some() { "ios" } else { "web" }.to_owned());
+    let agents = state.store.snapshot().await;
+    let result = state
+        .collaboration
+        .close_unanswerable(&close.items, &agents, &surface, Some(by.clone()))
+        .await;
+    let (code, outcome) = match &result {
+        Ok(outcome) => (
+            StatusCode::OK,
+            format!(
+                "closed {}, skipped {}",
+                outcome.closed.len(),
+                outcome.skipped.len()
+            ),
+        ),
+        Err(e) => subject_error(e),
+    };
+    audit(
+        state.decision_audit.as_ref(),
+        json!({
+            "at": time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).ok(),
+            "by": by, "account": account, "action": "close_unanswerable", "surface": surface,
+            "items": close.items, "closed": result.as_ref().ok().map(|o| o.closed.clone()),
+            "outcome": outcome, "status": code.as_u16(),
+        }),
+    )
+    .await;
+    match result {
+        Ok(closed) => Json(closed).into_response(),
+        Err(_) => error(code, outcome),
+    }
+}
+
+fn subject_error(error: &E) -> (StatusCode, String) {
+    let code = match error {
+        E::NotFound(_) => StatusCode::NOT_FOUND,
+        E::SubjectCheck(message)
+            if message == crate::collaboration::subject_check::CLOSE_UNANSWERABLE_OFF =>
+        {
+            StatusCode::FORBIDDEN
+        }
+        E::AlreadyTerminal(_) | E::SubjectCheck(_) => StatusCode::CONFLICT,
+        _ => StatusCode::SERVICE_UNAVAILABLE,
+    };
+    (code, error.to_string())
 }

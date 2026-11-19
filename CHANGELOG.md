@@ -28,6 +28,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the Mac's `home-answer:`/`home-sendback:` key), so it shows in `tend
   review history` and the Mac's history.
 
+- Questions nobody can answer any more are folded out of Your turn. When an
+  open question's asker (for tend's recovery items, the original request's
+  recipient; for reply wakes, its sender) has been established gone for a
+  day, by its own end hook, another agent starting in its pane, its pane
+  gone from a complete tmux/rmux scan, or a shell left in its pane, the
+  queue marks it `unanswerable` and lists it after every live item, with an
+  exact `unanswerable_count` (`subject_check_v1`). Nothing closes it without
+  a person. `tend review keep <id>` (`POST /api/decisions/keep`) keeps one
+  in Your turn; `tend review cleanup` lists them, and `--questions --apply`
+  (`POST /api/decisions/close-unanswerable`) declines exactly the listed
+  ones with the reply Dismiss sends, only with `[review] close_unanswerable
+  = true` (off by default; `close_unanswerable_v1`). See docs/REVIEW.md.
+
 ### Changed
 
 - Web Explore decides what needs you by the same rule as Home and Tend for

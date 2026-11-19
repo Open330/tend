@@ -167,6 +167,77 @@ is exactly what older readers decode. `tend review history` shows them;
 with `--json` it lists them only with `--closures`, so scripts that parse
 it see the shape they already know.
 
+### Questions nobody can answer
+
+An open question whose **subject** is established gone is folded out of the
+person's turn into its own group, **Can't be answered**, listed after every
+live item. Only a person closes it. The subject is the asking agent for an
+agent's question (`from`), the original request's recipient for a recovery
+item, and its sender for a reply wake; an item that covers several requests
+folds only when every subject is gone. Subjects on another Fleet host, the
+operator console and addresses still waiting for a session are never judged.
+
+A live session anywhere on this host (the session's own row, after a resume
+into another pane or `tend restore`) means alive. Otherwise only these count:
+
+| Cause | Evidence |
+| --- | --- |
+| `ended` | the provider's own `SessionEnded` hook, recorded when tendd ingests it |
+| `replaced` | a real provider `Started` hook for another session in the pane, on the same tmux server incarnation, recorded before the old row changes |
+| `pane_gone` | the pane is absent from a complete tmux or rmux scan of a socket that answered, unless that server is known to have restarted since |
+| `agent_exited` | what tendd already requires to stop a row with no agent process (a complete host, a recognized agent, an hour idle, no agent process, a shell in the foreground), on the same server incarnation |
+
+Nothing else is evidence: not a missing row, `binding_unavailable`, a rate
+limit, a failed or partial scan (herdr, cmux and zellij never show absence),
+or a subject on another host. The facts (`ended`, `replaced`) are kept in the
+mailbox database for 30 days; the reconcile sweeps write none. The server
+incarnation is the tmux server's `#{pid}` and `#{start_time}`, read in the
+same `list-panes` call as the panes; rmux does not report one, so on rmux only
+`ended` and `pane_gone` apply.
+
+Every reconcile pass keeps an evidence episode on the request
+(`subject_check`: `episode`, `state`, `gone_since`, `confirmed_at`, `causes`,
+`kept_episode`). Alive ends it; gone extends it; unknown pauses it, and more
+than 10 minutes of unknown restarts only the grace clock, never the episode.
+An item is unanswerable when the episode is gone and confirmed in the
+current pass, has been for 24 hours, the item is at least 24 hours old, and
+the person has not kept this episode. A daemon that was down cannot fold
+anything at start.
+
+On the wire (`subject_check_v1`), a folded `human_request` carries
+`unanswerable: {cause, episode, since, pane?}` and the queue
+`unanswerable_count`, exact even when the list is cut; folded items come
+after every live one, so they never crowd a live question out. Older readers
+ignore both and list the item as before.
+
+- **Keep** (`decision_keep {request_id, episode}`, `POST
+  /api/decisions/keep`, `tend review keep <id>`) puts the item back in the
+  person's turn until its subject is seen alive and then gone again.
+- **Close all** (`decision_close_unanswerable {items: [{request_id,
+  episode}], by_label?}`, `POST /api/decisions/close-unanswerable`, `tend
+  review cleanup --questions --apply`) declines exactly the listed pairs, in
+  one transaction, each still open, still unanswerable, in that episode, not
+  kept and with no subject back; the rest come back in `skipped` with why.
+  Each gets the reply Tend for Mac's Dismiss sends and a `closure` (`reason:
+  "subject_gone"`, the cause, the episode, `by: "person"` and the surface).
+  Closing a recovery item records the dismissal in the original request's
+  interruption decision, as any answer does; the request's status and
+  authority are unchanged and nothing is restarted. A close is final.
+  **Close all is off by default**: set `[review] close_unanswerable = true`.
+  While it is off the IPC and HTTP routes refuse ("closing unanswerable
+  questions is turned off; set [review] close_unanswerable = true") and
+  `hello` does not advertise `close_unanswerable_v1`, so surfaces show no
+  button. Folding and Keep work either way.
+
+Both are operator actions: the IPC calls need the console origin, and the
+routes are authorized like the other decision routes (an operator on the web
+or a paired device). `tend review cleanup` lists these questions with id,
+age, action, cause and since, and never closes one without `--questions
+--apply`; `--json` adds `questions` and `unanswerable_count` to the report.
+`tend review queue` shows them last, marked `✕ gone`. Each Fleet host judges
+its own questions; Keep and Close all act on this host only (a Fleet relay
+for them is not built yet).
+
 Tend for Mac draws this queue in Home's **Your turn** and at the top of the
 Review sheet; see [MACOS](MACOS.md#workspace-information-architecture). It
 opens commit and range evidence in a read-only Changes view on the person's

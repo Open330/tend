@@ -595,7 +595,25 @@ fn parse_pane_observation(stdout: &str, endpoint: Option<&str>) -> PaneObservati
         }
     }
     if complete {
-        PaneObservation::complete(panes)
+        // The endpoints that answered: the configured one, else each row's.
+        // rmux does not report a server incarnation here.
+        let mut endpoints: Vec<String> = endpoint
+            .map(str::to_owned)
+            .into_iter()
+            .chain(panes.iter().filter_map(|pane| pane.socket.clone()))
+            .collect();
+        endpoints.sort();
+        endpoints.dedup();
+        let mut observation = PaneObservation::complete(panes);
+        observation.servers = endpoints
+            .into_iter()
+            .map(|endpoint| crate::subject_evidence::ServerAnswer {
+                endpoint,
+                running: true,
+                incarnation: None,
+            })
+            .collect();
+        observation
     } else {
         PaneObservation::incomplete(panes)
     }

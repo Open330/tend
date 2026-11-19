@@ -948,6 +948,15 @@ pub struct CollaborationRequest {
     /// requests it covers, and why tendd closed it (`system_asks.rs`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_ask: Option<system_asks::SystemAskState>,
+    /// On an open human item: the evidence episode for its subject being
+    /// gone (`subject_check.rs`). Absent while the subject is alive or
+    /// unjudged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_check: Option<subject_check::SubjectCheck>,
+    /// On a question a person closed because its subject was gone: why,
+    /// which episode, and from where (`subject_check.rs`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closure: Option<subject_check::QuestionClosure>,
 }
 
 impl CollaborationRequest {
@@ -1617,6 +1626,10 @@ pub enum CollaborationError {
     MessageTooLarge(usize),
     #[error("request not found: {0}")]
     NotFound(String),
+    /// A subject-check operation refused (`subject_check.rs`): Keep of an
+    /// episode that ended, or Close all while it is turned off.
+    #[error("{0}")]
+    SubjectCheck(String),
     #[error("parent collaboration request not found: {0}")]
     ParentNotFound(String),
     #[error("parent collaboration request {0} does not involve this participant pair and room")]
@@ -1849,6 +1862,11 @@ fn open_database(path: &Path) -> Result<Connection, CollaborationError> {
          CREATE TABLE IF NOT EXISTS collaboration_worker_drains (id TEXT PRIMARY KEY, payload TEXT NOT NULL);
          CREATE TABLE IF NOT EXISTS collaboration_worker_spawns (id TEXT PRIMARY KEY, payload TEXT NOT NULL);
          CREATE TABLE IF NOT EXISTS collaboration_purposes (id TEXT PRIMARY KEY, payload TEXT NOT NULL);
+         CREATE TABLE IF NOT EXISTS collaboration_subject_facts (
+             id TEXT PRIMARY KEY,
+             observed_at_ns INTEGER NOT NULL,
+             payload TEXT NOT NULL
+         );
          CREATE TABLE IF NOT EXISTS collaboration_metadata (
              key TEXT PRIMARY KEY,
              value TEXT NOT NULL
@@ -2725,6 +2743,9 @@ pub struct CollaborationStore {
     /// last pass, by delivery's own predicate: request id to the ready row's
     /// (pane, socket, session). Only the undelivered-wake bound reads it.
     ready_pending_recipients: std::sync::Mutex<HashMap<String, wake_retry::ReadyRecipient>>,
+    /// Evidence facts, the current pass and the close switch for the
+    /// subject check of human items (`subject_check.rs`).
+    subject: subject_check::SubjectRuntime,
 }
 
 impl CollaborationStore {
@@ -2760,6 +2781,7 @@ impl CollaborationStore {
             turn_continuation: std::sync::atomic::AtomicBool::new(true),
             hook_transport: std::sync::atomic::AtomicBool::new(false),
             ready_pending_recipients: std::sync::Mutex::new(HashMap::new()),
+            subject: subject_check::SubjectRuntime::default(),
             changes,
         })
     }
@@ -2805,7 +2827,7 @@ impl CollaborationStore {
             .as_deref()
             .map(DurableDatabase::initialize)
             .transpose()?;
-        let (requests, identities, purposes, worker_spawns, worker_drains) =
+        let (requests, identities, purposes, worker_spawns, worker_drains, subject_facts) =
             if let Some(database) = &database {
                 database.with_connection(|connection| {
                     let (requests, identities) = load_database(connection, legacy.as_ref())?;
@@ -2815,6 +2837,7 @@ impl CollaborationStore {
                         load_purposes(connection)?,
                         load_spawns(connection)?,
                         load_drains(connection)?,
+                        subject_check::load_facts(connection)?,
                     ))
                 })?
             } else {
@@ -2830,6 +2853,7 @@ impl CollaborationStore {
                         .map(|request| (request.id.clone(), request))
                         .collect(),
                     snapshot.identities,
+                    Vec::new(),
                     Vec::new(),
                     Vec::new(),
                     Vec::new(),
@@ -2861,6 +2885,7 @@ impl CollaborationStore {
             turn_continuation: std::sync::atomic::AtomicBool::new(true),
             hook_transport: std::sync::atomic::AtomicBool::new(false),
             ready_pending_recipients: std::sync::Mutex::new(HashMap::new()),
+            subject: subject_check::SubjectRuntime::with_facts(subject_facts),
             changes,
         });
         store.apply_retention().await?;
@@ -3327,6 +3352,8 @@ impl CollaborationStore {
             execute_scope,
             wake_retry: None,
             system_ask: None,
+            subject_check: None,
+            closure: None,
             dispatch_id: input.dispatch_id,
             source_node_id: input.source_node_id,
             delegation_parent: input.delegation_parent,
@@ -10387,6 +10414,7 @@ mod recipient_slot_tests;
 mod recovery;
 mod retirement;
 pub mod sender_follow;
+pub mod subject_check;
 pub mod system_asks;
 pub mod wake_retry;
 pub use retirement::{RequestRetirement, RETIRE_CAPABILITY};

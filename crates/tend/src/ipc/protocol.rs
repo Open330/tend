@@ -157,6 +157,28 @@ pub(super) enum RequestBody {
         #[serde(default)]
         origin: Option<collaboration::CollaborationOrigin>,
     },
+    /// Keep one unanswerable question in the person's turn until its
+    /// subject is seen alive and gone again (`subject_check_v1`). The
+    /// console origin is required, as for `system_ask_cleanup`.
+    DecisionKeep {
+        request_id: String,
+        episode: String,
+        #[serde(default)]
+        origin: Option<collaboration::CollaborationOrigin>,
+    },
+    /// Close exactly these `(request id, episode)` pairs, each still open,
+    /// unanswerable, in that episode and not kept, with the reply Dismiss
+    /// sends (`close_unanswerable_v1`, only while `[review]
+    /// close_unanswerable` is on). The console origin is required.
+    DecisionCloseUnanswerable {
+        items: Vec<collaboration::subject_check::CloseItem>,
+        #[serde(default)]
+        origin: Option<collaboration::CollaborationOrigin>,
+        /// The surface the person closed from: `cli` (the default),
+        /// `web`, `mac` or `ios`.
+        #[serde(default)]
+        by_label: Option<String>,
+    },
     /// Durable Work records, backlog order (`work_backlog_v1`). With
     /// `stage`, only records at that stage.
     WorkBacklog {
@@ -1163,6 +1185,7 @@ pub(super) const CAPABILITIES: &[&str] = &[
     crate::decision_queue::DECISION_QUEUE_CAPABILITY,
     crate::decision_queue::DECISION_HISTORY_CLOSURES_CAPABILITY,
     collaboration::system_asks::SYSTEM_ASK_CLEANUP_CAPABILITY,
+    collaboration::subject_check::SUBJECT_CHECK_CAPABILITY,
     crate::work::WORK_BACKLOG_CAPABILITY,
     crate::work::WORK_VERIFY_CAPABILITY,
     crate::work_complete::CAPABILITY,
@@ -1441,6 +1464,13 @@ pub struct Response {
     /// `system_ask_cleanup_v1`: what a cleanup closed or would close.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_ask_cleanup: Option<Box<collaboration::system_asks::SystemAskCleanup>>,
+    /// `subject_check_v1`: the item `decision_keep` kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision_keep: Option<Box<collaboration::subject_check::KeepOutcome>>,
+    /// `close_unanswerable_v1`: what `decision_close_unanswerable` closed
+    /// and skipped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision_close_unanswerable: Option<Box<collaboration::subject_check::CloseOutcome>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pipeline_claims: Option<Vec<PipelineClaim>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1562,6 +1592,8 @@ impl Response {
             decision_queue: None,
             decision_history: None,
             system_ask_cleanup: None,
+            decision_keep: None,
+            decision_close_unanswerable: None,
             work_records: None,
             work_record: None,
             work_queue: None,

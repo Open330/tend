@@ -163,7 +163,7 @@ pub(super) fn gone_sender_body(parent: &CollaborationRequest) -> String {
     )
 }
 
-fn gone_sender_action(
+pub(super) fn gone_sender_action(
     parent: &CollaborationRequest,
     id: String,
     now: OffsetDateTime,
@@ -197,6 +197,8 @@ fn gone_sender_action(
     action.work_mode = WorkMode::ReadOnly;
     action.human_action = Some(HumanAction::Information);
     action.body = gone_sender_body(parent);
+    action.subject_check = None;
+    action.closure = None;
     action.system_ask = Some(super::system_asks::SystemAskState {
         subject_session: parent.from.agent_session_id.clone(),
         ..super::system_asks::SystemAskState::default()

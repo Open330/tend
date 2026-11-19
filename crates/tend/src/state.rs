@@ -666,6 +666,9 @@ pub struct Store {
     /// same instance so SSE subscriber bumps and event-apply bumps land
     /// in the same atomics.
     metrics: Metrics,
+    /// Scan, bindings and ingestion facts for the subject check of human
+    /// items (`subject_evidence.rs`).
+    subject: crate::subject_evidence::SubjectObservations,
 }
 
 impl std::fmt::Debug for Store {
@@ -719,7 +722,57 @@ impl Store {
             history,
             dirty: Arc::new(Notify::new()),
             metrics: Metrics::new(),
+            subject: crate::subject_evidence::SubjectObservations::default(),
         }
+    }
+
+    /// The evidence the subject check of human items reads: the newest
+    /// scan, each session's binding, and facts recorded at ingestion.
+    #[must_use]
+    pub fn subject_observations(&self) -> &crate::subject_evidence::SubjectObservations {
+        &self.subject
+    }
+
+    /// Keep the newest reconcile scan for the subject check, and stamp each
+    /// live row present in a complete scan with the binding it is seen on.
+    pub async fn record_pane_scan(&self, scan: crate::subject_evidence::PaneScan) {
+        let agents = self.agents.read().await;
+        let rows: HashSet<String> = agents.keys().cloned().collect();
+        let mut live = Vec::new();
+        for agent in agents.values() {
+            if agent.state == AgentState::Stopped || is_synthetic(&agent.session_id) {
+                continue;
+            }
+            let (Some(pane), Some(socket)) = (agent.pane.as_deref(), agent.tmux_socket.as_deref())
+            else {
+                continue;
+            };
+            let Some(kind) = crate::backend::pane_id_host_kind(pane) else {
+                continue;
+            };
+            let endpoint = crate::backend::pane_endpoint_identity(Some(pane), socket);
+            let Some(host) = scan.complete_host(kind) else {
+                continue;
+            };
+            if !host
+                .panes
+                .iter()
+                .any(|p| p.pane_id == pane && p.endpoint.as_deref() == Some(endpoint.as_str()))
+            {
+                continue;
+            }
+            live.push((
+                agent.session_id.clone(),
+                crate::subject_evidence::SubjectBinding {
+                    pane: pane.to_owned(),
+                    incarnation: scan.incarnation(kind, &endpoint),
+                    endpoint,
+                },
+            ));
+        }
+        drop(agents);
+        self.subject.stamp_bindings(live, &rows);
+        self.subject.set_scan(scan);
     }
 
     /// Borrow the runtime metrics handle. Daemon hands this off to the
@@ -1616,6 +1669,81 @@ fn remove_surface_task_placeholder(agents: &mut HashMap<String, Agent>, id: &Age
 }
 
 impl Store {
+    /// E1 for a `SessionEnded` hook; E2 for a `Started` hook in a pane that
+    /// another session was bound to. The predecessor is still unchanged in
+    /// `agents` here.
+    fn record_subject_facts(
+        &self,
+        agents: &HashMap<String, Agent>,
+        ev: &AgentEvent,
+        id: &crate::event::AgentId,
+    ) {
+        use crate::subject_evidence::{FactKind, SubjectFact};
+        let now = OffsetDateTime::now_utc();
+        match ev {
+            AgentEvent::SessionEnded { .. } => {
+                let row = agents.get(&id.session_id);
+                let pane = id.pane.as_deref().or(row.and_then(|r| r.pane.as_deref()));
+                let endpoint = row
+                    .and_then(|r| r.tmux_socket.as_deref())
+                    .or(id.tmux_socket.as_deref());
+                let incarnation = self
+                    .subject
+                    .binding(&id.session_id)
+                    .and_then(|binding| binding.incarnation);
+                self.subject.record(SubjectFact::new(
+                    FactKind::Ended,
+                    &id.session_id,
+                    pane,
+                    endpoint,
+                    incarnation,
+                    now,
+                ));
+            }
+            AgentEvent::Started { .. } => {
+                let Some(pane) = id.pane.as_deref() else {
+                    return;
+                };
+                let scan = self.subject.scan();
+                for predecessor in agents.values().filter(|agent| {
+                    agent.session_id != id.session_id
+                        && !is_synthetic(&agent.session_id)
+                        && same_pane_identity(agent, pane, id.tmux_socket.as_deref())
+                }) {
+                    let binding = self
+                        .subject
+                        .binding(&predecessor.session_id)
+                        .filter(|binding| binding.pane == pane);
+                    let current = match (
+                        crate::backend::pane_id_host_kind(pane),
+                        binding.as_ref(),
+                        scan.as_deref(),
+                    ) {
+                        (Some(kind), Some(binding), Some(scan)) => {
+                            scan.incarnation(kind, &binding.endpoint)
+                        }
+                        _ => None,
+                    };
+                    let incarnation = binding.and_then(|binding| binding.incarnation);
+                    let mut fact = SubjectFact::new(
+                        FactKind::Replaced,
+                        &predecessor.session_id,
+                        Some(pane),
+                        predecessor.tmux_socket.as_deref(),
+                        incarnation,
+                        now,
+                    );
+                    fact.same_incarnation = incarnation.is_some() && incarnation == current;
+                    fact.replaced_by = Some(id.session_id.clone());
+                    self.subject.record(fact);
+                }
+                // A fresh start binds anew; the next scan stamps it.
+                self.subject.forget_binding(&id.session_id);
+            }
+            _ => {}
+        }
+    }
+
     pub fn shared() -> SharedStore {
         Arc::new(Self::default())
     }
@@ -2019,6 +2147,13 @@ impl Store {
             AgentEvent::RateLimited { .. } => "rate_limited",
         };
         tracing::Span::current().record("event_type", event_type);
+
+        // Evidence a question's subject check may count later, recorded
+        // only from a real provider hook and before this event changes any
+        // row (`subject_evidence.rs`).
+        if ingested && source == StateSource::Hook && !is_synthetic(&id.session_id) {
+            self.record_subject_facts(&agents, ev, id);
+        }
 
         // A tend-owned PTY is surfaced immediately as a pid-tracked Task so
         // users can attach/control it before an agent's first hook. The hook's

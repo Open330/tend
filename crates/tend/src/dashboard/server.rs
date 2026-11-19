@@ -377,6 +377,7 @@ impl AppState {
 /// can mount it on an in-process listener and so that future PRs (e.g.
 /// the oh-my-prompt sink) can `.merge()` additional routes without
 /// touching this file.
+#[allow(clippy::too_many_lines)] // one route table
 pub fn router(state: AppState) -> Router {
     let host_layer = middleware::from_fn_with_state(state.clone(), host_guard_middleware);
     let read_auth_layer = middleware::from_fn_with_state(state.clone(), read_auth_middleware);
@@ -458,6 +459,11 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/decisions/requests/{id}",
             post(super::decisions::answer_handler),
+        )
+        .route("/api/decisions/keep", post(super::decisions::keep_handler))
+        .route(
+            "/api/decisions/close-unanswerable",
+            post(super::decisions::close_unanswerable_handler),
         )
         .layer(DefaultBodyLimit::max(CONTROL_BODY_LIMIT_BYTES))
         .layer(middleware::from_fn_with_state(

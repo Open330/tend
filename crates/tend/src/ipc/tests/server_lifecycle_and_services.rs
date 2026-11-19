@@ -3323,3 +3323,126 @@ async fn hello_names_the_dashboard_only_when_there_is_one() {
     let without = hello(None).await;
     assert!(without.get("dashboard_url").is_none(), "{without}");
 }
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)] // one switch, both settings
+async fn keep_and_close_unanswerable_are_operator_actions_and_close_follows_its_switch() {
+    use crate::collaboration::subject_check::{
+        CloseItem, GoneCause, CLOSE_UNANSWERABLE_CAPABILITY, CLOSE_UNANSWERABLE_OFF,
+        SUBJECT_CHECK_CAPABILITY,
+    };
+    use crate::collaboration::{
+        CollaborationOptions, CollaborationStore, HumanAction, NewRequest, Participant, RequestKind,
+    };
+    let dir = tempdir().unwrap();
+    let sock = dir.path().join("tend-unanswerable.sock");
+    let mailbox = CollaborationStore::in_memory(CollaborationOptions::default());
+    let asker: Participant = serde_json::from_value(serde_json::json!({
+        "launch_purpose": "worker", "agent_kind": "claude_code", "agent_session_id": "gone",
+        "pane": "%42", "socket": "default",
+        "room": {"host": "tmux", "socket": "default", "window_id": "@1"}, "state": "idle"
+    }))
+    .unwrap();
+    let mut pairs = Vec::new();
+    for body in ["deploy?", "merge?"] {
+        let request = mailbox
+            .create(
+                asker.clone(),
+                Participant::console(asker.room.clone()),
+                NewRequest {
+                    kind: RequestKind::Question,
+                    human_action: Some(HumanAction::Choice),
+                    body: body.into(),
+                    ..NewRequest::default()
+                },
+            )
+            .await
+            .unwrap();
+        let episode = mailbox
+            .fold_for_test(&request.id, GoneCause::PaneGone)
+            .await;
+        pairs.push(CloseItem {
+            request_id: request.id,
+            episode,
+        });
+    }
+    let server = Server::new(sock.clone(), Store::shared()).with_collaboration(mailbox.clone());
+    let (tx, rx) = broadcast::channel(1);
+    let handle = tokio::spawn(async move { server.run(rx).await.unwrap() });
+    wait_for_socket(&sock).await;
+    let client = Client::new(sock.clone());
+    let capabilities = |hello: crate::ipc::Hello| hello.capabilities;
+    let caps = capabilities(
+        client
+            .hello(std::time::Duration::from_secs(3))
+            .await
+            .unwrap(),
+    );
+    assert!(caps.iter().any(|c| c == SUBJECT_CHECK_CAPABILITY));
+    assert!(
+        !caps.iter().any(|c| c == CLOSE_UNANSWERABLE_CAPABILITY),
+        "off by default"
+    );
+
+    let queue = client
+        .decision_queue(&crate::decision_queue::operator_origin(), 50)
+        .await
+        .unwrap();
+    assert_eq!(queue.unanswerable_count, 2);
+
+    // Off: refused with the switch to turn on.
+    let error = client
+        .decision_close_unanswerable(&pairs[1..], "cli")
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), CLOSE_UNANSWERABLE_OFF);
+
+    // An agent's origin can do neither.
+    for body in [
+        serde_json::json!({"protocol": crate::ipc::PROTOCOL_VERSION, "kind": "decision_keep",
+            "request_id": pairs[0].request_id, "episode": pairs[0].episode,
+            "origin": {"pane": "%1", "socket": "default", "console": false}}),
+        serde_json::json!({"protocol": crate::ipc::PROTOCOL_VERSION, "kind": "decision_close_unanswerable",
+            "items": [pairs[1]], "origin": {"pane": "%1", "socket": "default", "console": false}}),
+    ] {
+        let refused = raw_call(&sock, &body).await;
+        assert_eq!(refused["ok"], false, "{refused}");
+        assert!(
+            refused["error"]
+                .as_str()
+                .unwrap()
+                .contains("operator-console"),
+            "{refused}"
+        );
+    }
+
+    let kept = client
+        .decision_keep(&pairs[0].request_id, &pairs[0].episode)
+        .await
+        .unwrap();
+    assert_eq!(kept.request_id, pairs[0].request_id);
+
+    mailbox.set_close_unanswerable(true);
+    let caps = capabilities(
+        client
+            .hello(std::time::Duration::from_secs(3))
+            .await
+            .unwrap(),
+    );
+    assert!(caps.iter().any(|c| c == CLOSE_UNANSWERABLE_CAPABILITY));
+    // Both pairs: the kept one is skipped, the other closed.
+    let outcome = client
+        .decision_close_unanswerable(&pairs, "cli")
+        .await
+        .unwrap();
+    assert_eq!(outcome.closed, [pairs[1].request_id.clone()]);
+    assert_eq!(outcome.skipped[0].request_id, pairs[0].request_id);
+    assert_eq!(outcome.skipped[0].reason, "kept");
+    let queue = client
+        .decision_queue(&crate::decision_queue::operator_origin(), 50)
+        .await
+        .unwrap();
+    assert_eq!(queue.unanswerable_count, 0);
+    tx.send(()).unwrap();
+    handle.await.unwrap();
+}

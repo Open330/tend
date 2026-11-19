@@ -292,6 +292,110 @@ async fn a_device_token_decides_and_nothing_else() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
+/// A `decide` device keeps and closes unanswerable questions like any
+/// other decision; Close all answers 403 while it is turned off.
+#[tokio::test]
+async fn a_decide_device_keeps_and_closes_unanswerable_questions() {
+    use crate::collaboration::subject_check::{GoneCause, CLOSE_UNANSWERABLE_OFF, DISMISSED_BODY};
+    use crate::collaboration::{
+        CollaborationOptions, CollaborationStore, HumanAction, NewRequest, Participant,
+        RequestKind, RequestStatus,
+    };
+    let collaboration = CollaborationStore::in_memory(CollaborationOptions::default());
+    let asker: Participant = serde_json::from_value(json!({
+        "launch_purpose": "worker", "agent_kind": "claude_code", "agent_session_id": "gone",
+        "pane": "%42", "socket": "default",
+        "room": {"host": "tmux", "socket": "default", "window_id": "@1"}, "state": "idle"
+    }))
+    .unwrap();
+    let mut ids = Vec::new();
+    for body in ["deploy?", "merge?"] {
+        let request = collaboration
+            .create(
+                asker.clone(),
+                Participant::console(asker.room.clone()),
+                NewRequest {
+                    kind: RequestKind::Question,
+                    human_action: Some(HumanAction::Choice),
+                    body: body.into(),
+                    ..NewRequest::default()
+                },
+            )
+            .await
+            .unwrap();
+        ids.push(request.id);
+    }
+    let kept_episode = collaboration
+        .fold_for_test(&ids[0], GoneCause::PaneGone)
+        .await;
+    let closed_episode = collaboration.fold_for_test(&ids[1], GoneCause::Ended).await;
+    let app = router(state(Some(TOKEN)).with_collaboration(collaboration.clone()));
+    let (token, device) = pair(&app, "phone").await;
+
+    let (status, queue) = call(&app, "GET", "/api/decisions", Some(&token), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let local = &queue["hosts"][0];
+    assert_eq!(local["queue"]["unanswerable_count"], 2, "{local}");
+    assert_eq!(local["subject_check"], true);
+    assert_eq!(local["close_unanswerable"], false);
+    let items = local["queue"]["items"].as_array().unwrap();
+    assert_eq!(items[0]["unanswerable"]["cause"], "pane_gone");
+    assert_eq!(items[0]["unanswerable"]["episode"], kept_episode.as_str());
+    assert_eq!(items[0]["unanswerable"]["pane"], "%42");
+
+    let close = json!({"items": [{"request_id": ids[1], "episode": closed_episode}]});
+    let (status, refused) = call(
+        &app,
+        "POST",
+        "/api/decisions/close-unanswerable",
+        Some(&token),
+        Some(close.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+    assert_eq!(refused["error"], CLOSE_UNANSWERABLE_OFF);
+
+    let (status, kept) = call(
+        &app,
+        "POST",
+        "/api/decisions/keep",
+        Some(&token),
+        Some(json!({"request_id": ids[0], "episode": kept_episode})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{kept}");
+    assert_eq!(kept["episode"], kept_episode.as_str());
+    let (_, queue) = call(&app, "GET", "/api/decisions", Some(&token), None).await;
+    assert_eq!(queue["hosts"][0]["queue"]["unanswerable_count"], 1);
+
+    collaboration.set_close_unanswerable(true);
+    let (_, queue) = call(&app, "GET", "/api/decisions", Some(&token), None).await;
+    assert_eq!(queue["hosts"][0]["close_unanswerable"], true);
+    let (status, closed) = call(
+        &app,
+        "POST",
+        "/api/decisions/close-unanswerable",
+        Some(&token),
+        Some(close),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{closed}");
+    assert_eq!(closed["closed"], json!([ids[1]]));
+    let console = Participant::console(asker.room.clone());
+    let row = collaboration.get_for(&console, &ids[1]).await.unwrap();
+    assert_eq!(row.status, RequestStatus::Declined);
+    assert_eq!(row.reply.unwrap().body, DISMISSED_BODY);
+    let closure = row.closure.unwrap();
+    assert_eq!(closure.surface, "ios");
+    assert_eq!(closure.by, "person");
+    assert_eq!(
+        closure.actor.as_deref(),
+        Some(Device::label("phone", &device).as_str())
+    );
+    // Deciding is all it may do: Work control and the rest refuse it.
+    refuses_every_operator_route(&app, &token, &device).await;
+}
+
 /// Every operator route answers a device token, whatever its scope, as if
 /// it had no credential.
 async fn refuses_every_operator_route(app: &Router, token: &str, device: &str) {
