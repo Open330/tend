@@ -13,7 +13,6 @@
 
 #![cfg(unix)]
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -125,13 +124,11 @@ fn stub_agent_dir(root: &Path) -> PathBuf {
     let bin = root.join("bin");
     std::fs::create_dir_all(&bin).expect("create stub bin dir");
     let claude = bin.join("claude");
-    std::fs::write(
+    tend::test_support::write_executable(
         &claude,
         "#!/bin/sh\nprintf '__TEND_STUB_AGENT__\\n'\nexec sleep 600\n",
-    )
-    .expect("write stub claude");
-    std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod stub claude");
+        0o755,
+    );
     bin
 }
 

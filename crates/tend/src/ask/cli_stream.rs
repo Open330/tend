@@ -196,10 +196,9 @@ mod tests {
     async fn store_publishes_progress_without_persisting_it_or_advancing_history() {
         use super::super::{AskOptions, AskStatus, AskStore};
         use crate::config::AskProviderConfig;
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let executable = dir.path().join("codex");
-        std::fs::write(
+        crate::test_support::write_executable(
             &executable,
             r#"#!/bin/sh
 printf '%s\n' '{"type":"thread.started","thread_id":"store-session"}'
@@ -207,9 +206,8 @@ printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"C
 while ! [ -f "$(dirname "$0")/continue" ]; do sleep 0.01; done
 printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Done"}}'
 "#,
-        )
-        .unwrap();
-        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+            0o700,
+        );
         let path = dir.path().join("ask.json");
         let store = AskStore::load(AskOptions {
             enabled: true,

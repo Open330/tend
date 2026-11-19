@@ -2196,7 +2196,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn rmux_doctor_reads_bindings_and_session_marks_without_a_current_target() {
-        use std::os::unix::fs::PermissionsExt;
         const PROBE: &str = "TEND_TEST_DOCTOR_RMUX";
         if std::env::var_os(PROBE).is_some() {
             assert!(doctor_uses_rmux());
@@ -2231,7 +2230,9 @@ mod tests {
         }
         let dir = tempfile::tempdir().unwrap();
         let rmux = dir.path().join("rmux");
-        std::fs::write(&rmux, r#"#!/bin/sh
+        tend::test_support::write_executable(
+            &rmux,
+            r#"#!/bin/sh
 if [ "$1" = "-V" ]; then exit 0; fi
 printf '%s\n' "$*" >> "$TEND_TEST_DOCTOR_LOG"
 if [ "$1" = "-S" ]; then shift 2; fi
@@ -2244,14 +2245,17 @@ list-sessions)
   printf 'acme\t$1\tacme\t/tmp\t1\t0\t1\t\n';;
 *) printf 'no current target\n' >&2; exit 1;;
 esac
-"#).unwrap();
-        std::fs::set_permissions(&rmux, std::fs::Permissions::from_mode(0o755)).unwrap();
+"#,
+            0o755,
+        );
         let tmux = dir.path().join("tmux");
-        std::fs::write(&tmux, "#!/bin/sh\nprintf 'WRONG HOST\n' >&2\nexit 1\n").unwrap();
-        std::fs::set_permissions(&tmux, std::fs::Permissions::from_mode(0o755)).unwrap();
+        tend::test_support::write_executable(
+            &tmux,
+            "#!/bin/sh\nprintf 'WRONG HOST\n' >&2\nexit 1\n",
+            0o755,
+        );
         let id = dir.path().join("id");
-        std::fs::write(&id, "#!/bin/sh\nprintf '12345\n'\n").unwrap();
-        std::fs::set_permissions(&id, std::fs::Permissions::from_mode(0o755)).unwrap();
+        tend::test_support::write_executable(&id, "#!/bin/sh\nprintf '12345\n'\n", 0o755);
         let socket_dir = dir.path().join("rmux-12345");
         std::fs::create_dir(&socket_dir).unwrap();
         let _listener = std::os::unix::net::UnixListener::bind(socket_dir.join("default")).unwrap();

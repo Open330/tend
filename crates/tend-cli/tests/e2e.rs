@@ -947,16 +947,13 @@ fn init_dashboard_prints_fragment_url_for_persisted_token() {
     std::fs::create_dir(&tools_dir).expect("create fake tools dir");
     for (name, version_arg) in [("cargo", "--version"), ("tmux", "-V")] {
         let path = tools_dir.join(name);
-        std::fs::write(
+        tend::test_support::write_executable(
             &path,
             format!(
                 "#!/bin/sh\nif [ \"$1\" = \"{version_arg}\" ]; then echo '{name} test'; exit 0; fi\nexit 1\n"
             ),
-        )
-        .expect("write fake tool");
-        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(path, permissions).expect("make fake tool executable");
+            0o755,
+        );
     }
 
     let config_home = dir.path().join("config");
@@ -1212,15 +1209,14 @@ fn fleet_dispatch_launch_retry_and_status_use_one_attachable_tmux_work() {
     std::fs::create_dir_all(&tools).unwrap();
     let marker = dir.path().join("launches");
     let stub = tools.join("codex");
-    std::fs::write(
+    tend::test_support::write_executable(
         &stub,
         format!(
             "#!/bin/sh\necho launched >> '{}'\nexec sleep 120\n",
             marker.display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        0o755,
+    );
     let env = [
         ("HOME", home.display().to_string()),
         (

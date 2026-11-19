@@ -1150,16 +1150,10 @@ version = "0.1.0"
     /// (`--config <p> config check --from <p>`) and then exits with `code`.
     #[cfg(unix)] // runs a `#!/bin/sh` stand-in for tend
     fn fake_tend(path: &Path, code: i32) {
-        use std::os::unix::fs::PermissionsExt;
-        fs::write(
-            path,
-            format!(
+        tend::test_support::write_executable(path, format!(
                 "#!/bin/sh\n[ \"$1 $3 $4 $5\" = \"--config config check --from\" ] && [ \"$2\" = \"$6\" ] || exit 99\n\
                  [ {code} -eq 0 ] || echo \"unknown field \\`account\\`, expected \\`options\\`\" >&2\nexit {code}\n"
-            ),
-        )
-        .unwrap();
-        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+            ), 0o755);
     }
 
     #[cfg(unix)] // runs a `#!/bin/sh` stand-in for tend

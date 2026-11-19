@@ -2791,10 +2791,8 @@ mod tests {
     /// does without starting one.
     #[cfg(unix)]
     fn scripted_sandbox(dir: &Path, tmux_body: &str) -> Sandbox {
-        use std::os::unix::fs::PermissionsExt;
         let tmux = dir.join("tmux");
-        std::fs::write(&tmux, format!("#!/bin/sh\n{tmux_body}\n")).unwrap();
-        std::fs::set_permissions(&tmux, std::fs::Permissions::from_mode(0o755)).unwrap();
+        tend::test_support::write_executable(&tmux, format!("#!/bin/sh\n{tmux_body}\n"), 0o755);
         let mut env = BTreeMap::new();
         env.insert(
             "TEND_TMUX_SOCKET".to_string(),

@@ -1157,15 +1157,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let fake = dir.path().join("codex");
         // Answers `initialize`, then never reads again.
-        std::fs::write(
+        tend::test_support::write_executable(
             &fake,
             "#!/bin/sh\nread line\necho '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}'\nexec sleep 60\n",
-        )
-        .unwrap();
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+            0o755,
+        );
         let mut server = AppServer::open(
             &Codex::program(fake.clone()),
             dir.path(),

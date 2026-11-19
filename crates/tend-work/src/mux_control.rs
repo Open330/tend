@@ -386,7 +386,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn lifecycle_commands_use_one_rmux_server_and_keep_termination_guards() {
-        use std::os::unix::fs::PermissionsExt;
         const PROBE: &str = "TEND_TEST_LIFECYCLE_ROUTING";
         if std::env::var_os(PROBE).is_some() {
             use crate::tmux_work::{ManageAction, ManageRequest};
@@ -435,7 +434,7 @@ mod tests {
         }
         let dir = tempfile::tempdir().unwrap();
         let rmux = dir.path().join("rmux");
-        std::fs::write(
+        tend::test_support::write_executable(
             &rmux,
             r#"#!/bin/sh
 if [ "$1" = "-V" ]; then exit 0; fi
@@ -447,9 +446,8 @@ display-message) case "$*" in *%43*) printf '0\t\n';; *) printf '1\tclaude\n';; 
 split-window) printf '%%99\n';;
 esac
 "#,
-        )
-        .unwrap();
-        std::fs::set_permissions(&rmux, std::fs::Permissions::from_mode(0o755)).unwrap();
+            0o755,
+        );
         let output = Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "mux_control::tests::lifecycle_commands_use_one_rmux_server_and_keep_termination_guards", "--nocapture"])
             .env(PROBE, "1").env("PATH", dir.path())
