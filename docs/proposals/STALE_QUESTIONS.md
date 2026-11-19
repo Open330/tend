@@ -275,17 +275,17 @@ The choice for the owner:
 - (b) commission the answer-revision design first, and ship folding and Keep
   without Close all until then.
 
-**Decision (2026-11-19):** (a), made by the coordinator for the owner and
-reported to the owner, who may still ask for (b) before release. Close all
-asks for one confirmation that names the count and says each asker gets a
-declined reply; it never includes an item whose evidence is younger than the
-24-hour grace or that was kept; and `tend review cleanup --questions` is a
-dry run unless `--apply` is given.
+**Status of the choice (2026-11-19):** the coordinator recommended (a), with
+safeguards: Close all asks for one confirmation that names the count and says
+each asker gets a declined reply; it never includes an item whose evidence is
+younger than the 24-hour grace or that was kept; and `tend review cleanup
+--questions` is a dry run unless `--apply` is given. The owner has not yet
+accepted it in their own words. Until they do, Close all is built but
+**off**: it sits behind `[review] close_unanswerable = false`, and the route,
+the button and `--questions --apply` refuse with that reason. Silence does not
+select (a). If the owner chooses (b), the answer-revision design comes first.
 
-Folding and Keep do not depend on this choice. Close all, its route and
-`tend review cleanup --questions --apply` are enabled under (a). If the owner
-asks for (b) before release, they are turned off again until the
-answer-revision design ships.
+Folding and Keep do not depend on this choice and ship enabled.
 
 ### Alternatives considered
 
@@ -352,7 +352,7 @@ run with --apply to close tend's items; add --questions to also close these 3
 
 ## Build plan
 
-Close all is enabled under the decision above.
+Close all ships off, behind `[review] close_unanswerable`, until the owner accepts (a).
 
 1. **Daemon and CLI** (one PR):
    - end and replacement facts recorded at ingestion;

@@ -740,6 +740,16 @@ fn decision_queue_refusal(
 ) -> Option<String> {
     let (capability, what) = match operation {
         FleetOperation::DecisionQueue { .. } => (FLEET_DECISION_QUEUE_CAPABILITY, "queue"),
+        // Asking for tend's own closures needs a relay that passes the
+        // flag on; an older one would answer the plain history, which is
+        // not what was asked for.
+        FleetOperation::DecisionHistory {
+            include_closures: true,
+            ..
+        } => (
+            tend::fleet::FLEET_DECISION_HISTORY_CLOSURES_CAPABILITY,
+            "history with tend's closures",
+        ),
         FleetOperation::DecisionHistory { .. } => (FLEET_DECISION_HISTORY_CAPABILITY, "history"),
         _ => return None,
     };
@@ -2382,6 +2392,18 @@ mod tests {
         let refusal = decision_queue_refusal("remote", &older, &history).unwrap();
         assert!(refusal.contains("decision history"), "{refusal}");
         assert!(decision_queue_refusal("remote", &current, &history).is_none());
+        // A relay with the history but not the closures: the plain read
+        // goes as the request it knows, the closures read is refused
+        // rather than answered with the plain history.
+        let plain_only = hello(&[FLEET_DECISION_HISTORY_CAPABILITY]);
+        assert!(decision_queue_refusal("remote", &plain_only, &history).is_none());
+        let with_closures = FleetOperation::DecisionHistory {
+            limit: 50,
+            include_closures: true,
+        };
+        let refusal = decision_queue_refusal("remote", &plain_only, &with_closures).unwrap();
+        assert!(refusal.contains("tend's closures"), "{refusal}");
+        assert!(decision_queue_refusal("remote", &current, &with_closures).is_none());
         assert!(
             !history.is_control(),
             "a read: observe-only hosts send it too"

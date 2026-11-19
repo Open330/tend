@@ -4680,6 +4680,13 @@ impl CollaborationStore {
             .collect()
     }
 
+    /// Install rows as they are, for tests elsewhere in the crate that need
+    /// a state no public call produces (an old or closed item).
+    #[cfg(test)]
+    pub(crate) async fn put_rows_for_test(&self, rows: &[CollaborationRequest]) {
+        self.commit_request_rows(rows).await.unwrap();
+    }
+
     /// Publish durable rows to memory only after their transaction commits.
     /// Notification methods with irreversible terminal side effects keep their
     /// separate install-on-failure semantics. This helper deliberately does not

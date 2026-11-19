@@ -2505,6 +2505,150 @@ async fn human_requests_in_the_decision_queue_are_an_operator_read() {
     handle.await.unwrap();
 }
 
+/// The history with tend's own closures is opt-in end to end: a default
+/// read is exactly what a reader that knows only reviews and answers
+/// decodes, and `include_closures` adds the closure.
+#[tokio::test]
+#[allow(clippy::too_many_lines)] // one daemon fixture: seed, default read, old decode, opt-in read
+async fn decision_history_lists_tends_closures_only_when_asked() {
+    /// A history reader from before closures: reviews and answers only.
+    #[derive(serde::Deserialize)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    #[allow(dead_code)]
+    enum OldDecided {
+        Review(serde_json::Value),
+        HumanAnswer(serde_json::Value),
+    }
+    #[derive(serde::Deserialize)]
+    #[allow(dead_code)]
+    struct OldHistory {
+        items: Vec<OldDecided>,
+    }
+    use crate::collaboration::system_asks::{
+        SystemAskCloseReason, SystemAskCloser, SystemAskClosure, SystemAskState,
+    };
+    use crate::collaboration::{
+        CollaborationOptions, CollaborationStore, HumanAction, NewRequest, Participant,
+        RequestKind, RequestStatus,
+    };
+    let dir = tempdir().unwrap();
+    let sock = dir.path().join("tend-closures.sock");
+    let sock_path = sock.clone();
+    let mailbox = CollaborationStore::in_memory(CollaborationOptions::default());
+    let sender: Participant = serde_json::from_value(serde_json::json!({
+        "agent_kind":"codex", "agent_session_id":"a", "pane":"%1",
+        "room":{"host":"tmux","socket":"default","window_id":"@1"},
+        "state":"idle", "launch_purpose":"worker"
+    }))
+    .unwrap();
+    let console = Participant::console(sender.room.clone());
+    let question = mailbox
+        .create(
+            sender.clone(),
+            console.clone(),
+            NewRequest {
+                body: "Merge?".into(),
+                kind: RequestKind::Question,
+                human_action: Some(HumanAction::Choice),
+                ..NewRequest::default()
+            },
+        )
+        .await
+        .unwrap();
+    mailbox
+        .reply(
+            &console,
+            &question.id,
+            RequestStatus::Completed,
+            "merge".into(),
+            vec![],
+        )
+        .await
+        .unwrap();
+    // A reply wake tend opened and later closed: the shape the daemon's own
+    // construction has (`system_ask_kind`), closed by its scheduled pass.
+    let mut closed = question.clone();
+    closed.id = "req_wake_closed".into();
+    closed.parent_request_id = Some(question.id.clone());
+    closed.from.agent_session_id = "tend:reply-wake".into();
+    closed.from.pane = "tend-reply-wake".into();
+    closed.from.agent_kind = crate::AgentKind::Task;
+    closed.human_action = Some(HumanAction::Information);
+    closed.provenance = None;
+    closed.reply = None;
+    closed.status = RequestStatus::Cancelled;
+    closed.system_ask = Some(SystemAskState {
+        subject_session: "a".into(),
+        covers: Vec::new(),
+        closed: Some(SystemAskClosure {
+            reason: SystemAskCloseReason::Stale,
+            at: time::OffsetDateTime::now_utc(),
+            by: SystemAskCloser::Daemon,
+            into: None,
+        }),
+    });
+    mailbox.put_rows_for_test(&[closed]).await;
+    let server = Server::new(sock.clone(), Store::shared()).with_collaboration(mailbox);
+    let (tx, rx) = broadcast::channel(1);
+    let handle = tokio::spawn(async move { server.run(rx).await.unwrap() });
+    wait_for_socket(&sock).await;
+    let client = Client::new(sock);
+    assert!(client
+        .hello(Duration::from_secs(3))
+        .await
+        .unwrap()
+        .capabilities
+        .iter()
+        .any(|c| c == crate::decision_queue::DECISION_HISTORY_CLOSURES_CAPABILITY));
+
+    // The default read, as an older client sends it (no flag at all).
+    let raw = {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+        let line = format!(
+            "{}\n",
+            serde_json::json!({
+                "protocol": PROTOCOL_VERSION,
+                "kind": "decision_history",
+                "limit": 10,
+                "origin": crate::decision_queue::operator_origin(),
+            })
+        );
+        let mut stream = crate::transport::Stream::connect(&sock_path).await.unwrap();
+        stream.write_all(line.as_bytes()).await.unwrap();
+        let mut reader = tokio::io::BufReader::new(stream);
+        let mut response = String::new();
+        reader.read_line(&mut response).await.unwrap();
+        serde_json::from_str::<serde_json::Value>(&response).unwrap()
+    };
+    assert_eq!(raw["ok"], true, "{raw}");
+    let items = raw["decision_history"]["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "{raw}");
+    assert_eq!(items[0]["kind"], "human_answer");
+    assert!(!raw.to_string().contains("closed_by_tend"));
+    // A reader that knows only the two older kinds decodes it.
+    serde_json::from_value::<OldHistory>(raw["decision_history"].clone())
+        .expect("an older reader decodes the default history");
+
+    let with = client
+        .decision_history_with(&crate::decision_queue::operator_origin(), 10, true)
+        .await
+        .unwrap();
+    assert_eq!(with.items.len(), 2, "{with:?}");
+    assert!(with.items.iter().any(|item| matches!(
+        item,
+        crate::decision_queue::DecidedItem::ClosedByTend(entry)
+            if entry.request.request_id == "req_wake_closed"
+                && entry.reason == SystemAskCloseReason::Stale
+                && entry.closed_by == SystemAskCloser::Daemon
+    )));
+    assert!(with
+        .items
+        .iter()
+        .any(|item| matches!(item, crate::decision_queue::DecidedItem::HumanAnswer(_))));
+    tx.send(()).unwrap();
+    handle.await.unwrap();
+}
+
 #[tokio::test]
 #[allow(clippy::too_many_lines)] // one daemon fixture covers create, queue, dispose and history
 async fn review_items_round_trip_over_ipc() {

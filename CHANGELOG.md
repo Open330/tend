@@ -37,7 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which was recreated and kept restarting the week; an item is listed for at
   least a day first. A recovery item for a request the person sent is still
   never closed for age, and agents' own questions are never touched.
-  `tend review history` lists these closures with their reason
+  `tend review history` lists these closures with their reason (with
+  `--json`, only when given `--closures`)
   (`decision_history_closures_v1`; `GET /api/decisions/history?closures=true`;
   over Fleet `fleet_decision_history_closures_v1`). Readers that do not ask
   get the history they decode today. Design: docs/proposals/STALE_QUESTIONS.md.

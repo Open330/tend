@@ -368,8 +368,9 @@ async fn remote_history(
             vec!["decision history: this host's tend does not send it; upgrade it".into()],
         );
     }
-    // Only a relay that says it can carries the flag: an older one would
-    // refuse a request field it does not know.
+    // Only a relay that says it can is asked for closures (tendd's Fleet
+    // manager refuses it to any other); an older one gets the request it
+    // knows and answers the plain history.
     let include_closures = include_closures
         && host
             .capabilities

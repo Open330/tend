@@ -163,7 +163,9 @@ The history lists these closures when the reader asks for them:
 and over Fleet only to a relay with `fleet_decision_history_closures_v1`.
 Each is `"kind": "closed_by_tend"`, with `reason`, `reason_text`,
 `closed_by`, `into` for a merge, and `closed_at`. Without the flag the history
-is exactly what older readers decode. `tend review history` asks for them.
+is exactly what older readers decode. `tend review history` shows them;
+with `--json` it lists them only with `--closures`, so scripts that parse
+it see the shape they already know.
 
 Tend for Mac draws this queue in Home's **Your turn** and at the top of the
 Review sheet; see [MACOS](MACOS.md#workspace-information-architecture). It
