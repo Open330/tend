@@ -561,6 +561,16 @@
         }
       }
     },
+    "Could not keep the notification key in this device's Keychain. Notifications stay off; try again.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "알림 키를 이 기기의 키체인에 저장하지 못했습니다. 알림은 꺼진 상태로 둡니다. 다시 시도하세요."
+          }
+        }
+      }
+    },
     "Dashboard": {
       "localizations": {
         "ko": {
@@ -1803,6 +1813,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Tend"
+          }
+        }
+      }
+    },
+    "Tend could not confirm this was sent. Open Tend to check.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tend가 이 결정이 전달됐는지 확인하지 못했습니다. Tend를 열어 확인하세요."
           }
         }
       }

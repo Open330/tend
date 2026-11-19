@@ -40,6 +40,10 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
                 // After pairing and the first read.
                 while model.pairing == nil || !model.loaded { try? await Task.sleep(nanoseconds: 300_000_000) }
                 model.adoptTestBinding(PushBinding(channel: payload.channel, refKey: key, content: false))
+                // A warm tap: the test moves away from Home meanwhile.
+                if let delay = ProcessInfo.processInfo.environment["TEND_TEST_NOTIFICATION_DELAY"].flatMap(Double.init) {
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
                 await model.open(payload)
             }
         }
@@ -63,6 +67,7 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         guard granted else { return false }
         model.notificationsWanted = true
         UIApplication.shared.registerForRemoteNotifications()
+        await model.syncPush()
         return true
     }
 
@@ -119,11 +124,14 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
             return
         default:
             switch await model.act(on: payload, action: action, text: text) {
-            case .success(let done):
+            case .done(let done):
                 await Self.say(done, opening: nil)
-            case .failure:
+            case .refused:
                 // Nothing was decided: offer the item itself.
                 await Self.say(String(localized: "Open Tend to decide this."), opening: payload)
+            case .unknown:
+                // Sent, but the answer was lost: it may have been taken.
+                await Self.say(String(localized: "Tend could not confirm this was sent. Open Tend to check."), opening: payload)
             }
         }
     }
@@ -162,7 +170,7 @@ struct NotificationSettings: View {
                                 denied = !(await delegate.enableNotifications())
                                 if denied { wanted = false }
                             } else {
-                                await model.unregisterPush()
+                                await model.turnNotificationsOff()
                             }
                         }
                     }

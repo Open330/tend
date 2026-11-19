@@ -82,6 +82,22 @@ final class NotificationUITests: XCTestCase {
         shot.lifetime = .keepAlways
         add(shot)
 
+        // A warm tap while Settings is in front: Home comes back with it.
+        app.terminate()
+        app.launchEnvironment["TEND_TEST_NOTIFICATION_DELAY"] = "15"
+        app.launch()
+        XCTAssertTrue(app.buttons["answerButton"].firstMatch.waitForExistence(timeout: 15))
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            let settings = app.descendants(matching: .any)["sidebarSettings"].firstMatch
+            if !settings.waitForExistence(timeout: 2) { app.buttons.element(boundBy: 0).tap() }
+            XCTAssertTrue(settings.waitForExistence(timeout: 5))
+            settings.tap()
+        } else {
+            app.tabBars.buttons.element(boundBy: 2).tap()
+        }
+        XCTAssertTrue(app.buttons["signOut"].waitForExistence(timeout: 5), "Settings did not open")
+        XCTAssertTrue(app.descendants(matching: .any)["focusedCard"].firstMatch.waitForExistence(timeout: 30), "a warm tap did not bring Home back")
+
         let (_, devices) = try operatorCall("GET", "/api/devices")
         for device in ((devices as? [String: Any])?["devices"] as? [[String: Any]]) ?? [] where device["name"] as? String == deviceName {
             if let id = device["id"] as? String { _ = try operatorCall("POST", "/api/devices/\(id)/remove") }
