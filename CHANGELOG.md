@@ -25,14 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `tend swap` waits on what the pane shows instead of fixed pauses: each
-  key that must be read before the next (Esc, Ctrl-C) goes once the screen
-  changes, the agent's exit is checked every 100 ms, the relaunch is typed
-  once the shell's screen holds still for 200 ms, and a relaunched agent
-  whose own prompt is on screen, bound to this launch, counts as ready
-  after 0.5 s of quiet instead of 1.5 s. The old pauses stay as ceilings.
-  One agent's stop-to-ready time went from ~4.3 s to ~2.5 s on a scratch
-  bench (fake agents, 0.8 s boot).
+- `tend swap` waits on what the pane shows instead of fixed pauses where
+  the screen can say so: `/exit` follows Ctrl-C once the draft is gone or
+  Claude answers the key, the next key follows Esc once the turn is seen
+  to stop, the agent's exit is checked every 100 ms, and the relaunch is
+  typed once the shell is the pane's foreground process and its screen
+  has held still for 200 ms. Without that evidence each wait is the old
+  pause, which stays as its ceiling. Readiness is unchanged.
 
 ### Fixed
 

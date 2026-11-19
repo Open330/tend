@@ -179,44 +179,12 @@ pub fn wait_for_resume_answering(
 #[allow(clippy::too_many_arguments)]
 pub fn wait_for_resume_answering_with_probe(
     clock: &dyn Clock,
-    capture: impl FnMut() -> Option<String>,
-    alive: impl FnMut() -> bool,
-    answer: impl FnMut(&[&str]) -> bool,
-    granted: &dyn Fn(Consent) -> bool,
-    timeout: Duration,
-    quiet: Duration,
-    tick: Duration,
-    answered: &mut Vec<&'static str>,
-    prompt_visible: &dyn Fn(&str) -> bool,
-) -> Resume {
-    wait_for_resume_settling(
-        clock,
-        capture,
-        alive,
-        answer,
-        granted,
-        timeout,
-        &|_| quiet,
-        tick,
-        answered,
-        prompt_visible,
-    )
-}
-
-/// [`wait_for_resume_answering_with_probe`] with the quiet a screen needs
-/// chosen per screen: `quiet(screen)` is how long that very screen must
-/// hold still to count as drawn. A caller with independent evidence that a
-/// screen is the agent's own finished prompt can ask for less of it there;
-/// every other check is the same.
-#[allow(clippy::too_many_arguments)]
-pub fn wait_for_resume_settling(
-    clock: &dyn Clock,
     mut capture: impl FnMut() -> Option<String>,
     mut alive: impl FnMut() -> bool,
     mut answer: impl FnMut(&[&str]) -> bool,
     granted: &dyn Fn(Consent) -> bool,
     timeout: Duration,
-    quiet: &dyn Fn(&str) -> Duration,
+    quiet: Duration,
     tick: Duration,
     answered: &mut Vec<&'static str>,
     prompt_visible: &dyn Fn(&str) -> bool,
@@ -230,7 +198,7 @@ pub fn wait_for_resume_settling(
             last = screen;
             quiet_since = clock.now();
         } else if !last.trim().is_empty()
-            && clock.now().saturating_duration_since(quiet_since) >= quiet(&last)
+            && clock.now().saturating_duration_since(quiet_since) >= quiet
         {
             if answered_dialog_lingers(&last, answered)
                 && open_question(&last).is_some()
