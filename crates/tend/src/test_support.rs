@@ -34,3 +34,17 @@ pub fn write_executable(path: &Path, contents: impl AsRef<[u8]>, mode: u32) {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).expect("chmod script");
     let _ = std::fs::remove_file(source);
 }
+
+/// Replace the executable at `path` with one holding `contents`, the way
+/// an install does: [`write_executable`] under a sibling name, then a
+/// rename over `path`. Neither this process nor anything polling `path`
+/// ever sees it open for writing or half written.
+pub fn replace_executable(path: &Path, contents: impl AsRef<[u8]>, mode: u32) {
+    let staged = path.with_file_name(format!(
+        ".{}.new",
+        path.file_name()
+            .map_or_else(Default::default, |name| name.to_string_lossy())
+    ));
+    write_executable(&staged, contents, mode);
+    std::fs::rename(&staged, path).expect("rename the replacement into place");
+}

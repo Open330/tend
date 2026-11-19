@@ -6809,15 +6809,13 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::too_many_lines)] // one isolated transport lifecycle, including origin env
     async fn call_peer_sends_named_slots_as_slots() {
-        use std::os::unix::fs::PermissionsExt;
         const PROBE: &str = "TEND_CALL_PEER_SLOT_PROBE";
         if std::env::var_os(PROBE).is_none() {
             // This fixture models routing and has no real terminal backend.
             // Make metadata explicit instead of querying the developer's tmux.
             let control = tempfile::tempdir().unwrap();
             let tmux = control.path().join("tmux");
-            std::fs::write(&tmux, "#!/bin/sh\ncase \"$*\" in\n*-V*) printf 'tmux 3.6\\n';;\n*display-message*) printf '\\t\\t\\n';;\n*) exit 1;;\nesac\n").unwrap();
-            std::fs::set_permissions(&tmux, std::fs::Permissions::from_mode(0o700)).unwrap();
+            tend::test_support::write_executable(&tmux, "#!/bin/sh\ncase \"$*\" in\n*-V*) printf 'tmux 3.6\\n';;\n*display-message*) printf '\\t\\t\\n';;\n*) exit 1;;\nesac\n", 0o700);
             let mut paths = vec![control.path().to_owned()];
             paths.extend(std::env::split_paths(
                 &std::env::var_os("PATH").unwrap_or_default(),
@@ -9297,12 +9295,10 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn an_idle_server_reexecs_only_after_its_binary_is_replaced() {
-        use std::os::unix::fs::PermissionsExt;
         use std::sync::atomic::{AtomicUsize, Ordering};
         let dir = tempfile::tempdir().unwrap();
         let binary = dir.path().join("tend");
-        std::fs::write(&binary, b"#!/bin/sh\nexit 0\n").unwrap();
-        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        tend::test_support::write_executable(&binary, b"#!/bin/sh\nexit 0\n", 0o755);
         let calls = Arc::new(AtomicUsize::new(0));
         let seen = Arc::clone(&calls);
         let watch = UpgradeWatch {
@@ -9339,11 +9335,11 @@ mod tests {
         // A config-incompatible install cannot take down this live pipe,
         // and the same rejected binary/config pair is probed only once.
         let probes = dir.path().join("probes");
-        std::fs::write(
+        tend::test_support::replace_executable(
             &binary,
             format!("#!/bin/sh\nprintf p >> '{}'\nexit 1\n", probes.display()),
-        )
-        .unwrap();
+            0o755,
+        );
         // A poll schedules an OS process; its completion is not bounded by
         // a few timer ticks on a busy host. Wait for the probe's evidence.
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -9366,7 +9362,11 @@ mod tests {
         assert!(line.contains("\"id\":2"));
 
         // Replaced: the next idle poll hands over to the new binary once.
-        std::fs::write(&binary, b"#!/bin/sh\n# validated new build\nexit 0\n").unwrap();
+        tend::test_support::replace_executable(
+            &binary,
+            b"#!/bin/sh\n# validated new build\nexit 0\n",
+            0o755,
+        );
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
             while calls.load(Ordering::SeqCst) == 0 {
                 tokio::time::sleep(UPGRADE_POLL_INTERVAL).await;

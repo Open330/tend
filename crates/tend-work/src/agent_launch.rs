@@ -2005,7 +2005,7 @@ mod tests {
     #[allow(clippy::too_many_lines, clippy::unnecessary_debug_formatting)]
     fn duplicate_launch_ticket_refuses_a_second_physical_create() {
         use std::io::{BufRead, Write};
-        use std::os::unix::{fs::PermissionsExt, net::UnixListener};
+        use std::os::unix::net::UnixListener;
         use std::process::Command;
         const PROBE: &str = "TEND_TEST_DUPLICATE_LAUNCH";
         if let Some(root) = std::env::var_os(PROBE) {
@@ -2067,7 +2067,7 @@ mod tests {
             .status
             .success());
         let wrapper = bin.join("tmux");
-        std::fs::write(
+        tend::test_support::write_executable(
             &wrapper,
             format!(
                 r"#!/usr/bin/env python3
@@ -2080,12 +2080,10 @@ os.execv({real:?}, [{real:?}] + args)
                 count = root.path().join("creates"),
                 real = real_tmux
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+            0o755,
+        );
         let claude = bin.join("claude");
-        std::fs::write(&claude, "#!/bin/sh\nexec sleep 600\n").unwrap();
-        std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+        tend::test_support::write_executable(&claude, "#!/bin/sh\nexec sleep 600\n", 0o755);
         let private_socket = root.path().join("tmux.sock");
         let mut child = Command::new(std::env::current_exe().unwrap());
         child

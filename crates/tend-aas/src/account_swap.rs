@@ -6194,17 +6194,15 @@ while read line; do case "$line" in */exit*) exit 0 ;; esac; echo "GOT $line"; e
 
     #[cfg(unix)]
     fn fake_aas(name: &str, body: &str) -> std::path::PathBuf {
-        use std::os::unix::fs::PermissionsExt;
         let dir = std::env::temp_dir().join(format!("tend-aas-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("aas");
         // Anything but `candidates` exits at once, so the probe below is free.
-        std::fs::write(
+        tend::test_support::write_executable(
             &path,
             format!("#!/bin/sh\n[ \"$1\" = candidates ] || exit 0\n{body}\n"),
-        )
-        .unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            0o755,
+        );
         // A test thread forking while the file was open for writing leaves
         // it busy (ETXTBSY) until that child execs; wait that out here so
         // the query under test never sees it.

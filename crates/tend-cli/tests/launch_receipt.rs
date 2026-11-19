@@ -1,6 +1,5 @@
 //! Uses only a disposable -L tmux server, private tendd and isolated HOME/XDG.
 #![cfg(target_os = "linux")]
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -114,7 +113,9 @@ impl Scratch {
         fixture.tmux(&["set-option", "-g", "default-shell", "/bin/sh"]);
         fixture.tmux(&["set-option", "-g", "remain-on-exit", "on"]);
         let provider = fixture.root.path().join("bin/claude");
-        std::fs::write(&provider,r"#!/usr/bin/env python3
+        tend::test_support::write_executable(
+            &provider,
+            r"#!/usr/bin/env python3
 import json, os, subprocess, sys, time
 session = sys.argv[sys.argv.index('--session-id')+1]
 pid = os.getpid()
@@ -124,8 +125,9 @@ with open('%s/sessions/%s.json' % (root,pid),'w') as f:
     json.dump({'pid':pid,'procStart':start,'sessionId':session},f)
 if not os.environ.get('TEST_SKIP_HOOK'): subprocess.run([os.environ['TEST_TEND'],'hook','claude','--event','session_start'], input=json.dumps({'session_id':session,'cwd':os.getcwd()}), text=True, check=True)
 while True: time.sleep(1)
-").unwrap();
-        std::fs::set_permissions(&provider, std::fs::Permissions::from_mode(0o755)).unwrap();
+",
+            0o755,
+        );
         let daemon = PathBuf::from(env!("CARGO_BIN_EXE_tend")).with_file_name("tendd");
         let log = std::fs::File::create(fixture.root.path().join("daemon.log")).unwrap();
         fixture.daemon = Some(
@@ -240,7 +242,7 @@ fn scratch_tmux_launch_receipts_verify_all_create_shapes_without_consumers() {
     let real = tend::tmux::tmux_binary().to_str().unwrap();
     let wrapper = scratch.root.path().join("bin/tmux");
     let count = scratch.root.path().join("creates");
-    std::fs::write(
+    tend::test_support::write_executable(
         &wrapper,
         format!(
             r"#!/usr/bin/env python3
@@ -257,9 +259,8 @@ os.execv(real,[real]+args)
 ",
             count = count.to_str().unwrap()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        0o755,
+    );
     let result = scratch.cli(&[
         "agent",
         "start",
@@ -316,7 +317,10 @@ fn archive_failure_still_launches(corrupt_after_create: bool) {
     let wrapper = scratch.root.path().join("bin/tmux");
     let real = tend::tmux::tmux_binary().to_str().unwrap();
     let count = scratch.root.path().join("creates");
-    std::fs::write(&wrapper, format!(r"#!/usr/bin/env python3
+    tend::test_support::write_executable(
+        &wrapper,
+        format!(
+            r"#!/usr/bin/env python3
 import os, pathlib, subprocess, sys
 args=sys.argv[1:]
 out=subprocess.run([{real:?}]+args, capture_output=True)
@@ -339,8 +343,17 @@ if 'list-panes' in args and '-F' in args:
 sys.stdout.buffer.write(stdout)
 sys.stderr.buffer.write(out.stderr)
 sys.exit(out.returncode)
-", count=count.to_str().unwrap(), archives=archives.to_str().unwrap(), corrupt=if corrupt_after_create { "True" } else { "False" })).unwrap();
-    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+",
+            count = count.to_str().unwrap(),
+            archives = archives.to_str().unwrap(),
+            corrupt = if corrupt_after_create {
+                "True"
+            } else {
+                "False"
+            }
+        ),
+        0o755,
+    );
     let (result, stderr) = scratch.cli_with_stderr(&[
         "agent",
         "start",

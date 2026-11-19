@@ -12,7 +12,6 @@
 
 #![cfg(unix)]
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -99,9 +98,7 @@ fn stub_agent_dir(root: &Path) -> PathBuf {
     let bin = root.join("bin");
     std::fs::create_dir_all(&bin).expect("create stub bin dir");
     let claude = bin.join("claude");
-    std::fs::write(&claude, "#!/bin/sh\nexec sleep 600\n").expect("write stub claude");
-    std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod stub claude");
+    tend::test_support::write_executable(&claude, "#!/bin/sh\nexec sleep 600\n", 0o755);
     bin
 }
 
@@ -341,19 +338,14 @@ fn launch_registers(program: &str, late: bool) {
             // macOS tmux reports the executable basename, not exec -a's
             // argv[0]. Give the delayed executable the real provider name.
             let script = stub_bin.join(program);
-            std::fs::write(
+            tend::test_support::write_executable(
                 &script,
                 format!(
                     "#!/bin/sh\nsleep 1\nexec {}\n",
                     tend::shell::Dialect::Posix.quote(&binary.to_string_lossy())
                 ),
-            )
-            .unwrap();
-            std::fs::set_permissions(
-                &script,
-                <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
-            )
-            .unwrap();
+                0o755,
+            );
         }
         // tmux starts the child's shell with its server-side PATH.
         server

@@ -1248,13 +1248,11 @@ fn observed_environment_is_canonical_and_cross_host_or_socket_ambiguity_is_not_e
 #[cfg(unix)]
 #[tokio::test]
 async fn restart_preflight_refusal_does_not_signal_shutdown_and_success_pins_target() {
-    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let target = dir.path().join("tendd");
     let config = dir.path().join("cfg");
     std::fs::write(&config, "").unwrap();
-    std::fs::write(&target, "#!/bin/sh\nexit 1\n").unwrap();
-    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).unwrap();
+    crate::test_support::write_executable(&target, "#!/bin/sh\nexit 1\n", 0o755);
     let (tx, mut rx) = broadcast::channel(4);
     let controller = RestartController::new(0, tx).with_upgrade_check(Some(
         crate::binary_upgrade::UpgradeCheck::new(
@@ -1265,7 +1263,7 @@ async fn restart_preflight_refusal_does_not_signal_shutdown_and_success_pins_tar
     assert!(controller.request_checked_restart().await.is_err());
     assert!(!controller.restart_requested());
     assert!(rx.try_recv().is_err());
-    std::fs::write(&target, "#!/bin/sh\nexit 0\n").unwrap();
+    crate::test_support::replace_executable(&target, "#!/bin/sh\nexit 0\n", 0o755);
     assert!(controller.request_checked_restart().await.unwrap());
     assert!(rx.try_recv().is_ok());
     assert_eq!(
