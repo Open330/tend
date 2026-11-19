@@ -367,3 +367,36 @@ Wave 8 adds the Mac side, from a separate-bundle build (`dev.tend.audit.wave8`, 
 ![Tend for Mac Home in a smaller window](web-home/w8-mac-home-small-light-en.png)
 
 The Mac's Review sheet could not be captured: the capture tool takes the window, not a sheet over it.
+
+## Wave 9: retiring /workbench
+
+The owner asked for the legacy dashboard to go, with Home replacing it. Each
+part still served at `/workbench` either moves into the shell (Home,
+Explore, Settings) or is retired with what covers the need. The rule: what
+Tend for Mac has moves; what the Mac dropped is not ported.
+
+| `/workbench` part | Verdict | Where, or why |
+|---|---|---|
+| Landing page for visitors (product, docs, sign-in, token) | **Moves** | Its own page, `/welcome` (`welcome.html` + `landing.mjs`, without `main.js`). Anyone signed out who opens `/`, `/home` or `/explore` is sent there, and it returns them where they were after sign-in. |
+| Read-only view for viewers (`public_read`, viewer accounts) | **Moves** | The shell itself, read-only. Explore with topology and status (no pane output, no composer, as the API already enforces) and Messages with details redacted. Home says it needs an operator and offers *Upgrade with token*, which also sits in Settings. |
+| Start Work | Already moved | Home's Start Work, the Mac's WorkStartView. |
+| Work detail and controls | **Moves, as on the Mac** | Home's inspector for a Work unit gains *Steer this Work*, the Mac's WorkPromptComposer (`POST /api/work-control/prompt`). Stages, agents and helpers are already there. |
+| Work metadata editor (title, stage, goal, next action), abort-all | **Retired** | The Mac has neither. The CLI keeps them (`tend work …`), and so does the HTTP API (`/api/work-metadata`, `/api/work-control/abort`). |
+| Session navigator, Agents and Panes tables, overview strip | **Retired** | Explore lists every host, session, window and pane. It gains the Mac's **session and window detail** (FleetSessionDetailView, FleetWindowDetailView): the panes of a session or window, with status and latest activity. |
+| Pane drawer (output, input, abort) | Already moved | Explore's pane view, with live output, input and abort. |
+| Collaboration reader | Already moved | Explore → Messages (wave 7). |
+| Timeline (activity heatmap and lanes) | **Retired** | The Mac has none. `tend timeline` and `tend stats --timeline` give the same intervals; `/api/timeline` stays. |
+| Terminals tab (Tend-owned PTY sessions) | **Retired** | The Mac has none, and its own terminals are local. The API stays (`/api/terminal-sessions`) for the CLI and the Windows app. |
+| PAT unlock, access dialog | Already moved | Settings (sign-in, token, operators, sharing). |
+| Share links (`/share/…`) | Unchanged | `share.html` is its own page and never needed the workbench. |
+
+Old links keep working: `/workbench` and `/#…` go through the shell's
+link adapter. `#pane=` goes to `/explore#pane=`, `#message=`/`#thread=` go to
+`/explore/messages`, and `#workspace=`/`#session=`/`#window=` go to that detail
+in Explore. Anything else goes to Home. A signed-out visitor goes to
+`/welcome`, with the original address kept for after sign-in.
+
+**Phases**, one reviewed PR each:
+1. `/welcome` as its own page, plus non-operators in the shell (read-only Explore and Messages, Home's operator notice).
+2. Explore's session and window detail, and *Steer this Work* on Home.
+3. Remove `/workbench`: `index.html`, `main.js`, `style.css` and the modules only it uses, its routes, strings and tests. The redirects, route-matrix rows, Windows proxy allowlist, docs, README and landing go with it. Report the size removed.
