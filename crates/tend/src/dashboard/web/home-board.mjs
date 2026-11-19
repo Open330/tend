@@ -216,9 +216,10 @@ function decisionUnit(item, host, index) {
       socket: remote ? null : found?.agent?.tmux_socket || null,
       agentKind: found?.agent?.kind || null,
       unanswerable: unanswerableOf(item),
-      // Keep and Close all act on this host only (no Fleet relay for them).
-      keepable: !remote && host.subject_check === true,
-      closable: !remote && host.close_unanswerable === true,
+      // Keep and Close all, here or on a Fleet host whose section says it
+      // takes them (docs/proposals/FLEET_UNANSWERABLE.md).
+      keepable: host.subject_check === true,
+      closable: host.close_unanswerable === true,
       ...decisionFields(item.decision, null),
     };
   }
@@ -332,8 +333,9 @@ function decidedUnit(item, host, now) {
 /// is gone (`subject_check_v1`), out of Your turn and its count. The count
 /// is the hosts' exact `unanswerable_count` (their lists may be cut), never
 /// less than what is listed; under a project filter only what is listed
-/// can be counted. Close all offers exactly the listed pairs on a host that
-/// allows it (`close_unanswerable`).
+/// can be counted. Close all offers exactly the listed pairs, one host at a
+/// time, on each host that allows it (`close_unanswerable`); a host whose
+/// folded questions cannot be kept or closed from here says why.
 export function cantAnswerGroup(units, sections = [], filter = {}) {
   const listed = units.filter((u) => u.unanswerable);
   let count = listed.length;
@@ -343,24 +345,44 @@ export function cantAnswerGroup(units, sections = [], filter = {}) {
       .reduce((sum, s) => sum + (Number(s?.queue?.unanswerable_count ?? s?.unanswerable_count) || 0), 0);
     count = Math.max(count, exact);
   }
-  const closable = listed.filter((u) => u.closable && u.actionable !== false);
-  return {
-    count,
-    units: listed,
-    remote: listed.some((u) => u.remote),
-    closeAll: closable.length ? closeAllPayload(closable) : null,
-  };
+  const hosts = [...new Set(listed.map((u) => u.host))];
+  const closeAll = [];
+  const notes = [];
+  for (const host of hosts) {
+    const theirs = listed.filter((u) => u.host === host);
+    const remote = theirs.some((u) => u.remote);
+    const closable = theirs.filter((u) => u.closable && u.actionable !== false);
+    if (closable.length) closeAll.push({ host, remote, count: closable.length, payload: closeAllPayload(closable) });
+    if (!remote) continue;
+    const section = sections.find((s) => s.alias === host) || {};
+    const reason = cantAnswerReason(section);
+    if (reason) notes.push({ host, reason });
+  }
+  return { count, units: listed, remote: listed.some((u) => u.remote), closeAll, notes };
+}
+
+/// Why another host's folded questions cannot be kept, or closed, from
+/// here: an observe-only host, a relay that needs an upgrade, or Close all
+/// turned off on that host. `null` when both work.
+export function cantAnswerReason(section) {
+  if (section.control === false) return "observeOnly";
+  if (section.subject_check !== true) return "upgrade";
+  if (section.close_unanswerable !== true) return "closeOff";
+  return null;
 }
 
 /// `POST /api/decisions/keep`: this question, in this episode, back in
 /// Your turn.
 export function keepPayload(unit) {
-  return { request_id: unit.id, episode: unit.unanswerable.episode };
+  const payload = { request_id: unit.id, episode: unit.unanswerable.episode };
+  return unit.remote ? { ...payload, host: unit.host } : payload;
 }
 
 /// `POST /api/decisions/close-unanswerable`: exactly these pairs.
 export function closeAllPayload(units) {
-  return { items: units.map((u) => ({ request_id: u.id, episode: u.unanswerable.episode })), by_label: "web" };
+  const payload = { items: units.map((u) => ({ request_id: u.id, episode: u.unanswerable.episode })), by_label: "web" };
+  const remote = units.find((u) => u.remote);
+  return remote ? { ...payload, host: remote.host } : payload;
 }
 
 function ordered(hosts) {

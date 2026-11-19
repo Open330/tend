@@ -693,27 +693,29 @@ function cantAnswerSection(group) {
   box.append(toggle);
   if (!open) return box;
   box.append(el("p", "cant-answer-help", S.cantAnswerHelp));
-  if (group.closeAll && canDecide()) {
-    const n = group.closeAll.items.length;
-    if (state.confirmCloseAll) {
+  // One Close all per host: each host closes its own, under its own rules.
+  const named = group.closeAll.length > 1 || group.closeAll.some((entry) => entry.remote);
+  for (const entry of canDecide() ? group.closeAll : []) {
+    const host = named ? entry.host : null;
+    if (state.confirmCloseAll === entry.host) {
       const confirm = el("div", "confirm-close");
       confirm.setAttribute("role", "alertdialog");
       // What happens, then, on its own line, that it is final.
-      confirm.append(el("p", null, S.closeAllConfirm(n)), el("p", "undo", S.closeAllUndo));
+      confirm.append(el("p", null, S.closeAllConfirm(entry.count, host)), el("p", "undo", S.closeAllUndo));
       const row = el("div", "row end");
       row.append(
         button(S.cancel, () => {
           state.confirmCloseAll = false;
           render();
         }, "btn ghost"),
-        button(S.closeN(n), () => closeAll(group.closeAll), "btn primary danger"),
+        button(S.closeN(entry.count), () => closeAll(entry), "btn primary danger"),
       );
       confirm.append(row);
       box.append(confirm);
     } else {
       const row = el("div", "row");
-      row.append(button(S.closeAll, () => {
-        state.confirmCloseAll = true;
+      row.append(button(host ? S.closeAllOn(host) : S.closeAll, () => {
+        state.confirmCloseAll = entry.host;
         render();
       }, "btn ghost small"));
       box.append(row);
@@ -723,7 +725,7 @@ function cantAnswerSection(group) {
   if (report) box.append(report);
   for (const unit of group.units) box.append(cantAnswerRow(unit));
   if (group.count > group.units.length) box.append(el("div", "lane-note quiet", S.cantAnswerMore(group.count - group.units.length)));
-  if (group.remote) box.append(el("div", "lane-note quiet", S.cantAnswerThere));
+  for (const note of group.notes) box.append(el("div", "lane-note quiet", S.cantAnswerReasons[note.reason](note.host)));
   return box;
 }
 
@@ -765,8 +767,9 @@ function cantAnswerRow(unit) {
   return card;
 }
 
-/// Close all: exactly the listed pairs; what was skipped is said.
-async function closeAll(payload) {
+/// Close all on one host: exactly its listed pairs; what was skipped is
+/// said, with the host when it is another one.
+async function closeAll({ host, remote, payload }) {
   state.confirmCloseAll = false;
   state.busy.add(CANT_ANSWER_KEY);
   state.results.delete(CANT_ANSWER_KEY);
@@ -778,11 +781,11 @@ async function closeAll(payload) {
     const text = skipped.length
       ? `${S.closedCount(closed)} ${S.skippedCount(skipped.length)}: ${skipped.map((s) => `${s.request_id} (${s.reason})`).join("; ")}`
       : S.closedCount(closed);
-    state.results.set(CANT_ANSWER_KEY, { ok: !skipped.length, text });
+    state.results.set(CANT_ANSWER_KEY, { ok: !skipped.length, text: remote ? `${host}: ${text}` : text });
     setTimeout(refresh, 400);
   } catch (error) {
     if (error.auth) return lostAccess(error);
-    state.results.set(CANT_ANSWER_KEY, { ok: false, text: error.message });
+    state.results.set(CANT_ANSWER_KEY, { ok: false, text: remote ? `${host}: ${error.message}` : error.message });
   } finally {
     state.busy.delete(CANT_ANSWER_KEY);
     render();
