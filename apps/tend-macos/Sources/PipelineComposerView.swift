@@ -71,7 +71,7 @@ struct PipelineComposerView: View {
     private var header: some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: "sparkles")
-                .font(.system(size: 26))
+                .font(TendType.emptyIcon)
                 .foregroundStyle(.tint)
             VStack(alignment: .leading, spacing: 3) {
                 Text("Describe a pipeline")

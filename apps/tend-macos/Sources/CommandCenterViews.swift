@@ -95,7 +95,7 @@ struct WorkCommandCenterView: View {
 
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Active Work")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(TendType.cardTitle)
                     if model.workGroups.isEmpty {
                         HStack(spacing: 10) {
                             Image(systemName: "square.stack.3d.up.slash")
@@ -129,7 +129,7 @@ struct WorkCommandCenterView: View {
 
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Hosts")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(TendType.cardTitle)
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 10) {
                             ForEach(model.fleetHosts) { host in
@@ -213,7 +213,7 @@ struct WorkCommandCenterView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text("Pipelines")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(TendType.cardTitle)
                 if let path = model.workOptions?.configPath {
                     Text(path)
                         .font(TendType.meta.monospaced())
@@ -461,7 +461,7 @@ struct WorkCommandCenterView: View {
     private var commandCenterTitle: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text("Work Command Center")
-                .font(.system(size: 22, weight: .semibold))
+                .font(TendType.page)
                 .fixedSize(horizontal: false, vertical: true)
             Text("Start outcomes, coordinate collaborators, and inspect their execution without returning to tmux.")
                 .foregroundStyle(.secondary)
@@ -550,7 +550,7 @@ private struct CommandCenterStatusLine: View {
             Image(systemName: symbol)
                 .foregroundStyle(color)
             Text(verbatim: "\(value)")
-                .font(.system(size: 17, weight: .semibold).monospacedDigit())
+                .font(TendType.page.monospacedDigit())
             Text(title)
                 .font(TendType.detail)
                 .foregroundStyle(.secondary)
@@ -574,7 +574,7 @@ private struct CommandCenterAttentionList: View {
         if !attention.isEmpty || !limited.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Look at now")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(TendType.cardTitle)
                 VStack(spacing: 0) {
                     ForEach(Array(attention.prefix(Self.limit).enumerated()), id: \.element.id) { index, hosted in
                         if index > 0 { Divider().padding(.leading, 36) }
@@ -587,7 +587,7 @@ private struct CommandCenterAttentionList: View {
                         } label: {
                             HStack(spacing: 4) {
                                 Text("\(attention.count - Self.limit) more in Explore › Needs attention")
-                                Image(systemName: "arrow.right").font(.system(size: 9, weight: .semibold))
+                                Image(systemName: "arrow.right").font(TendType.glyph)
                             }
                             .font(TendType.detail)
                             .foregroundStyle(Color.accentColor)

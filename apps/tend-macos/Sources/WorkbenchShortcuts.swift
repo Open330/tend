@@ -169,7 +169,7 @@ struct TendShortcutsSheet: View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Text("Keyboard Shortcuts")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(TendType.section)
                 Spacer()
                 TendFilterField(prompt: String(localized: "Filter shortcuts"), text: $filter, focused: $filterFocused) {
                     EmptyView()
@@ -186,17 +186,17 @@ struct TendShortcutsSheet: View {
                     ForEach(sections) { section in
                         VStack(alignment: .leading, spacing: 2) {
                             Text(verbatim: section.title.uppercased())
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(TendType.detail.weight(.semibold))
                                 .tracking(0.4)
                                 .foregroundStyle(.secondary)
                                 .padding(.bottom, 4)
                             ForEach(section.entries) { entry in
                                 HStack {
                                     Text(verbatim: entry.title)
-                                        .font(.system(size: 12))
+                                        .font(TendType.detail)
                                     Spacer(minLength: 12)
                                     Text(verbatim: entry.keys)
-                                        .font(.system(size: 12, weight: .medium).monospaced())
+                                        .font(TendType.mono.weight(.medium))
                                         .padding(.horizontal, 6)
                                         .frame(minHeight: 20)
                                         .background(
@@ -216,7 +216,7 @@ struct TendShortcutsSheet: View {
 
             HStack {
                 Text("Shortcuts act on the focused editor; a focused terminal keeps only its own copy, paste, and scroll keys.")
-                    .font(.system(size: 12))
+                    .font(TendType.detail)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer()

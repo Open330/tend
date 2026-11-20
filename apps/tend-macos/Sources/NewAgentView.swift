@@ -173,11 +173,11 @@ struct NewAgentView: View {
     private var header: some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: "sparkles.rectangle.stack.fill")
-                .font(.system(size: 28))
+                .font(TendType.emptyIcon)
                 .foregroundStyle(.tint)
             VStack(alignment: .leading, spacing: 3) {
                 Text("New Agent")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(TendType.cardTitle)
                 Text("Start one coding agent in a folder; it opens as a tab.")
                     .foregroundStyle(.secondary)
             }
@@ -191,7 +191,7 @@ struct NewAgentView: View {
         VStack(alignment: .leading, spacing: 3) {
             let command = ([program.rawValue] + effectiveOptions)
             Text(verbatim: TendAgentLaunchOptionsText.join(command))
-                .font(TendType.detail.monospaced())
+                .font(TendType.mono)
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
             if isLocalHost, let installed = launcher.installedPrograms, !installed.contains(program.rawValue) {

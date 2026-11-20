@@ -165,7 +165,7 @@ private struct TendIconButtonBody: View {
     var body: some View {
         configuration.label
             .labelStyle(.iconOnly)
-            .font(.system(size: 13))
+            .font(TendType.body)
             .frame(width: size, height: size)
             .contentShape(Rectangle())
             .background(
@@ -219,7 +219,7 @@ private struct TendButtonBody: View {
     var body: some View {
         configuration.label
             .labelStyle(TendButtonLabelStyle())
-            .font(.system(size: compact ? 12 : 13, weight: kind == .primary ? .semibold : .medium))
+            .font((compact ? TendType.detail : TendType.body).weight(kind == .primary ? .semibold : .medium))
             .lineLimit(1)
             .padding(.horizontal, compact ? 8 : 10)
             .frame(minHeight: compact ? 22 : 26)
@@ -286,7 +286,7 @@ struct TendButtonLabelStyle: LabelStyle {
     func makeBody(configuration: Configuration) -> some View {
         HStack(spacing: 5) {
             configuration.icon
-                .font(.system(size: 11, weight: .medium))
+                .font(TendType.label)
                 .imageScale(.small)
             configuration.title
         }
@@ -325,7 +325,7 @@ struct TendSegmented<Value: Hashable>: View {
                         }
                         label(option)
                     }
-                        .font(.system(size: 12, weight: active ? .semibold : .medium))
+                        .font(TendType.detail.weight(active ? .semibold : .medium))
                         .lineLimit(1)
                         .foregroundStyle(active ? Color.primary : Color.secondary)
                         .padding(.horizontal, 10)
@@ -369,7 +369,7 @@ private struct TendFieldChrome: ViewModifier {
     func body(content: Content) -> some View {
         content
             .textFieldStyle(.plain)
-            .font(.system(size: 13))
+            .font(TendType.body)
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
             .background(
@@ -394,7 +394,7 @@ struct TendSectionTitle<Actions: View>: View {
     var body: some View {
         HStack(spacing: 2) {
             Text(verbatim: title.uppercased())
-                .font(.system(size: 11, weight: .semibold))
+                .font(TendType.label.weight(.semibold))
                 .tracking(0.4)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -424,7 +424,7 @@ struct TendTextTabs<Value: Hashable & Identifiable>: View {
                     selection = item
                 } label: {
                     Text(title(item))
-                        .font(.system(size: 11, weight: active ? .semibold : .regular))
+                        .font(TendType.meta.weight(active ? .semibold : .regular))
                         .textCase(.uppercase)
                         .tracking(0.3)
                         .foregroundStyle(active ? Color.primary : Color.secondary)
@@ -456,11 +456,11 @@ struct TendFilterField<Trailing: View>: View {
     var body: some View {
         HStack(spacing: 5) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 11))
+                .font(TendType.meta)
                 .foregroundStyle(.secondary)
             TextField(prompt, text: $text)
                 .textFieldStyle(.plain)
-                .font(.system(size: 13))
+                .font(TendType.body)
                 .focused(focused)
             if !text.isEmpty {
                 Button {

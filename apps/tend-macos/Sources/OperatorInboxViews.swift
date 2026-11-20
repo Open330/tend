@@ -173,7 +173,7 @@ struct TendOperatorInboxView: View {
             if showingHostFailureDetails {
                 ForEach(details, id: \.self) { line in
                     Text(line)
-                        .font(TendType.detail.monospaced())
+                        .font(TendType.mono)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                         .lineLimit(2)
@@ -358,7 +358,7 @@ private struct OperatorMessageRow: View {
 
             HStack(spacing: 8) {
                 Label(message.host.alias, systemImage: "server.rack")
-                    .font(TendType.detail.monospaced())
+                    .font(TendType.mono)
                     .foregroundStyle(.secondary)
                 if let work = request.workID {
                     Text([request.workspaceID, work].compactMap { $0 }.joined(separator: " / "))
@@ -786,7 +786,7 @@ struct TendCollaborationView: View {
                 }
                 .frame(width: 130)
                 Text("to \(pane.pane.agentAlias.map { "@\($0)" } ?? pane.pane.paneID)")
-                    .font(TendType.detail.monospaced())
+                    .font(TendType.mono)
                     .foregroundStyle(.secondary)
                 Spacer()
             }
@@ -1008,7 +1008,7 @@ private struct CollaborationReplyView: View {
     var replyBody: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Reply to \(request.from.label)")
-                .font(.system(size: 14, weight: .semibold))
+                .font(TendType.cardTitle)
             MarkdownContent(source: request.body)
                 .padding(10)
                 .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 7))

@@ -49,7 +49,7 @@ struct PipelineEditorView: View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: "point.3.connected.trianglepath.dotted")
-                    .font(.system(size: 26))
+                    .font(TendType.emptyIcon)
                     .foregroundStyle(.tint)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(isNew ? "New pipeline" : "Edit pipeline \(target.pipeline?.name ?? "")")

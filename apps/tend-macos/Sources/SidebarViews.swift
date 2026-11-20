@@ -238,7 +238,7 @@ struct TendSidebar: View {
         TendSectionTitle(title: model.sidebarMode.title) {
             if model.sidebarMode != .files {
             Text(verbatim: sidebarCountLabel)
-                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                .font(TendType.label.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 5)
                 .frame(minHeight: 16)
@@ -1035,7 +1035,7 @@ private struct ActivityRailItem: View {
     var body: some View {
         Button(action: select) {
             Image(systemName: systemImage)
-                .font(.system(size: 16, weight: .regular))
+                .font(TendType.icon)
                 .frame(width: 34, height: 32)
                 .background(
                     RoundedRectangle(cornerRadius: TendRadius.group, style: .continuous)
@@ -1052,7 +1052,7 @@ private struct ActivityRailItem: View {
                 .overlay(alignment: .topTrailing) {
                     if badge > 0 {
                         Text(verbatim: badge > 99 ? "99+" : "\(badge)")
-                            .font(.system(size: 9, weight: .semibold).monospacedDigit())
+                            .font(TendType.glyph.monospacedDigit())
                             .foregroundStyle(.white)
                             .padding(.horizontal, badge > 9 ? 4 : 0)
                             .frame(minWidth: 15, minHeight: 15)

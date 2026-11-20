@@ -74,9 +74,9 @@ struct SessionSnapshotSaveSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Save Snapshot")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(TendType.cardTitle)
                 Text("Records every session, window layout, pane directory, and what each pane runs — agents come back on their own conversation.")
-                    .font(.system(size: 12))
+                    .font(TendType.detail)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -88,7 +88,7 @@ struct SessionSnapshotSaveSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             } else if viewModel.saved != nil, let status = viewModel.statusMessage {
                 Label(status, systemImage: "checkmark.circle")
-                    .font(.system(size: 12))
+                    .font(TendType.detail)
                     .foregroundStyle(.green)
             }
             HStack {
@@ -175,11 +175,11 @@ struct SessionSnapshotRestoreSheet: View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Restore Snapshot")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(TendType.cardTitle)
                 Text(viewModel.onlyMissing
                     ? String(localized: "Recreates the sessions that are missing and relaunches what their panes ran. Sessions that already exist are left untouched.")
                     : String(localized: "Recreates the sessions that are missing and adds the windows and panes running sessions lack; their idle shells are given their recorded directory and command. Nothing that runs now is closed."))
-                    .font(.system(size: 12))
+                    .font(TendType.detail)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -202,12 +202,12 @@ struct SessionSnapshotRestoreSheet: View {
     private var emptyState: some View {
         VStack(spacing: 10) {
             Image(systemName: "camera.on.rectangle")
-                .font(.system(size: 28))
+                .font(TendType.emptyIcon)
                 .foregroundStyle(.secondary)
             Text("No snapshots yet")
-                .font(.system(size: 13, weight: .semibold))
+                .font(TendType.section)
             Text("tendd takes one automatically every 15 minutes when the workspace changes. You can also save one now from Explore \"…\" → Save Snapshot.")
-                .font(.system(size: 12))
+                .font(TendType.detail)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 380)
@@ -218,12 +218,12 @@ struct SessionSnapshotRestoreSheet: View {
     private var unsupportedState: some View {
         VStack(spacing: 10) {
             Image(systemName: "arrow.up.circle")
-                .font(.system(size: 28))
+                .font(TendType.emptyIcon)
                 .foregroundStyle(.secondary)
             Text("tendd is too old for snapshots")
-                .font(.system(size: 13, weight: .semibold))
+                .font(TendType.section)
             Text(SessionSnapshotViewModel.unsupportedMessage)
-                .font(.system(size: 12))
+                .font(TendType.detail)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .textSelection(.enabled)
@@ -273,7 +273,7 @@ struct SessionSnapshotRestoreSheet: View {
             }
             if let entry = viewModel.selectedEntry, !entry.readable {
                 Text(entry.error ?? String(localized: "This snapshot cannot be read."))
-                    .font(.system(size: 12))
+                    .font(TendType.detail)
                     .foregroundStyle(.red)
                     .textSelection(.enabled)
                     .padding(14)
@@ -287,7 +287,7 @@ struct SessionSnapshotRestoreSheet: View {
             } else {
                 if let plan = viewModel.plan, !plan.serverReachable {
                     Text("The multiplexer is not running, so every session will be created.")
-                        .font(.system(size: 12))
+                        .font(TendType.detail)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 14)
                         .padding(.bottom, 4)
@@ -339,7 +339,7 @@ struct SessionSnapshotRestoreSheet: View {
                         : "Tell the \(viewModel.midTurnAgents) agents that were mid-turn to continue")
                 }
                 .toggleStyle(.checkbox)
-                .font(.system(size: 12))
+                .font(TendType.detail)
                 .disabled(viewModel.isBusy || !viewModel.supported)
                 .help("Once each resumed agent's screen settles, type continue so it picks its interrupted turn back up")
             }
@@ -350,13 +350,13 @@ struct SessionSnapshotRestoreSheet: View {
                         set: { value in Task { await viewModel.setOnlyMissing(value) } }
                     ))
                     .toggleStyle(.checkbox)
-                    .font(.system(size: 12))
+                    .font(TendType.detail)
                     .disabled(viewModel.isBusy || viewModel.phase == .finished || !viewModel.supported)
                     .help("Leave running sessions untouched. Turn off to also add the windows and panes they lack")
                 }
                 Toggle("Rebuild layout only", isOn: $viewModel.layoutOnly)
                     .toggleStyle(.checkbox)
-                    .font(.system(size: 12))
+                    .font(TendType.detail)
                     .disabled(viewModel.isBusy || viewModel.phase == .finished || !viewModel.supported)
                     .help("Recreate sessions, windows and directories, but leave every pane as an empty shell")
                 if viewModel.isBusy && viewModel.phase != .restoring {
@@ -397,11 +397,11 @@ private struct SessionSnapshotListRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         title
-                            .font(.system(size: 12, weight: .medium))
+                            .font(TendType.detail.weight(.medium))
                             .lineLimit(1)
                         if entry.summary?.isAutomatic == true {
                             Text("Auto")
-                                .font(.system(size: 11, weight: .medium))
+                                .font(TendType.label)
                                 .foregroundStyle(.secondary)
                                 .padding(.horizontal, 4)
                                 .background(
@@ -413,17 +413,17 @@ private struct SessionSnapshotListRow: View {
                     }
                     if let summary = entry.summary {
                         Text(verbatim: summary.serverLabel)
-                            .font(.system(size: 12))
+                            .font(TendType.detail)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Text(verbatim: summary.countsLabel)
-                            .font(.system(size: 12))
+                            .font(TendType.detail)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     } else {
                         Text("Unreadable")
-                            .font(.system(size: 12))
+                            .font(TendType.detail)
                             .foregroundStyle(.red)
                     }
                 }
@@ -471,16 +471,16 @@ private struct SessionSnapshotTreeRowView: View {
         VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 6) {
                 Image(systemName: row.symbol)
-                    .font(.system(size: 12))
+                    .font(TendType.detail)
                     .foregroundStyle(.secondary)
                     .frame(width: 14)
                 Text(verbatim: row.title)
-                    .font(.system(size: 12, weight: row.depth == 0 ? .semibold : .regular))
+                    .font(TendType.detail.weight(row.depth == 0 ? .semibold : .regular))
                     .lineLimit(1)
                     .truncationMode(.middle)
                 if let detail = row.detail {
                     Text(verbatim: detail)
-                        .font(.system(size: 12))
+                        .font(TendType.detail)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -497,7 +497,7 @@ private struct SessionSnapshotTreeRowView: View {
             .frame(minHeight: TendTheme.rowHeight)
             if let message = row.message {
                 Text(verbatim: message)
-                    .font(.system(size: 12))
+                    .font(TendType.detail)
                     .foregroundStyle(row.badge == .unconfirmed ? Color.orange : Color.red)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
@@ -517,7 +517,7 @@ private struct SessionSnapshotMarkChip: View {
 
     var body: some View {
         title
-            .font(.system(size: 11, weight: .medium))
+            .font(TendType.label)
             .foregroundStyle(color)
             .lineLimit(1)
             .fixedSize()
@@ -564,7 +564,7 @@ private struct SessionSnapshotBadge: View {
             Image(systemName: symbol)
         }
         .labelStyle(.titleAndIcon)
-        .font(.system(size: 11, weight: .medium))
+        .font(TendType.label)
         .foregroundStyle(color)
         .lineLimit(1)
     }

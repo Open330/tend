@@ -112,7 +112,7 @@ struct WorkStartView: View {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Start Work")
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(TendType.page)
                     Text("Say what needs to get done. The agents work out the rest.")
                         .foregroundStyle(.secondary)
                 }
@@ -698,7 +698,7 @@ private struct FleetPaneWorkspace: View {
             ForEach(Array(parts.enumerated()), id: \.offset) { index, part in
                 if index > 0 {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 8, weight: .semibold))
+                        .font(TendType.glyph)
                         .foregroundStyle(.tertiary)
                 }
                 Text(verbatim: part)
@@ -707,7 +707,7 @@ private struct FleetPaneWorkspace: View {
                     .truncationMode(.middle)
             }
         }
-        .font(.system(size: 12))
+        .font(TendType.detail)
     }
 
     private func attachInPanel() {
@@ -779,7 +779,7 @@ struct HostRegistrationView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Register Host")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(TendType.cardTitle)
                     Text("Add an OpenSSH target to Tend's central host inventory.")
                         .foregroundStyle(.secondary)
                 }
@@ -1171,7 +1171,8 @@ struct HostIdentityBadge: View {
             RoundedRectangle(cornerRadius: size * 0.25, style: .continuous)
                 .fill(identityColor.opacity(0.14))
             Image(systemName: local ? "laptopcomputer" : "server.rack")
-                .font(.system(size: size * 0.46, weight: .medium))
+                // Sized from a fraction of the disc it sits in, not a text role.
+                .font(.system(size: size * 0.46, weight: .medium)) // type-ramp: exempt
                 .foregroundStyle(identityColor)
         }
         .frame(width: size, height: size)
@@ -1238,7 +1239,7 @@ struct ConsoleUnavailableView: View {
     var body: some View {
         VStack(spacing: 9) {
             Image(systemName: systemImage)
-                .font(.system(size: 32))
+                .font(TendType.emptyIcon)
                 .foregroundStyle(.secondary)
             Text(title).font(.headline)
             Text(description)

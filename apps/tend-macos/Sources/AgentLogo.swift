@@ -138,7 +138,8 @@ struct TendAgentLogo: View {
             }
         } else {
             Image(systemName: fallbackSymbol)
-                .font(.system(size: size * 0.8, weight: .medium))
+                // Sized from a fraction of the logo box, not a text role.
+                .font(.system(size: size * 0.8, weight: .medium)) // type-ramp: exempt
                 .frame(width: size, height: size)
                 .modifier(TendLogoBaseline(size: size))
                 .accessibilityHidden(true)
