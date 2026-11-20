@@ -139,8 +139,18 @@ struct TendSidebar: View {
     @AppStorage("tend.explore.sort") private var exploreSort: ExploreSort = .topology
     @AppStorage("tend.explore.grouping") private var exploreGrouping: ExploreGrouping = .host
 
+    /// The title bar row (the traffic lights, and the section title when the
+    /// list shows) is always the tab strip's opaque surface, so the column
+    /// and the strip beside it make one title bar; only the column below it
+    /// may take the sidebar material. With the material on, a behind-window
+    /// effect under the traffic lights showed the desktop's tint in the
+    /// title bar, beside the opaque strip.
     private var background: some View {
-        TendSidebarBackground()
+        VStack(spacing: 0) {
+            TendTheme.tabStrip(colorScheme)
+                .frame(height: chrome.rowHeight)
+            TendSidebarBackground()
+        }
     }
 
     var body: some View {

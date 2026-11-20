@@ -40,6 +40,8 @@ struct DesignCaptureTests {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let saved = savePreferences()
         defer { restorePreferences(saved) }
+        // Every capture but the material ones draws the default, opaque sidebar.
+        UserDefaults.standard.set(false, forKey: TendPreferences.sidebarMaterialKey)
         let model = AppModel(client: TendIPCClient(socketPath: socket), launchesDaemon: false)
         model.retryConnection()
         // The fixture's fleet, not just a host: demo-setup seeds a dozen agents.
@@ -125,6 +127,17 @@ struct DesignCaptureTests {
             try await window.settle(seconds: 3)
             try write(window.image(), name: name, scheme: scheme)
         }
+
+        // The opt-in sidebar material, list folded (Home) and shown
+        // (Explore). Off-screen the window is never key, so the material
+        // draws its inactive look; the title bar row stays opaque either way.
+        UserDefaults.standard.set(true, forKey: TendPreferences.sidebarMaterialKey)
+        for (selection, name) in [(TendSidebarSelection.workBoard, "home-material"), (.watch, "explore-material")] {
+            model.select(selection)
+            try await window.settle(seconds: 2)
+            try write(window.image(), name: name, scheme: scheme)
+        }
+        UserDefaults.standard.set(false, forKey: TendPreferences.sidebarMaterialKey)
         model.select(.workBoard)
     }
 
@@ -229,6 +242,7 @@ struct DesignCaptureTests {
     private static let preferenceKeys = [
         TendPreferences.homeCardLayoutKey, TendPreferences.settingsTabKey,
         FleetReviewMarks.defaultsKey, FleetReviewMarks.migratedKey,
+        TendPreferences.sidebarMaterialKey,
     ]
 
     /// The host's own persisted values (not the registered defaults, which

@@ -129,7 +129,9 @@ material (`NSVisualEffectView`, `.sidebar`, behind-window, following the
 window's active state) is built but opt-in (`tend.appearance.sidebarMaterial`,
 no control yet, never under Reduce Transparency or Increase Contrast) until an
 on-screen check covers it over bright, dark and colourful backdrops in active
-and inactive windows; CI cannot sample what is behind a window. The shared `side-bar` and
+and inactive windows; CI cannot sample what is behind a window. The title bar row of the column (under the traffic lights) is always the
+opaque strip surface, in every sidebar state: the material starts below it
+(`SidebarTitleBarTests`). The shared `side-bar` and
 `activity-bar` tokens stay the web's and iOS's. Content and cards stay opaque. Radii: control 6, option group 8, card 10,
 lane 12, all continuous corners.
 
