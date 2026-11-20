@@ -565,6 +565,14 @@ older than `--jobs` refuses the run). `--status`, `--cancel`, `--retry`,
 $ tend swap --host local --host build --host mini --all --to work
 ```
 
+The MCP tool takes `hosts` (a list, instead of `host`) for the same
+thing: a start only, up to four hosts in flight, each its own job under a
+request key minted for it (a caller's `request_key` names one job, so it
+does not go with `hosts`). The result lists every host in the order given,
+each with its own result, `ok` and, for a failure, its `recovery` call;
+`failed_hosts` names the ones that did not end cleanly, and the call is an
+error if any did. Read, cancel or retry each job with `host`.
+
 ## Automatic swap
 
 The same swap is an automation action. This rule moves any capped agent to the

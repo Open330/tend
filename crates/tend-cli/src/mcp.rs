@@ -696,6 +696,7 @@ fn tool_definitions(config: &tend::config::Config) -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "host": { "type": "string", "description": "Fleet host alias. Omit (or \"local\") for this host." },
+                    "hosts": { "type": "array", "items": { "type": "string" }, "minItems": 1, "description": "Instead of host: start the same swap on each of these hosts at once (\"local\" is this one). Each host runs its own job under its own request key; the result lists them per host." },
                     "targets": { "type": "array", "items": { "type": "string" }, "description": "Panes (%5, rmux:%5) or provider session ids. Omit for every capped agent." },
                     "all": { "type": "boolean", "description": "Every Claude/Codex agent, not only capped ones." },
                     "provider": { "type": "string", "enum": ["claude", "codex"] },
@@ -1827,7 +1828,7 @@ async fn call_tool_inner(
             Ok(value) => json_result(&value),
             Err(error) => error_result(&error),
         }),
-        "tend_swap_account" => Ok(swap_account(client, &args, config).await),
+        "tend_swap_account" => Ok(swap_accounts(client, &args, config).await),
         "tend_peer_report" => Ok(peer_report(client, &args).await),
         "tend_set_identity" => {
             let alias = args.get("alias").and_then(Value::as_str);
@@ -5597,6 +5598,115 @@ async fn swap_account(client: &Client, args: &Value, config: &tend::config::Conf
     swap_reply(&plan, host, &output)
 }
 
+/// How many hosts a multi-host swap has in flight at once, as `tend swap
+/// --host a --host b`.
+const SWAP_HOSTS_AT_ONCE: usize = 4;
+
+/// `tend_swap_account` with `hosts`: the same start on each host, at most
+/// [`SWAP_HOSTS_AT_ONCE`] at a time, each its own job under its own request
+/// key. One host failing never stops or hides another; the result lists
+/// every host in the order given. Without `hosts`, one call as before.
+async fn swap_accounts(client: &Client, args: &Value, config: &tend::config::Config) -> Value {
+    use futures_util::StreamExt as _;
+    if args.get("hosts").is_none_or(Value::is_null) {
+        return swap_account(client, args, config).await;
+    }
+    let hosts = match swap_hosts(args) {
+        Ok(hosts) => hosts,
+        Err(error) => return error_result(&error),
+    };
+    let calls: Vec<Value> = hosts
+        .into_iter()
+        .map(|host| {
+            let mut one = args.clone();
+            if let Some(object) = one.as_object_mut() {
+                object.remove("hosts");
+                object.insert("host".into(), json!(host));
+            }
+            one
+        })
+        .collect();
+    let replies: Vec<Value> = futures_util::stream::iter(calls)
+        .map(|one: Value| async move { swap_account(client, &one, config).await })
+        .buffered(SWAP_HOSTS_AT_ONCE)
+        .collect()
+        .await;
+    swap_hosts_reply(&replies)
+}
+
+/// The hosts of a multi-host call, refused before anything is sent if the
+/// call is not a start on distinct hosts.
+fn swap_hosts(args: &Value) -> Result<Vec<String>, String> {
+    if args.get("host").is_some_and(|host| !host.is_null()) {
+        return Err("give `host` or `hosts`, not both; nothing was sent".into());
+    }
+    if args
+        .get("action")
+        .and_then(Value::as_str)
+        .is_some_and(|action| action != "swap")
+    {
+        return Err(
+            "`hosts` is for action swap; read, cancel or retry a job on its own host; nothing \
+             was sent"
+                .into(),
+        );
+    }
+    if args.get("request_key").is_some_and(|key| !key.is_null()) {
+        return Err(
+            "`request_key` names one job; with `hosts` each host gets its own key, returned \
+             with its result; nothing was sent"
+                .into(),
+        );
+    }
+    let Some(list) = args.get("hosts").and_then(Value::as_array) else {
+        return Err("`hosts` is a list of host aliases".into());
+    };
+    let mut hosts: Vec<String> = Vec::new();
+    for entry in list {
+        let Some(host) = entry.as_str().map(str::trim).filter(|h| !h.is_empty()) else {
+            return Err("`hosts` holds host aliases (non-empty strings)".into());
+        };
+        let host = tend::work_control::remote_host_alias(Some(host))
+            .unwrap_or(tend::fleet::LOCAL_HOST_ALIAS)
+            .to_owned();
+        if hosts.contains(&host) {
+            return Err(format!("`hosts` names {host} twice; nothing was sent"));
+        }
+        hosts.push(host);
+    }
+    if hosts.is_empty() {
+        return Err("`hosts` is empty; nothing was sent".into());
+    }
+    Ok(hosts)
+}
+
+/// Every host's own result under `hosts`, in order, with `failed_hosts`
+/// naming those that did not end cleanly; an error if any did not.
+fn swap_hosts_reply(replies: &[Value]) -> Value {
+    let mut failed = Vec::new();
+    let rows: Vec<Value> = replies
+        .iter()
+        .map(|reply| {
+            let error = reply["isError"].as_bool().unwrap_or(false);
+            let text = reply["content"][0]["text"].as_str().unwrap_or_default();
+            let mut row = serde_json::from_str::<Value>(text)
+                .ok()
+                .filter(Value::is_object)
+                .unwrap_or_else(|| json!({ "error": text }));
+            row["ok"] = json!(!error);
+            if error {
+                failed.push(row.get("host").cloned().unwrap_or(Value::Null));
+            }
+            row
+        })
+        .collect();
+    let body = json!({ "hosts": rows, "failed_hosts": failed });
+    json!({
+        "content": [ { "type": "text", "text": body.to_string() } ],
+        "isError": !failed.is_empty(),
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SwapAction {
     Swap,
@@ -6223,6 +6333,54 @@ mod tests {
 
     /// Output that is not the action's own result type is no result, and
     /// what the host printed is kept with the way to find the job.
+    /// `hosts` is a start on distinct hosts, refused whole before anything
+    /// is sent otherwise.
+    #[test]
+    fn a_multi_host_swap_takes_only_distinct_hosts_for_a_start() {
+        assert_eq!(
+            swap_hosts(&json!({"hosts": ["mini", " local ", "devbox"]})).unwrap(),
+            ["mini", "local", "devbox"]
+        );
+        assert!(swap_hosts(&json!({"hosts": [""]}))
+            .unwrap_err()
+            .contains("non-empty"));
+        for bad in [
+            json!({"hosts": []}),
+            json!({"hosts": "mini"}),
+            json!({"hosts": ["mini", "mini"]}),
+            json!({"hosts": ["local", "local"]}),
+            json!({"hosts": ["mini", 3]}),
+            json!({"hosts": ["mini"], "host": "devbox"}),
+            json!({"hosts": ["mini"], "action": "status", "job": "k"}),
+            json!({"hosts": ["mini"], "action": "retry", "job": "k"}),
+            json!({"hosts": ["mini"], "request_key": "k"}),
+        ] {
+            assert!(swap_hosts(&bad).is_err(), "{bad}");
+        }
+        assert!(swap_hosts(&json!({"hosts": ["mini"], "action": "swap"})).is_ok());
+    }
+
+    /// Every host's own result in order; one failing marks the whole call
+    /// and names that host, never hiding the others.
+    #[test]
+    fn a_multi_host_swap_reports_every_host() {
+        let plan = swap_plan(&json!({"request_key": "k-1"}), Some("mini"), None).unwrap();
+        let good = swap_reply(&plan, Some("mini"), &output(0, "[]", ""));
+        let bad = swap_error(&plan.call(Some("devbox")), "disconnected");
+        let (error, body) = reply_fields(&swap_hosts_reply(&[good.clone(), bad]));
+        assert!(error);
+        assert_eq!(body["failed_hosts"], json!(["devbox"]));
+        assert_eq!(body["hosts"][0]["host"], "mini");
+        assert_eq!(body["hosts"][0]["ok"], true);
+        assert_eq!(body["hosts"][0]["request_key"], "k-1");
+        assert_eq!(body["hosts"][1]["ok"], false);
+        assert_eq!(body["hosts"][1]["error"], "disconnected");
+        assert_eq!(body["hosts"][1]["recovery"]["arguments"]["host"], "devbox");
+        let (error, body) = reply_fields(&swap_hosts_reply(&[good]));
+        assert!(!error);
+        assert_eq!(body["failed_hosts"], json!([]));
+    }
+
     #[test]
     fn a_swap_reply_of_the_wrong_shape_is_no_result() {
         let swap = swap_plan(
