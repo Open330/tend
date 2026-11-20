@@ -110,14 +110,17 @@ pub trait LivenessSource: Send + Sync + 'static {
 /// integration colocated with the trait whose contract it leans on.
 /// One reconcile tick's scan as the subject check reads it
 /// (`subject_evidence.rs`): per backend, whether it was complete, the
-/// sockets that answered, and each pane's foreground and agent process.
+/// sockets that answered, each pane's foreground and agent process, and
+/// the sessions a process was explicitly resumed on.
 fn pane_scan(
     at: time::OffsetDateTime,
     observations: &[(HostKind, PaneObservation)],
     workloads: &HashMap<String, crate::WorkloadSummary>,
+    resumed: Option<std::collections::BTreeSet<String>>,
 ) -> crate::subject_evidence::PaneScan {
     crate::subject_evidence::PaneScan {
         at,
+        resumed,
         hosts: observations
             .iter()
             .map(|(kind, observation)| crate::subject_evidence::HostScan {
@@ -692,6 +695,7 @@ impl<L: LivenessSource> Reconciler<L> {
         // ancestry outrank the stored binding, so an idle resumed agent is not
         // left on an id that now belongs to another pane until its next hook.
         let mut codex_hosts = Vec::new();
+        let resumed = codex_scan.as_ref().map(|scan| scan.resumed.clone());
         // Not gated on an existing real row: right after a multiplexer
         // restart the resumed agents may have none, and adopting them is the
         // point.
@@ -768,7 +772,12 @@ impl<L: LivenessSource> Reconciler<L> {
         // What the subject check of human items reads: this scan, with each
         // pane's foreground and whether its workload has an agent process.
         self.store
-            .record_pane_scan(pane_scan(inventory_observed_at, &observations, &workloads))
+            .record_pane_scan(pane_scan(
+                inventory_observed_at,
+                &observations,
+                &workloads,
+                resumed,
+            ))
             .await;
         let store_update_us =
             u64::try_from(reconcile_started.elapsed().as_micros()).unwrap_or(u64::MAX);

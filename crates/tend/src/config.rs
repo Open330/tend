@@ -670,7 +670,7 @@ pub const DEFAULT_TICKET_TIMEOUT_SECS: u64 = 180;
 #[serde(default, deny_unknown_fields)]
 pub struct ReviewConfig {
     /// Let a person close, in one go, the questions nobody can answer any
-    /// more (their asker gone for a day): `decision_close_unanswerable`,
+    /// more (their asker established gone): `decision_close_unanswerable`,
     /// Close all and `tend review cleanup --questions --apply`. Each gets
     /// the reply Dismiss sends, which is final; every surface says so in
     /// its confirmation. On by default (the owner's decision, 2026-11-19);

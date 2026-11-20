@@ -92,6 +92,12 @@ pub struct PaneScan {
     #[serde(with = "time::serde::rfc3339")]
     pub at: OffsetDateTime,
     pub hosts: Vec<HostScan>,
+    /// Session ids a process in a scanned pane was explicitly started on
+    /// (`codex resume <id>`, `claude --resume <id>`), from the same process
+    /// walk; `None` when this pass did not walk the panes. A session listed
+    /// here is back, whatever its row says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resumed: Option<std::collections::BTreeSet<String>>,
 }
 
 impl PaneScan {

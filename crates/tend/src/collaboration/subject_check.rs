@@ -72,10 +72,21 @@ pub const CLOSE_UNANSWERABLE_CAPABILITY: &str = "close_unanswerable_v1";
 pub const CLOSE_UNANSWERABLE_OFF: &str =
     "closing unanswerable questions is turned off; set [review] close_unanswerable = true";
 
-/// How long a subject must have been established gone.
-pub const SUBJECT_GONE_GRACE: time::Duration = time::Duration::hours(24);
-/// How long the item itself must have been open.
-pub const ITEM_MIN_AGE: time::Duration = time::Duration::hours(24);
+/// How long a subject must have been established gone before its item
+/// leaves the person's turn. Only long enough to absorb the ordinary ways a
+/// live session is briefly unseen: an account swap or `tend reload`
+/// relaunching it (a minute or two, and its resume process makes it alive
+/// again at once), a daemon restart (the episode is durable, and
+/// [`UNKNOWN_GAP`] covers the scans it misses), a reboot that `tend
+/// restore` brings back. A fold is undone the moment the subject is seen
+/// alive, and the item stays one click away under "Can't be answered"
+/// with Keep, so waiting longer only keeps a question nobody can answer in
+/// the person's turn (`docs/proposals/STALE_QUESTIONS.md`, "Grace").
+pub const SUBJECT_GONE_GRACE: time::Duration = time::Duration::minutes(15);
+/// How long the item itself must have been open: the same, so a question
+/// whose asker exits right after asking is not folded before the person
+/// could have seen it.
+pub const ITEM_MIN_AGE: time::Duration = SUBJECT_GONE_GRACE;
 /// An unknown stretch longer than this since the last confirmed gone
 /// restarts the grace clock (not the episode).
 pub const UNKNOWN_GAP: time::Duration = time::Duration::minutes(10);
@@ -461,6 +472,16 @@ fn judge(
     {
         return Verdict::Alive;
     }
+    // A process explicitly started on the session (`codex resume <id>`,
+    // `claude --resume <id>`) is the session back, before its first prompt
+    // gives it a row.
+    if inputs
+        .scan
+        .and_then(|scan| scan.resumed.as_ref())
+        .is_some_and(|resumed| resumed.contains(session))
+    {
+        return Verdict::Alive;
+    }
     let mut causes = Vec::new();
     // A fact counts only if it is newer than the last activity the row
     // shows, so an end before a resume says nothing about the resumed run.
@@ -484,7 +505,13 @@ fn judge(
         (pane.as_deref(), socket.as_deref(), inputs.scan)
     {
         let binding = merged_binding(stored.get(session), inputs.bindings.get(session));
-        if let Some(cause) = scan_evidence(pane, socket, row, binding.as_ref(), scan, now) {
+        let seen = Seen {
+            session,
+            row,
+            binding: binding.as_ref(),
+            agents: inputs.agents,
+        };
+        if let Some(cause) = scan_evidence(pane, socket, &seen, scan, now) {
             causes.push(cause);
         }
     }
@@ -497,12 +524,32 @@ fn judge(
     }
 }
 
-/// E3 or E4 from the newest scan, if it shows either.
+/// What a scan is judged against for one subject.
+struct Seen<'a> {
+    session: &'a str,
+    /// The subject's own row, never live here (`judge` returned already).
+    row: Option<&'a Agent>,
+    binding: Option<&'a SubjectBinding>,
+    agents: &'a [Agent],
+}
+
+/// E2, E3 or E4 from the newest scan, if it shows one.
+///
+/// Two ways a scan can show the subject's pane no longer holds it:
+///
+/// - **On the bound incarnation**: the session was seen bound to this pane
+///   on the server incarnation the socket answers with now.
+/// - **From present state**: the pass walked every pane's processes
+///   (`PaneScan::resumed`), so `judge` has already established that the
+///   session has no live row anywhere on this host and that no process was
+///   started on it. The pane then needs no history: it is absent, or a
+///   different, named session's live row holds it, or it runs a shell and no
+///   agent. A pane held by an agent tendd cannot name yet (a synthetic row)
+///   shows nothing.
 fn scan_evidence(
     pane: &str,
     socket: &str,
-    row: Option<&Agent>,
-    binding: Option<&SubjectBinding>,
+    seen: &Seen<'_>,
     scan: &PaneScan,
     now: OffsetDateTime,
 ) -> Option<GoneCause> {
@@ -520,10 +567,12 @@ fn scan_evidence(
         .servers
         .iter()
         .find(|server| server.endpoint == endpoint)?;
-    let bound = binding
+    let bound = seen
+        .binding
         .filter(|binding| binding.pane == pane && binding.endpoint == endpoint)
         .and_then(|binding| binding.incarnation);
-    let current = server.incarnation;
+    let on_bound = bound.is_some() && bound == server.incarnation;
+    let present = scan.resumed.is_some();
     let entry = host
         .panes
         .iter()
@@ -531,37 +580,59 @@ fn scan_evidence(
         .filter(|_| server.running);
     let Some(entry) = entry else {
         // E3: absent from a socket that answered.
-        // - "No server running": no server holds any pane there, so none
-        //   from any incarnation is left.
-        // - tmux: only on the server incarnation the session was bound on.
-        //   When that cannot be established (no binding remembered, as
-        //   after a daemon restart, or an incarnation unreported) the
-        //   absence says nothing: the session may have been bound on a
-        //   server that is gone, and restored since into a pane tendd has
-        //   not tied to it yet.
-        // - rmux reports no incarnation at all, so it can never show the
-        //   same one. Its pane ids are namespaced to the endpoint tendd
-        //   scans, and an rmux restart ends every pane it had, so absence
-        //   from a running endpoint is that pane's end. A restored session
-        //   still wins through the live-session check, and the 24-hour
-        //   grace needs every pass for a day to keep confirming it.
+        // - "No server running": no server holds any pane there.
+        // - rmux reports no incarnation, and its pane ids are namespaced to
+        //   the endpoint tendd scans; an rmux restart ends every pane it
+        //   had, so absence from a running endpoint is that pane's end.
+        // - tmux: on the bound incarnation, or from present state. Without
+        //   either (a scan that did not walk the processes) the session may
+        //   have been restored into a pane tendd has not tied to it yet.
         let gone = !server.running
             || match kind {
                 HostKind::Rmux => true,
-                _ => bound.is_some() && bound == current,
+                _ => on_bound || present,
             };
         return gone.then_some(GoneCause::PaneGone);
     };
-    // E4: the same incarnation, and exactly the agentless-pane conjunction.
-    let row = row?;
     let unique = host.panes.iter().filter(|p| p.pane_id == pane).count() == 1;
-    (bound.is_some()
-        && bound == current
+    let holders: Vec<&Agent> = seen
+        .agents
+        .iter()
+        .filter(|agent| {
+            agent.state != AgentState::Stopped
+                && agent.pane.as_deref() == Some(pane)
+                && agent.tmux_socket.as_deref().is_some_and(|other| {
+                    crate::backend::pane_endpoint_identity(Some(pane), other) == endpoint
+                })
+        })
+        .collect();
+    // E2 from present state: another session tendd can name runs there.
+    if present
         && unique
-        && row.pid.is_none()
-        && row.surface.is_none()
-        && recognized(row.kind)
-        && now - row.last_activity_at >= AGENTLESS_PANE_IDLE
+        && !holders.is_empty()
+        && holders.iter().all(|agent| {
+            agent.session_id != seen.session
+                && !agent
+                    .session_id
+                    .starts_with(crate::state::SYNTHETIC_SESSION_PREFIX)
+        })
+    {
+        return Some(GoneCause::Replaced);
+    }
+    // E4: exactly the agentless-pane conjunction, on the bound incarnation
+    // or from present state with nothing else holding the pane.
+    let quiet = match seen.row {
+        Some(row) => {
+            row.pid.is_none()
+                && row.surface.is_none()
+                && recognized(row.kind)
+                && now - row.last_activity_at >= AGENTLESS_PANE_IDLE
+        }
+        None => present,
+    };
+    ((on_bound || (present && holders.is_empty()))
+        && unique
+        && quiet
         && entry.agent_process == Some(false)
         && crate::shell::is_shell_program(&entry.foreground))
     .then_some(GoneCause::AgentExited)

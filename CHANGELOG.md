@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A question whose asking agent has exited now leaves Your turn even when
+  it was asked before tendd stored where its asker ran. tendd establishes
+  the asker gone from the present: no live row for its session anywhere on
+  the host, no process started on that session (`codex resume <id>`,
+  `claude --resume <id>`), and its pane absent, held by another named
+  session, or back at a shell. A session resumed by a swap or `tend reload`,
+  even before its first prompt and in another pane, counts as alive. On
+  jiun-mini this reaches the week-old questions `tend review cleanup` did
+  not list; one of them (%8) turned out to have its asker resumed and stays.
+- The grace before such a question folds is 15 minutes instead of 24 hours:
+  long enough for an account swap, a daemon restart or a restore, and the
+  question unfolds the moment its asker is seen again. It stays under
+  Can't be answered, with Keep, until a person closes it.
+- A tend recovery item about a request a person sent (from the console or a
+  Fleet initiator) now closes after 7 days when its recipient vanished,
+  with no agent row at all. Its answer only recorded a decision, and there
+  was no one left for it; the original request stays, still interrupted.
+  A recipient that is only failing or stopped keeps the item.
+
 ## [0.10.28] - 2026-11-20
 
 ### Added

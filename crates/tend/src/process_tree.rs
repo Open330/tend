@@ -168,6 +168,12 @@ pub struct CodexPaneScan {
     /// claim the pane's placeholder row as `Unknown`, so this — not a registry
     /// placeholder — is the evidence a cwd correlation needs.
     pub hosts: Vec<PaneInfo>,
+    /// Every session id a process in a walked pane was explicitly started
+    /// on, in any number of panes and whichever way its hooks run
+    /// (`--no-daemon` included). A question's subject check reads it: a
+    /// session resumed and not yet prompted has no live row, and its own
+    /// process is the only sign it is back (`subject_check.rs`).
+    pub resumed: std::collections::BTreeSet<String>,
 }
 
 /// Recover detached Codex sessions from an explicit CLI resume id and its
@@ -210,7 +216,9 @@ pub fn scan_codex_panes_with(panes: &[PaneInfo], source: &ProcessSource) -> Code
         })
         .map(|(pane, _)| (*pane).clone())
         .collect();
+    let resumed = resumed_sessions(scanned.iter().map(|(_, processes)| processes.as_slice()));
     CodexPaneScan {
+        resumed,
         resume_bindings: unique_resume_bindings(
             scanned
                 .into_iter()
@@ -249,6 +257,16 @@ fn is_interactive_codex(process: &ProcessInfo) -> bool {
         args.find(|arg| !arg.starts_with('-')),
         Some("app-server" | "exec" | "e" | "review" | "mcp-server")
     )
+}
+
+/// Every session id a process in these panes was explicitly started on.
+fn resumed_sessions<'a>(
+    panes: impl Iterator<Item = &'a [ProcessInfo]>,
+) -> std::collections::BTreeSet<String> {
+    panes
+        .flat_map(|processes| processes.iter().filter_map(resume_id))
+        .map(str::to_owned)
+        .collect()
 }
 
 fn unique_resume_bindings<'a>(
@@ -580,6 +598,40 @@ mod tests {
             comm: comm.into(),
             cmdline: cmdline.into(),
         }
+    }
+
+    #[test]
+    fn every_explicit_resume_is_listed_whatever_its_hooks_or_pane_count() {
+        let codex = "01a132f3-21bf-76e3-822e-e84855943e22";
+        let claude = "55115377-0000-4000-8000-000000000000";
+        let isolated = vec![proc(
+            20,
+            10,
+            1,
+            "codex",
+            &format!("codex --no-daemon --yolo resume {codex}"),
+        )];
+        let twice = vec![proc(
+            30,
+            11,
+            1,
+            "claude",
+            &format!("claude --resume {claude}"),
+        )];
+        let fresh = vec![proc(40, 12, 1, "codex", "codex --yolo")];
+        let resumed = resumed_sessions(
+            [
+                isolated.as_slice(),
+                twice.as_slice(),
+                twice.as_slice(),
+                fresh.as_slice(),
+            ]
+            .into_iter(),
+        );
+        assert_eq!(
+            resumed.into_iter().collect::<Vec<_>>(),
+            [codex.to_owned(), claude.to_owned()]
+        );
     }
 
     #[test]

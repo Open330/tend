@@ -129,7 +129,8 @@ with the subject's pane absent.
 - The scan must be complete. herdr, cmux and zellij are partial
   observations and can never show absence.
 - If the server's incarnation changed since the subject was last bound, the
-  absence says nothing about the subject, so the evidence is unknown.
+  absence says nothing about the subject, so the evidence is unknown, unless
+  present state establishes it (see "Present state" below).
 
 **E4, agent exited.** The exact conjunction `stop_rows_without_agent_process`
 already requires, for the subject's pane:
@@ -139,9 +140,9 @@ already requires, for the subject's pane:
 - no primary agent process is in the pane's workload;
 - the multiplexer reports a recognized shell in the foreground.
 
-It also needs the same server incarnation. A foreground that is anything
-other than a shell (a wrapper, a tool, a suspended TUI) is **unknown**, not
-gone.
+It also needs the same server incarnation, or present state. A foreground
+that is anything other than a shell (a wrapper, a tool, a suspended TUI) is
+**unknown**, not gone.
 
 Never evidence:
 - a missing row with no fact;
@@ -180,14 +181,14 @@ The state machine runs on every reconcile, and every pass yields **alive**,
   minutes (a failed scan, the daemon being down, an ambiguous foreground),
   only the grace clock restarts: `gone_since` becomes the next confirmed
   *gone*. The episode id and `kept_episode` are unchanged, because nothing
-  showed the subject alive. A daemon that was down 24 hours therefore cannot
+  showed the subject alive. A daemon that was down therefore cannot
   fold anything at start, and an item kept before the outage stays kept.
 
 An item is **unanswerable** when all of these hold:
 - the episode is *gone*;
 - `confirmed_at` is from the current pass;
-- `gone_since` is at least 24 hours old;
-- the item is at least 24 hours old;
+- `gone_since` is at least 15 minutes old (the grace, below);
+- the item is at least 15 minutes old;
 - `kept_episode` is not this episode.
 
 A change of cause within one episode (for example pane gone, then shell,
@@ -229,12 +230,80 @@ The binding is therefore also kept on the open item, next to its episode:
 Nothing else changes. A stored binding is a record of where tendd saw the
 session alive, not evidence that it is gone. The pane must still be absent
 from a complete scan of a server with that same incarnation (E3), or hold
-a shell with no agent process (E4), and the 24-hour grace still applies. A
-tmux server restarted since keeps the evidence unknown, as before. An item
+a shell with no agent process (E4), and the grace still applies. A
+tmux server restarted since keeps this evidence unknown, as before. An item
 asked before this change has no stored binding until its subject is seen
-again, so only new evidence counts for it.
+again; present state (next) covers it.
 
 Old daemons ignore the field. It is skipped when empty.
+
+### Present state: an asker gone before its binding was stored
+
+Measured on 0.10.28 (2026-11-20): of jiun-mini's 18 open agent questions, 10
+were 7 to 9 days old and their asker had no live row. `tend review cleanup
+--questions` listed none of them. Four had an `ended` fact and were inside the
+24-hour grace; the other six had no stored binding (asked before it was
+kept), and their tmux server had been restarted since, so E3 and E4 said
+nothing. rtzr (4) and jiun-mbp (1) had the same pattern.
+
+A binding is history: where tendd saw the session. What the person asks is
+about now: **the asker is not running anywhere on this host, and its pane no
+longer holds it.** tendd can establish that from the present alone, when a
+pass has walked every pane's processes:
+
+- **Not running anywhere.** No bound, not-Stopped row for the session id on
+  this host (as before), **and no process in any pane was started on it**:
+  `codex resume <id>`, `claude --resume <id>` / `-r` / `--session-id`. The
+  reconcile pass already reads every pane's process tree once; it now keeps
+  the set of explicitly resumed session ids with the scan
+  (`PaneScan::resumed`). A session found there is **alive**, whatever its
+  row says. That is the swap and `tend reload` case: the same session id in a
+  new process, in its old pane or a new one, possibly under another account.
+  Its row comes back on the first prompt; until then its process is the
+  evidence. On jiun-mini, %8 was exactly this: an idle `codex --no-daemon
+  resume 01a132f3…` whose row was synthetic. A pane check alone would have
+  called it replaced.
+- **Its pane no longer holds it**, on a complete scan of a socket that
+  answered, on any server incarnation:
+  - the pane is absent (E3, `pane_gone`);
+  - or a different session tendd can name holds it with a live row (E2,
+    `replaced`); a synthetic row (an agent tendd cannot name yet) shows
+    nothing;
+  - or the pane runs a shell and no agent, and no live row holds it (E4,
+    `agent_exited`).
+
+A pass that did not walk the processes (`resumed` absent: no complete host,
+an older scan) keeps the old rule: only the bound incarnation counts. Old
+daemons ignore the field.
+
+Why this is safe now and was not before: the incarnation rule existed so that
+a session restored into a new pane tendd had not tied to it yet was not
+called gone from its old pane id. Restores and swaps relaunch the session by
+id, which the process set shows directly. What is left is a session that
+comes back with no id on its command line (`claude --continue`); it folds
+until its first hook, then is alive again, and Keep and the grace cover the
+person in between.
+
+### Grace: long enough for a swap, not a day
+
+The 24-hour grace kept week-old questions in Your turn for a day after their
+asker exited, and the owner wants them out when the agent is gone. The grace
+only has to absorb the ways a live session is briefly unseen:
+
+| What | How long it is unseen | Covered by |
+| --- | --- | --- |
+| Account swap, `tend reload` | a minute or two; the resume process is seen at once | the resume set, then 15 min |
+| tendd restart | one or two missed passes | the durable episode; `UNKNOWN_GAP` (10 min) |
+| Reboot then `tend restore` | minutes, while the person restores | 15 min; later, it unfolds the moment it is back |
+| `/clear`, a new session in the pane | it is a different session | not absorbed: the asker really is gone |
+
+`SUBJECT_GONE_GRACE` and `ITEM_MIN_AGE` are therefore **15 minutes**: three
+confirmation windows (`CONFIRMATION_FRESH`, 5 min) and longer than the
+unknown gap, so one missed scan cannot fold anything, and a swap finishes
+well inside it. Longer would only keep questions nobody can answer in the
+person's turn. A fold is reversible: the subject seen alive ends the
+episode and the item returns to Your turn. It stays reachable under
+**Can't be answered** with Keep, and nothing closes it without a person.
 
 ## What happens to each kind
 
@@ -256,8 +325,17 @@ changes.
   already decode, rather than a new one.
 
 A recovery item for a request the person sent (operator console or Fleet
-initiator) is never closed **for age**. It still resolves when its condition
-ends, as now. When its subject is established gone under the episode rules,
+initiator) is closed **for age** only when its recipient **vanished**
+(`binding_unavailable`: no agent row at all, live or Stopped) for the whole
+7 days. On jiun-mbp three such items were 11 to 20 days old: four console
+dispatches to a Codex session with no row since 2026-11-08, three console
+requests from September to two Claude sessions with none since 2026-10-31.
+Their answer "records a decision; it does not restart, cancel, or spend";
+with no recipient there is nothing for it to decide. The original request
+is not changed: it stays the person's, still listed as interrupted, to
+resend or retire. A recipient that is only failing, rate-limited or stopped
+still has a row, so its item stays for the person however old. It still
+resolves when its condition ends, as now. When its subject is established gone under the episode rules,
 it folds like an agent's question. For a recovery item the subject is the
 original request's recipient; `binding_unavailable` alone never counts.
 
@@ -272,10 +350,8 @@ Reply wakes keep today's `abandoned` rule, which exempts only a console
 sender. Adding the Fleet-initiator exemption to reply wakes is not part of
 this change.
 
-On jiun-mbp, the three measured console recoveries have only
-`binding_unavailable`. Unless a scan establishes E3 or E4 for their recipients,
-they stay in Your turn, and the proposal says so rather than inventing
-evidence.
+The three jiun-mbp console recoveries close under the vanished-recipient
+rule above.
 
 ### Agents' questions with a gone asker: folded, closed only by a person
 
@@ -327,7 +403,7 @@ the user may as well close them."). So:
 - Its one confirmation, on Mac, web and iOS, names the count, says each
   asking agent gets a reply that the person dismissed it, and says plainly
   that this cannot be undone.
-- It never includes an item whose evidence is younger than the 24-hour grace
+- It never includes an item whose evidence is younger than the grace
   or that was kept, and `tend review cleanup --questions` stays a dry run
   unless `--apply` is given.
 - Reopening a closed item is not offered: a close is final, as Dismiss is.
@@ -385,7 +461,7 @@ Folding and Keep do not depend on this choice.
 
 ```text
 would close 6 of tend's own items (stale: nobody left to act on it …)
-3 questions can't be answered (subject gone 24h+); not closed:
+3 questions can't be answered (subject gone); not closed:
   req_…  8.7d  information  pane %42 gone since 2026-11-16 (otpeek)
   …
 run with --apply to close tend's items; add --questions to also close these 3
@@ -432,9 +508,9 @@ Each identity and evidence case gets its own fixture:
 - the same pane id on two sockets;
 - a partial (herdr) scan;
 - a failed socket;
-- a daemon down 24 hours, where the grace clock restarts but the episode
+- a daemon down for hours, where the grace clock restarts but the episode
   does not;
-- Keep, then unknown for 24 hours, then gone again with no alive in between,
+- Keep, then unknown for hours, then gone again with no alive in between,
   which stays kept;
 - a recovery close, after which the original request records the dismissal
   in its interruption decision, with its status unchanged and nothing

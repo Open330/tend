@@ -342,7 +342,7 @@ enum Action {
     /// touched. Prints what it would close; --apply closes it.
     ///
     /// Also lists the questions nobody can answer any more (their asker or
-    /// subject established gone for a day), which are never closed for age;
+    /// subject established gone), which are never closed for age;
     /// --questions --apply closes exactly the ones listed, each with the
     /// reply Dismiss sends, when `[review] close_unanswerable` is on.
     Cleanup {
@@ -606,7 +606,7 @@ fn render_queue(queue: &PendingQueue, now: OffsetDateTime) -> String {
                     group = true;
                     let _ = writeln!(
                         out,
-                        "can't be answered ({}): subject gone 24h+; `tend review cleanup` lists them",
+                        "can't be answered ({}): subject gone; `tend review cleanup` lists them",
                         queue.unanswerable_count.max(folded),
                     );
                 }
@@ -797,7 +797,7 @@ fn render_questions(report: &CleanupReport, now: OffsetDateTime) -> String {
     if let Some(closed) = &report.questions_closed {
         let _ = writeln!(
                 out,
-                "closed {} of {n} {plural} that can't be answered (subject gone 24h+); each asker got the reply Dismiss sends",
+                "closed {} of {n} {plural} that can't be answered (subject gone); each asker got the reply Dismiss sends",
                 closed.closed.len(),
             );
         for skipped in &closed.skipped {
@@ -806,7 +806,7 @@ fn render_questions(report: &CleanupReport, now: OffsetDateTime) -> String {
     } else {
         let _ = writeln!(
             out,
-            "{n} {plural} can't be answered (subject gone 24h+); not closed:"
+            "{n} {plural} can't be answered (subject gone); not closed:"
         );
         for entry in &report.questions {
             let _ = writeln!(out, "  {}", render_unanswerable(entry, now));
@@ -1426,7 +1426,7 @@ mod tests {
         };
         let out = render_questions(&report, now);
         assert!(
-            out.starts_with("1 question can't be answered (subject gone 24h+); not closed:\n"),
+            out.starts_with("1 question can't be answered (subject gone); not closed:\n"),
             "{out}"
         );
         assert!(out.contains("add --questions --apply"), "{out}");

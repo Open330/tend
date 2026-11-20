@@ -1,6 +1,6 @@
 // Your turn's folded group, **Can't be answered** (docs/proposals/
 // STALE_QUESTIONS.md): questions whose asking agent tendd established gone
-// for a day (`subject_check_v1`). They leave Your turn and every count, are
+// (`subject_check_v1`). They leave Your turn and every count, are
 // collapsed by default, and say why and since when. Keep puts one back in
 // Your turn; Close all, only where the daemon allows it, declines exactly
 // the listed ones after one confirmation. Another Fleet host's are kept or
