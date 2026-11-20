@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.30] - 2026-11-21
+
 ### Fixed
 
 - Questions whose asker has exited now actually fold from present state.
