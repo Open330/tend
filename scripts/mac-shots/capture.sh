@@ -72,7 +72,7 @@ tend review request --session s-data --as agent --label data \
   --recommend "publish: 14 models ran with 0 errors" >/dev/null
 
 # What each language must produce: a missing one fails the run.
-screens=(home home-compact home-start-work explore inbox ask menubar onboarding whats-new home-unconnected
+screens=(home home-compact home-narrow home-compact-narrow home-hosts home-hosts-narrow home-review home-start-work explore inbox ask menubar onboarding whats-new home-unconnected
   settings-general settings-notifications settings-menuBar settings-accounts settings-ask settings-agents
   settings-automations settings-fleet settings-advanced)
 
