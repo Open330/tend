@@ -242,6 +242,16 @@ while agents finish their work.
 
 `--provider claude|codex` narrows any of these to one provider.
 
+`--from <account>` narrows any of them to the agents running on that
+account (`home` and `home@claude` are the same): `tend swap --all --from
+home --to work` moves only what runs on `home`. The account is the one the
+swap identifies anyway: its `aas e` launch line, the account `aas` marks
+active for an agent started bare, or, with `[[accounts]]`, the account its
+environment matches. Every other agent in scope is reported as skipped
+with the account it is on; one whose account cannot be identified is left
+alone too, never taken to be on it. A Fleet host older than `--from`
+refuses the run instead of swapping every account's agents. MCP: `from`.
+
 A named target is resolved to exactly one live pane first. A bare `%81`
 means `rmux:%81` when that is the only pane it can mean. A name that matches
 no live pane, or several (the same `%N` on two servers), is reported and

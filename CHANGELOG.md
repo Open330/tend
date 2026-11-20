@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `tend swap --from <account>` (MCP `from`) swaps only the agents running
+  on that account, within the usual scope: `--all --from home --to work`
+  moves what runs on `home` and reports every other agent as skipped with
+  the account it is on. An agent whose account cannot be identified is
+  left alone. The flag is relayed to a Fleet host, which refuses it if its
+  `tend` predates it.
+
 ## [0.10.27] - 2026-11-20
 
 ### Added
