@@ -244,12 +244,14 @@ while agents finish their work.
 
 `--from <account>` narrows any of them to the agents running on that
 account (`home` and `home@claude` are the same): `tend swap --all --from
-home --to work` moves only what runs on `home`. The account is the one the
-swap identifies anyway: its `aas e` launch line, the account `aas` marks
-active for an agent started bare, or, with `[[accounts]]`, the account its
-environment matches. Every other agent in scope is reported as skipped
-with the account it is on; one whose account cannot be identified is left
-alone too, never taken to be on it. A Fleet host older than `--from`
+home --to work` moves only what runs on `home`. Only an account bound to
+the process counts: its `aas e` launch line, or, with `[[accounts]]`, the
+account its environment matches (its launch line where the environment
+cannot be read). An agent started bare is not taken to be on the account
+`aas` marks active, which is global and may have changed since it started.
+Every other agent in scope is reported as skipped with the account it is
+on; one whose account cannot be identified is left alone too, never taken
+to be on it. A Fleet host older than `--from`
 refuses the run instead of swapping every account's agents. MCP: `from`.
 
 A named target is resolved to exactly one live pane first. A bare `%81`
