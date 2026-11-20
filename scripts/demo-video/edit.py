@@ -114,14 +114,17 @@ def keep_acts(start, end, logged, lead=0.15):
 
 
 def cut(video, pieces, out, pre="", post=""):
-    """Concatenate `pieces` of `video` (re-timed), through optional filters."""
-    # Constant frame rate first: a simulator recording has no frames while
-    # the screen is still, and a trim there would come out empty.
-    split = f"[0:v]fps={FPS},split={len(pieces)}" + "".join(f"[s{i}]" for i in range(len(pieces))) + ";"
-    parts = split + "".join(f"[s{i}]trim={a:.3f}:{b:.3f},setpts=PTS-STARTPTS[p{i}];" for i, (a, b) in enumerate(pieces))
+    """Concatenate `pieces` of `video` (re-timed), through optional filters.
+    Each piece is its own seeked input, at a constant frame rate: a
+    simulator recording only has frames where the screen changed, and
+    trimming its timeline after an fps conversion lands seconds off."""
+    inputs = []
+    for a, b in pieces:
+        inputs += ["-ss", f"{a:.3f}", "-t", f"{b - a:.3f}", "-i", video]
+    parts = "".join(f"[{i}:v]fps={FPS},setpts=PTS-STARTPTS[p{i}];" for i in range(len(pieces)))
     concat = "".join(f"[p{i}]" for i in range(len(pieces))) + f"concat=n={len(pieces)}:v=1:a=0[c]"
-    chain = f"[c]{pre}fps={FPS},format=yuv420p{post}[v]" if pre or post else f"[c]fps={FPS},format=yuv420p[v]"
-    run(["ffmpeg", "-v", "error", "-y", "-i", video, "-filter_complex", parts + concat + ";" + chain,
+    chain = f"[c]{pre}fps={FPS},format=yuv420p{post}[v]"
+    run(["ffmpeg", "-v", "error", "-y", *inputs, "-filter_complex", parts + concat + ";" + chain,
          "-map", "[v]", "-c:v", "libx264", "-preset", "medium", "-crf", "14", out])
 
 
@@ -141,12 +144,13 @@ def duration(path):
 
 
 def device(video, pieces, out, work, cards, rotate, height, radius):
-    """An iOS clip of `pieces`, rounded, on the background. Simulator
-    recordings only carry a frame when the screen changes, so they are cut
-    by their marks, not by freeze detection."""
+    """An iOS clip of `pieces`, rounded, on the background. The recording is
+    first made constant-frame-rate (simulator recordings only carry a frame
+    when the screen changes, and seeking in them lands seconds off); the
+    pieces are seconds on that timeline (see `--sheets`)."""
+    cfr = cfr_copy(video, work, rotate, height)
     raw = os.path.join(work, os.path.basename(out) + ".raw.mp4")
-    pre = ("transpose=2," if rotate else "") + f"scale=-2:{height}:flags=lanczos,"
-    cut(video, pieces, raw, pre=pre)
+    cut(cfr, pieces, raw)
     w = int(subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries", "stream=width",
                             "-of", "csv=p=0", raw], capture_output=True, text=True).stdout)
     mask = os.path.join(work, f"mask-{w}x{height}.png")
@@ -157,6 +161,15 @@ def device(video, pieces, out, work, cards, rotate, height, radius):
          f"color=c={BG}:s=1920x1080:r={FPS}[bg];[1:v]format=gray[m];[0:v][m]alphamerge[d];"
          f"[bg][d]overlay=(W-w)/2:{top}:shortest=1,format=yuv420p[v]",
          "-map", "[v]", "-t", f"{duration(raw)}", "-c:v", "libx264", "-preset", "medium", "-crf", "14", out])
+
+
+def cfr_copy(video, work, rotate, height):
+    out = os.path.join(work, os.path.basename(video).replace(".mp4", f"-cfr{height}.mp4"))
+    if not os.path.exists(out):
+        vf = ("transpose=2," if rotate else "") + f"fps={FPS},scale=-2:{height}:flags=lanczos"
+        run(["ffmpeg", "-v", "error", "-y", "-i", video, "-vf", vf, "-c:v", "libx264", "-preset", "fast",
+             "-crf", "14", out])
+    return out
 
 
 def xfade_all(clips, out, d=0.4):
@@ -180,7 +193,18 @@ def main():
     ap.add_argument("out")
     ap.add_argument("--lang", default="en", choices=sorted(CAPTIONS))
     ap.add_argument("--name", default="tend-demo")
+    ap.add_argument("--sheets", action="store_true",
+                    help="only write contact sheets (2 per second) of the iOS recordings' constant-rate copies")
     args = ap.parse_args()
+    if args.sheets:
+        work = os.path.join(args.out, "sheets")
+        os.makedirs(work, exist_ok=True)
+        for slug, rotate, height in (("iphone", False, 940), ("ipad", True, 860)):
+            cfr = cfr_copy(os.path.join(args.takes, f"{slug}-raw.mp4"), work, rotate, height)
+            run(["ffmpeg", "-v", "error", "-y", "-i", cfr, "-vf", "fps=1,scale=160:-1,tile=20x20",
+                 os.path.join(work, f"{slug}-sheet-%d.png")])
+            print(slug, round(duration(cfr), 1), "s")
+        return
     text = CAPTIONS[args.lang]
     work = os.path.join(args.out, f"work-{args.lang}")
     os.makedirs(work, exist_ok=True)
@@ -221,11 +245,10 @@ def main():
     overlay(clips[0], title, titled, start=0.0, end=2.6, fade=0.35)
     clips[0] = titled
 
-    dm = marks(os.path.join(args.takes, "iphone-marks.txt"))
-    h, d = dm["home"], dm["decide"]
-    iphone = [(h - 0.9, h + 2.6), (d - 2.0, d + 0.6), (d + 4.0, d + 7.0)]
-    dm = marks(os.path.join(args.takes, "ipad-marks.txt"))
-    ipad = [(dm["home"] - 0.5, dm["home"] + 5.5)]
+    # iOS windows: seconds on each recording's constant-frame-rate copy,
+    # picked from its contact sheet (--sheets) into TAKES_DIR/ios-cuts.json.
+    cuts = json.load(open(os.path.join(args.takes, "ios-cuts.json")))
+    iphone, ipad = [tuple(p) for p in cuts["iphone"]], [tuple(p) for p in cuts["ipad"]]
     for slug, pieces, rotate, height, radius in (("iphone", iphone, False, 940, 64), ("ipad", ipad, True, 860, 28)):
         video = os.path.join(args.takes, f"{slug}-raw.mp4")
         raw = os.path.join(work, f"{slug}.raw.mp4")
