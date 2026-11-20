@@ -105,6 +105,7 @@ impl ResolveOverrides for SwapOverrides {
             Some(other) => return Err(format!("unknown continue evidence {other:?}")),
         };
         request.exclude.clone_from(&self.exclude);
+        request.from = self.from.as_deref().map(str::trim).map(str::to_owned);
         if let Some(jobs) = self.jobs {
             request.jobs = usize::from(jobs).clamp(1, tend::swap_api::MAX_SWAP_JOBS);
         }

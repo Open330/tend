@@ -190,7 +190,7 @@ struct FleetDecisionHistoryView: View {
     private func empty(_ text: String) -> some View {
         VStack(spacing: 8) {
             Image(systemName: "clock.arrow.circlepath")
-                .font(.system(size: 32))
+                .font(TendType.emptyIcon)
                 .foregroundStyle(.secondary)
             Text(verbatim: text)
                 .foregroundStyle(.secondary)
@@ -207,7 +207,7 @@ struct FleetDecidedRowView: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: row.systemImage)
-                .font(.system(size: 16))
+                .font(TendType.icon)
                 .foregroundStyle(row.tint)
                 .frame(width: 20)
             VStack(alignment: .leading, spacing: 3) {

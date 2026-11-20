@@ -103,10 +103,10 @@ struct FleetReviewView: View {
     private var header: some View {
         HStack(spacing: 12) {
             Text(showsHistory ? "Decided" : "Review")
-                .font(.system(size: 17, weight: .semibold))
+                .font(TendType.page)
             if !showsHistory {
                 Text("\(queue.count)")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(TendType.section)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
                 Picker("Mode", selection: $mode) {
@@ -148,7 +148,7 @@ struct FleetReviewView: View {
     private var caughtUp: some View {
         VStack(spacing: 10) {
             Image(systemName: "checkmark.circle")
-                .font(.system(size: 40))
+                .font(TendType.heroIcon)
                 .foregroundStyle(.green)
             Text("All caught up")
                 .font(.title3.weight(.semibold))
@@ -272,7 +272,7 @@ struct FleetReviewDetail: View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(work.title)
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(TendType.page)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 6) {
                     if let repo = work.repo { Text(repo) }
@@ -319,7 +319,7 @@ struct FleetReviewDetail: View {
     private func block<Content: View>(_ title: LocalizedStringKey, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(title)
-                .font(.system(size: 11, weight: .bold))
+                .font(TendType.label.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
             content()
@@ -625,7 +625,7 @@ private struct FleetReviewDigest: View {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
                                 Label(group.project ?? String(localized: "No project"), systemImage: "folder")
-                                    .font(.system(size: 13, weight: .semibold))
+                                    .font(TendType.section)
                                 Text("\(group.works.count)")
                                     .foregroundStyle(.secondary)
                                     .monospacedDigit()
@@ -688,7 +688,7 @@ private struct FleetReviewDigest: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Label("Summary", systemImage: "wand.and.stars")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(TendType.section)
                 if summary != nil, summaryFor != ids {
                     Text("Out of date")
                         .font(TendType.meta)
@@ -981,9 +981,9 @@ struct FleetReviewRequests: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Text("Decisions")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(TendType.section)
                         Text(verbatim: feed.queue?.truncated == true ? "\(decisions.count)+" : "\(decisions.count)")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(TendType.detail.weight(.semibold))
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                         Text("oldest first")
@@ -1172,15 +1172,15 @@ struct FleetEvidenceList: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(verbatim: pair.tool ?? "tool")
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .font(TendType.monoSmall.weight(.semibold))
                         if pair.isError == true {
                             Text("error")
-                                .font(.system(size: 10, weight: .semibold))
+                                .font(TendType.label)
                                 .foregroundStyle(.red)
                         }
                         if pair.result == nil {
                             Text("no result recorded")
-                                .font(.system(size: 10))
+                                .font(TendType.meta)
                                 .foregroundStyle(.secondary)
                         }
                         let tail = pair.resultTail(lines: 4)
@@ -1188,23 +1188,23 @@ struct FleetEvidenceList: View {
                         // too, so anything not visibly short counts as a preview.
                         if pair.clipped || tail?.cut == true || pair.call.count > 160 || pair.call.contains("\n") {
                             Text("preview")
-                                .font(.system(size: 10, weight: .semibold))
+                                .font(TendType.label)
                                 .foregroundStyle(.orange)
                                 .help("Part of this call or result is not shown here; the command below prints it all")
                         }
                     }
                     Text(verbatim: pair.call)
-                        .font(.system(size: 11, design: .monospaced))
+                        .font(TendType.monoSmall)
                         .lineLimit(3)
                         .textSelection(.enabled)
                     if let tail = pair.resultTail(lines: 4) {
                         Text(verbatim: tail.cut ? "…\n" + tail.text : tail.text)
-                            .font(.system(size: 11, design: .monospaced))
+                            .font(TendType.monoSmall)
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                     }
                     Text(verbatim: pair.readCommand)
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(TendType.monoSmall)
                         .foregroundStyle(.tertiary)
                         .textSelection(.enabled)
                         .help("Prints the full call and result")

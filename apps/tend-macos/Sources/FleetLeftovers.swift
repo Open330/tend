@@ -182,7 +182,7 @@ struct FleetLeftoversView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Leftovers")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(TendType.page)
                 Spacer()
                 TendSegmented(selection: $tab, options: [.worktrees, .servers]) { tab in
                     switch tab {
@@ -256,7 +256,7 @@ struct FleetLeftoversView: View {
             HStack(spacing: 6) {
                 Image(systemName: TendHostIcons.icon(for: host.alias, local: host.local))
                     .foregroundStyle(.secondary)
-                Text(host.alias).font(.system(size: 13, weight: .semibold))
+                Text(host.alias).font(TendType.section)
                 if case .rows(let inventory) = states[host.alias] {
                     let ready = inventory.rows.filter(\.canSetAside)
                     Text(String(localized: "\(inventory.rows.count) worktrees · \(ready.count) can be set aside · \(FleetLeftovers.size(ready.compactMap(\.bytes).reduce(0, +)))"))
@@ -334,7 +334,7 @@ struct FleetLeftoversView: View {
                     .help("Select to set aside")
                 }
                 Text(label)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(TendType.label)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 1)
                     .background(color.opacity(0.15), in: Capsule())
@@ -410,7 +410,7 @@ struct FleetLeftoversView: View {
             )
         }
         return VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.system(size: 13, weight: .semibold))
+            Text(title).font(TendType.section)
             Text(note)
                 .font(TendType.meta)
                 .foregroundStyle(.secondary)
@@ -419,7 +419,7 @@ struct FleetLeftoversView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(confirmation.rows) { row in
                         Text(verbatim: "\(row.location)  \(row.currentBranch ?? String(localized: "detached")) \(row.shortHead)")
-                            .font(.system(size: 11, design: .monospaced))
+                            .font(TendType.monoSmall)
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }

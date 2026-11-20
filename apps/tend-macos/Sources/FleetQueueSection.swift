@@ -206,9 +206,9 @@ struct FleetQueueColumn: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text("Queued")
-                    .font(.system(size: 13, weight: .bold))
+                    .font(TendType.section)
                 Text("\(items.count)")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(TendType.detail.weight(.semibold))
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 4)
@@ -306,7 +306,7 @@ struct FleetQueueCard: View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(verbatim: item.displayTitle)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(TendType.section)
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 statusChip
@@ -352,7 +352,7 @@ struct FleetQueueCard: View {
 
     private var statusChip: some View {
         Text(verbatim: item.statusText)
-            .font(.system(size: 10, weight: .semibold))
+            .font(TendType.label)
             .padding(.horizontal, 5)
             .padding(.vertical, 1)
             .background((item.isUncertain ? Color.orange : Color.secondary).opacity(0.15), in: Capsule())
@@ -457,7 +457,7 @@ struct FleetQueueCard: View {
     private var editor: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Edit Prompt")
-                .font(.system(size: 13, weight: .semibold))
+                .font(TendType.section)
             TextEditor(text: $draft)
                 .font(TendType.body)
                 .frame(width: 380, height: 160)

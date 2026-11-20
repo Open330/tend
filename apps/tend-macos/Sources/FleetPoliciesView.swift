@@ -158,7 +158,7 @@ private struct FleetAutomationPopover: View {
                 }
             }
             Text(rule.screen ?? "")
-                .font(.system(size: 11, design: .monospaced))
+                .font(TendType.monoSmall)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
                 .textSelection(.enabled)
@@ -262,7 +262,7 @@ struct FleetApprovalRuleSheet: View {
                     .font(TendType.detail.weight(.semibold))
                 TextField(isPattern ? "Regular expression for the whole command, e.g. npm (test|run lint)" : "e.g. npm test", text: $text)
                     .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 12, design: .monospaced))
+                    .font(TendType.mono)
                 Toggle("Regular expression", isOn: $isPattern)
                     .toggleStyle(.checkbox)
                     .font(TendType.meta)
@@ -341,7 +341,7 @@ struct FleetApprovalRuleSheet: View {
                     ProgressView().controlSize(.small)
                 } else if let request {
                     Text(request.joined(separator: "\n"))
-                        .font(.system(size: 11, design: .monospaced))
+                        .font(TendType.monoSmall)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 } else {

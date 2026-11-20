@@ -85,6 +85,16 @@ Eight roles, three weights (regular, medium, semibold), all the system font
 | Meta | 11 / 14 | regular, tabular digits | who, where, when |
 | Mono | 12 / 16 | regular | commands, paths, pane text |
 
+Beside the eight text roles, **Mono small** (11pt monospaced) is for a path
+or id inside a meta line, and five symbol sizes cover symbols that stand
+alone: Glyph (9pt semibold: chevrons, close marks, the count in a 15pt badge
+disc), Icon (16), Empty icon (28), Hero icon (40) and Display icon (60, the
+Welcome mark). A symbol beside text takes that text's role. Emphasis inside
+a role changes its weight (`TendType.detail.weight(.semibold)`), never its
+size. The only sizes left outside the roles are computed from a frame (a
+glyph drawn to its own box, the user's terminal font size) and carry
+`// type-ramp: exempt` with the reason on the line above.
+
 Decision-bearing prose (the question, its context, options, the asker's
 recommendation and rationale, answers) is Body, 13pt. Evidence keeps its
 full accessible label and its reveal path. 11pt is for short metadata and

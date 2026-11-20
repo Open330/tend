@@ -242,6 +242,18 @@ while agents finish their work.
 
 `--provider claude|codex` narrows any of these to one provider.
 
+`--from <account>` narrows any of them to the agents running on that
+account (`home` and `home@claude` are the same): `tend swap --all --from
+home --to work` moves only what runs on `home`. Only an account bound to
+the process counts: its `aas e` launch line, or, with `[[accounts]]`, the
+account its environment matches (its launch line where the environment
+cannot be read). An agent started bare is not taken to be on the account
+`aas` marks active, which is global and may have changed since it started.
+Every other agent in scope is reported as skipped with the account it is
+on; one whose account cannot be identified is left alone too, never taken
+to be on it. A Fleet host older than `--from`
+refuses the run instead of swapping every account's agents. MCP: `from`.
+
 A named target is resolved to exactly one live pane first. A bare `%81`
 means `rmux:%81` when that is the only pane it can mean. A name that matches
 no live pane, or several (the same `%N` on two servers), is reported and
@@ -573,6 +585,18 @@ older than `--jobs` refuses the run). `--status`, `--cancel`, `--retry`,
 ```console
 $ tend swap --host local --host build --host mini --all --to work
 ```
+
+The MCP tool takes `hosts` (a list, instead of `host`) for the same
+thing: a start only, up to four hosts in flight, each its own job. With a
+`request_key`, host `H` runs under `<request_key>:H`, so the caller holds
+every host's handle before anything is sent (all of them are checked
+first); without one, each host gets a key minted for it, returned with its
+result. The result lists every host in the order given, each with its own
+result, `ok` and, for a failure, its `recovery` call; `failed_hosts` names
+the ones that did not end cleanly, and the call is an error if any did. If
+the answer itself is lost, never send the call again: read each host's job
+with `action=status`, `host=H` and `job=<request_key>:H`. Read, cancel or
+retry each job with `host`.
 
 ## Automatic swap
 

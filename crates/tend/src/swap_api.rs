@@ -315,6 +315,10 @@ pub struct SwapOverrides {
     pub limited: bool,
     pub provider: Option<String>,
     pub to: Option<String>,
+    /// Only agents on this account (`--from`). Left out of the digest when
+    /// not typed, so a request from before the option is the same request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
     pub spread: bool,
     pub force: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -368,6 +372,11 @@ impl SwapOverrides {
         if self.all && self.limited {
             return conflict("all", "limited");
         }
+        if self.from.as_deref().is_some_and(|from| {
+            from.trim().is_empty() || matches!(from.trim(), "auto" | "same" | "spread")
+        }) {
+            return Err("from names an account".into());
+        }
         if self.spread && self.to.is_some() {
             return conflict("spread", "to");
         }
@@ -401,6 +410,7 @@ impl SwapOverrides {
         for (what, value) in [
             ("provider", self.provider.as_deref()),
             ("to", self.to.as_deref()),
+            ("from", self.from.as_deref()),
             ("bare", self.bare.as_deref()),
         ] {
             if value.is_some_and(|value| value.len() > MAX_NAME) {

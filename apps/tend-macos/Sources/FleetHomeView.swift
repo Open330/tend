@@ -191,7 +191,7 @@ struct FleetHomeView: View {
     private var header: some View {
         HStack(spacing: 12) {
             Text("Home")
-                .font(.system(size: 17, weight: .semibold))
+                .font(TendType.page)
             Spacer(minLength: 8)
             TendSegmented(selection: $cardLayout, options: FleetCardLayout.allCases) { layout in
                 Text(Image(systemName: layout.systemImage)).accessibilityLabel(layout.title)
@@ -225,7 +225,7 @@ struct FleetHomeView: View {
                 Text("Review")
                 if count > 0 {
                     Text(verbatim: count > 99 ? "99+" : "\(count)")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(TendType.label.weight(.semibold))
                         .monospacedDigit()
                         .foregroundStyle(.white)
                         .lineLimit(1)
@@ -737,7 +737,7 @@ struct FleetLaneColumn: View {
                     .font(TendType.section)
                     .foregroundStyle(TendInk.label(colorScheme))
                 Text("\(works.count + decisions.count)")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(TendType.detail.weight(.medium))
                     .monospacedDigit()
                     .foregroundStyle(TendInk.secondary(colorScheme))
                 Spacer(minLength: 4)
@@ -877,12 +877,12 @@ struct FleetProjectHeader: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: isSystem ? "gearshape" : "folder")
-                .font(.system(size: 10))
+                .font(TendType.meta)
             Text(isSystem ? String(localized: "From tend itself") : project ?? String(localized: "No project"))
-                .font(.system(size: 11, weight: .semibold))
+                .font(TendType.label.weight(.semibold))
                 .lineLimit(1)
             Text("\(count)")
-                .font(.system(size: 11))
+                .font(TendType.meta)
                 .monospacedDigit()
                 .foregroundStyle(.tertiary)
             Spacer(minLength: 0)
@@ -986,7 +986,7 @@ private struct FleetWorkInspector: View {
             HStack(alignment: .top, spacing: 8) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(work.title)
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(TendType.page)
                         .fixedSize(horizontal: false, vertical: true)
                     Text([work.repo, work.hostAliases.joined(separator: ", ")].compactMap { $0 }.joined(separator: " · "))
                         .font(TendType.meta)
@@ -1043,10 +1043,10 @@ private struct FleetWorkInspector: View {
         }
         VStack(alignment: .leading, spacing: 10) {
             Text(laneTitle)
-                .font(.system(size: 11, weight: .bold))
+                .font(TendType.label.weight(.semibold))
                 .foregroundStyle(tint)
             Text(work.headline)
-                .font(.system(size: 13.5, weight: work.lane == .needsYou ? .semibold : .regular))
+                .font(TendType.body.weight(work.lane == .needsYou ? .semibold : .regular))
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
             if work.lane == .needsYou, let focus = work.focus {
@@ -1075,7 +1075,7 @@ private struct FleetWorkInspector: View {
                 // One unit, several agents asking: each answers on its own.
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Also waiting on you")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(TendType.label.weight(.semibold))
                         .foregroundStyle(.orange)
                     ForEach(others) { hosted in
                         FleetWaitingAgent(model: model, hosted: hosted, open: open) {
@@ -1156,7 +1156,7 @@ private struct FleetWorkInspector: View {
     private func section<Content: View>(_ title: LocalizedStringKey, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
-                .font(.system(size: 11, weight: .bold))
+                .font(TendType.label.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
             content()
@@ -1345,7 +1345,7 @@ private struct FleetEmptyBoard: View {
     var body: some View {
         VStack(spacing: 12) {
             Image(systemName: "rectangle.3.group")
-                .font(.system(size: 38))
+                .font(TendType.heroIcon)
                 .foregroundStyle(.secondary)
             Text("No work yet")
                 .font(.title3.weight(.semibold))

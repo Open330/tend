@@ -65,6 +65,11 @@ pub struct Args {
     /// config order; `aas`: its best-ranked one with quota left).
     #[arg(long, value_name = "ACCOUNT", conflicts_with = "spread")]
     to: Option<String>,
+    /// Only agents running on this account (within the scope: capped ones,
+    /// `--all`, or the named targets). An agent whose account cannot be
+    /// identified is left alone.
+    #[arg(long, value_name = "ACCOUNT", value_parser = from_account)]
+    from: Option<String>,
     /// Round-robin the agents over every account with quota left.
     #[arg(long)]
     spread: bool,
@@ -137,7 +142,7 @@ pub struct Args {
         long,
         value_name = "KEY",
         conflicts_with_all = [
-            "targets", "all", "limited", "provider", "to", "spread", "force", "bare",
+            "targets", "all", "limited", "provider", "to", "from", "spread", "force", "bare",
             "continue_text", "continue_legacy", "continue_when", "no_continue",
             "continue_evidence", "dry_run", "jobs",
             "exclude", "local", "when_idle", "idle_timeout",
@@ -153,7 +158,7 @@ pub struct Args {
         long,
         value_name = "KEY",
         conflicts_with_all = [
-            "targets", "all", "limited", "provider", "to", "spread", "bare",
+            "targets", "all", "limited", "provider", "to", "from", "spread", "bare",
             "continue_text", "continue_legacy", "continue_when", "no_continue",
             "dry_run", "jobs", "exclude", "local", "when_idle", "idle_timeout", "status",
         ]
@@ -166,7 +171,7 @@ pub struct Args {
         long,
         value_name = "KEY",
         conflicts_with_all = [
-            "targets", "all", "limited", "provider", "to", "spread", "force", "bare",
+            "targets", "all", "limited", "provider", "to", "from", "spread", "force", "bare",
             "continue_text", "continue_legacy", "continue_when", "no_continue",
             "continue_evidence", "dry_run", "jobs", "exclude", "local", "when_idle", "idle_timeout", "status", "retry",
         ]
@@ -244,6 +249,15 @@ impl Args {
     }
 }
 
+/// `--from`: an account name, trimmed; never one of `--to`'s choices.
+fn from_account(raw: &str) -> Result<String, String> {
+    match raw.trim() {
+        "" => Err("names an account".into()),
+        "auto" | "same" | "spread" => Err(format!("{raw:?} is a --to choice, not an account")),
+        name => Ok(name.to_owned()),
+    }
+}
+
 /// Printed when the deprecated spelling is used: it no longer means "send
 /// to every agent", and a caller relying on that should say so.
 const CONTINUE_DEPRECATED: &str = "tend swap: --continue is deprecated; use --continue-text. \
@@ -269,6 +283,7 @@ fn request(args: &Args, config: &SwapConfig) -> SwapRequest {
     } else {
         AccountChoice::parse(args.to.as_deref().unwrap_or("auto"))
     };
+    request.from.clone_from(&args.from);
     request.force = args.force;
     request.when_idle = args.when_idle;
     if let Some(bare) = args.bare {
@@ -497,6 +512,7 @@ fn overrides(args: &Args, explicit_config: Option<&Path>) -> SwapOverrides {
             .to_owned()
         }),
         to: args.to.clone(),
+        from: args.from.clone(),
         spread: args.spread,
         force: args.force,
         when_idle: args.when_idle,
@@ -1403,6 +1419,11 @@ fn remote_argv(args: &Args) -> Vec<String> {
     if let Some(to) = &args.to {
         words.push(format!("--to={to}"));
     }
+    // Only when asked: a host from before `--from` refuses the flag rather
+    // than swapping agents on every account.
+    if let Some(from) = &args.from {
+        words.push(format!("--from={from}"));
+    }
     if let Some(job) = &args.status {
         words.push(format!("--status={job}"));
     }
@@ -1928,6 +1949,8 @@ mod tests {
             "claude",
             "--to",
             "work@claude",
+            "--from",
+            "home@claude",
             "--continue-text",
             "keep going",
             "--continue-when",
@@ -1944,12 +1967,24 @@ mod tests {
                 "--force",
                 "--provider=claude",
                 "--to=work@claude",
+                "--from=home@claude",
                 "--continue-text=keep going",
                 "--continue-when=always",
                 "--json"
             ]
         );
         tend::work_control::validate_swap_argv(&argv).unwrap();
+    }
+
+    /// `--from` names an account, never one of `--to`'s choices.
+    #[test]
+    fn from_takes_only_an_account_name() {
+        let parse = |from: &str| Cli::try_parse_from(["swap", "--all", "--from", from]);
+        assert_eq!(parse(" home ").unwrap().args.from.as_deref(), Some("home"));
+        for bad in ["", " ", "auto", "same", "spread"] {
+            assert!(parse(bad).is_err(), "{bad:?}");
+        }
+        assert!(Cli::try_parse_from(["swap", "--status", "k", "--from", "home"]).is_err());
     }
 
     /// A Fleet host accepts the idle-wait switches the CLI forwards, so

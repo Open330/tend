@@ -120,6 +120,12 @@ enum TendDesignTokens {
         static let label = TypeRole(size: 11, weight: "medium", tabularDigits: false, monospaced: false)
         static let meta = TypeRole(size: 11, weight: "regular", tabularDigits: true, monospaced: false)
         static let mono = TypeRole(size: 12, weight: "regular", tabularDigits: false, monospaced: true)
+        static let monoSmall = TypeRole(size: 11, weight: "regular", tabularDigits: false, monospaced: true)
+        static let glyph = TypeRole(size: 9, weight: "semibold", tabularDigits: false, monospaced: false)
+        static let icon = TypeRole(size: 16, weight: "regular", tabularDigits: false, monospaced: false)
+        static let emptyIcon = TypeRole(size: 28, weight: "regular", tabularDigits: false, monospaced: false)
+        static let heroIcon = TypeRole(size: 40, weight: "regular", tabularDigits: false, monospaced: false)
+        static let displayIcon = TypeRole(size: 60, weight: "regular", tabularDigits: false, monospaced: false)
 
         /// The 4-point spacing scale.
         enum Space {

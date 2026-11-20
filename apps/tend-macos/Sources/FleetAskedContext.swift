@@ -12,7 +12,7 @@ struct FleetAskedContext: View {
         if let source = Self.context(for: agent) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("What it's asking about")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(TendType.label.weight(.semibold))
                     .foregroundStyle(.secondary)
                 ScrollViewReader { proxy in
                     ScrollView {
