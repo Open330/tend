@@ -40,6 +40,8 @@ struct DesignCaptureTests {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let saved = savePreferences()
         defer { restorePreferences(saved) }
+        // Every capture but the material ones draws the default, opaque sidebar.
+        UserDefaults.standard.set(false, forKey: TendPreferences.sidebarMaterialKey)
         let model = AppModel(client: TendIPCClient(socketPath: socket), launchesDaemon: false)
         model.retryConnection()
         // The fixture's fleet, not just a host: demo-setup seeds a dozen agents.

@@ -35,7 +35,19 @@ struct SidebarTitleBarTests {
                 model.select(collapsed ? .workBoard : .watch)
                 try #require(model.isSidebarListCollapsed == collapsed, "the sidebar did not \(collapsed ? "fold" : "show") its list")
                 let width = collapsed ? TendTheme.activityBarWidth + 1 : 300
-                let rep = try await render(model, scheme: scheme, size: CGSize(width: width, height: 580))
+                let (rep, top) = try await render(model, scheme: scheme, size: CGSize(width: width, height: 580))
+                // The material itself: mounted only when asked for, and
+                // only below the title bar row. The system's Reduce
+                // Transparency or Increase Contrast keeps it off.
+                let workspace = NSWorkspace.shared
+                if material, !workspace.accessibilityDisplayShouldReduceTransparency, !workspace.accessibilityDisplayShouldIncreaseContrast {
+                    let materialTop = try #require(top, "material on, \(collapsed ? "folded" : "list shown"), \(scheme): no sidebar material mounted")
+                    #expect(materialTop >= chrome.rowHeight - 0.5, "the sidebar material starts at \(materialTop), inside the \(chrome.rowHeight)pt title bar row")
+                } else if material {
+                    print("SidebarTitleBarTests: the system's accessibility settings keep the material off; checked the opaque fallback only")
+                } else {
+                    #expect(top == nil, "material off, but a sidebar material is mounted")
+                }
                 // Under the traffic lights: the whole rail when folded, the
                 // space before the section title when the list shows.
                 let span = collapsed ? width - 2 : chrome.leadingInset - 20
@@ -43,7 +55,7 @@ struct SidebarTitleBarTests {
                 let hex = scheme == .dark ? expected.dark : expected.light
                 for x in stride(from: CGFloat(1), through: span, by: 4) {
                     for y in [CGFloat(2), chrome.rowHeight / 2, chrome.rowHeight - 3] {
-                        let pixel = try #require(color(rep, x: x, y: y, width: width))
+                        let pixel = try #require(Self.pixel(rep, x: x, y: y, width: width))
                         #expect(Self.matches(pixel, hex),
                                 "material \(material), \(collapsed ? "folded" : "list shown"), \(scheme): (\(Int(x)), \(Int(y))) is \(Self.describe(pixel)), not the strip's #\(String(hex, radix: 16))")
                     }
@@ -52,7 +64,9 @@ struct SidebarTitleBarTests {
         }
     }
 
-    private func render(_ model: AppModel, scheme: ColorScheme, size: CGSize) async throws -> NSBitmapImageRep {
+    /// The drawn side bar, and where its sidebar material starts (from the
+    /// top), if one is mounted.
+    private func render(_ model: AppModel, scheme: ColorScheme, size: CGSize) async throws -> (NSBitmapImageRep, CGFloat?) {
         let view = TendSidebar(
             model: model, inputs: model.chrome.sidebar, chrome: chrome,
             openPinnedSession: { _ in }, openPinnedPane: { _ in }, openFile: { _, _ in }, closeShell: { _ in },
@@ -74,25 +88,42 @@ struct SidebarTitleBarTests {
             hosting.layoutSubtreeIfNeeded()
             try await Task.sleep(for: .milliseconds(50))
         }
-        let rep = try #require(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
-        hosting.cacheDisplay(in: hosting.bounds, to: rep)
-        return rep
+        let drawn = try #require(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+        hosting.cacheDisplay(in: hosting.bounds, to: drawn)
+        // Bytes in sRGB: `colorAt` hands back a Generic RGB colour whose
+        // conversion shifts the values, so read the samples themselves.
+        let rep = try #require(drawn.converting(to: .sRGB, renderingIntent: .default))
+        return (rep, Self.materialTop(in: hosting))
     }
 
-    /// The pixel at a point (top-left origin), in sRGB.
-    private func color(_ rep: NSBitmapImageRep, x: CGFloat, y: CGFloat, width: CGFloat) -> NSColor? {
+    private static func materialTop(in hosting: NSView) -> CGFloat? {
+        func effects(_ view: NSView) -> [NSVisualEffectView] {
+            ((view as? NSVisualEffectView).map { [$0] } ?? []) + view.subviews.flatMap(effects)
+        }
+        return effects(hosting).filter { $0.material == .sidebar }.map { effect in
+            let frame = effect.convert(effect.bounds, to: hosting)
+            return hosting.isFlipped ? frame.minY : hosting.bounds.height - frame.maxY
+        }.min()
+    }
+
+    /// The 8-bit RGBA bytes at a point (top-left origin).
+    private static func pixel(_ rep: NSBitmapImageRep, x: CGFloat, y: CGFloat, width: CGFloat) -> [Int]? {
+        guard rep.bitsPerSample == 8, rep.samplesPerPixel == 4, !rep.isPlanar else { return nil }
         let scale = CGFloat(rep.pixelsWide) / width
-        return rep.colorAt(x: Int(x * scale), y: Int(y * scale))?.usingColorSpace(.sRGB)
+        var samples = [Int](repeating: 0, count: 4)
+        rep.getPixel(&samples, atX: Int(x * scale), y: Int(y * scale))
+        // Opaque pixels, so premultiplication does not change them.
+        return rep.bitmapFormat.contains(.alphaFirst) ? Array(samples[1...3]) + [samples[0]] : samples
     }
 
-    private static func matches(_ color: NSColor, _ hex: UInt32) -> Bool {
-        let want = [(hex >> 16) & 0xFF, (hex >> 8) & 0xFF, hex & 0xFF].map { CGFloat($0) / 255 }
-        let got = [color.redComponent, color.greenComponent, color.blueComponent]
-        return color.alphaComponent > 0.99 && zip(want, got).allSatisfy { abs($0 - $1) <= 3 / 255 }
+    /// Exact to one count: the inactive material is within three of the
+    /// light strip.
+    private static func matches(_ pixel: [Int], _ hex: UInt32) -> Bool {
+        let want = [(hex >> 16) & 0xFF, (hex >> 8) & 0xFF, hex & 0xFF].map(Int.init)
+        return pixel[3] == 255 && zip(want, pixel.prefix(3)).allSatisfy { abs($0 - $1) <= 1 }
     }
 
-    private static func describe(_ color: NSColor) -> String {
-        let bytes = [color.redComponent, color.greenComponent, color.blueComponent].map { Int(($0 * 255).rounded()) }
-        return String(format: "#%02X%02X%02X α%.2f", bytes[0], bytes[1], bytes[2], color.alphaComponent)
+    private static func describe(_ pixel: [Int]) -> String {
+        String(format: "#%02X%02X%02X α%d", pixel[0], pixel[1], pixel[2], pixel[3])
     }
 }
