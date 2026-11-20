@@ -630,12 +630,11 @@ fn read_descendants_walk(root: u32) -> (Vec<ProcessInfo>, bool) {
     let mut whole = true;
     let mut out = Vec::new();
     let mut seen: HashSet<u32> = HashSet::new();
-    let children = |pid: u32, whole: &mut bool| match read_children_checked(pid) {
-        Ok(children) => children,
-        Err(()) => {
+    let children = |pid: u32, whole: &mut bool| {
+        read_children_checked(pid).unwrap_or_else(|()| {
             *whole = false;
             Vec::new()
-        }
+        })
     };
     let mut q: VecDeque<(u32, u8)> = children(root, &mut whole)
         .into_iter()
