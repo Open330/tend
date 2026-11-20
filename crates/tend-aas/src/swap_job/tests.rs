@@ -1876,3 +1876,56 @@ fn a_failed_target_records_its_readiness() {
         Some("readiness_unsettled: never_quiet")
     );
 }
+
+/// A reason already on the attempt, as a resume's withheld-text marker, is
+/// never replaced by one read from the journal; and a stage recorded with
+/// no effect boundary (a journal from before it was kept) names no effect
+/// rather than guess which stage one was refused in.
+#[test]
+fn a_failure_reason_keeps_a_stored_marker_and_never_guesses_a_stage() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let lease = store.acquire(&me("a", 1), &alive).unwrap();
+    let job = running(&store, &lease, "k", 2);
+    for target in 0..2 {
+        store
+            .observe(
+                &lease,
+                &job,
+                target,
+                1,
+                &Observation::Phase {
+                    phase: Phase::Stopping,
+                },
+            )
+            .unwrap();
+        let mut journal = store.journal(&lease, &job, target, 1);
+        let refused = effect(Purpose::Exit, Op::Key(Key::Enter));
+        journal.before(&refused).unwrap();
+        journal.after(&refused, Transport::Refused).unwrap();
+    }
+    store
+        .hold()
+        .execute_batch(&format!(
+            "UPDATE targets SET reason = 'follow_up_text_unavailable'
+               WHERE job_id = '{job}' AND target_id = 0;
+             UPDATE observations SET value_json = json_remove(value_json, '$.effects_before')
+               WHERE job_id = '{job}' AND target_id = 1 AND kind = 'phase';"
+        ))
+        .unwrap();
+    for target in 0..2 {
+        store
+            .finish_target(&lease, &job, target, 1, Disposition::Failed)
+            .unwrap();
+    }
+    let status = store.status(&job).unwrap();
+    assert_eq!(
+        status.targets[0].reason.as_deref(),
+        Some("follow_up_text_unavailable")
+    );
+    assert_eq!(
+        status.targets[0].continuation.as_deref(),
+        Some("text_unavailable")
+    );
+    assert_eq!(status.targets[1].reason.as_deref(), Some("stopping_failed"));
+}

@@ -510,6 +510,9 @@ fn failed_readiness(disposition: Option<&str>, readiness: Option<&str>) -> Optio
     }
 }
 
+/// The key a recorded phase keeps the last effect seq before it under.
+const PHASE_EFFECTS_BEFORE: &str = "effects_before";
+
 /// Why a failed attempt failed, in tend's own closed lists, from what its
 /// journal recorded, never text read off a screen or an account name:
 /// - a readiness that was not ready: `readiness_blocked: open_question`
@@ -574,32 +577,31 @@ fn failure_reason(
             _ => None,
         })
         .filter(|_| stage == "verifying");
-    // Only an effect refused in the stage the attempt ended in: one refused
-    // earlier was gone past.
-    let entered = last("phase")?.and_then(|(_, at)| parse_time(&at));
-    let refused = tx
-        .query_row(
-            "SELECT purpose, intent_at FROM effects
-             WHERE job_id = ?1 AND target_id = ?2 AND attempt = ?3 AND state = 'refused'
-             ORDER BY seq DESC LIMIT 1",
-            keys,
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-        )
-        .optional()?
-        .filter(|(_, at)| match (entered, parse_time(at)) {
-            (Some(entered), Some(at)) => at >= entered,
-            (None, _) => true,
-            (Some(_), None) => false,
-        })
-        .map(|(purpose, _)| format!("{purpose}_refused"));
+    // Only an effect refused in the stage the attempt ended in, after the
+    // effects that stage's phase saw before it: one refused earlier was gone
+    // past. A stage with no such boundary (none entered, or recorded before
+    // it was kept) names no effect rather than guess.
+    let boundary = last("phase")?
+        .and_then(|(json, _)| serde_json::from_str::<serde_json::Value>(&json).ok())
+        .and_then(|value| value[PHASE_EFFECTS_BEFORE].as_u64());
+    let refused = match boundary {
+        Some(before) => tx
+            .query_row(
+                "SELECT purpose FROM effects
+                 WHERE job_id = ?1 AND target_id = ?2 AND attempt = ?3 AND state = 'refused'
+                   AND seq > ?4
+                 ORDER BY seq DESC LIMIT 1",
+                params![job, target, attempt, before],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .map(|purpose| format!("{purpose}_refused")),
+        None => None,
+    };
     Ok(Some(match checked.or(refused) {
         Some(detail) => format!("{stage}_failed: {detail}"),
         None => format!("{stage}_failed"),
     }))
-}
-
-fn parse_time(at: &str) -> Option<time::OffsetDateTime> {
-    time::OffsetDateTime::parse(at, &time::format_description::well_known::Rfc3339).ok()
 }
 
 /// A job as read back.
@@ -1469,8 +1471,17 @@ impl SwapJobStore {
             }
             // A failure with no reason of its own is given the one its
             // journal shows, read before its phase is overwritten.
-            let derived = match (disposition, reason) {
-                (Disposition::Failed, None) => failure_reason(&tx, job, target, attempt)?,
+            // One already on the attempt (a resume's marker) is kept.
+            let stored: Option<String> = tx
+                .query_row(
+                    "SELECT reason FROM targets WHERE job_id = ?1 AND target_id = ?2 AND attempt = ?3",
+                    params![job, target, attempt],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .flatten();
+            let derived = match (disposition, reason, stored) {
+                (Disposition::Failed, None, None) => failure_reason(&tx, job, target, attempt)?,
                 _ => None,
             };
             let reason = reason.or(derived.as_deref());
@@ -1543,9 +1554,22 @@ impl SwapJobStore {
                 params![job, target, attempt],
                 |row| row.get(0),
             )?;
-            let value =
+            let mut value =
                 serde_json::to_value(observation).map_err(|error| JobError::Store(error.to_string()))?;
             let kind = value["kind"].as_str().unwrap_or_default().to_owned();
+            // A phase notes how many of the attempt's effects came before
+            // it: the boundary that places an effect in a stage, which a
+            // wall clock cannot. Reading it back as an [`Observation`]
+            // ignores it.
+            if matches!(observation, Observation::Phase { .. }) {
+                let before: u32 = tx.query_row(
+                    "SELECT COALESCE(MAX(seq), 0) FROM effects
+                     WHERE job_id = ?1 AND target_id = ?2 AND attempt = ?3",
+                    params![job, target, attempt],
+                    |row| row.get(0),
+                )?;
+                value[PHASE_EFFECTS_BEFORE] = before.into();
+            }
             tx.execute(
                 "INSERT INTO observations (job_id, target_id, attempt, seq, kind, value_json, observed_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
