@@ -645,39 +645,40 @@ fn named(agent: &Agent) -> bool {
 
 /// Whether `scan` can show a subject gone without history: the pass walked
 /// every pane of every backend completely (`processes_walked`), and every
-/// pane running an agent process is accounted for, by a named live row in
-/// it or by an explicit resume id. An agent tendd cannot name
-/// (`claude --continue`, a session picked from a list, an unbound thread)
-/// could be any subject, so while one runs anywhere on the host only the
-/// bound incarnation counts.
+/// agent running anywhere on the host is accounted for. In each pane, an
+/// agent started on a session id names itself (`resumed`); each one that
+/// carries none (`unnamed_agents`: `claude --continue`, a session picked
+/// from a list, a fresh start) needs its own named, not-Stopped row in that
+/// pane, other than the sessions the pane already names. One unaccounted
+/// agent anywhere could be any subject, so then only the bound incarnation
+/// counts.
 fn present_state(scan: &PaneScan, agents: &[Agent]) -> bool {
     scan.processes_walked
-        && scan
-            .hosts
-            .iter()
-            .flat_map(|host| &host.panes)
-            .all(|pane| match pane.agent_process {
-                Some(false) => true,
-                None => false,
-                Some(true) => {
-                    !pane.resumed.is_empty()
-                        || agents.iter().any(|agent| {
-                            agent.state != AgentState::Stopped
-                                && named(agent)
-                                && agent.pane.as_deref() == Some(pane.pane_id.as_str())
-                                && match (agent.tmux_socket.as_deref(), pane.endpoint.as_deref()) {
-                                    (Some(socket), Some(endpoint)) => {
-                                        crate::backend::pane_endpoint_identity(
-                                            agent.pane.as_deref(),
-                                            socket,
-                                        ) == endpoint
-                                    }
-                                    (None, None) => true,
-                                    _ => false,
-                                }
-                        })
-                }
-            })
+        && scan.hosts.iter().flat_map(|host| &host.panes).all(|pane| {
+            let Some(unnamed) = pane.unnamed_agents else {
+                return pane.agent_process == Some(false);
+            };
+            let rows = agents
+                .iter()
+                .filter(|agent| {
+                    agent.state != AgentState::Stopped
+                        && named(agent)
+                        && !pane.resumed.contains(&agent.session_id)
+                        && agent.pane.as_deref() == Some(pane.pane_id.as_str())
+                        && match (agent.tmux_socket.as_deref(), pane.endpoint.as_deref()) {
+                            (Some(socket), Some(endpoint)) => {
+                                crate::backend::pane_endpoint_identity(
+                                    agent.pane.as_deref(),
+                                    socket,
+                                ) == endpoint
+                            }
+                            (None, None) => true,
+                            _ => false,
+                        }
+                })
+                .count();
+            usize::from(unnamed) <= rows
+        })
 }
 
 /// The binding to judge a subject by: the one stored on the item, or the

@@ -98,6 +98,7 @@ fn scan(
                     foreground: p.foreground.into(),
                     agent_process: p.agent,
                     resumed: Vec::new(),
+                    unnamed_agents: None,
                 })
                 .collect(),
         }],
@@ -1721,6 +1722,10 @@ fn walked(scan: PaneScan, resumed: &[(&str, &str)]) -> PaneScan {
                 .filter(|(id, _)| *id == pane.pane_id)
                 .map(|(_, session)| (*session).to_owned())
                 .collect();
+            // One agent per pane, named when it was resumed by id.
+            pane.unnamed_agents = Some(u16::from(
+                pane.agent_process == Some(true) && pane.resumed.is_empty(),
+            ));
         }
     }
     scan
@@ -1932,4 +1937,32 @@ async fn a_walk_that_was_not_complete_shows_nothing_without_a_binding() {
         get(&store, &q.id).await.subject_check.is_none(),
         "resumed: alive"
     );
+}
+
+#[tokio::test]
+async fn one_named_agent_does_not_account_for_another_in_the_same_pane() {
+    // %5 runs `codex resume other` and, beside it, `claude --continue`,
+    // which could be the asker. `other`'s own row is in %5 too.
+    let store = CollaborationStore::in_memory(CollaborationOptions::default());
+    let q = question(&store, &participant("55115377", "%140", "default")).await;
+    let other = row("other", "%5", "default", AgentState::Idle, Duration::ZERO).await;
+    let shared = |unnamed: u16| {
+        move |at| {
+            let mut scan = walked(
+                scan(
+                    at,
+                    &[("default", Some(B))],
+                    &[pane("%5", "default", "codex", Some(true))],
+                ),
+                &[("%5", "other")],
+            );
+            scan.hosts[0].panes[0].unnamed_agents = Some(unnamed);
+            scan
+        }
+    };
+    drive_unbound(&store, std::slice::from_ref(&other), shared(1)).await;
+    assert!(get(&store, &q.id).await.subject_check.is_none());
+    // Only `other` there: every agent is accounted for.
+    drive_unbound(&store, &[other], shared(0)).await;
+    assert!(folded(&store, &q.id).await.is_some());
 }

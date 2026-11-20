@@ -77,6 +77,11 @@ pub struct ScannedPane {
     /// A session listed here is back, whatever its row says.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub resumed: Vec<String>,
+    /// Top-level agent processes in the pane that carry no session id
+    /// (`claude --continue`, a fresh `codex`); `None` when the identity walk
+    /// did not cover the pane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unnamed_agents: Option<u16>,
 }
 
 /// One backend's part of a scan.

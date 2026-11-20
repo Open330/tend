@@ -116,7 +116,7 @@ fn pane_scan(
     at: time::OffsetDateTime,
     observations: &[(HostKind, PaneObservation)],
     workloads: &HashMap<String, crate::WorkloadSummary>,
-    resumed: &HashMap<String, Vec<String>>,
+    identities: &HashMap<process_tree::PaneKey, process_tree::PaneIdentities>,
     processes_walked: bool,
 ) -> crate::subject_evidence::PaneScan {
     crate::subject_evidence::PaneScan {
@@ -131,16 +131,24 @@ fn pane_scan(
                 panes: observation
                     .panes
                     .iter()
-                    .map(|pane| crate::subject_evidence::ScannedPane {
-                        pane_id: pane.pane_id.clone(),
-                        endpoint: pane.socket.as_deref().map(|socket| {
-                            crate::backend::pane_endpoint_identity(Some(&pane.pane_id), socket)
-                        }),
-                        foreground: pane.current_command.clone(),
-                        agent_process: workloads
-                            .get(&pane.pane_id)
-                            .map(|workload| workload.primary_pid.is_some()),
-                        resumed: resumed.get(&pane.pane_id).cloned().unwrap_or_default(),
+                    .map(|pane| {
+                        let key = process_tree::PaneKey::of(pane);
+                        // The identity walk is keyed by the whole pane
+                        // identity; the workload map only by pane id, which
+                        // repeats across sockets.
+                        let identity = identities.get(&key);
+                        crate::subject_evidence::ScannedPane {
+                            pane_id: pane.pane_id.clone(),
+                            endpoint: key.endpoint.clone(),
+                            foreground: pane.current_command.clone(),
+                            agent_process: identity.map(|i| i.agent).or_else(|| {
+                                workloads
+                                    .get(&pane.pane_id)
+                                    .map(|workload| workload.primary_pid.is_some())
+                            }),
+                            resumed: identity.map(|i| i.resumed.clone()).unwrap_or_default(),
+                            unnamed_agents: identity.map(|i| i.unnamed),
+                        }
                     })
                     .collect(),
             })
@@ -703,9 +711,9 @@ impl<L: LivenessSource> Reconciler<L> {
             && codex_scan
                 .as_ref()
                 .map_or(union_panes.is_empty(), |scan| scan.complete);
-        let resumed = codex_scan
+        let identities = codex_scan
             .as_ref()
-            .map(|scan| scan.resumed.clone())
+            .map(|scan| scan.identities.clone())
             .unwrap_or_default();
         // Not gated on an existing real row: right after a multiplexer
         // restart the resumed agents may have none, and adopting them is the
@@ -787,7 +795,7 @@ impl<L: LivenessSource> Reconciler<L> {
                 inventory_observed_at,
                 &observations,
                 &workloads,
-                &resumed,
+                &identities,
                 walked,
             ))
             .await;

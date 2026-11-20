@@ -255,12 +255,14 @@ from a walk that saw everything:
   scan was complete (a herdr, cmux or zellij observation, or one failed
   socket, makes it partial), the process table was read (a failed `ps`
   reads as empty, not as "nothing runs"), every pane had a root process,
-  and no pane's walk hit its node limit. The reconcile pass already walks
+  and no pane's walk stopped at its depth or node limit. On Linux each
+  process's children are read from every one of its threads. The reconcile pass already walks
   every pane's process tree once; it now reports whether that walk was
   whole.
 - **The asker is not running**: no bound, not-Stopped row for its session id
   (as before), and no process in any pane was started on it: `codex resume
-  <id>`, `claude --resume <id>` / `-r` / `--session-id`, kept per pane as
+  <id>`, `claude --resume <id>` / `-r` / `--session-id`, kept per physical
+  pane (pane id and endpoint: pane ids repeat across sockets) as
   `ScannedPane::resumed`. A session found there is **alive**, whatever its
   row says, and that counts from any walk, complete or not. That is the swap
   and `tend reload` case: the same session id in a new process, in its old
@@ -271,10 +273,14 @@ from a walk that saw everything:
 - **Every agent on the host is someone else.** A command line names the
   session only when it was started by id. `claude --continue`, a session
   picked from a list, or a thread tendd has not bound runs under no name it
-  can read, and could be the asker. So every pane whose walk found an agent
-  process must be accounted for: a named, not-Stopped row in it, or an
-  explicit resume id. While one is not, anywhere on the host, only the bound
-  incarnation counts (Codex review of #686).
+  can read, and could be the asker. So every agent must be accounted for,
+  one by one. In each pane the walk counts the top-level agent processes (no
+  agent among their ancestors; an agent's own children are part of it) that
+  carry no session id (`ScannedPane::unnamed_agents`). Each needs its own
+  named, not-Stopped row in that pane, other than the sessions the pane
+  already names by resume id: one identified agent does not account for a
+  second one beside it. While any agent is unaccounted for, anywhere on the
+  host, only the bound incarnation counts (Codex review of #686).
 
 Then the pane needs no history, on any server incarnation:
 

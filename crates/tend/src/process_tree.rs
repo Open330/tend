@@ -168,15 +168,14 @@ pub struct CodexPaneScan {
     /// claim the pane's placeholder row as `Unknown`, so this — not a registry
     /// placeholder — is the evidence a cwd correlation needs.
     pub hosts: Vec<PaneInfo>,
-    /// Per pane id, every session id a process in it was explicitly started
-    /// on, whichever way its hooks run (`--no-daemon` included). A
-    /// question's subject check reads it: a session resumed and not yet
-    /// prompted has no live row, and its own process is the only sign it is
-    /// back (`subject_check.rs`).
-    pub resumed: HashMap<String, Vec<String>>,
+    /// Per pane (id and endpoint), which agents run in it and which of them
+    /// the walk can name. A question's subject check reads it: a session
+    /// resumed and not yet prompted has no live row, and its own process is
+    /// the only sign it is back (`subject_check.rs`).
+    pub identities: HashMap<PaneKey, PaneIdentities>,
     /// The walk covered every pane it was given: the process table was
-    /// read, every pane had a root process, and no walk hit its node limit.
-    /// Only then does a resume id missing from [`Self::resumed`] say
+    /// read, every pane had a root process, and no walk stopped at its depth
+    /// or node limit. Only then does what [`Self::identities`] lacks say
     /// anything.
     pub complete: bool,
 }
@@ -202,15 +201,15 @@ pub fn scan_codex_panes_with(panes: &[PaneInfo], source: &ProcessSource) -> Code
         .filter(|p| p.pane_pid != 0)
         .map(|pane| {
             #[cfg(not(target_os = "linux"))]
-            let processes = table.descendants(pane.pane_pid, MAX_DEPTH, MAX_NODES);
+            let (processes, whole) = table.descendants_walk(pane.pane_pid, MAX_DEPTH, MAX_NODES);
             #[cfg(target_os = "linux")]
-            let processes = read_descendants(pane.pane_pid);
+            let (processes, whole) = read_descendants_walk(pane.pane_pid);
             #[cfg(target_os = "linux")]
             let root = read_proc(pane.pane_pid, 0);
             #[cfg(not(target_os = "linux"))]
             let root = table.get(pane.pane_pid).cloned();
             // A directly exec'd TUI can itself be the pane root process.
-            let walked = root.is_some() && processes.len() < MAX_NODES;
+            let walked = root.is_some() && whole;
             let processes: Vec<ProcessInfo> = root.into_iter().chain(processes).collect();
             (pane, processes, walked)
         })
@@ -222,12 +221,9 @@ pub fn scan_codex_panes_with(panes: &[PaneInfo], source: &ProcessSource) -> Code
     let complete = read
         && unique.iter().all(|pane| pane.pane_pid != 0)
         && scanned.iter().all(|(_, _, walked)| *walked);
-    let resumed = scanned
+    let identities = scanned
         .iter()
-        .filter_map(|(pane, processes, _)| {
-            let ids = resumed_sessions(std::iter::once(processes.as_slice()));
-            (!ids.is_empty()).then(|| (pane.pane_id.clone(), ids.into_iter().collect()))
-        })
+        .map(|(pane, processes, _)| (PaneKey::of(pane), pane_identities(processes)))
         .collect();
     let scanned: Vec<_> = scanned
         .into_iter()
@@ -241,7 +237,7 @@ pub fn scan_codex_panes_with(panes: &[PaneInfo], source: &ProcessSource) -> Code
         .map(|(pane, _)| (*pane).clone())
         .collect();
     CodexPaneScan {
-        resumed,
+        identities,
         complete,
         resume_bindings: unique_resume_bindings(
             scanned
@@ -281,6 +277,81 @@ fn is_interactive_codex(process: &ProcessInfo) -> bool {
         args.find(|arg| !arg.starts_with('-')),
         Some("app-server" | "exec" | "e" | "review" | "mcp-server")
     )
+}
+
+/// One physical pane: its id and normalized endpoint, as
+/// `subject_evidence::ScannedPane` carries them. Pane ids repeat across
+/// sockets.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PaneKey {
+    pub pane_id: String,
+    pub endpoint: Option<String>,
+}
+
+impl PaneKey {
+    #[must_use]
+    pub fn of(pane: &PaneInfo) -> Self {
+        Self {
+            pane_id: pane.pane_id.clone(),
+            endpoint: pane
+                .socket
+                .as_deref()
+                .map(|socket| crate::backend::pane_endpoint_identity(Some(&pane.pane_id), socket)),
+        }
+    }
+}
+
+/// The agents one pane's walk found.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PaneIdentities {
+    /// Any agent process at all.
+    pub agent: bool,
+    /// Session ids a process in it was explicitly started on, whichever way
+    /// its hooks run (`--no-daemon` included).
+    pub resumed: Vec<String>,
+    /// Top-level agent processes (no agent among their ancestors in the
+    /// pane) that carry no session id: `claude --continue`, a fresh
+    /// `codex`, a session picked from a list. An agent's own children are
+    /// part of it, not counted.
+    pub unnamed: u16,
+}
+
+/// What [`PaneIdentities`] a pane's walk shows.
+fn pane_identities(processes: &[ProcessInfo]) -> PaneIdentities {
+    let agents: HashMap<u32, &ProcessInfo> = processes
+        .iter()
+        .filter(|process| agent_kind(process).is_some())
+        .map(|process| (process.pid, process))
+        .collect();
+    let parent_of: HashMap<u32, u32> = processes.iter().map(|p| (p.pid, p.parent_pid)).collect();
+    let under_agent = |process: &ProcessInfo| {
+        let mut pid = process.parent_pid;
+        let mut hops = 0;
+        while let Some(parent) = parent_of.get(&pid) {
+            if agents.contains_key(&pid) {
+                return true;
+            }
+            pid = *parent;
+            hops += 1;
+            if hops > usize::from(MAX_DEPTH) + 1 {
+                break;
+            }
+        }
+        agents.contains_key(&pid)
+    };
+    let unnamed = agents
+        .values()
+        .filter(|process| !under_agent(process) && resume_id(process).is_none())
+        .count();
+    let mut resumed: Vec<String> = resumed_sessions(std::iter::once(processes))
+        .into_iter()
+        .collect();
+    resumed.sort();
+    PaneIdentities {
+        agent: !agents.is_empty(),
+        resumed,
+        unnamed: u16::try_from(unnamed).unwrap_or(u16::MAX),
+    }
 }
 
 /// Every session id a process in these panes was explicitly started on.
@@ -523,6 +594,15 @@ fn command_name(s: &str) -> &str {
 
 #[cfg(target_os = "linux")]
 pub(crate) fn read_descendants(root: u32) -> Vec<ProcessInfo> {
+    read_descendants_walk(root).0
+}
+
+/// [`read_descendants`], and whether the walk reached every descendant:
+/// `false` past [`MAX_DEPTH`] or at [`MAX_NODES`] with more to visit. A
+/// child that exits between being listed and being read is simply gone.
+#[cfg(target_os = "linux")]
+fn read_descendants_walk(root: u32) -> (Vec<ProcessInfo>, bool) {
+    let mut whole = true;
     let mut out = Vec::new();
     let mut seen: HashSet<u32> = HashSet::new();
     let mut q: VecDeque<(u32, u8)> = read_children(root)
@@ -530,7 +610,11 @@ pub(crate) fn read_descendants(root: u32) -> Vec<ProcessInfo> {
         .map(|pid| (pid, 1))
         .collect();
     while let Some((pid, depth)) = q.pop_front() {
-        if depth > MAX_DEPTH || !seen.insert(pid) || out.len() >= MAX_NODES {
+        if !seen.insert(pid) {
+            continue;
+        }
+        if depth > MAX_DEPTH || out.len() >= MAX_NODES {
+            whole = false;
             continue;
         }
         if let Some(proc) = read_proc(pid, depth) {
@@ -540,16 +624,33 @@ pub(crate) fn read_descendants(root: u32) -> Vec<ProcessInfo> {
             out.push(proc);
         }
     }
-    out
+    (out, whole)
 }
 
+/// Every child of `pid`, whichever of its threads forked it: each task
+/// lists only its own (`/proc/<pid>/task/<tid>/children`).
 #[cfg(target_os = "linux")]
 fn read_children(pid: u32) -> Vec<u32> {
-    std::fs::read_to_string(format!("/proc/{pid}/task/{pid}/children"))
-        .unwrap_or_default()
-        .split_whitespace()
-        .filter_map(|s| s.parse().ok())
-        .collect()
+    let tasks: Vec<String> = std::fs::read_dir(format!("/proc/{pid}/task"))
+        .map(|dir| {
+            dir.filter_map(Result::ok)
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_else(|_| vec![pid.to_string()]);
+    let mut children: Vec<u32> = tasks
+        .iter()
+        .flat_map(|tid| {
+            std::fs::read_to_string(format!("/proc/{pid}/task/{tid}/children"))
+                .unwrap_or_default()
+                .split_whitespace()
+                .filter_map(|s| s.parse().ok())
+                .collect::<Vec<u32>>()
+        })
+        .collect();
+    children.sort_unstable();
+    children.dedup();
+    children
 }
 
 #[cfg(target_os = "linux")]
@@ -656,7 +757,9 @@ mod tests {
         let scan = scan_codex_panes_with(&[pane("%8", 10)], &source(table()));
         assert!(scan.complete);
         assert_eq!(
-            scan.resumed.get("%8").map(Vec::as_slice),
+            scan.identities
+                .get(&PaneKey::of(&pane("%8", 10)))
+                .map(|i| i.resumed.as_slice()),
             Some([sid.to_owned()].as_slice())
         );
         // A failed `ps`.
@@ -676,10 +779,73 @@ mod tests {
         assert!(
             !scan_codex_panes_with(&[pane("%8", 10), pane("%9", 99)], &source(table())).complete
         );
-        // A walk cut off at its node limit.
+        // A walk cut off at its node limit, or past its depth limit.
         let mut wide = table();
         wide.extend((0..300).map(|i| proc(1000 + i, 10, 1, "sleep", "sleep 1")));
         assert!(!scan_codex_panes_with(&[pane("%8", 10)], &source(wide)).complete);
+        let mut deep = vec![proc(10, 1, 0, "zsh", "-zsh")];
+        deep.extend((0..12).map(|i| {
+            proc(
+                100 + i,
+                if i == 0 { 10 } else { 99 + i },
+                1,
+                "sh",
+                "sh -c x",
+            )
+        }));
+        deep.push(proc(200, 111, 1, "codex", &format!("codex resume {sid}")));
+        let scan = scan_codex_panes_with(&[pane("%8", 10)], &source(deep));
+        assert!(!scan.complete, "depth truncation is not a whole walk");
+        // The same pane id on two sockets: each keeps its own evidence.
+        let other = || -> PaneInfo {
+            serde_json::from_value(serde_json::json!({
+                "pane_id": "%8", "session": "x", "window_index": "0", "pane_index": "0",
+                "tty": "", "current_command": "claude", "title": "", "pane_pid": 50,
+                "socket": "/tmp/tmux-501/work"
+            }))
+            .unwrap()
+        };
+        let mut both = table();
+        both.push(proc(50, 1, 0, "zsh", "-zsh"));
+        both.push(proc(60, 50, 1, "claude", "claude --continue"));
+        let scan = scan_codex_panes_with(&[pane("%8", 10), other()], &source(both));
+        let here = &scan.identities[&PaneKey::of(&pane("%8", 10))];
+        let there = &scan.identities[&PaneKey::of(&other())];
+        assert_eq!((here.resumed.len(), here.unnamed), (1, 0));
+        assert_eq!((there.resumed.len(), there.unnamed), (0, 1));
+    }
+
+    #[test]
+    fn an_agents_own_children_are_part_of_it_but_a_second_agent_is_not() {
+        let sid = "01a132f3-21bf-76e3-822e-e84855943e22";
+        let named = pane_identities(&[
+            proc(10, 1, 0, "zsh", "-zsh"),
+            proc(
+                20,
+                10,
+                1,
+                "aas",
+                &format!("aas exec x@codex -- resume {sid}"),
+            ),
+            proc(
+                21,
+                20,
+                2,
+                "codex",
+                &format!("codex --no-daemon resume {sid}"),
+            ),
+            proc(22, 21, 3, "codex", "codex exec helper"),
+        ]);
+        assert_eq!(
+            (named.agent, named.resumed.len(), named.unnamed),
+            (true, 1, 0)
+        );
+        let beside = pane_identities(&[
+            proc(10, 1, 0, "zsh", "-zsh"),
+            proc(21, 10, 1, "codex", &format!("codex resume {sid}")),
+            proc(30, 10, 1, "claude", "claude --continue"),
+        ]);
+        assert_eq!(beside.unnamed, 1);
     }
 
     #[test]
