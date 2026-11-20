@@ -334,6 +334,7 @@ mod tests {
             action_request_id: Some("human-choice".into()),
             decision: None,
             healthy_since: None,
+            reason_since: None,
         });
         let observed = outcome(&request);
         assert_eq!(observed["reason"], "peer_interrupted");

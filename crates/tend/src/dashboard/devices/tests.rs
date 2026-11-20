@@ -355,7 +355,7 @@ async fn a_decide_device_keeps_and_closes_unanswerable_questions() {
         );
         observations.set_scan(PaneScan {
             at: time::OffsetDateTime::now_utc(),
-            resumed: None,
+            processes_walked: false,
             hosts: vec![HostScan {
                 kind: crate::backend::HostKind::Tmux,
                 complete: true,

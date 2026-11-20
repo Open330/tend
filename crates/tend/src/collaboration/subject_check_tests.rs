@@ -78,7 +78,7 @@ fn scan(
 ) -> PaneScan {
     PaneScan {
         at,
-        resumed: None,
+        processes_walked: false,
         hosts: vec![HostScan {
             kind: HostKind::Tmux,
             complete: true,
@@ -97,6 +97,7 @@ fn scan(
                     endpoint: Some(p.endpoint.into()),
                     foreground: p.foreground.into(),
                     agent_process: p.agent,
+                    resumed: Vec::new(),
                 })
                 .collect(),
         }],
@@ -901,7 +902,9 @@ async fn a_console_recovery_with_only_binding_unavailable_does_not_fold_and_clos
     assert!(get(&store, &item.id).await.needs_human_response());
     // Its recipient vanished a week ago: nobody is left for the answer.
     let mut aged = get(&store, &parent.id).await;
-    aged.interruption.as_mut().unwrap().observed_at -= Duration::days(5);
+    let info = aged.interruption.as_mut().unwrap();
+    info.observed_at -= Duration::days(5);
+    *info.reason_since.as_mut().expect("stamped") -= Duration::days(8);
     put(&store, aged).await;
     store.sweep_system_asks(&[]).await.unwrap();
     let closed = get(&store, &item.id).await;
@@ -1704,13 +1707,23 @@ async fn a_stored_binding_keeps_its_first_incarnation_and_follows_a_move() {
     assert_eq!((moved.pane.as_str(), moved.incarnation), ("%4", Some(A)));
 }
 
-/// `scan`, from a pass that walked every pane's processes and found these
-/// sessions explicitly resumed.
-fn walked(scan: PaneScan, resumed: &[&str]) -> PaneScan {
-    PaneScan {
-        resumed: Some(resumed.iter().map(|s| (*s).to_owned()).collect()),
+/// `scan`, from a pass that walked every pane's processes completely and
+/// found these `(pane, session)` explicit resumes.
+fn walked(scan: PaneScan, resumed: &[(&str, &str)]) -> PaneScan {
+    let mut scan = PaneScan {
+        processes_walked: true,
         ..scan
+    };
+    for host in &mut scan.hosts {
+        for pane in &mut host.panes {
+            pane.resumed = resumed
+                .iter()
+                .filter(|(id, _)| *id == pane.pane_id)
+                .map(|(_, session)| (*session).to_owned())
+                .collect();
+        }
     }
+    scan
 }
 
 /// Pass every five minutes for the grace and a little more, with no
@@ -1799,7 +1812,7 @@ async fn a_resumed_or_moved_asker_is_alive_before_its_first_prompt() {
             &[("default", Some(B))],
             &[pane("%8", "default", "codex", Some(true))],
         ),
-        &["01a132f3"],
+        &[("%8", "01a132f3")],
     );
     pass(&store, &[], &HashMap::new(), Some(&resumed)).await;
     assert!(
@@ -1845,5 +1858,78 @@ async fn a_shell_where_the_asker_ran_is_agent_exited_from_present_state() {
     assert_eq!(
         folded(&store, &q.id).await.expect("folded").cause,
         GoneCause::AgentExited
+    );
+}
+
+#[tokio::test]
+async fn an_agent_tendd_cannot_name_anywhere_keeps_an_unbound_asker_unknown() {
+    // `claude --continue` in another pane: no id on its command line, so it
+    // could be the asker. Its absent pane then shows nothing.
+    let store = CollaborationStore::in_memory(CollaborationOptions::default());
+    let q = question(&store, &participant("55115377", "%140", "default")).await;
+    let mut unnamed = row("x", "%99", "default", AgentState::Idle, Duration::ZERO).await;
+    unnamed.session_id = format!("{}7:default:%99", crate::state::SYNTHETIC_SESSION_PREFIX);
+    let elsewhere = |at| {
+        walked(
+            scan(
+                at,
+                &[("default", Some(B))],
+                &[pane("%99", "default", "claude", Some(true))],
+            ),
+            &[],
+        )
+    };
+    drive_unbound(&store, std::slice::from_ref(&unnamed), elsewhere).await;
+    assert!(get(&store, &q.id).await.subject_check.is_none());
+    // No row at all for that agent process: the same.
+    drive_unbound(&store, &[], elsewhere).await;
+    assert!(get(&store, &q.id).await.subject_check.is_none());
+    // Named, it is someone else: the asker is gone.
+    let other = row(
+        "someone",
+        "%99",
+        "default",
+        AgentState::Idle,
+        Duration::ZERO,
+    )
+    .await;
+    drive_unbound(&store, &[other], elsewhere).await;
+    assert_eq!(
+        folded(&store, &q.id).await.expect("folded").cause,
+        GoneCause::PaneGone
+    );
+}
+
+#[tokio::test]
+async fn a_walk_that_was_not_complete_shows_nothing_without_a_binding() {
+    // A complete tmux scan beside an incomplete backend, a failed `ps` or a
+    // cut-off walk: the reconcile reports `processes_walked: false`.
+    let store = CollaborationStore::in_memory(CollaborationOptions::default());
+    let q = question(&store, &participant("01a16985", "%15", "default")).await;
+    drive_unbound(&store, &[], |at| scan(at, &[("default", Some(B))], &[])).await;
+    assert!(get(&store, &q.id).await.subject_check.is_none());
+    // A resume found by that partial walk still counts as alive.
+    let partial = scan(
+        OffsetDateTime::now_utc(),
+        &[("default", Some(B))],
+        &[pane("%3", "default", "codex", Some(true))],
+    );
+    let mut partial = partial;
+    partial.hosts[0].panes[0].resumed = vec!["01a16985".into()];
+    let mut row_gone = get(&store, &q.id).await;
+    row_gone.subject_check = Some(SubjectCheck {
+        episode: "ep_x".into(),
+        state: SubjectState::Gone,
+        gone_since: Some(OffsetDateTime::now_utc() - Duration::hours(1)),
+        confirmed_at: OffsetDateTime::now_utc(),
+        causes: vec![GoneCause::PaneGone],
+        kept_episode: None,
+        pane: Some("%15".into()),
+    });
+    put(&store, row_gone).await;
+    pass(&store, &[], &HashMap::new(), Some(&partial)).await;
+    assert!(
+        get(&store, &q.id).await.subject_check.is_none(),
+        "resumed: alive"
     );
 }

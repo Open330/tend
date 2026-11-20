@@ -14,7 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the asker gone from the present: no live row for its session anywhere on
   the host, no process started on that session (`codex resume <id>`,
   `claude --resume <id>`), and its pane absent, held by another named
-  session, or back at a shell. A session resumed by a swap or `tend reload`,
+  session, or back at a shell. It does so only when the pass walked every
+  pane completely and every agent process on the host belongs to a named
+  session, so an agent tendd cannot name (`claude --continue`) keeps it
+  from guessing. A session resumed by a swap or `tend reload`,
   even before its first prompt and in another pane, counts as alive. On
   jiun-mini this reaches the week-old questions `tend review cleanup` did
   not list; one of them (%8) turned out to have its asker resumed and stays.
@@ -23,8 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   question unfolds the moment its asker is seen again. It stays under
   Can't be answered, with Keep, until a person closes it.
 - A tend recovery item about a request a person sent (from the console or a
-  Fleet initiator) now closes after 7 days when its recipient vanished,
-  with no agent row at all. Its answer only recorded a decision, and there
+  Fleet initiator) now closes once its recipient has been gone for 7 days,
+  with no agent row at all, counted from when the row went (an older error
+  before that does not count; an episode from before this release counts
+  from the upgrade). Its answer only recorded a decision, and there
   was no one left for it; the original request stays, still interrupted.
   A recipient that is only failing or stopped keeps the item.
 

@@ -116,11 +116,12 @@ fn pane_scan(
     at: time::OffsetDateTime,
     observations: &[(HostKind, PaneObservation)],
     workloads: &HashMap<String, crate::WorkloadSummary>,
-    resumed: Option<std::collections::BTreeSet<String>>,
+    resumed: &HashMap<String, Vec<String>>,
+    processes_walked: bool,
 ) -> crate::subject_evidence::PaneScan {
     crate::subject_evidence::PaneScan {
         at,
-        resumed,
+        processes_walked,
         hosts: observations
             .iter()
             .map(|(kind, observation)| crate::subject_evidence::HostScan {
@@ -139,6 +140,7 @@ fn pane_scan(
                         agent_process: workloads
                             .get(&pane.pane_id)
                             .map(|workload| workload.primary_pid.is_some()),
+                        resumed: resumed.get(&pane.pane_id).cloned().unwrap_or_default(),
                     })
                     .collect(),
             })
@@ -695,7 +697,16 @@ impl<L: LivenessSource> Reconciler<L> {
         // ancestry outrank the stored binding, so an idle resumed agent is not
         // left on an id that now belongs to another pane until its next hook.
         let mut codex_hosts = Vec::new();
-        let resumed = codex_scan.as_ref().map(|scan| scan.resumed.clone());
+        // What the subject check may infer from this walk: only a walk of
+        // every pane of every backend, all complete, says what is not running.
+        let walked = all_complete
+            && codex_scan
+                .as_ref()
+                .map_or(union_panes.is_empty(), |scan| scan.complete);
+        let resumed = codex_scan
+            .as_ref()
+            .map(|scan| scan.resumed.clone())
+            .unwrap_or_default();
         // Not gated on an existing real row: right after a multiplexer
         // restart the resumed agents may have none, and adopting them is the
         // point.
@@ -776,7 +787,8 @@ impl<L: LivenessSource> Reconciler<L> {
                 inventory_observed_at,
                 &observations,
                 &workloads,
-                resumed,
+                &resumed,
+                walked,
             ))
             .await;
         let store_update_us =

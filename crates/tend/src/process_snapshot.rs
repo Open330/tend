@@ -30,6 +30,12 @@ pub struct ProcessTable {
 
 #[cfg_attr(target_os = "linux", allow(dead_code))]
 impl ProcessTable {
+    /// Nothing was read (a failed `ps`).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.by_pid.is_empty()
+    }
+
     pub fn from_processes(processes: impl IntoIterator<Item = ProcessInfo>) -> Self {
         let mut table = Self::default();
         for mut process in processes {

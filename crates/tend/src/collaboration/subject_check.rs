@@ -475,11 +475,12 @@ fn judge(
     // A process explicitly started on the session (`codex resume <id>`,
     // `claude --resume <id>`) is the session back, before its first prompt
     // gives it a row.
-    if inputs
-        .scan
-        .and_then(|scan| scan.resumed.as_ref())
-        .is_some_and(|resumed| resumed.contains(session))
-    {
+    if inputs.scan.is_some_and(|scan| {
+        scan.hosts
+            .iter()
+            .flat_map(|host| &host.panes)
+            .any(|pane| pane.resumed.iter().any(|id| id == session))
+    }) {
         return Verdict::Alive;
     }
     let mut causes = Vec::new();
@@ -539,13 +540,12 @@ struct Seen<'a> {
 ///
 /// - **On the bound incarnation**: the session was seen bound to this pane
 ///   on the server incarnation the socket answers with now.
-/// - **From present state**: the pass walked every pane's processes
-///   (`PaneScan::resumed`), so `judge` has already established that the
-///   session has no live row anywhere on this host and that no process was
-///   started on it. The pane then needs no history: it is absent, or a
-///   different, named session's live row holds it, or it runs a shell and no
-///   agent. A pane held by an agent tendd cannot name yet (a synthetic row)
-///   shows nothing.
+/// - **From present state**: [`present_state`] holds, so every agent
+///   running on this host is accounted for by another session, and `judge`
+///   has already established that the subject has no live row and no
+///   process was started on it. The pane then needs no history: it is
+///   absent, or a different, named session's live row holds it, or it runs
+///   a shell and no agent.
 fn scan_evidence(
     pane: &str,
     socket: &str,
@@ -572,7 +572,7 @@ fn scan_evidence(
         .filter(|binding| binding.pane == pane && binding.endpoint == endpoint)
         .and_then(|binding| binding.incarnation);
     let on_bound = bound.is_some() && bound == server.incarnation;
-    let present = scan.resumed.is_some();
+    let present = present_state(scan, seen.agents);
     let entry = host
         .panes
         .iter()
@@ -610,12 +610,9 @@ fn scan_evidence(
     if present
         && unique
         && !holders.is_empty()
-        && holders.iter().all(|agent| {
-            agent.session_id != seen.session
-                && !agent
-                    .session_id
-                    .starts_with(crate::state::SYNTHETIC_SESSION_PREFIX)
-        })
+        && holders
+            .iter()
+            .all(|agent| agent.session_id != seen.session && named(agent))
     {
         return Some(GoneCause::Replaced);
     }
@@ -636,6 +633,51 @@ fn scan_evidence(
         && entry.agent_process == Some(false)
         && crate::shell::is_shell_program(&entry.foreground))
     .then_some(GoneCause::AgentExited)
+}
+
+/// A row with a session id tendd learned from the provider, not one it
+/// minted for a pane it could not tie to a session.
+fn named(agent: &Agent) -> bool {
+    !agent
+        .session_id
+        .starts_with(crate::state::SYNTHETIC_SESSION_PREFIX)
+}
+
+/// Whether `scan` can show a subject gone without history: the pass walked
+/// every pane of every backend completely (`processes_walked`), and every
+/// pane running an agent process is accounted for, by a named live row in
+/// it or by an explicit resume id. An agent tendd cannot name
+/// (`claude --continue`, a session picked from a list, an unbound thread)
+/// could be any subject, so while one runs anywhere on the host only the
+/// bound incarnation counts.
+fn present_state(scan: &PaneScan, agents: &[Agent]) -> bool {
+    scan.processes_walked
+        && scan
+            .hosts
+            .iter()
+            .flat_map(|host| &host.panes)
+            .all(|pane| match pane.agent_process {
+                Some(false) => true,
+                None => false,
+                Some(true) => {
+                    !pane.resumed.is_empty()
+                        || agents.iter().any(|agent| {
+                            agent.state != AgentState::Stopped
+                                && named(agent)
+                                && agent.pane.as_deref() == Some(pane.pane_id.as_str())
+                                && match (agent.tmux_socket.as_deref(), pane.endpoint.as_deref()) {
+                                    (Some(socket), Some(endpoint)) => {
+                                        crate::backend::pane_endpoint_identity(
+                                            agent.pane.as_deref(),
+                                            socket,
+                                        ) == endpoint
+                                    }
+                                    (None, None) => true,
+                                    _ => false,
+                                }
+                        })
+                }
+            })
 }
 
 /// The binding to judge a subject by: the one stored on the item, or the

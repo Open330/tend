@@ -248,41 +248,55 @@ nothing. rtzr (4) and jiun-mbp (1) had the same pattern.
 
 A binding is history: where tendd saw the session. What the person asks is
 about now: **the asker is not running anywhere on this host, and its pane no
-longer holds it.** tendd can establish that from the present alone, when a
-pass has walked every pane's processes:
+longer holds it.** tendd can establish that from the present alone, but only
+from a walk that saw everything:
 
-- **Not running anywhere.** No bound, not-Stopped row for the session id on
-  this host (as before), **and no process in any pane was started on it**:
-  `codex resume <id>`, `claude --resume <id>` / `-r` / `--session-id`. The
-  reconcile pass already reads every pane's process tree once; it now keeps
-  the set of explicitly resumed session ids with the scan
-  (`PaneScan::resumed`). A session found there is **alive**, whatever its
-  row says. That is the swap and `tend reload` case: the same session id in a
-  new process, in its old pane or a new one, possibly under another account.
-  Its row comes back on the first prompt; until then its process is the
-  evidence. On jiun-mini, %8 was exactly this: an idle `codex --no-daemon
-  resume 01a132f3…` whose row was synthetic. A pane check alone would have
-  called it replaced.
-- **Its pane no longer holds it**, on a complete scan of a socket that
-  answered, on any server incarnation:
-  - the pane is absent (E3, `pane_gone`);
-  - or a different session tendd can name holds it with a live row (E2,
-    `replaced`); a synthetic row (an agent tendd cannot name yet) shows
-    nothing;
-  - or the pane runs a shell and no agent, and no live row holds it (E4,
-    `agent_exited`).
+- **The walk is complete** (`PaneScan::processes_walked`): every backend's
+  scan was complete (a herdr, cmux or zellij observation, or one failed
+  socket, makes it partial), the process table was read (a failed `ps`
+  reads as empty, not as "nothing runs"), every pane had a root process,
+  and no pane's walk hit its node limit. The reconcile pass already walks
+  every pane's process tree once; it now reports whether that walk was
+  whole.
+- **The asker is not running**: no bound, not-Stopped row for its session id
+  (as before), and no process in any pane was started on it: `codex resume
+  <id>`, `claude --resume <id>` / `-r` / `--session-id`, kept per pane as
+  `ScannedPane::resumed`. A session found there is **alive**, whatever its
+  row says, and that counts from any walk, complete or not. That is the swap
+  and `tend reload` case: the same session id in a new process, in its old
+  pane or a new one, possibly under another account. Its row comes back on
+  the first prompt; until then its process is the evidence. On jiun-mini, %8
+  was exactly this: an idle `codex --no-daemon resume 01a132f3…` whose row
+  was synthetic. A pane check alone would have called it replaced.
+- **Every agent on the host is someone else.** A command line names the
+  session only when it was started by id. `claude --continue`, a session
+  picked from a list, or a thread tendd has not bound runs under no name it
+  can read, and could be the asker. So every pane whose walk found an agent
+  process must be accounted for: a named, not-Stopped row in it, or an
+  explicit resume id. While one is not, anywhere on the host, only the bound
+  incarnation counts (Codex review of #686).
 
-A pass that did not walk the processes (`resumed` absent: no complete host,
-an older scan) keeps the old rule: only the bound incarnation counts. Old
-daemons ignore the field.
+Then the pane needs no history, on any server incarnation:
+
+- it is absent (E3, `pane_gone`);
+- or a different session tendd can name holds it with a live row (E2,
+  `replaced`);
+- or it runs a shell and no agent, and no live row holds it (E4,
+  `agent_exited`).
+
+Otherwise the old rule stands: only the bound incarnation counts. Old
+daemons ignore both new fields.
 
 Why this is safe now and was not before: the incarnation rule existed so that
 a session restored into a new pane tendd had not tied to it yet was not
 called gone from its old pane id. Restores and swaps relaunch the session by
-id, which the process set shows directly. What is left is a session that
-comes back with no id on its command line (`claude --continue`); it folds
-until its first hook, then is alive again, and Keep and the grace cover the
-person in between.
+id, which the walk shows directly; a session relaunched any other way is an
+unaccounted agent, which stops the inference. Close all reads the same
+evidence again inside its transaction, so it closes nothing these rules
+would not fold.
+
+Measured read-only on 2026-11-20 with these rules: no host had an
+unaccounted agent process.
 
 ### Grace: long enough for a swap, not a day
 
@@ -325,9 +339,14 @@ changes.
   already decode, rather than a new one.
 
 A recovery item for a request the person sent (operator console or Fleet
-initiator) is closed **for age** only when its recipient **vanished**
-(`binding_unavailable`: no agent row at all, live or Stopped) for the whole
-7 days. On jiun-mbp three such items were 11 to 20 days old: four console
+initiator) is closed **for age** only when its recipient has been
+**vanished** (`binding_unavailable`: no agent row at all, live or Stopped)
+for the whole 7 days. That clock is the reason's, not the episode's: an
+episode that began as an error a month ago and lost its recipient's row
+today counts from today. The interruption records when its current reason
+began (`reason_since`, reset whenever the reason changes); an episode from
+before the field is stamped at the first reconcile after the upgrade, so its
+week starts then. On jiun-mbp three such items were 11 to 20 days old: four console
 dispatches to a Codex session with no row since 2026-11-08, three console
 requests from September to two Claude sessions with none since 2026-10-31.
 Their answer "records a decision; it does not restart, cancel, or spend";
@@ -350,8 +369,10 @@ Reply wakes keep today's `abandoned` rule, which exempts only a console
 sender. Adding the Fleet-initiator exemption to reply wakes is not part of
 this change.
 
-The three jiun-mbp console recoveries close under the vanished-recipient
-rule above.
+The three jiun-mbp console recoveries fold at once (their recipients' panes
+are gone or held by other named sessions) and close under the
+vanished-recipient rule a week after the upgrade, when their `reason_since`
+was first stamped.
 
 ### Agents' questions with a gone asker: folded, closed only by a person
 

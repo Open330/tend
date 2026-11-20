@@ -168,12 +168,17 @@ pub struct CodexPaneScan {
     /// claim the pane's placeholder row as `Unknown`, so this — not a registry
     /// placeholder — is the evidence a cwd correlation needs.
     pub hosts: Vec<PaneInfo>,
-    /// Every session id a process in a walked pane was explicitly started
-    /// on, in any number of panes and whichever way its hooks run
-    /// (`--no-daemon` included). A question's subject check reads it: a
-    /// session resumed and not yet prompted has no live row, and its own
-    /// process is the only sign it is back (`subject_check.rs`).
-    pub resumed: std::collections::BTreeSet<String>,
+    /// Per pane id, every session id a process in it was explicitly started
+    /// on, whichever way its hooks run (`--no-daemon` included). A
+    /// question's subject check reads it: a session resumed and not yet
+    /// prompted has no live row, and its own process is the only sign it is
+    /// back (`subject_check.rs`).
+    pub resumed: HashMap<String, Vec<String>>,
+    /// The walk covered every pane it was given: the process table was
+    /// read, every pane had a root process, and no walk hit its node limit.
+    /// Only then does a resume id missing from [`Self::resumed`] say
+    /// anything.
+    pub complete: bool,
 }
 
 /// Recover detached Codex sessions from an explicit CLI resume id and its
@@ -205,9 +210,28 @@ pub fn scan_codex_panes_with(panes: &[PaneInfo], source: &ProcessSource) -> Code
             #[cfg(not(target_os = "linux"))]
             let root = table.get(pane.pane_pid).cloned();
             // A directly exec'd TUI can itself be the pane root process.
+            let walked = root.is_some() && processes.len() < MAX_NODES;
             let processes: Vec<ProcessInfo> = root.into_iter().chain(processes).collect();
-            (pane, processes)
+            (pane, processes, walked)
         })
+        .collect();
+    #[cfg(not(target_os = "linux"))]
+    let read = !table.is_empty();
+    #[cfg(target_os = "linux")]
+    let read = true;
+    let complete = read
+        && unique.iter().all(|pane| pane.pane_pid != 0)
+        && scanned.iter().all(|(_, _, walked)| *walked);
+    let resumed = scanned
+        .iter()
+        .filter_map(|(pane, processes, _)| {
+            let ids = resumed_sessions(std::iter::once(processes.as_slice()));
+            (!ids.is_empty()).then(|| (pane.pane_id.clone(), ids.into_iter().collect()))
+        })
+        .collect();
+    let scanned: Vec<_> = scanned
+        .into_iter()
+        .map(|(pane, processes, _)| (pane, processes))
         .collect();
     let hosts = scanned
         .iter()
@@ -216,9 +240,9 @@ pub fn scan_codex_panes_with(panes: &[PaneInfo], source: &ProcessSource) -> Code
         })
         .map(|(pane, _)| (*pane).clone())
         .collect();
-    let resumed = resumed_sessions(scanned.iter().map(|(_, processes)| processes.as_slice()));
     CodexPaneScan {
         resumed,
+        complete,
         resume_bindings: unique_resume_bindings(
             scanned
                 .into_iter()
@@ -598,6 +622,64 @@ mod tests {
             comm: comm.into(),
             cmdline: cmdline.into(),
         }
+    }
+
+    /// Only a walk of every pane, from a table that was read, says what is
+    /// not running.
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn a_walk_is_complete_only_when_every_pane_was_read() {
+        let sid = "01a132f3-21bf-76e3-822e-e84855943e22";
+        let pane = |id: &str, pid: u32| -> PaneInfo {
+            serde_json::from_value(serde_json::json!({
+                "pane_id": id, "session": "tend", "window_index": "0", "pane_index": "0",
+                "tty": "", "current_command": "codex", "title": "", "pane_pid": pid,
+                "socket": "default"
+            }))
+            .unwrap()
+        };
+        let source = |processes: Vec<ProcessInfo>| ProcessSource {
+            table: crate::process_snapshot::ProcessTable::from_processes(processes),
+        };
+        let table = || {
+            vec![
+                proc(10, 1, 0, "zsh", "-zsh"),
+                proc(
+                    20,
+                    10,
+                    1,
+                    "codex",
+                    &format!("codex --no-daemon resume {sid}"),
+                ),
+            ]
+        };
+        let scan = scan_codex_panes_with(&[pane("%8", 10)], &source(table()));
+        assert!(scan.complete);
+        assert_eq!(
+            scan.resumed.get("%8").map(Vec::as_slice),
+            Some([sid.to_owned()].as_slice())
+        );
+        // A failed `ps`.
+        assert!(
+            !scan_codex_panes_with(
+                &[pane("%8", 10)],
+                &ProcessSource {
+                    table: crate::process_snapshot::ProcessTable::default()
+                }
+            )
+            .complete
+        );
+        // A pane with no pid, or whose root is not in the table.
+        assert!(
+            !scan_codex_panes_with(&[pane("%8", 10), pane("%9", 0)], &source(table())).complete
+        );
+        assert!(
+            !scan_codex_panes_with(&[pane("%8", 10), pane("%9", 99)], &source(table())).complete
+        );
+        // A walk cut off at its node limit.
+        let mut wide = table();
+        wide.extend((0..300).map(|i| proc(1000 + i, 10, 1, "sleep", "sleep 1")));
+        assert!(!scan_codex_panes_with(&[pane("%8", 10)], &source(wide)).complete);
     }
 
     #[test]
