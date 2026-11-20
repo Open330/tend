@@ -284,10 +284,12 @@ from a walk that saw everything:
   - outside every walked pane (`PaneScan::outside`), every agent process in
     the whole table: another terminal, a cmux surface, a zellij pane. A
     process there started on a session id counts as alive like one in a
-    pane (`outside_resumed`). Codex servers (`app-server`, `exec-server`,
-    `mcp-server` and their daemon) are no session a person talks to and are
-    left out; on Linux a process whose `comm` or `cmdline` cannot be read is
-    an entry of no kind.
+    pane (`outside_resumed`), and its live row accounts for that process
+    only. Codex servers (`app-server`, `exec-server`, `mcp-server` as the
+    subcommand, options and their values skipped) are no session a person
+    talks to and are left out; a resume id names its session first. On
+    Linux a process whose `comm` or `cmdline` cannot be read is an entry of
+    no kind, and a `/proc` listing that fails part-way is no read at all.
 
   Each named, not-Stopped row accounts for one unnamed agent of its kind in
   the same place (the pane, or outside every walked pane), other than the
@@ -296,15 +298,22 @@ from a walk that saw everything:
   asker it could be, and only for a while**:
   - **by kind**: an unnamed `codex` cannot be a Claude Code asker, and the
     other way round. An entry of no kind could be any.
-  - **by time** (`UNNAMED_AGENT_BOUND`, one hour from the first scan that
-    showed it, carried from scan to scan by pid or pane): a restart or swap
+  - **by time, for a fold only** (`UNNAMED_AGENT_BOUND`, one hour from the
+    first scan that showed it; carried from scan to scan by pid and process
+    start time, so a reused pid starts over, or by pane and server
+    incarnation; a process whose start cannot be read is never carried):
+    a restart or swap
     tend drives names its session (`--resume <id>`), so an unnamed agent
     is one a person started by hand, and it gets a named row at its first
     prompt, which brings its asker's questions back at once. One left
     unprompted for an hour is not where the conversation is going on. The
     fold it then allows changes only where the question is shown: it stays
     under "Can't be answered" with Keep, and only a person closes it. After
-    a daemon restart the hour starts again (conservative).
+    a daemon restart the hour starts again (conservative). **Close all
+    does not use the bound** (Codex review of #688): it declines the
+    question for good, so it re-evaluates with every unnamed agent that
+    could be the asker still blocking, however old, and skips that
+    question with "its subject is no longer established gone".
 
   Before WAVE10 one unnamed agent anywhere on the host (rtzr's fresh `codex
   --yolo` in rmux:%492) stopped the inference for every asker, for as long

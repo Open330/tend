@@ -183,6 +183,11 @@ pub struct CodexPaneScan {
     /// answer), another terminal, or past a walk's limit. A question's
     /// subject could be any of them.
     pub outside: OutsideAgents,
+    /// When each unnamed agent process (in a pane or outside) started, as
+    /// [`crate::agent_conversation::process_start`] reads it: with the pid,
+    /// the identity that tells one process from a later one on the same
+    /// pid. Missing where it could not be read.
+    pub starts: HashMap<u32, String>,
 }
 
 /// Agent processes in no walked pane, from the whole process table.
@@ -247,7 +252,7 @@ pub fn scan_codex_panes_with(panes: &[PaneInfo], source: &ProcessSource) -> Code
     let outside = outside_agents(read, table.processes().cloned().map(Ok), &inside);
     #[cfg(target_os = "linux")]
     let outside = read_outside_agents(&inside);
-    let identities = scanned
+    let identities: HashMap<PaneKey, PaneIdentities> = scanned
         .iter()
         .map(|(pane, processes, walked)| {
             let mut identities = pane_identities(processes);
@@ -266,10 +271,17 @@ pub fn scan_codex_panes_with(panes: &[PaneInfo], source: &ProcessSource) -> Code
         })
         .map(|(pane, _)| (*pane).clone())
         .collect();
+    let starts = identities
+        .values()
+        .flat_map(|identity| identity.unnamed.iter().map(|(pid, _)| *pid))
+        .chain(outside.unnamed.iter().map(|(pid, _)| *pid))
+        .filter_map(|pid| Some((pid, crate::agent_conversation::process_start(pid)?)))
+        .collect();
     CodexPaneScan {
         identities,
         complete,
         outside,
+        starts,
         resume_bindings: unique_resume_bindings(
             scanned
                 .into_iter()
@@ -304,17 +316,17 @@ fn outside_agents(
                 continue;
             }
         };
-        if inside.contains(&process.pid) || codex_server(&process) {
+        if inside.contains(&process.pid) {
             continue;
         }
         let Some(kind) = agent_kind(&process) else {
             continue;
         };
-        match resume_id(&process) {
-            Some(sid) => {
-                resumed.insert(sid.to_owned());
-            }
-            None => out.unnamed.push((process.pid, Some(kind))),
+        // A resume id names the session whatever else the command says.
+        if let Some(sid) = resume_id(&process) {
+            resumed.insert(sid.to_owned());
+        } else if !codex_server(&process) {
+            out.unnamed.push((process.pid, Some(kind)));
         }
     }
     out.resumed = resumed.into_iter().collect();
@@ -324,13 +336,51 @@ fn outside_agents(
 
 /// A Codex server process (`app-server`, `exec-server`, `mcp-server`, and
 /// the daemon that keeps them): it hosts threads for clients, and is no
-/// session of its own a person could be talking to.
+/// session of its own a person could be talking to. Only the subcommand
+/// counts, not an option's value or a prompt that happens to say so.
 fn codex_server(process: &ProcessInfo) -> bool {
     agent_kind(process) == Some(AgentKind::Codex)
-        && process
-            .cmdline
-            .split_whitespace()
-            .any(|arg| matches!(arg, "app-server" | "exec-server" | "mcp-server"))
+        && matches!(
+            codex_subcommand(&process.cmdline),
+            Some("app-server" | "exec-server" | "mcp-server")
+        )
+}
+
+/// The first positional argument after the `codex` program, skipping its
+/// global options and the values of the ones that take one.
+fn codex_subcommand(cmdline: &str) -> Option<&str> {
+    const WITH_VALUE: [&str; 18] = [
+        "-c",
+        "--config",
+        "-m",
+        "--model",
+        "-p",
+        "--profile",
+        "-s",
+        "--sandbox",
+        "-a",
+        "--ask-for-approval",
+        "-C",
+        "--cd",
+        "-i",
+        "--image",
+        "--add-dir",
+        "--enable",
+        "--disable",
+        "--local-provider",
+    ];
+    let mut args = cmdline
+        .split_whitespace()
+        .skip_while(|arg| crate::shell::program_name(arg) != "codex")
+        .skip(1);
+    while let Some(arg) = args.next() {
+        if WITH_VALUE.contains(&arg) {
+            args.next();
+        } else if !arg.starts_with('-') {
+            return Some(arg);
+        }
+    }
+    None
 }
 
 /// [`outside_agents`] over `/proc`, read now. A process that exists but
@@ -340,9 +390,14 @@ fn read_outside_agents(inside: &HashSet<u32>) -> OutsideAgents {
     let Ok(entries) = std::fs::read_dir("/proc") else {
         return OutsideAgents::default();
     };
+    // An entry that could not be listed could be any process: the table
+    // was not read.
+    let Ok(entries) = entries.collect::<Result<Vec<_>, _>>() else {
+        return OutsideAgents::default();
+    };
     let own = std::process::id();
     let processes = entries
-        .filter_map(Result::ok)
+        .into_iter()
         .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
         .filter(|pid| *pid != own && !inside.contains(pid))
         .filter_map(|pid| {
@@ -1072,6 +1127,29 @@ mod tests {
             outside.unnamed,
             vec![(30, Some(AgentKind::Codex)), (36, None)]
         );
+        // Only the subcommand makes a server: a profile or a prompt that
+        // says so does not, and a resume id always names its session.
+        let other = "01a1ca42-0000-7000-8000-000000000000";
+        let tricky = vec![
+            Ok(proc(
+                40,
+                1,
+                0,
+                "codex",
+                &format!("codex --profile exec-server resume {other}"),
+            )),
+            Ok(proc(41, 1, 0, "codex", "codex exec app-server")),
+            Ok(proc(
+                42,
+                1,
+                0,
+                "codex",
+                "/x/codex -c a=b -p p app-server --listen x",
+            )),
+        ];
+        let named = outside_agents(true, tricky.into_iter(), &inside);
+        assert_eq!(named.resumed, vec![other.to_owned()]);
+        assert_eq!(named.unnamed, vec![(41, Some(AgentKind::Codex))]);
         // A table that was not read lists nothing and says so.
         let unread = outside_agents(false, processes.into_iter(), &inside);
         assert_eq!(unread, OutsideAgents::default());

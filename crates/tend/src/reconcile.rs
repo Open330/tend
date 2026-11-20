@@ -118,8 +118,10 @@ fn pane_scan(
     workloads: &HashMap<String, crate::WorkloadSummary>,
     identities: &HashMap<process_tree::PaneKey, process_tree::PaneIdentities>,
     outside: Option<&process_tree::OutsideAgents>,
+    starts: &HashMap<u32, String>,
 ) -> crate::subject_evidence::PaneScan {
     use crate::subject_evidence::UnnamedAgent;
+    let start = |pid: &u32| starts.get(pid).map(String::as_str);
     crate::subject_evidence::PaneScan {
         at,
         processes_read: outside.is_some_and(|outside| outside.read),
@@ -128,7 +130,7 @@ fn pane_scan(
                 outside
                     .unnamed
                     .iter()
-                    .map(|(pid, kind)| UnnamedAgent::process(*pid, *kind, at))
+                    .map(|(pid, kind)| UnnamedAgent::process(*pid, start(pid), *kind, at))
                     .collect()
             })
             .unwrap_or_default(),
@@ -167,7 +169,7 @@ fn pane_scan(
                                     i.unnamed
                                         .iter()
                                         .map(|(pid, kind)| {
-                                            UnnamedAgent::process(*pid, Some(*kind), at)
+                                            UnnamedAgent::process(*pid, start(pid), Some(*kind), at)
                                         })
                                         .collect::<Vec<_>>()
                                 })
@@ -177,6 +179,13 @@ fn pane_scan(
                                     UnnamedAgent::unwalked(
                                         &pane.pane_id,
                                         key.endpoint.as_deref(),
+                                        key.endpoint.as_deref().and_then(|endpoint| {
+                                            observation
+                                                .servers
+                                                .iter()
+                                                .find(|server| server.endpoint == endpoint)
+                                                .and_then(|server| server.incarnation)
+                                        }),
                                         at,
                                     )
                                 }))
@@ -747,6 +756,10 @@ impl<L: LivenessSource> Reconciler<L> {
             .map(|scan| scan.identities.clone())
             .unwrap_or_default();
         let outside = codex_scan.as_ref().map(|scan| scan.outside.clone());
+        let starts = codex_scan
+            .as_ref()
+            .map(|scan| scan.starts.clone())
+            .unwrap_or_default();
         // Not gated on an existing real row: right after a multiplexer
         // restart the resumed agents may have none, and adopting them is the
         // point.
@@ -829,6 +842,7 @@ impl<L: LivenessSource> Reconciler<L> {
                 &workloads,
                 &identities,
                 outside.as_ref(),
+                &starts,
             ))
             .await;
         let store_update_us =
@@ -1156,23 +1170,39 @@ mod tests {
             resumed: vec!["s1".into()],
             unnamed: vec![(50, Some(AgentKind::Codex))],
         };
+        let starts: HashMap<u32, String> = [(50, "s50".to_owned())].into_iter().collect();
         let scan = pane_scan(
             at,
             &observations,
             &HashMap::new(),
             &identities,
             Some(&outside),
+            &starts,
         );
         assert!(scan.processes_read);
         assert_eq!(scan.outside_resumed, vec!["s1".to_owned()]);
-        assert_eq!(scan.outside[0].key, "pid:50");
+        assert_eq!(scan.outside[0].key, "pid:50@s50");
+        // %1's agent has no start that could be read: never carried.
+        assert!(scan.hosts[0].panes[0].unnamed[0]
+            .key
+            .starts_with("pid:40@unread:"));
         let panes = &scan.hosts[0].panes;
         assert_eq!(panes[0].unnamed[0].kind, Some(AgentKind::ClaudeCode));
         // %2 had no walk: what it runs could be anything.
         assert_eq!(panes[1].unnamed.len(), 1);
         assert_eq!(panes[1].unnamed[0].kind, None);
         // Without a process table read, nothing can be inferred.
-        assert!(!pane_scan(at, &observations, &HashMap::new(), &identities, None).processes_read);
+        assert!(
+            !pane_scan(
+                at,
+                &observations,
+                &HashMap::new(),
+                &identities,
+                None,
+                &starts
+            )
+            .processes_read
+        );
     }
 
     fn pane(id: &str) -> PaneInfo {

@@ -103,7 +103,7 @@ pub const CONFIRMATION_FRESH: time::Duration = time::Duration::minutes(5);
 /// agent a person starts unnamed gets a named row at its first prompt,
 /// which brings its question back at once. One left unprompted this long
 /// is not where the conversation goes on, and the fold it then allows is
-/// still reachable under "Can't be answered".
+/// still reachable under "Can't be answered". Close all never uses it.
 pub const UNNAMED_AGENT_BOUND: time::Duration = time::Duration::hours(1);
 
 const SCAN_FRESH: time::Duration = time::Duration::minutes(5);
@@ -297,6 +297,17 @@ impl SubjectRuntime {
     }
 }
 
+/// What a verdict is for. Folding only moves a question to "Can't be
+/// answered", and it unfolds when its asker is seen again, so an unnamed
+/// agent stops holding it after [`UNNAMED_AGENT_BOUND`]. Close all
+/// declines the question for good: there an unnamed agent that could be
+/// the asker holds it for as long as it runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Purpose {
+    Fold,
+    Close,
+}
+
 /// A pass's verdict on one subject or item.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Verdict {
@@ -461,6 +472,7 @@ fn judge(
     inputs: &SubjectInputs<'_>,
     facts: &[SubjectFact],
     now: OffsetDateTime,
+    purpose: Purpose,
 ) -> Verdict {
     let session = subject.agent_session_id.as_str();
     if subject.console
@@ -520,6 +532,7 @@ fn judge(
         let seen = Seen {
             session,
             kind: subject.agent_kind,
+            purpose,
             row,
             binding: binding.as_ref(),
             agents: inputs.agents,
@@ -541,6 +554,7 @@ fn judge(
 struct Seen<'a> {
     session: &'a str,
     kind: AgentKind,
+    purpose: Purpose,
     /// The subject's own row, never live here (`judge` returned already).
     row: Option<&'a Agent>,
     binding: Option<&'a SubjectBinding>,
@@ -585,7 +599,7 @@ fn scan_evidence(
         .filter(|binding| binding.pane == pane && binding.endpoint == endpoint)
         .and_then(|binding| binding.incarnation);
     let on_bound = bound.is_some() && bound == server.incarnation;
-    let present = present_state(scan, seen.agents, seen.kind, now);
+    let present = present_state(scan, seen.agents, seen.kind, now, seen.purpose);
     let entry = host
         .panes
         .iter()
@@ -665,10 +679,17 @@ fn named(agent: &Agent) -> bool {
 /// named, not-Stopped row of its kind in the same place, other than the
 /// sessions a pane already names; the subject has no such row (`judge`
 /// returned already). What is left blocks the subject only while it
-/// [could be](UnnamedAgent::could_be) one of its kind, and for at most
-/// [`UNNAMED_AGENT_BOUND`] from when a scan first showed it. A pane whose
+/// [could be](UnnamedAgent::could_be) one of its kind, and, for a fold, for
+/// at most [`UNNAMED_AGENT_BOUND`] from when a scan first showed it
+/// ([`Purpose`]). A pane whose
 /// walk did not finish leaves an entry of no kind, which could be any.
-fn present_state(scan: &PaneScan, agents: &[Agent], kind: AgentKind, now: OffsetDateTime) -> bool {
+fn present_state(
+    scan: &PaneScan,
+    agents: &[Agent],
+    kind: AgentKind,
+    now: OffsetDateTime,
+    purpose: Purpose,
+) -> bool {
     if !scan.processes_read {
         return false;
     }
@@ -695,19 +716,22 @@ fn present_state(scan: &PaneScan, agents: &[Agent], kind: AgentKind, now: Offset
             })
             .map(|agent| agent.kind)
             .collect();
-        !could_be_subject(&pane.unnamed, rows, kind, now)
+        !could_be_subject(&pane.unnamed, rows, kind, now, purpose)
     });
+    // Outside every pane, as in one: a session a process names by its
+    // resume id accounts for that process, not for another one.
     let rows = agents
         .iter()
         .filter(live)
         .filter(|agent| {
-            !panes
-                .iter()
-                .any(|pane| at(agent, &pane.pane_id, pane.endpoint.as_deref()))
+            !scan.outside_resumed.contains(&agent.session_id)
+                && !panes
+                    .iter()
+                    .any(|pane| at(agent, &pane.pane_id, pane.endpoint.as_deref()))
         })
         .map(|agent| agent.kind)
         .collect();
-    in_panes && !could_be_subject(&scan.outside, rows, kind, now)
+    in_panes && !could_be_subject(&scan.outside, rows, kind, now, purpose)
 }
 
 /// Whether anything in `unnamed` that `rows` (the kinds of the named rows
@@ -719,6 +743,7 @@ fn could_be_subject(
     mut rows: Vec<AgentKind>,
     kind: AgentKind,
     now: OffsetDateTime,
+    purpose: Purpose,
 ) -> bool {
     let mut unnamed: Vec<&UnnamedAgent> = unnamed.iter().collect();
     unnamed.sort_by_key(|agent| agent.since);
@@ -729,7 +754,8 @@ fn could_be_subject(
                 return false;
             }
         }
-        agent.could_be(kind) && now - agent.since < UNNAMED_AGENT_BOUND
+        agent.could_be(kind)
+            && (purpose == Purpose::Close || now - agent.since < UNNAMED_AGENT_BOUND)
     })
 }
 
@@ -793,6 +819,7 @@ pub(super) fn evaluate(
     inputs: &SubjectInputs<'_>,
     facts: &[SubjectFact],
     now: OffsetDateTime,
+    purpose: Purpose,
 ) -> Option<Verdict> {
     let subjects = subjects(request, requests)?;
     let mut causes = Vec::new();
@@ -803,7 +830,14 @@ pub(super) fn evaluate(
             all_gone = false;
             continue;
         };
-        match judge(subject, &request.subject_bindings, inputs, facts, now) {
+        match judge(
+            subject,
+            &request.subject_bindings,
+            inputs,
+            facts,
+            now,
+            purpose,
+        ) {
             Verdict::Alive => return Some(Verdict::Alive),
             Verdict::Gone {
                 causes: these,
@@ -986,7 +1020,8 @@ impl CollaborationStore {
         let mut changed = Vec::new();
         let mut report = SubjectPassReport::default();
         for request in snapshot.values().filter(|r| r.needs_human_response()) {
-            let Some(verdict) = evaluate(request, &snapshot, inputs, &facts, now) else {
+            let Some(verdict) = evaluate(request, &snapshot, inputs, &facts, now, Purpose::Fold)
+            else {
                 continue;
             };
             let old = request.subject_check.as_ref();
@@ -1190,7 +1225,7 @@ impl CollaborationStore {
                 outcome.skipped.push(skip("not unanswerable now"));
                 continue;
             };
-            match evaluate(request, &snapshot, &inputs, &facts, now) {
+            match evaluate(request, &snapshot, &inputs, &facts, now, Purpose::Close) {
                 Some(Verdict::Gone { .. }) => {}
                 Some(Verdict::Alive) => {
                     outcome.skipped.push(skip("its subject is back"));

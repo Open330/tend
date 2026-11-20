@@ -1727,7 +1727,7 @@ fn walked(scan: PaneScan, resumed: &[(&str, &str)]) -> PaneScan {
                 .collect();
             // One agent per pane, named when it was resumed by id.
             pane.unnamed = (pane.agent_process == Some(true) && pane.resumed.is_empty())
-                .then(|| UnnamedAgent::process(1, Some(AgentKind::ClaudeCode), at))
+                .then(|| UnnamedAgent::process(1, Some("1"), Some(AgentKind::ClaudeCode), at))
                 .into_iter()
                 .collect();
         }
@@ -1961,7 +1961,9 @@ async fn one_named_agent_does_not_account_for_another_in_the_same_pane() {
                 &[("%5", "other")],
             );
             scan.hosts[0].panes[0].unnamed = (0..unnamed)
-                .map(|pid| UnnamedAgent::process(pid.into(), Some(AgentKind::ClaudeCode), at))
+                .map(|pid| {
+                    UnnamedAgent::process(pid.into(), Some("1"), Some(AgentKind::ClaudeCode), at)
+                })
                 .collect();
             scan
         }
@@ -2006,7 +2008,12 @@ async fn an_unnamed_agent_outside_every_pane_blocks_only_an_asker_of_its_kind() 
     // rtzr: a fresh `codex --yolo` nobody has prompted yet.
     let codex_outside = |at| {
         let mut scan = walked(scan(at, &[("default", Some(B))], &[]), &[]);
-        scan.outside = vec![UnnamedAgent::process(492, Some(AgentKind::Codex), at)];
+        scan.outside = vec![UnnamedAgent::process(
+            492,
+            Some("1"),
+            Some(AgentKind::Codex),
+            at,
+        )];
         scan
     };
     let store = CollaborationStore::in_memory(CollaborationOptions::default());
@@ -2028,7 +2035,7 @@ async fn an_unnamed_agent_outside_every_pane_blocks_only_an_asker_of_its_kind() 
     let claude = question(&store, &participant("55115377", "%140", "default")).await;
     drive_unbound(&store, &[], |at| {
         let mut scan = walked(scan(at, &[("default", Some(B))], &[]), &[]);
-        scan.outside = vec![UnnamedAgent::process(7, None, at)];
+        scan.outside = vec![UnnamedAgent::process(7, Some("1"), None, at)];
         scan
     })
     .await;
@@ -2045,7 +2052,7 @@ async fn an_unnamed_agent_blocks_for_at_most_the_bound() {
             let mut scan = walked(scan(at, &[("default", Some(B))], &[]), &[]);
             scan.outside = vec![UnnamedAgent {
                 since,
-                ..UnnamedAgent::process(9, Some(AgentKind::ClaudeCode), at)
+                ..UnnamedAgent::process(9, Some("1"), Some(AgentKind::ClaudeCode), at)
             }];
             scan
         }
@@ -2071,7 +2078,7 @@ async fn an_unnamed_agent_blocks_for_at_most_the_bound() {
             );
             scan.hosts[0].panes[0].unnamed = vec![UnnamedAgent {
                 since,
-                ..UnnamedAgent::unwalked("%9", Some("default"), at)
+                ..UnnamedAgent::unwalked("%9", Some("default"), Some(B), at)
             }];
             scan
         }
@@ -2107,7 +2114,12 @@ async fn outside_every_pane_a_resume_is_alive_and_a_named_row_accounts_for_its_a
     surface.tmux_socket = None;
     drive_unbound(&store, std::slice::from_ref(&surface), |at| {
         let mut scan = walked(scan(at, &[("default", Some(B))], &[]), &[]);
-        scan.outside = vec![UnnamedAgent::process(9, Some(AgentKind::ClaudeCode), at)];
+        scan.outside = vec![UnnamedAgent::process(
+            9,
+            Some("1"),
+            Some(AgentKind::ClaudeCode),
+            at,
+        )];
         scan
     })
     .await;
@@ -2119,21 +2131,95 @@ fn a_scan_keeps_when_it_first_saw_each_unnamed_thing() {
     let t0 = OffsetDateTime::now_utc() - Duration::hours(2);
     let t1 = t0 + Duration::minutes(1);
     let observations = crate::subject_evidence::SubjectObservations::default();
-    let at = |at: OffsetDateTime, kind| {
+    let at = |at: OffsetDateTime, start: &str| {
         let mut scan = walked(scan(at, &[("default", Some(B))], &[]), &[]);
         scan.outside = vec![
-            UnnamedAgent::process(9, Some(kind), at),
-            UnnamedAgent::process(10, Some(AgentKind::Codex), at),
+            UnnamedAgent::process(9, Some(start), Some(AgentKind::ClaudeCode), at),
+            UnnamedAgent::process(10, Some("1"), Some(AgentKind::Codex), at),
+            UnnamedAgent::process(11, None, Some(AgentKind::Codex), at),
         ];
         scan
     };
-    observations.set_scan(at(t0, AgentKind::ClaudeCode));
-    observations.set_scan(at(t1, AgentKind::ClaudeCode));
+    observations.set_scan(at(t0, "1"));
+    observations.set_scan(at(t1, "1"));
     let kept = observations.scan().unwrap();
     assert_eq!(kept.outside[0].since, t0);
-    // pid 9 is now another kind of process: a new one.
-    observations.set_scan(at(t1 + Duration::minutes(1), AgentKind::Codex));
+    // An unreadable start is never carried: always new.
+    assert_eq!(kept.outside[2].since, t1);
+    // pid 9 now started at another time: another process on a reused pid.
+    let t2 = t1 + Duration::minutes(1);
+    observations.set_scan(at(t2, "2"));
     let kept = observations.scan().unwrap();
-    assert_eq!(kept.outside[0].since, t1 + Duration::minutes(1));
+    assert_eq!(kept.outside[0].since, t2);
     assert_eq!(kept.outside[1].since, t0);
+}
+
+#[tokio::test]
+async fn close_all_never_closes_past_an_unnamed_agent_that_could_be_the_asker() {
+    // Unnamed for two hours: the question folds, but Close all, which
+    // cannot be undone, still treats that agent as the asker.
+    let store = CollaborationStore::in_memory(CollaborationOptions::default());
+    let q = question(&store, &participant("55115377", "%140", "default")).await;
+    let long_ago = OffsetDateTime::now_utc() - Duration::hours(2);
+    let scan_at = move |at| {
+        let mut scan = walked(scan(at, &[("default", Some(B))], &[]), &[]);
+        scan.outside = vec![UnnamedAgent {
+            since: long_ago,
+            ..UnnamedAgent::process(9, Some("1"), Some(AgentKind::ClaudeCode), at)
+        }];
+        scan
+    };
+    drive_unbound(&store, &[], scan_at).await;
+    let gone = folded(&store, &q.id).await.expect("folded");
+    store.set_close_unanswerable(true);
+    let close = |scan: PaneScan| {
+        let store = &store;
+        let item = CloseItem {
+            request_id: q.id.clone(),
+            episode: gone.episode.clone(),
+        };
+        async move {
+            let registry = registry(&[]).await;
+            registry.subject_observations().set_scan(scan);
+            store
+                .close_unanswerable(&[item], &registry, "cli", None)
+                .await
+                .unwrap()
+        }
+    };
+    let outcome = close(scan_at(OffsetDateTime::now_utc())).await;
+    assert!(outcome.closed.is_empty(), "{outcome:?}");
+    assert!(get(&store, &q.id).await.needs_human_response());
+    // Once that agent is gone too, Close all closes it.
+    let outcome = close(walked(
+        scan(OffsetDateTime::now_utc(), &[("default", Some(B))], &[]),
+        &[],
+    ))
+    .await;
+    assert_eq!(outcome.closed, vec![q.id.clone()]);
+}
+
+#[tokio::test]
+async fn a_session_resumed_outside_every_pane_accounts_only_for_its_own_process() {
+    // `claude --resume other` and an unrelated `claude --continue`, both in
+    // another terminal; `other` has its live row. The second could be the
+    // asker.
+    let store = CollaborationStore::in_memory(CollaborationOptions::default());
+    let q = question(&store, &participant("55115377", "%140", "default")).await;
+    let mut other = row("other", "%1", "default", AgentState::Idle, Duration::ZERO).await;
+    other.pane = None;
+    other.tmux_socket = None;
+    drive_unbound(&store, std::slice::from_ref(&other), |at| {
+        let mut scan = walked(scan(at, &[("default", Some(B))], &[]), &[]);
+        scan.outside_resumed = vec!["other".into()];
+        scan.outside = vec![UnnamedAgent::process(
+            9,
+            Some("1"),
+            Some(AgentKind::ClaudeCode),
+            at,
+        )];
+        scan
+    })
+    .await;
+    assert!(folded(&store, &q.id).await.is_none());
 }

@@ -18,8 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whole table.
 - One agent tendd cannot name (a fresh `codex`, `claude --continue`) no
   longer holds every question on its host: it blocks only askers of its own
-  kind, and for at most an hour from when tendd first saw it. A Codex
-  `app-server` is not counted as one.
+  kind, and, for folding, for at most an hour from when tendd first saw it.
+  Close all never closes a question such an agent could still be asking.
+  A Codex `app-server` is not counted as one.
 
 ## [0.10.29] - 2026-11-20
 

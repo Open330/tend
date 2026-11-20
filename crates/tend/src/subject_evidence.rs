@@ -88,8 +88,9 @@ pub struct ScannedPane {
 /// be any session of its kind.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnnamedAgent {
-    /// The same thing in the next scan: `pid:<pid>` for a process,
-    /// `pane:<endpoint>:<pane>` for a pane walk that did not finish.
+    /// The same thing in the next scan: `pid:<pid>@<start>` for a process,
+    /// `pane:<endpoint>:<incarnation>:<pane>` for a pane walk that did not
+    /// finish.
     pub key: String,
     /// `None`: what it runs could not be read, so it could be any agent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -102,21 +103,44 @@ pub struct UnnamedAgent {
 }
 
 impl UnnamedAgent {
-    /// An agent process no session id names.
+    /// An agent process no session id names, with its start time when it
+    /// could be read. Without one, the key is this scan's alone, so it is
+    /// never carried and the process stays new for as long as it runs.
     #[must_use]
-    pub fn process(pid: u32, kind: Option<crate::event::AgentKind>, at: OffsetDateTime) -> Self {
+    pub fn process(
+        pid: u32,
+        start: Option<&str>,
+        kind: Option<crate::event::AgentKind>,
+        at: OffsetDateTime,
+    ) -> Self {
         Self {
-            key: format!("pid:{pid}"),
+            key: start.map_or_else(
+                || format!("pid:{pid}@unread:{}", at.unix_timestamp_nanos()),
+                |start| format!("pid:{pid}@{start}"),
+            ),
             kind,
             since: at,
         }
     }
 
-    /// The part of a pane its walk did not reach.
+    /// The part of a pane its walk did not reach, on the server
+    /// incarnation it was seen on: a restarted server reuses pane ids.
     #[must_use]
-    pub fn unwalked(pane: &str, endpoint: Option<&str>, at: OffsetDateTime) -> Self {
+    pub fn unwalked(
+        pane: &str,
+        endpoint: Option<&str>,
+        incarnation: Option<ServerIncarnation>,
+        at: OffsetDateTime,
+    ) -> Self {
         Self {
-            key: format!("pane:{}:{pane}", endpoint.unwrap_or_default()),
+            key: format!(
+                "pane:{}:{}:{pane}",
+                endpoint.unwrap_or_default(),
+                incarnation.map_or_else(
+                    || format!("unknown@{}", at.unix_timestamp_nanos()),
+                    |server| format!("{}.{}", server.pid, server.start_time),
+                ),
+            ),
             kind: None,
             since: at,
         }
