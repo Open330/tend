@@ -159,7 +159,7 @@ private struct AasMenuBarAccountRow: View {
             }
             ForEach(meters) { meter in
                 HStack {
-                    Text(verbatim: meter.label).font(TendType.meta.monospaced()).frame(width: 26, alignment: .leading)
+                    Text(verbatim: meter.label).font(TendType.monoSmall).frame(width: 26, alignment: .leading)
                     ProgressView(value: meter.fraction).tint(meter.tint).frame(width: 85)
                     Text(verbatim: AasFormat.percent(meter.usedPct)).font(TendType.detail.monospacedDigit()).frame(width: 40, alignment: .trailing)
                     Spacer(minLength: 0)

@@ -43,7 +43,7 @@ struct AskProvidersSettingsPane: View {
             statusSection
 
             Section {
-                HStack(spacing: 10) {
+                HStack(spacing: TendSpace.m) {
                     TendSettingsCaption("Re-check after installing a CLI. Reload tendd only when its PATH must change too.")
                     Spacer()
                     TendDaemonReloadButton(model: model, title: "Reload tendd PATH…")
@@ -103,7 +103,7 @@ struct AskProvidersSettingsPane: View {
                 Button(model.askConfigurationPendingReload ? "Reload tendd" : "Enable Global Ask") {
                     Task { await model.enableAsk() }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.tendPrimary)
                 .disabled(model.isEnablingAsk)
             }
         }
@@ -288,9 +288,9 @@ struct AskProviderKindBadge: View {
         .font(TendType.meta.weight(.semibold))
         .lineLimit(1)
         .fixedSize(horizontal: true, vertical: false)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .background(Color.primary.opacity(0.08), in: Capsule())
+        .padding(.horizontal, TendSpace.s)
+        .padding(.vertical, TendSpace.xxs)
+        .background(TendTheme.panelFill, in: Capsule())
     }
 }
 
@@ -344,18 +344,18 @@ struct AskProviderRow: View {
     private var isConfigured: Bool { store.supportsInstances && provider.isConfigured }
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: TendSpace.s) {
             TendAgentLogo(asset: provider.logo, fallbackSymbol: provider.symbolName, size: 16)
                 .foregroundStyle(.tint)
                 .frame(width: 20)
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) {
+                HStack(spacing: TendSpace.s) {
                     name
                     chips
                 }
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: TendSpace.xs) {
                     name
-                    HStack(spacing: 6) { chips }
+                    HStack(spacing: TendSpace.s) { chips }
                 }
             }
             .layoutPriority(1)
@@ -388,7 +388,7 @@ struct AskProviderRow: View {
 
     @ViewBuilder
     private var buttons: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: TendSpace.s) {
             if provider.kind == .cli, provider.takesCredential {
                 Button("Log In…") {
                     Task { await model.openProviderCLI(provider) }
@@ -416,12 +416,12 @@ struct AskProviderDetectedRow: View {
     var onAdded: () -> Void = {}
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: TendSpace.m) {
             TendAgentLogo(asset: provider.logo, fallbackSymbol: provider.symbolName, size: 16)
                 .foregroundStyle(.tint)
                 .frame(width: 20)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: TendSpace.xs) {
+                HStack(spacing: TendSpace.s) {
                     Text(provider.title)
                         .lineLimit(1)
                     AskProviderKindBadge(kind: provider.kind)
@@ -466,7 +466,7 @@ struct AskProviderDetectedRow: View {
                 TendSettingsCaption("Looking for \(provider.executable) on your PATH…")
             case .installed(let tool):
                 Text("CLI found at \(tool.path)")
-                    .font(TendType.detail.monospaced())
+                    .font(TendType.mono)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -584,7 +584,7 @@ struct AskProviderEditSheet: View {
         VStack(spacing: 0) {
             Form {
                 Section {
-                    HStack(spacing: 8) {
+                    HStack(spacing: TendSpace.s) {
                         AskProviderKindBadge(kind: provider.kind)
                         AskProviderUsabilityBadge(usability: store.usability(provider))
                         if model.askAgent == provider.id {
@@ -594,7 +594,7 @@ struct AskProviderEditSheet: View {
                         }
                         Spacer()
                         Text(verbatim: provider.id)
-                            .font(TendType.detail.monospaced())
+                            .font(TendType.mono)
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                     }
@@ -638,7 +638,7 @@ struct AskProviderEditSheet: View {
                 Button("Done") { dismiss() }
                     .keyboardShortcut(.cancelAction)
             }
-            .padding(14)
+            .padding(TendSpace.m)
         }
         .frame(minWidth: 520, idealWidth: 560, minHeight: 420, idealHeight: 520)
         .onAppear {
@@ -654,7 +654,7 @@ struct AskProviderEditSheet: View {
     private var detectionLine: some View {
         switch detection {
         case .probing:
-            HStack(spacing: 6) {
+            HStack(spacing: TendSpace.s) {
                 ProgressView().controlSize(.mini)
                 TendSettingsCaption("Looking for \(provider.executable) on your PATH…")
             }
@@ -662,25 +662,25 @@ struct AskProviderEditSheet: View {
             // The version line often carries its own parentheses
             // ("2.1.3 (Claude Code)"), so the path gets a line of its own
             // instead of being wrapped in more.
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: TendSpace.xxs) {
                 Text("Installed · \(InstalledTools.versionSummary(name: tool.name, version: tool.version))")
-                    .font(TendType.detail.monospaced())
+                    .font(TendType.mono)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .lineLimit(1)
                 Text(verbatim: tool.path)
-                    .font(TendType.detail.monospaced())
+                    .font(TendType.mono)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
         case .notInstalled:
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: TendSpace.xs) {
                 TendSettingsCaption("Install the \(provider.executable) command and make sure it is on your PATH, then re-check.")
                 if let command = provider.installCommand {
                     Text(verbatim: command)
-                        .font(TendType.detail.monospaced())
+                        .font(TendType.mono)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                 }
@@ -690,7 +690,7 @@ struct AskProviderEditSheet: View {
 
     private var credentialSection: some View {
         Section {
-            HStack(spacing: 8) {
+            HStack(spacing: TendSpace.s) {
                 SecureField("API key", text: $key, prompt: Text(keyFieldTitle))
                     .onSubmit(saveKey)
                 Button("Save", action: saveKey)
@@ -703,7 +703,7 @@ struct AskProviderEditSheet: View {
                     .controlSize(.small)
                 }
             }
-            HStack(spacing: 8) {
+            HStack(spacing: TendSpace.s) {
                 if hasKey {
                     Label("Key saved in Keychain", systemImage: "key.fill")
                         .font(TendType.detail)
@@ -719,7 +719,7 @@ struct AskProviderEditSheet: View {
                 }
                 Spacer()
                 Text(verbatim: provider.environmentKey)
-                    .font(TendType.detail.monospaced())
+                    .font(TendType.mono)
                     .foregroundStyle(.secondary)
             }
         } header: {
@@ -743,7 +743,7 @@ struct AskProviderEditSheet: View {
             TextField("Model", text: $modelName, prompt: modelPrompt)
             if provider.kind == .cli {
                 TextField("Executable", text: $executablePath, prompt: executablePrompt)
-                    .font(.body.monospaced())
+                    .font(TendType.mono)
             }
             if provider.isApple {
                 TendSettingsCaption("Model: on-device, or private-cloud for Private Cloud Compute (macOS 27 or later; not working yet).")
@@ -762,7 +762,7 @@ struct AskProviderEditSheet: View {
 
     private var modelSection: some View {
         Section {
-            HStack(spacing: 8) {
+            HStack(spacing: TendSpace.s) {
                 TextField("Model", text: $modelName, prompt: modelPrompt)
                     .onSubmit(saveModel)
                 Button("Save Model", action: saveModel)
@@ -845,10 +845,10 @@ struct AskProviderAddSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: TendSpace.m) {
+            VStack(alignment: .leading, spacing: TendSpace.xs) {
                 Text("Add Provider")
-                    .font(.title3.weight(.semibold))
+                    .font(TendType.page)
                 Text("A provider is one instance of an engine. Add the same engine twice to keep a work key and a personal key apart.")
                     .font(TendType.detail)
                     .foregroundStyle(.secondary)
@@ -876,12 +876,12 @@ struct AskProviderAddSheet: View {
                         }
                     }
                     TextField("Id", text: identifier, prompt: Text(verbatim: suggestedIdentifier))
-                        .font(.body.monospaced())
+                        .font(TendType.mono)
                     TextField("Title", text: $draft.title, prompt: Text("Optional"))
                     TextField("Model", text: $draft.model, prompt: modelPrompt)
                     if draft.engine.kind == .cli {
                         TextField("Executable", text: $draft.executable, prompt: executablePrompt)
-                            .font(.body.monospaced())
+                            .font(TendType.mono)
                     } else {
                         SecureField("API key", text: $draft.apiKey)
                     }
@@ -903,7 +903,7 @@ struct AskProviderAddSheet: View {
                     .textSelection(.enabled)
             }
 
-            HStack(spacing: 10) {
+            HStack(spacing: TendSpace.m) {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
@@ -911,12 +911,12 @@ struct AskProviderAddSheet: View {
                     ProgressView().controlSize(.small)
                 }
                 Button("Add Provider", action: add)
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.tendPrimary)
                     .keyboardShortcut(.defaultAction)
                     .disabled(!draft.isReady(taken: taken) || store.isConfiguring || !model.isConnected)
             }
         }
-        .padding(20)
+        .padding(TendSpace.xl)
         .frame(width: 520)
         .frame(minHeight: 460, idealHeight: 600)
         .onAppear {

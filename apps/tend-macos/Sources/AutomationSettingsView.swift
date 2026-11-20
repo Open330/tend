@@ -79,7 +79,7 @@ struct AutomationSettingsPane: View {
     private var unsupportedSection: some View {
         Section {
             Label("This tendd has no automation engine", systemImage: "wand.and.rays")
-                .font(.headline)
+                .font(TendType.section)
             TendSettingsCaption("Update tend and restart tendd to write rules from here. Until then, rules can be written by hand in the configuration file and read with tend automation list.")
             TendSettingsCaption("The Advanced tab opens that file.")
         }
@@ -93,13 +93,13 @@ struct AutomationSettingsPane: View {
 
     private var engineSection: some View {
         Section {
-            HStack(spacing: 10) {
+            HStack(spacing: TendSpace.m) {
                 Toggle("Automation engine", isOn: masterBinding)
                     .labelsHidden()
                     .toggleStyle(.switch)
                     .disabled(!store.isSupported || !store.hasLoaded || store.isMutating)
                 Text("Automation engine")
-                    .font(.headline)
+                    .font(TendType.section)
                     .accessibilityHidden(true)
                 engineStatus
                 Spacer(minLength: 8)
@@ -161,10 +161,10 @@ struct AutomationSettingsPane: View {
     /// turns orange only once a rule that types into a pane actually exists.
     private var safetyInfo: some View {
         TendSettingsInfoButton(title: "What bounds this", tint: hasTypingRule ? .orange : .secondary) {
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: TendSpace.xs) {
                 Text("A rule types into a live agent's pane, exactly as a person would.")
                     .foregroundStyle(.primary)
-                    .padding(.bottom, 3)
+                    .padding(.bottom, TendSpace.xs)
                 Text("• The master switch and the pause above stop every rule.")
                 Text("• Each rule has its own switch.")
                 Text("• Firings per hour and the cooldown cap how often one rule may act on one pane.")
@@ -173,7 +173,7 @@ struct AutomationSettingsPane: View {
                 Text("• One rate-limit episode fires a rule once.")
                 Text("• Every firing and every skip is written to the run log below.")
                 Text("Test on a rule shows what it would do right now without firing anything.")
-                    .padding(.top, 3)
+                    .padding(.top, TendSpace.xs)
             }
         }
     }
@@ -189,7 +189,7 @@ struct AutomationSettingsPane: View {
     private var rulesSection: some View {
         Section {
             if store.rules.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: TendSpace.xs) {
                     Text("No rules yet")
                     TendSettingsCaption("Nothing fires until a rule is added and switched on. Choose a limit policy in Accounts to handle capped agents without writing one.")
                 }
@@ -306,7 +306,7 @@ private struct AutomationFullLogSheet: View {
                 Button("Done") { dismiss() }
                     .keyboardShortcut(.defaultAction)
             }
-            .padding(14)
+            .padding(TendSpace.m)
         }
         .frame(minWidth: 620, idealWidth: 720, minHeight: 420, idealHeight: 620)
     }
@@ -345,17 +345,17 @@ private struct AutomationRuleRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: TendSpace.m) {
             Toggle(isOn: enabledBinding) {
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: TendSpace.xs) {
                     ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 8) {
+                        HStack(spacing: TendSpace.s) {
                             ruleName
                             badges
                         }
-                        VStack(alignment: .leading, spacing: 4) {
+                        VStack(alignment: .leading, spacing: TendSpace.xs) {
                             ruleName
-                            HStack(spacing: 6) { badges }
+                            HStack(spacing: TendSpace.s) { badges }
                         }
                     }
                     Group {
@@ -393,12 +393,12 @@ private struct AutomationRuleRow: View {
             .help("Edit, test or remove this rule")
             .accessibilityLabel(Text("Actions for \(rule.name)"))
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, TendSpace.xxs)
     }
 
     private var ruleName: some View {
         Text(verbatim: rule.name)
-            .font(.headline)
+            .font(TendType.section)
             .lineLimit(1)
             .layoutPriority(1)
     }
@@ -424,8 +424,8 @@ private struct AutomationTargetSummary: View {
                 .foregroundStyle(.secondary)
         } else {
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) { filters }
-                VStack(alignment: .leading, spacing: 4) { filters }
+                HStack(spacing: TendSpace.m) { filters }
+                VStack(alignment: .leading, spacing: TendSpace.xs) { filters }
             }
         }
     }
@@ -472,7 +472,7 @@ private struct AutomationGuardSummary: View {
     let rule: TendAutomationRule
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: TendSpace.m) {
             if let wait = rule.wait, !wait.isEmpty {
                 AutomationWaitChip(wait: wait)
             }
@@ -494,7 +494,7 @@ private struct AutomationActivitySummary: View {
 
     var body: some View {
         if rule.firedLastHour != nil || rule.lastFiredAt != nil {
-            HStack(spacing: 10) {
+            HStack(spacing: TendSpace.m) {
                 if let fired = rule.firedLastHour {
                     AutomationChip(
                         title: "This hour",
@@ -519,7 +519,7 @@ private struct AutomationWaitChip: View {
     let wait: String
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: TendSpace.xs) {
             Text("Wait")
                 .font(TendType.meta)
                 .foregroundStyle(.secondary)
@@ -527,11 +527,11 @@ private struct AutomationWaitChip: View {
                 AutomationResetChip()
                 if !offsetText.isEmpty {
                     Text(verbatim: offsetText)
-                        .font(TendType.detail.monospaced())
+                        .font(TendType.mono)
                 }
             } else {
                 Text(verbatim: wait)
-                    .font(TendType.detail.monospaced())
+                    .font(TendType.mono)
             }
         }
     }
@@ -548,7 +548,7 @@ struct AutomationResetChip: View {
     var body: some View {
         Text("limit resets")
             .font(TendType.meta.weight(.medium))
-            .padding(.horizontal, 5)
+            .padding(.horizontal, TendSpace.xs)
             .padding(.vertical, 1)
             .background(Color.accentColor.opacity(0.14), in: Capsule())
     }
@@ -563,7 +563,7 @@ private struct AutomationTokenChips: View {
     let style: AutomationTokenStyle
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: TendSpace.xs) {
             Text(title)
                 .font(TendType.meta)
                 .foregroundStyle(.secondary)
@@ -572,7 +572,7 @@ private struct AutomationTokenChips: View {
                     .font(TendType.meta.weight(.medium))
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
-                    .padding(.horizontal, 5)
+                    .padding(.horizontal, TendSpace.xs)
                     .padding(.vertical, 1)
                     .background(style.capsuleTint(for: token).opacity(0.12), in: Capsule())
             }
@@ -585,12 +585,12 @@ private struct AutomationChip: View {
     let value: String
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: TendSpace.xs) {
             Text(title)
                 .font(TendType.meta)
                 .foregroundStyle(.secondary)
             Text(verbatim: value)
-                .font(TendType.detail.monospaced())
+                .font(TendType.mono)
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
@@ -610,8 +610,8 @@ private struct AutomationBadge: View {
         .font(TendType.meta.weight(.semibold))
         .lineLimit(1)
         .fixedSize(horizontal: true, vertical: false)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
+        .padding(.horizontal, TendSpace.s)
+        .padding(.vertical, TendSpace.xxs)
         .background(Color.accentColor.opacity(0.12), in: Capsule())
     }
 }
@@ -640,14 +640,14 @@ private struct AutomationLogRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: TendSpace.m) {
             Image(systemName: symbol)
                 .foregroundStyle(tint)
-                .padding(.top, 2)
+                .padding(.top, TendSpace.xxs)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 8) {
-                    Text(verbatim: entry.rule).font(.callout.weight(.semibold))
+            VStack(alignment: .leading, spacing: TendSpace.xs) {
+                HStack(spacing: TendSpace.s) {
+                    Text(verbatim: entry.rule).font(TendType.detail.weight(.semibold))
                     if let action = entry.action {
                         Text(verbatim: automationActionTitle(action))
                             .font(TendType.detail)
@@ -657,7 +657,7 @@ private struct AutomationLogRow: View {
                         .font(TendType.detail)
                         .foregroundStyle(tint)
                 }
-                HStack(spacing: 10) {
+                HStack(spacing: TendSpace.m) {
                     if let pane = entry.pane, !pane.isEmpty {
                         AutomationChip(title: "Pane", value: pane)
                     }
@@ -694,7 +694,7 @@ private struct AutomationLogRow: View {
             .font(TendType.detail.monospacedDigit())
             .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, TendSpace.s)
     }
 
     /// A skip's detail is a reason the app can name; a firing's is the text
@@ -707,7 +707,7 @@ private struct AutomationLogRow: View {
                 .foregroundStyle(.secondary)
             if let remainder = reason.remainder {
                 Text(verbatim: remainder)
-                    .font(TendType.detail.monospaced())
+                    .font(TendType.mono)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
             }
@@ -734,9 +734,9 @@ private struct AutomationTestSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Text(verbatim: report.rule).font(.title3.weight(.semibold))
+            VStack(alignment: .leading, spacing: TendSpace.s) {
+                HStack(spacing: TendSpace.s) {
+                    Text(verbatim: report.rule).font(TendType.page)
                     Spacer()
                     if !report.engineEnabled {
                         AutomationBadge(text: String(localized: "Engine off"), symbol: "power")
@@ -751,17 +751,17 @@ private struct AutomationTestSheet: View {
                     .font(TendType.detail)
                     .foregroundStyle(.secondary)
             }
-            .padding(20)
+            .padding(TendSpace.xl)
 
             Divider()
 
             if report.candidates.isEmpty {
-                VStack(spacing: 6) {
+                VStack(spacing: TendSpace.s) {
                     Image(systemName: "person.slash")
-                        .font(.system(size: 26))
+                        .font(TendType.emptyIcon)
                         .foregroundStyle(.secondary)
                     Text("No agent matches this rule right now.")
-                        .font(.callout)
+                        .font(TendType.detail)
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -773,7 +773,7 @@ private struct AutomationTestSheet: View {
                             AutomationTestRow(candidate: candidate)
                         }
                     }
-                    .padding(.horizontal, 16)
+                    .padding(.horizontal, TendSpace.l)
                 }
             }
 
@@ -785,9 +785,9 @@ private struct AutomationTestSheet: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button("Done") { dismiss() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.tendPrimary)
             }
-            .padding(16)
+            .padding(TendSpace.l)
         }
         .frame(width: 560, height: 460)
     }
@@ -797,15 +797,15 @@ private struct AutomationTestRow: View {
     let candidate: TendAutomationTestCandidate
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: TendSpace.m) {
             Image(systemName: candidate.wouldFire ? "bolt.circle.fill" : "minus.circle")
                 .foregroundStyle(candidate.wouldFire ? Color.accentColor : Color.secondary)
-                .padding(.top, 2)
+                .padding(.top, TendSpace.xxs)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: TendSpace.xs) {
                 Text(verbatim: automationDecisionTitle(candidate.decision))
-                    .font(.callout.weight(candidate.wouldFire ? .semibold : .regular))
-                HStack(spacing: 10) {
+                    .font(TendType.detail.weight(candidate.wouldFire ? .semibold : .regular))
+                HStack(spacing: TendSpace.m) {
                     if let pane = candidate.pane, !pane.isEmpty {
                         AutomationChip(title: "Pane", value: pane)
                     }
@@ -826,7 +826,7 @@ private struct AutomationTestRow: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, TendSpace.s)
     }
 }
 
@@ -900,7 +900,7 @@ struct AutomationRuleEditor: View {
     private var waitControls: some View {
         if wait.anchor == .freeform {
             TextField("Wait", text: waitBinding.freeform)
-                .font(.callout.monospaced())
+                .font(TendType.mono)
             HStack {
                 Text("This wait was written by hand, so tend keeps it exactly as it is.")
                     .font(TendType.detail)
@@ -925,7 +925,7 @@ struct AutomationRuleEditor: View {
             }
             if wait.anchor == .reset {
                 LabeledContent {
-                    HStack(spacing: 8) {
+                    HStack(spacing: TendSpace.s) {
                         TextField("Offset", text: waitBinding.offset, prompt: Text(verbatim: "2m"))
                             .labelsHidden()
                             .frame(width: 92)
@@ -1049,18 +1049,18 @@ struct AutomationRuleEditor: View {
                         .foregroundStyle(.secondary)
                     if draft.action.carriesAccount {
                         TextField("Account", text: $draft.account, prompt: Text("Best account with quota left"))
-                            .font(.callout.monospaced())
+                            .font(TendType.mono)
                         Text("A configured account name or an aas account such as work@claude. Leave empty to let Tend choose an available account of the same provider.")
                             .font(TendType.detail)
                             .foregroundStyle(.secondary)
                         TextField("Follow-up", text: $draft.text, prompt: Text("The [swap] follow-up from config.toml"))
-                            .font(.callout.monospaced())
+                            .font(TendType.mono)
                         Text("Typed after the conversation resumes on the new account, so the turn the limit cut off carries on.")
                             .font(TendType.detail)
                             .foregroundStyle(.secondary)
                     } else if draft.action.needsText {
                         TextField("Text", text: $draft.text, prompt: Text(verbatim: "continue"))
-                            .font(.callout.monospaced())
+                            .font(TendType.mono)
                         Toggle("Press Enter after typing", isOn: $draft.submit)
                         Text("Without this the text is left on the agent's prompt for you to send.")
                             .font(TendType.detail)
@@ -1138,10 +1138,10 @@ struct AutomationRuleEditor: View {
                         if await store.save(draft.rule, model: model) { dismiss() }
                     }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.tendPrimary)
                 .disabled(!issues.isEmpty || store.isMutating)
             }
-            .padding(16)
+            .padding(TendSpace.l)
         }
         .frame(width: 620, height: 660)
         .task { await providers.reload(model: model) }
@@ -1210,8 +1210,8 @@ private struct AutomationAskConditionPanel: View {
             Text("Bounded recent screen/current state and work/workspace IDs leave this machine for the selected API provider. This uses one potentially billed, read-only, tool-free turn and executes no action, even with observe-only off.")
         }
         if let judgment {
-            VStack(alignment: .leading, spacing: 5) {
-                Text("Judgment: \(judgment.decision.rawValue)").font(.headline)
+            VStack(alignment: .leading, spacing: TendSpace.xs) {
+                Text("Judgment: \(judgment.decision.rawValue)").font(TendType.section)
                 Text(verbatim: judgment.reason)
                 ForEach(Array(judgment.evidence.enumerated()), id: \.offset) { _, evidence in
                     Text(verbatim: "• " + evidence)
@@ -1273,7 +1273,7 @@ private struct AutomationTokenLabel: View {
     let style: AutomationTokenStyle
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: TendSpace.xs) {
             if let mark {
                 TendAgentLogo(mark: mark, size: AutomationTokenStyle.agentLogoSize)
                     .foregroundStyle(mark.tint)
@@ -1298,11 +1298,11 @@ private struct AutomationTokenPicker: View {
 
     var body: some View {
         LabeledContent {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: TendSpace.s) {
                 LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 128), spacing: 6, alignment: .leading)],
+                    columns: [GridItem(.adaptive(minimum: 128), spacing: TendSpace.s, alignment: .leading)],
                     alignment: .leading,
-                    spacing: 6
+                    spacing: TendSpace.s
                 ) {
                     ForEach(offered, id: \.self) { token in
                         Toggle(isOn: binding(for: token)) {
@@ -1347,7 +1347,7 @@ private struct AutomationTimingPreview: View {
     let draft: TendAutomationRuleDraft
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: TendSpace.xs) {
             waitLine
             if draft.event.supportsResetTiming {
                 fallbackLine

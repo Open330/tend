@@ -376,7 +376,7 @@ struct TendSwapOutcomeRow: View {
                 HStack(spacing: 6) {
                     Text(name).font(TendType.body.weight(.medium)).lineLimit(1)
                     if let pane = outcome.pane {
-                        Text(verbatim: pane).font(TendType.meta.monospaced()).foregroundStyle(.secondary)
+                        Text(verbatim: pane).font(TendType.monoSmall).foregroundStyle(.secondary)
                     }
                 }
                 if outcome.from != nil || outcome.to != nil {
@@ -589,9 +589,9 @@ struct TendSwapActivityRow: View {
                 .frame(width: 12)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
-                    Text(verbatim: entry.pane ?? entry.outcome?.pane ?? "?").font(TendType.meta.monospaced())
+                    Text(verbatim: entry.pane ?? entry.outcome?.pane ?? "?").font(TendType.monoSmall)
                     if let from = entry.outcome?.from, let to = entry.outcome?.to {
-                        Text(verbatim: "\(from) → \(to)").font(TendType.meta.monospaced())
+                        Text(verbatim: "\(from) → \(to)").font(TendType.monoSmall)
                     }
                 }
                 if let text = entryDetail(entry) {

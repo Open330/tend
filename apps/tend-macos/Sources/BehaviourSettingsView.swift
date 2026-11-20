@@ -134,7 +134,7 @@ struct TendNotificationsSettingsPane: View {
                             .foregroundStyle(.orange)
                     }
                 } label: {
-                    HStack(spacing: 6) {
+                    HStack(spacing: TendSpace.s) {
                         Text("Also notify from tendd when Tend isn't running")
                         TendSettingsInfoButton(title: "Notifications from tendd") {
                             Text("tendd notifies when an agent starts waiting for a person, hits an error, or stops mid-turn. Repeats for the same agent are suppressed for 30 seconds.")
@@ -242,7 +242,7 @@ private struct TendBehaviourStatusSection: View {
             if store.isSupported {
                 if let message = problem {
                     Section {
-                        HStack(spacing: 8) {
+                        HStack(spacing: TendSpace.s) {
                             message
                                 .font(TendType.detail)
                                 .textSelection(.enabled)
@@ -265,11 +265,11 @@ private struct TendBehaviourStatusSection: View {
                 Section("Not editable from here") {
                     TendSettingsCaption("This tendd cannot write its configuration. Copy the block below into the tend configuration file, then restart tendd from Advanced.")
                     Text(verbatim: snippet)
-                        .font(TendType.detail.monospaced())
+                        .font(TendType.mono)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(8)
-                        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: TendTheme.panelRadius))
+                        .padding(TendSpace.s)
+                        .background(TendTheme.panelFill, in: RoundedRectangle(cornerRadius: TendTheme.panelRadius))
                     Button {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(snippet, forType: .string)

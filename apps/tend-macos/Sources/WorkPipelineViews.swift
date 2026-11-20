@@ -150,7 +150,7 @@ struct WorkPipelineCard: View {
                         .lineLimit(2)
                 } else {
                     Text(routes.map { routeSummary($0) }.joined(separator: " · "))
-                        .font(TendType.meta.monospaced())
+                        .font(TendType.monoSmall)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
@@ -408,7 +408,7 @@ struct WorkPlanView: View {
                     .font(.headline)
                 Spacer()
                 Text(planSummary)
-                    .font(TendType.meta.monospaced())
+                    .font(TendType.monoSmall)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -620,7 +620,7 @@ struct WorkRoutesEditor: View {
                     .background(Color.primary.opacity(0.07), in: Capsule())
             } else if let cwd = route.cwd, !cwd.isEmpty {
                 Text(cwd)
-                    .font(TendType.detail.monospaced())
+                    .font(TendType.mono)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)

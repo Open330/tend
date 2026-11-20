@@ -156,7 +156,7 @@ private struct InboxAgentRequestRow: View {
                 }
                 Spacer(minLength: 4)
                 Text(compactTimestamp(message.activityAt))
-                    .font(TendType.meta.monospaced())
+                    .font(TendType.monoSmall)
                     .foregroundStyle(.secondary)
             }
             MarkdownContent(source: request.body, lineLimit: 3)

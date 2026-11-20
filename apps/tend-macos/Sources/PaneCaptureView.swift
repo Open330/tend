@@ -191,7 +191,7 @@ struct PaneCaptureView: View {
                         .font(TendType.detail.weight(.semibold))
                         .fixedSize()
                     Text(verbatim: "\(target.host.alias) · \(target.pane.session) › \(target.pane.windowName) › \(target.pane.paneID)")
-                        .font(TendType.meta.monospaced())
+                        .font(TendType.monoSmall)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                     Text("Monitor")
