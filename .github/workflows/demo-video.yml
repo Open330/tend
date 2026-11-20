@@ -1,0 +1,43 @@
+name: Demo video
+
+# Probe: can a macOS runner record its own screen and drive a window?
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    if: contains(github.event.pull_request.labels.*.name, 'demo-video')
+    runs-on: macos-26
+    steps:
+      - name: Probe the screen
+        continue-on-error: true
+        run: |
+          set -x
+          mkdir -p "$RUNNER_TEMP/probe"; cd "$RUNNER_TEMP/probe"
+          sw_vers; whoami; system_profiler SPDisplaysDataType | head -40
+          screencapture -x shot.png; ls -la shot.png
+          screencapture -x -v -V 4 -k rec.mov & sleep 6; ls -la rec.mov || true
+          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" "select service,client,auth_value from access" | head -80 || true
+          sqlite3 "$HOME/Library/Application Support/com.apple.TCC/TCC.db" "select service,client,auth_value from access" | head -80 || true
+          brew install cliclick ffmpeg >/dev/null 2>&1 || true
+          ffmpeg -hide_banner -f avfoundation -list_devices true -i "" 2>&1 | tail -20 || true
+          ffmpeg -hide_banner -f avfoundation -framerate 30 -capture_cursor 1 -i "Capture screen 0" -t 4 -pix_fmt yuv420p ff.mp4 2>&1 | tail -5 || true
+          ls -la
+          open -a TextEdit; sleep 3
+          osascript -e 'tell application "System Events" to get name of every process whose visible is true' || true
+          cliclick m:400,400 c:400,400 || true
+          screencapture -x after.png
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe
+          path: ${{ runner.temp }}/probe/*
