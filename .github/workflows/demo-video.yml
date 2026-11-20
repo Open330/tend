@@ -23,19 +23,16 @@ jobs:
         run: |
           set -x
           mkdir -p "$RUNNER_TEMP/probe"; cd "$RUNNER_TEMP/probe"
-          sw_vers; whoami; system_profiler SPDisplaysDataType | head -40
-          screencapture -x shot.png; ls -la shot.png
-          screencapture -x -v -V 4 -k rec.mov & sleep 6; ls -la rec.mov || true
-          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" "select service,client,auth_value from access" | head -80 || true
-          sqlite3 "$HOME/Library/Application Support/com.apple.TCC/TCC.db" "select service,client,auth_value from access" | head -80 || true
-          brew install cliclick ffmpeg >/dev/null 2>&1 || true
-          ffmpeg -hide_banner -f avfoundation -list_devices true -i "" 2>&1 | tail -20 || true
-          ffmpeg -hide_banner -f avfoundation -framerate 30 -capture_cursor 1 -i "Capture screen 0" -t 4 -pix_fmt yuv420p ff.mp4 2>&1 | tail -5 || true
-          ls -la
-          open -a TextEdit; sleep 3
-          osascript -e 'tell application "System Events" to get name of every process whose visible is true' || true
-          cliclick m:400,400 c:400,400 || true
-          screencapture -x after.png
+          brew install displayplacer cliclick >/dev/null 2>&1 || true
+          displayplacer list || true
+          system_profiler SPDisplaysDataType || true
+          for res in 1920x1080 1920x1200 1680x1050 1440x900 2560x1440 2880x1800; do
+            id=$(displayplacer list | sed -n 's/^Persistent screen id: //p' | head -1)
+            displayplacer "id:$id res:$res scaling:off origin:(0,0) degree:0" && echo "OK $res" || echo "FAIL $res"
+          done
+          displayplacer "id:$(displayplacer list | sed -n 's/^Persistent screen id: //p' | head -1) res:1920x1080 hz:60 color_depth:8 scaling:on origin:(0,0) degree:0" || true
+          system_profiler SPDisplaysDataType | grep -i resol || true
+          screencapture -x shot.png; sips -g pixelWidth -g pixelHeight shot.png
       - uses: actions/upload-artifact@v4
         if: always()
         with:
