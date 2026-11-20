@@ -324,24 +324,28 @@ fn pane_identities(processes: &[ProcessInfo]) -> PaneIdentities {
         .map(|process| (process.pid, process))
         .collect();
     let parent_of: HashMap<u32, u32> = processes.iter().map(|p| (p.pid, p.parent_pid)).collect();
-    let under_agent = |process: &ProcessInfo| {
+    // The nearest agent among a process's ancestors in the pane.
+    let nearest_agent = |process: &ProcessInfo| {
         let mut pid = process.parent_pid;
-        let mut hops = 0;
-        while let Some(parent) = parent_of.get(&pid) {
-            if agents.contains_key(&pid) {
-                return true;
+        for _ in 0..=usize::from(MAX_DEPTH) + 1 {
+            if let Some(agent) = agents.get(&pid) {
+                return Some(*agent);
             }
-            pid = *parent;
-            hops += 1;
-            if hops > usize::from(MAX_DEPTH) + 1 {
-                break;
-            }
+            pid = *parent_of.get(&pid)?;
         }
-        agents.contains_key(&pid)
+        None
     };
+    // An agent process is one more session unless it is provably the same
+    // one as the agent it runs under: a launcher shim and the binary it
+    // starts carry the same kind and the same session id, or the same
+    // arguments. Any other agent below an agent (`codex resume a` -> shell
+    // -> `claude --continue`) is its own session.
     let unnamed = agents
         .values()
-        .filter(|process| !under_agent(process) && resume_id(process).is_none())
+        .filter(|process| resume_id(process).is_none())
+        .filter(|process| {
+            nearest_agent(process).is_none_or(|parent| !same_session(parent, process))
+        })
         .count();
     let mut resumed: Vec<String> = resumed_sessions(std::iter::once(processes))
         .into_iter()
@@ -352,6 +356,26 @@ fn pane_identities(processes: &[ProcessInfo]) -> PaneIdentities {
         resumed,
         unnamed: u16::try_from(unnamed).unwrap_or(u16::MAX),
     }
+}
+
+/// Whether `child`, an agent process under the agent `parent`, is the same
+/// session: the same kind, and the same explicit session id, or no id and
+/// the same arguments (a shim re-executing the real binary).
+fn same_session(parent: &ProcessInfo, child: &ProcessInfo) -> bool {
+    let args = |process: &ProcessInfo| -> Vec<String> {
+        process
+            .cmdline
+            .split_whitespace()
+            .skip(1)
+            .map(str::to_owned)
+            .collect()
+    };
+    agent_kind(parent) == agent_kind(child)
+        && match (resume_id(parent), resume_id(child)) {
+            (Some(a), Some(b)) => a == b,
+            (None, None) => args(parent) == args(child),
+            _ => false,
+        }
 }
 
 /// Every session id a process in these panes was explicitly started on.
@@ -598,14 +622,22 @@ pub(crate) fn read_descendants(root: u32) -> Vec<ProcessInfo> {
 }
 
 /// [`read_descendants`], and whether the walk reached every descendant:
-/// `false` past [`MAX_DEPTH`] or at [`MAX_NODES`] with more to visit. A
-/// child that exits between being listed and being read is simply gone.
+/// `false` past [`MAX_DEPTH`], at [`MAX_NODES`] with more to visit, or when
+/// anything under `/proc` could not be read for a process that still
+/// exists. A process (or thread) that exits mid-walk is simply gone.
 #[cfg(target_os = "linux")]
 fn read_descendants_walk(root: u32) -> (Vec<ProcessInfo>, bool) {
     let mut whole = true;
     let mut out = Vec::new();
     let mut seen: HashSet<u32> = HashSet::new();
-    let mut q: VecDeque<(u32, u8)> = read_children(root)
+    let children = |pid: u32, whole: &mut bool| match read_children_checked(pid) {
+        Ok(children) => children,
+        Err(()) => {
+            *whole = false;
+            Vec::new()
+        }
+    };
+    let mut q: VecDeque<(u32, u8)> = children(root, &mut whole)
         .into_iter()
         .map(|pid| (pid, 1))
         .collect();
@@ -618,39 +650,53 @@ fn read_descendants_walk(root: u32) -> (Vec<ProcessInfo>, bool) {
             continue;
         }
         if let Some(proc) = read_proc(pid, depth) {
-            for child in read_children(pid) {
+            for child in children(pid, &mut whole) {
                 q.push_back((child, depth.saturating_add(1)));
             }
             out.push(proc);
+        } else if std::path::Path::new(&format!("/proc/{pid}")).exists() {
+            // Still there, but unreadable.
+            whole = false;
         }
     }
     (out, whole)
 }
 
 /// Every child of `pid`, whichever of its threads forked it: each task
-/// lists only its own (`/proc/<pid>/task/<tid>/children`).
+/// lists only its own (`/proc/<pid>/task/<tid>/children`). `Err` when a
+/// file of a process or thread that still exists could not be read; a
+/// process or thread that is gone has no children.
 #[cfg(target_os = "linux")]
-fn read_children(pid: u32) -> Vec<u32> {
-    let tasks: Vec<String> = std::fs::read_dir(format!("/proc/{pid}/task"))
-        .map(|dir| {
-            dir.filter_map(Result::ok)
-                .map(|entry| entry.file_name().to_string_lossy().into_owned())
-                .collect()
-        })
-        .unwrap_or_else(|_| vec![pid.to_string()]);
-    let mut children: Vec<u32> = tasks
-        .iter()
-        .flat_map(|tid| {
-            std::fs::read_to_string(format!("/proc/{pid}/task/{tid}/children"))
-                .unwrap_or_default()
-                .split_whitespace()
-                .filter_map(|s| s.parse().ok())
-                .collect::<Vec<u32>>()
-        })
-        .collect();
+fn read_children_checked(pid: u32) -> Result<Vec<u32>, ()> {
+    use std::io::ErrorKind;
+    let gone = |error: &std::io::Error| {
+        matches!(error.kind(), ErrorKind::NotFound) || error.raw_os_error() == Some(3)
+    };
+    let dir = match std::fs::read_dir(format!("/proc/{pid}/task")) {
+        Ok(dir) => dir,
+        Err(error) if gone(&error) => return Ok(Vec::new()),
+        Err(_) => return Err(()),
+    };
+    let mut children = Vec::new();
+    for entry in dir {
+        let entry = entry.map_err(|_| ())?;
+        let tid = entry.file_name();
+        let task = format!("/proc/{pid}/task/{}", tid.to_string_lossy());
+        match std::fs::read_to_string(format!("{task}/children")) {
+            Ok(listed) => children.extend(
+                listed
+                    .split_whitespace()
+                    .filter_map(|s| s.parse::<u32>().ok()),
+            ),
+            // The thread exited. A kernel without the `children` file has
+            // the thread but not the file: that is unreadable, not empty.
+            Err(error) if gone(&error) && !std::path::Path::new(&task).exists() => {}
+            Err(_) => return Err(()),
+        }
+    }
     children.sort_unstable();
     children.dedup();
-    children
+    Ok(children)
 }
 
 #[cfg(target_os = "linux")]
@@ -816,7 +862,7 @@ mod tests {
     }
 
     #[test]
-    fn an_agents_own_children_are_part_of_it_but_a_second_agent_is_not() {
+    fn a_shim_is_one_session_and_any_other_nested_agent_is_its_own() {
         let sid = "01a132f3-21bf-76e3-822e-e84855943e22";
         let named = pane_identities(&[
             proc(10, 1, 0, "zsh", "-zsh"),
@@ -834,7 +880,7 @@ mod tests {
                 "codex",
                 &format!("codex --no-daemon resume {sid}"),
             ),
-            proc(22, 21, 3, "codex", "codex exec helper"),
+            proc(22, 21, 3, "node_repl", "node_repl"),
         ]);
         assert_eq!(
             (named.agent, named.resumed.len(), named.unnamed),
@@ -846,6 +892,28 @@ mod tests {
             proc(30, 10, 1, "claude", "claude --continue"),
         ]);
         assert_eq!(beside.unnamed, 1);
+        // Nested under it, through a shell, it is still its own session.
+        let nested = pane_identities(&[
+            proc(10, 1, 0, "zsh", "-zsh"),
+            proc(21, 10, 1, "codex", &format!("codex resume {sid}")),
+            proc(25, 21, 2, "zsh", "zsh -c claude"),
+            proc(30, 25, 3, "claude", "claude --continue"),
+        ]);
+        assert_eq!((nested.resumed.len(), nested.unnamed), (1, 1));
+        // A shim and the binary it starts, with the same arguments: one.
+        let shim = pane_identities(&[
+            proc(10, 1, 0, "zsh", "-zsh"),
+            proc(20, 10, 1, "codex", "codex --yolo"),
+            proc(21, 20, 2, "codex", "/opt/codex/bin/codex --yolo"),
+        ]);
+        assert_eq!(shim.unnamed, 1);
+        // A child with other arguments (a subagent run): its own session.
+        let sub = pane_identities(&[
+            proc(10, 1, 0, "zsh", "-zsh"),
+            proc(20, 10, 1, "codex", "codex --yolo"),
+            proc(21, 20, 2, "codex", "codex exec do-it"),
+        ]);
+        assert_eq!(sub.unnamed, 2);
     }
 
     #[test]
