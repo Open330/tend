@@ -566,12 +566,16 @@ $ tend swap --host local --host build --host mini --all --to work
 ```
 
 The MCP tool takes `hosts` (a list, instead of `host`) for the same
-thing: a start only, up to four hosts in flight, each its own job under a
-request key minted for it (a caller's `request_key` names one job, so it
-does not go with `hosts`). The result lists every host in the order given,
-each with its own result, `ok` and, for a failure, its `recovery` call;
-`failed_hosts` names the ones that did not end cleanly, and the call is an
-error if any did. Read, cancel or retry each job with `host`.
+thing: a start only, up to four hosts in flight, each its own job. With a
+`request_key`, host `H` runs under `<request_key>:H`, so the caller holds
+every host's handle before anything is sent (all of them are checked
+first); without one, each host gets a key minted for it, returned with its
+result. The result lists every host in the order given, each with its own
+result, `ok` and, for a failure, its `recovery` call; `failed_hosts` names
+the ones that did not end cleanly, and the call is an error if any did. If
+the answer itself is lost, never send the call again: read each host's job
+with `action=status`, `host=H` and `job=<request_key>:H`. Read, cancel or
+retry each job with `host`.
 
 ## Automatic swap
 

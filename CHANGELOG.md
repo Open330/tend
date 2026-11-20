@@ -12,8 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `tend_swap_account` MCP tool takes `hosts`, a list of Fleet hosts
   (`local` is this one), to start the same swap on each at once, as `tend
   swap --host a --host b`: up to four in flight, each its own job under its
-  own request key, with every host's result listed in order and
-  `failed_hosts` naming the ones that failed.
+  own request key (`<request_key>:<host>` when the caller gives one, so
+  every handle is held before anything is sent), with every host's result
+  listed in order and `failed_hosts` naming the ones that failed.
 
 ## [0.10.27] - 2026-11-20
 

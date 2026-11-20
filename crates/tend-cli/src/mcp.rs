@@ -696,7 +696,7 @@ fn tool_definitions(config: &tend::config::Config) -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "host": { "type": "string", "description": "Fleet host alias. Omit (or \"local\") for this host." },
-                    "hosts": { "type": "array", "items": { "type": "string" }, "minItems": 1, "description": "Instead of host: start the same swap on each of these hosts at once (\"local\" is this one). Each host runs its own job under its own request key; the result lists them per host." },
+                    "hosts": { "type": "array", "items": { "type": "string" }, "minItems": 1, "description": "Instead of host: start the same swap on each of these hosts at once (\"local\" is this one). Each host runs its own job; with request_key K, host H's job key is K:H, known before anything is sent. The result lists them per host." },
                     "targets": { "type": "array", "items": { "type": "string" }, "description": "Panes (%5, rmux:%5) or provider session ids. Omit for every capped agent." },
                     "all": { "type": "boolean", "description": "Every Claude/Codex agent, not only capped ones." },
                     "provider": { "type": "string", "enum": ["claude", "codex"] },
@@ -5604,8 +5604,10 @@ const SWAP_HOSTS_AT_ONCE: usize = 4;
 
 /// `tend_swap_account` with `hosts`: the same start on each host, at most
 /// [`SWAP_HOSTS_AT_ONCE`] at a time, each its own job under its own request
-/// key. One host failing never stops or hides another; the result lists
-/// every host in the order given. Without `hosts`, one call as before.
+/// key: `<request_key>:<host>` when the caller gave one, so it holds every
+/// host's handle before anything is sent, or one minted per host. One host
+/// failing never stops or hides another; the result lists every host in the
+/// order given. Without `hosts`, one call as before.
 async fn swap_accounts(client: &Client, args: &Value, config: &tend::config::Config) -> Value {
     use futures_util::StreamExt as _;
     if args.get("hosts").is_none_or(Value::is_null) {
@@ -5617,11 +5619,14 @@ async fn swap_accounts(client: &Client, args: &Value, config: &tend::config::Con
     };
     let calls: Vec<Value> = hosts
         .into_iter()
-        .map(|host| {
+        .map(|(host, key)| {
             let mut one = args.clone();
             if let Some(object) = one.as_object_mut() {
                 object.remove("hosts");
                 object.insert("host".into(), json!(host));
+                if let Some(key) = key {
+                    object.insert("request_key".into(), json!(key));
+                }
             }
             one
         })
@@ -5634,9 +5639,16 @@ async fn swap_accounts(client: &Client, args: &Value, config: &tend::config::Con
     swap_hosts_reply(&replies)
 }
 
-/// The hosts of a multi-host call, refused before anything is sent if the
-/// call is not a start on distinct hosts.
-fn swap_hosts(args: &Value) -> Result<Vec<String>, String> {
+/// The request key host `host` runs under when the caller gave `base`.
+fn swap_host_key(base: &str, host: &str) -> String {
+    format!("{base}:{host}")
+}
+
+/// The hosts of a multi-host call, each with the request key the caller
+/// can derive (`None`: one is minted for it), refused before anything is
+/// sent if the call is not a start on distinct hosts or a derived key is
+/// not one.
+fn swap_hosts(args: &Value) -> Result<Vec<(String, Option<String>)>, String> {
     if args.get("host").is_some_and(|host| !host.is_null()) {
         return Err("give `host` or `hosts`, not both; nothing was sent".into());
     }
@@ -5651,11 +5663,14 @@ fn swap_hosts(args: &Value) -> Result<Vec<String>, String> {
                 .into(),
         );
     }
-    if args.get("request_key").is_some_and(|key| !key.is_null()) {
+    let base = match args.get("request_key") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(key)) => Some(key.as_str()),
+        Some(_) => return Err("`request_key` is a string; nothing was sent".into()),
+    };
+    if base.is_some() && args.get("dry_run").and_then(Value::as_bool) == Some(true) {
         return Err(
-            "`request_key` names one job; with `hosts` each host gets its own key, returned \
-             with its result; nothing was sent"
-                .into(),
+            "`request_key` goes with a swap that is not a dry run; nothing was sent".into(),
         );
     }
     let Some(list) = args.get("hosts").and_then(Value::as_array) else {
@@ -5677,7 +5692,19 @@ fn swap_hosts(args: &Value) -> Result<Vec<String>, String> {
     if hosts.is_empty() {
         return Err("`hosts` is empty; nothing was sent".into());
     }
-    Ok(hosts)
+    hosts
+        .into_iter()
+        .map(|host| {
+            let key = base.map(|base| swap_host_key(base, &host));
+            match key {
+                Some(key) if !crate::swap::plain_request_key(&key) => Err(format!(
+                    "`request_key`: {key:?} (the key for {host}) is not 1-128 characters of \
+                     letters, digits and -_.:@; nothing was sent"
+                )),
+                key => Ok((host, key)),
+            }
+        })
+        .collect()
 }
 
 /// Every host's own result under `hosts`, in order, with `failed_hosts`
@@ -6339,7 +6366,11 @@ mod tests {
     fn a_multi_host_swap_takes_only_distinct_hosts_for_a_start() {
         assert_eq!(
             swap_hosts(&json!({"hosts": ["mini", " local ", "devbox"]})).unwrap(),
-            ["mini", "local", "devbox"]
+            [
+                ("mini".to_owned(), None),
+                ("local".to_owned(), None),
+                ("devbox".to_owned(), None)
+            ]
         );
         assert!(swap_hosts(&json!({"hosts": [""]}))
             .unwrap_err()
@@ -6353,11 +6384,53 @@ mod tests {
             json!({"hosts": ["mini"], "host": "devbox"}),
             json!({"hosts": ["mini"], "action": "status", "job": "k"}),
             json!({"hosts": ["mini"], "action": "retry", "job": "k"}),
-            json!({"hosts": ["mini"], "request_key": "k"}),
+            json!({"hosts": ["mini"], "request_key": "has space"}),
+            json!({"hosts": ["mini"], "request_key": "x".repeat(124)}),
+            json!({"hosts": ["mini"], "request_key": 7}),
+            json!({"hosts": ["mini"], "request_key": "k", "dry_run": true}),
         ] {
             assert!(swap_hosts(&bad).is_err(), "{bad}");
         }
         assert!(swap_hosts(&json!({"hosts": ["mini"], "action": "swap"})).is_ok());
+    }
+
+    /// With a caller's `request_key`, every host's key is known before
+    /// anything is sent: if the answer is lost, each job is found again from
+    /// what the caller already holds, on its own host, never by sending it
+    /// again.
+    #[test]
+    fn a_multi_host_swap_keys_every_host_from_the_callers_key() {
+        let hosts =
+            swap_hosts(&json!({"hosts": ["mini", "local"], "request_key": "nightly-7"})).unwrap();
+        assert_eq!(
+            hosts,
+            [
+                ("mini".to_owned(), Some("nightly-7:mini".to_owned())),
+                ("local".to_owned(), Some("nightly-7:local".to_owned()))
+            ]
+        );
+        for (host, key) in hosts {
+            let key = key.unwrap();
+            assert_eq!(key, swap_host_key("nightly-7", &host));
+            // The start carries that key ...
+            let target = tend::work_control::remote_host_alias(Some(&host));
+            let plan = swap_plan(&json!({"all": true, "request_key": key}), target, None).unwrap();
+            assert_eq!(plan.request_key.as_deref(), Some(key.as_str()));
+            assert!(
+                plan.argv.contains(&format!("--request-key={key}")),
+                "{:?}",
+                plan.argv
+            );
+            // ... and a lost answer is recovered from it alone.
+            let status = swap_plan(&json!({"action": "status", "job": key}), target, None).unwrap();
+            assert!(
+                status.argv.contains(&format!("--status={key}")),
+                "{:?}",
+                status.argv
+            );
+            let (_, lost) = reply_fields(&swap_error(&plan.call(target), "connection reset"));
+            assert_eq!(lost["recovery"]["arguments"]["job"], key);
+        }
     }
 
     /// Every host's own result in order; one failing marks the whole call
