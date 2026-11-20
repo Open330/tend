@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The `tend_swap_account` MCP tool takes `hosts`, a list of Fleet hosts
+  (`local` is this one), to start the same swap on each at once, as `tend
+  swap --host a --host b`: up to four in flight, each its own job under its
+  own request key (`<request_key>:<host>` when the caller gives one, so
+  every handle is held before anything is sent), with every host's result
+  listed in order and `failed_hosts` naming the ones that failed.
 - `tend swap --from <account>` (MCP `from`) swaps only the agents running
   on that account, within the usual scope: `--all --from home --to work`
   moves what runs on `home` and reports every other agent as skipped with
