@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.28] - 2026-11-20
+
 ### Added
 
 - The `tend_swap_account` MCP tool takes `hosts`, a list of Fleet hosts
