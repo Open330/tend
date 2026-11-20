@@ -258,9 +258,11 @@ and Korean. The PR (#645) puts them side by side. The full before set (76
 screens, including all of Settings, Start Work, Ask, Inbox, onboarding and a
 window before tendd answers) is the **Mac screens** artifact.
 
-The capture does not yet include the Review sheet: pressing Review through
-the accessibility tree did not open it off-screen. Mockups for the Review
-and Start Work sheets come with the screen PRs.
+The capture includes the Review sheet (Home opens with it up, since pressing
+its button through the accessibility tree does not open it off-screen), Home
+at the window's minimum size in both layouts, and Home with the fixture's
+agents spread over three hosts (`home-hosts*`: drawn only, the names are
+labels and nothing is sent to them).
 
 ## 5. Plan
 

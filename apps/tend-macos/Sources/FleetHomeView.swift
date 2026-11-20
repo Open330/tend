@@ -40,6 +40,14 @@ struct FleetHomeView: View {
     /// seconds later.
     @State private var movedFrom: [String: FleetLane] = [:]
 
+    /// `presentsReview` opens with the Review sheet up: for the off-screen
+    /// design capture, which cannot press the toolbar button.
+    init(model: AppModel, homeBoard: FleetHomeBoard, presentsReview: Bool = false) {
+        self.model = model
+        self.homeBoard = homeBoard
+        _showsReview = State(initialValue: presentsReview)
+    }
+
     private var allWorks: [FleetWork] {
         homeBoard.works
     }

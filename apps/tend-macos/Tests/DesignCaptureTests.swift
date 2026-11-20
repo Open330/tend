@@ -5,8 +5,8 @@ import Testing
 @testable import Tend
 
 // Screens of the whole app, drawn off-screen against a fixture tendd, for
-// design reviews: Home (both card layouts, the Review and Start Work
-// sheets), Explore, Inbox, every Settings tab, the menu bar popover and the
+// design reviews: Home (both card layouts, at full and minimum size, with
+// one host and with three, the Review and Start Work sheets), Explore, Inbox, every Settings tab, the menu bar popover and the
 // Welcome guide, light and dark. Runs only where the capture workflow
 // (.github/workflows/mac-shots.yml, on a CI runner) sets TEND_CAPTURE_SOCKET
 // to the demo fixture's sandboxed tendd and TEND_RENDER_DIR to where the
@@ -86,13 +86,34 @@ struct DesignCaptureTests {
         UserDefaults.standard.set(FleetCardLayout.emphasis.rawValue, forKey: TendPreferences.homeCardLayoutKey)
         try await window.settle(seconds: 1)
 
-        // The Review sheet, opened the way the person does: its toolbar button.
-        if window.press(label: String(localized: "Review")) {
-            try await window.settle(seconds: 2)
-            if let sheet = window.sheetImage() { try write(sheet, name: "home-review", scheme: scheme) }
-            window.closeSheet()
-            try await window.settle(seconds: 1)
+        // Home at the window's minimum size, both layouts.
+        let narrow = OffscreenWindow(ContentView(model: model).environmentObject(model), scheme: scheme, size: Self.minimumWindow)
+        for (layout, name) in [(FleetCardLayout.emphasis, "home-narrow"), (.compact, "home-compact-narrow")] {
+            UserDefaults.standard.set(layout.rawValue, forKey: TendPreferences.homeCardLayoutKey)
+            try await narrow.settle(seconds: 2)
+            try write(narrow.image(), name: name, scheme: scheme)
         }
+        narrow.close()
+        UserDefaults.standard.set(FleetCardLayout.emphasis.rawValue, forKey: TendPreferences.homeCardLayoutKey)
+
+        // The fixture's agents spread over three hosts, at both sizes.
+        let hosts = Self.board(spreading: model)
+        for (size, name) in [(CGSize(width: 1440, height: 900), "home-hosts"), (Self.minimumWindow, "home-hosts-narrow")] {
+            let window = OffscreenWindow(FleetHomeView(model: model, homeBoard: hosts).environmentObject(model), scheme: scheme, size: size)
+            try await window.settle(seconds: 2)
+            try write(window.image(), name: name, scheme: scheme)
+            window.close()
+        }
+
+        // The Review sheet. Pressing its toolbar button through the
+        // accessibility tree does not open it off-screen, so Home starts with
+        // it up.
+        let review = OffscreenWindow(FleetHomeView(model: model, homeBoard: model.homeBoard, presentsReview: true).environmentObject(model),
+                                     scheme: scheme, size: CGSize(width: 1440, height: 900))
+        try await review.settle(seconds: 3)
+        try write(review.sheetImage(), name: "home-review", scheme: scheme)
+        review.close()
+
         model.isPresentingWorkStart = true
         try await window.settle(seconds: 2)
         if let sheet = window.sheetImage() { try write(sheet, name: "home-start-work", scheme: scheme) }
@@ -114,6 +135,45 @@ struct DesignCaptureTests {
                               name: "settings-\(tab.rawValue)", scheme: scheme, size: CGSize(width: 820, height: 680))
         }
         TendSettingsOpener.select(.general)
+    }
+
+    /// The app window's minimum content size (ContentView's frame).
+    static let minimumWindow = CGSize(width: 920, height: 580)
+
+    /// A Home board of the fixture's own agents, each tmux session's agents
+    /// moved together onto one of three hosts (this Mac and two named
+    /// remotes), as a fleet of several machines shows them. Drawn only: the
+    /// board follows nothing, and nothing is sent to these hosts.
+    private static func board(spreading model: AppModel) -> FleetHomeBoard {
+        let snapshot = model.executionSnapshot
+        let board = FleetHomeBoard()
+        guard let local = snapshot.hosts.first(where: \.local), let remote = local.remote else { return board }
+        let aliases = [local.alias, "jiun-mini", "rtzr"]
+        let sessions = Array(Set(remote.agents.compactMap(\.tmuxSession))).sorted()
+        func alias(_ session: String?) -> String {
+            guard let session, let index = sessions.firstIndex(of: session) else { return local.alias }
+            return aliases[index % aliases.count]
+        }
+        let hosts = aliases.map { name in
+            TendFleetHost(
+                alias: name, local: name == local.alias, sshTarget: name == local.alias ? nil : name,
+                mode: local.mode, state: local.state, latencyMS: name == local.alias ? nil : 24,
+                error: nil, tendVersion: local.tendVersion, daemonGeneration: local.daemonGeneration,
+                labels: local.labels, annotations: local.annotations,
+                remote: TendRemoteSnapshot(
+                    agents: remote.agents.filter { alias($0.tmuxSession) == name },
+                    panes: remote.panes.filter { alias($0.session) == name }
+                ),
+                capabilities: local.capabilities
+            )
+        }
+        let spread = TendExecutionSnapshot(hosts: hosts + snapshot.hosts.filter { !$0.local })
+        let now = Date()
+        let agents = FleetBoard.homeAgents(spread, now: now)
+        board.setHosts(spread.hosts.map(\.identity))
+        board.setConnected(true)
+        board.setWorks(FleetBoard.works(groups: spread.workGroups(pipelineRuns: model.pipelineRuns), agents: agents, now: now))
+        return board
     }
 
     // MARK: - Drawing
