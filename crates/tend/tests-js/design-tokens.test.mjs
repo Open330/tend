@@ -146,7 +146,10 @@ test("Explore's highlighted rows keep their words readable on the sidebar surfac
   assert.match(watch, /case \.selected: Color\.accentColor\.opacity\(selected\)/);
   assert.match(watch, /selected: Double = 0\.18/);
   assert.match(watch, /case \.followed: Color\.accentColor\.opacity\(0\.06\)/);
-  assert.match(watch, /func watchRowInk\(_ highlight: WatchTreeHighlight, _ scheme: ColorScheme\) -> AnyShapeStyle \{\s*highlight == \.idle \? AnyShapeStyle\(\.secondary\) : AnyShapeStyle\(TendInk\.label\(scheme\)\)/);
+  // Idle rows take TendInk.secondary, which the bare-surface matrix above
+  // checks on the sidebar; SwiftUI's semantic .secondary is not checked.
+  assert.match(watch, /func watchRowInk\(_ highlight: WatchTreeHighlight, _ scheme: ColorScheme\) -> Color \{\s*highlight == \.idle \? TendInk\.secondary\(scheme\) : TendInk\.label\(scheme\)\s*\}/);
+  assert.ok(tokens.mac.ink.secondary.text, "secondary is a text ink, so the matrix checks it on the sidebar");
   const rows = watch.match(/WatchPaneRowTrailing\(pane: pane, onTint: [^)]*\)/g) || [];
   assert.ok(rows.length >= 2 && rows.every((row) => row.endsWith("onTint: highlight != .idle)")), "every highlighted row is on tint");
   assert.match(watch, /Text\(command\)\s*\.font\([^\n]*\)\s*\.foregroundStyle\(watchRowInk\(onTint \? \.selected : \.idle, colorScheme\)\)/, "the command");

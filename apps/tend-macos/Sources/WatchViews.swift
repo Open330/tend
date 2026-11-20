@@ -169,10 +169,11 @@ private func watchHighlightFill(
     }
 }
 
-/// A highlighted row's informing text: label ink on either tint (secondary
-/// falls under 4.5:1 there, under some system accents too), else secondary.
-func watchRowInk(_ highlight: WatchTreeHighlight, _ scheme: ColorScheme) -> AnyShapeStyle {
-    highlight == .idle ? AnyShapeStyle(.secondary) : AnyShapeStyle(TendInk.label(scheme))
+/// A row's informing text: label ink on either tint (secondary falls under
+/// 4.5:1 there, under some system accents too), else the secondary ink
+/// (SwiftUI's semantic secondary is 3.8:1 on the opaque sidebar).
+func watchRowInk(_ highlight: WatchTreeHighlight, _ scheme: ColorScheme) -> Color {
+    highlight == .idle ? TendInk.secondary(scheme) : TendInk.label(scheme)
 }
 
 /// Thin leading accent bar that marks the followed pane without reading as a
