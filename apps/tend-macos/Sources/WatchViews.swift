@@ -500,7 +500,7 @@ private struct WatchPaneRow: View {
                         .layoutPriority(1)
                     TendUnreadDot(pane: pane.id) // WS-A
                     Spacer(minLength: 3)
-                    WatchPaneRowTrailing(pane: pane, onTint: highlight == .selected)
+                    WatchPaneRowTrailing(pane: pane, onTint: highlight != .idle)
                 }
                 .padding(.trailing, 8)
             }
@@ -632,17 +632,19 @@ struct WatchFlatPaneRow: View {
                             .layoutPriority(1)
                         TendUnreadDot(pane: pane.id) // WS-A
                         Spacer(minLength: 3)
-                        WatchPaneRowTrailing(pane: pane, onTint: highlight == .selected)
+                        WatchPaneRowTrailing(pane: pane, onTint: highlight != .idle)
                     }
+                    // A selected row's tint takes secondary ink under 4.5:1:
+                    // every word on it is label ink.
                     if let activity = watchPaneActivity(pane) {
                         Text(activity)
                             .font(TendType.detail)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(highlight == .selected ? Color.primary : Color.secondary)
                             .lineLimit(1)
                     }
                     Text(location)
                         .font(TendType.meta)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(highlight == .selected ? Color.primary : Color.secondary)
                         .lineLimit(1)
                 }
             }

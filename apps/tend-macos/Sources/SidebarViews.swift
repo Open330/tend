@@ -997,7 +997,8 @@ private struct SidebarActivityRail: View {
         .padding(.top, 4)
         .frame(width: TendTheme.activityBarWidth)
         .frame(maxHeight: .infinity)
-        .background(TendSidebarBackground())
+        // No fill of its own: the sidebar's background (material, or the
+        // opaque surface) runs under the rail too.
     }
 
     @Environment(\.colorScheme) private var colorScheme

@@ -134,3 +134,28 @@ test("a secondary button's label reads on its rest, hover and pressed fills on e
     }
   }
 });
+
+test("Explore's highlighted rows keep their words readable on the sidebar surface", () => {
+  // WatchViews: a selected row is the accent at 18%, a followed one at 6%,
+  // over the sidebar surface (the opaque value under Reduce Transparency).
+  // State hues on those tints fall under 4.5:1, so both rows put their
+  // status word in label ink (onTint). Secondary reads on the followed
+  // tint; on the selected one every word is label ink.
+  const watch = readFileSync(join(ROOT, "apps/tend-macos/Sources/WatchViews.swift"), "utf8");
+  assert.match(watch, /case \.selected: Color\.accentColor\.opacity\(selected\)/);
+  assert.match(watch, /selected: Double = 0\.18/);
+  assert.match(watch, /case \.followed: Color\.accentColor\.opacity\(0\.06\)/);
+  const rows = watch.match(/WatchPaneRowTrailing\(pane: pane, onTint: [^)]*\)/g) || [];
+  assert.ok(rows.length >= 2 && rows.every((row) => row.endsWith("onTint: highlight != .idle)")), "every highlighted row is on tint");
+  assert.ok(!/\.foregroundStyle\(\.secondary\)\s*\.lineLimit\(1\)\s*\}\s*Text\(location\)/.test(watch), "a selected row's detail lines are label ink");
+  for (const scheme of ["light", "dark"]) {
+    const sidebar = srgb(tokens.mac.surface.sidebar[scheme]).rgb;
+    for (const alpha of [0.18, 0.06]) {
+      const tint = over({ rgb: srgb(tokens.color.accent[scheme]).rgb, alpha }, sidebar);
+      for (const name of alpha === 0.06 ? ["label", "secondary"] : ["label"]) {
+        const ratio = contrast(over(srgb(tokens.mac.ink[name][scheme]), tint), tint);
+        assert.ok(ratio >= 4.5, `${name} on the ${alpha} accent over the sidebar (${scheme}): ${ratio.toFixed(2)}`);
+      }
+    }
+  }
+});
