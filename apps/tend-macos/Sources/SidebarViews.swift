@@ -139,8 +139,8 @@ struct TendSidebar: View {
     @AppStorage("tend.explore.sort") private var exploreSort: ExploreSort = .topology
     @AppStorage("tend.explore.grouping") private var exploreGrouping: ExploreGrouping = .host
 
-    private var background: Color {
-        TendSurfacePalette.sidebar(for: colorScheme)
+    private var background: some View {
+        TendSidebarBackground()
     }
 
     var body: some View {
@@ -997,7 +997,7 @@ private struct SidebarActivityRail: View {
         .padding(.top, 4)
         .frame(width: TendTheme.activityBarWidth)
         .frame(maxHeight: .infinity)
-        .background(TendTheme.activityBar(colorScheme))
+        .background(TendSidebarBackground())
     }
 
     @Environment(\.colorScheme) private var colorScheme

@@ -14,6 +14,7 @@ import { CSS_PATH, readTokens, renderCss, renderSwift, SWIFT_PATH } from "../../
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../../..");
 const theme = readFileSync(join(ROOT, "apps/tend-macos/Sources/TendTheme.swift"), "utf8");
 const brand = readFileSync(join(ROOT, "apps/tend-macos/Sources/BrandMark.swift"), "utf8");
+const system = readFileSync(join(ROOT, "apps/tend-macos/Sources/TendDesignSystem.swift"), "utf8");
 const tokens = readTokens();
 
 test("tokens.css and TendDesignTokens.swift are generated from tokens.json", () => {
@@ -29,6 +30,17 @@ test("TendTheme.swift draws its surfaces and metrics from the generated tokens",
     assert.match(body, new RegExp(`TendDesignTokens\\.${camel(token)}\\b`), `TendTheme.${value.swift} reads token ${token}`);
   }
   assert.match(theme, /static let panelFill = [\s\S]*?TendDesignTokens\.lane/);
+  // The shared side-bar and activity-bar values are the web's and iOS's;
+  // the Mac draws its own sidebar surface there, and the material over it.
+  assert.ok(!tokens.color["side-bar"].swift && !tokens.color["activity-bar"].swift, "the Mac does not draw the shared side-bar tokens");
+  for (const surface of ["sideBar", "activityBar"]) {
+    const body = theme.match(new RegExp(`static func ${surface}\\(_ scheme: ColorScheme\\) -> Color \\{\\s*([^\\n]+)`))?.[1] || "";
+    assert.match(body, /TendSurface\.sidebar\(scheme\)/, `TendTheme.${surface} draws the Mac sidebar surface`);
+  }
+  assert.match(system, /static func sidebar\(_ scheme: ColorScheme\) -> Color \{ TendTheme\.token\(TendDesignTokens\.Mac\.surfaceSidebar, scheme\) \}/);
+  // Reduce Transparency and Increase Contrast get the opaque surface the
+  // contrast checks below measure, never the material.
+  assert.match(system, /struct TendSidebarBackground[\s\S]*?if reduceTransparency \|\| contrast == \.increased \{\s*TendSurface\.sidebar\(colorScheme\)/);
   for (const metric of ["rowHeight", "sectionHeaderHeight", "statusBarHeight", "activityBarWidth", "controlRadius", "panelRadius"]) {
     assert.match(theme, new RegExp(`static let ${metric} = CGFloat\\(TendDesignTokens\\.Metric\\.${metric}\\)`), metric);
   }

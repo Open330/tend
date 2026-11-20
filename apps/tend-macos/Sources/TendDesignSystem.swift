@@ -130,3 +130,34 @@ enum TendStateHue: CaseIterable, Sendable {
         }
     }
 }
+
+/// The leading column's background (the activity bar and the sidebar list):
+/// the system sidebar material, blended with what is behind the window and
+/// following the window's active state, as a native sidebar is. Under
+/// Reduce Transparency or Increase Contrast it is the opaque sidebar surface,
+/// the value every ink in the design is checked against.
+struct TendSidebarBackground: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    var body: some View {
+        if reduceTransparency || contrast == .increased {
+            TendSurface.sidebar(colorScheme)
+        } else {
+            TendSidebarMaterial()
+        }
+    }
+}
+
+private struct TendSidebarMaterial: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .sidebar
+        view.blendingMode = .behindWindow
+        view.state = .followsWindowActiveState
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+}

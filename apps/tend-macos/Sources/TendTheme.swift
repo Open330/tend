@@ -49,12 +49,17 @@ enum TendTheme {
 
     // MARK: Surfaces
 
+    /// The activity bar's opaque surface: the Mac sidebar surface. Where it
+    /// is the window's leading column it draws `TendSidebarBackground`.
     static func activityBar(_ scheme: ColorScheme) -> Color {
-        token(TendDesignTokens.activityBar, scheme)
+        TendSurface.sidebar(scheme)
     }
 
+    /// The Mac sidebar surface (`mac.surface.sidebar`), the system sidebar
+    /// material's opaque value. The shared `side-bar` token stays the web's
+    /// and iOS's.
     static func sideBar(_ scheme: ColorScheme) -> Color {
-        token(TendDesignTokens.sideBar, scheme)
+        TendSurface.sidebar(scheme)
     }
 
     static func editor(_ scheme: ColorScheme) -> Color {
