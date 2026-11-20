@@ -15,9 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   result, Explore and steering an agent, the menu bar, then the iPhone and
   iPad apps. It is the real apps on a GitHub macOS runner and its
   simulators against the demo fixture; `.github/workflows/demo-video.yml`
-  records it on a PR labelled `demo-video` and
-  `scripts/demo-video/edit.py` cuts and captions the takes
-  (docs/demo-video/README.md).
+  records the raw takes on a PR labelled `demo-video`, and
+  `scripts/demo-video/edit.py` cuts and captions them
+  ([docs/demo-video/README.md](docs/demo-video/README.md)).
 
 ## [0.10.29] - 2026-11-20
 

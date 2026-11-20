@@ -285,7 +285,7 @@ frame() { # <slug> <agent> <state> <prompt> [tool]... → echoes the pane comman
   # TEND_DEMO_PANE_SCRIPTS: a directory of executables named after slugs
   # that take over those panes (the demo video's panes that answer).
   if [ -n "${TEND_DEMO_PANE_SCRIPTS:-}" ] && [ -x "$TEND_DEMO_PANE_SCRIPTS/$slug" ]; then
-    printf 'exec %s %s' "$TEND_DEMO_PANE_SCRIPTS/$slug" "$FRAME_DIR/$slug"
+    printf 'exec %q %q' "$TEND_DEMO_PANE_SCRIPTS/$slug" "$FRAME_DIR/$slug"
     return
   fi
   # `exec cat` holds the pane open on a quiet stdin, keeping the frame on
@@ -580,8 +580,12 @@ msg "$P_DOCS" "$PCTL" question \
   'COLLABORATION.md still leads with the wake mechanism. Should I document `wake = never` as the default posture and treat idle_only as the opt-in, or keep the current framing?'
 msg "$P_INFRA" "$PCTL" review \
   'Provider pins are in. One question before I apply: the network module split moves the NAT gateway into its own state file, which is a destroy/recreate. Confirm before I run apply?'
-# One outgoing, so the Sent tab is not empty either.
-msg "$PCTL" "$P_SDK" task \
+# One outgoing, so the Sent tab is not empty either. With the demo video's
+# answering panes it goes to a working agent instead: one sent to `sdk`,
+# stopped on its error, leaves tendd a recovery question for the person.
+TASK_TO=$P_SDK
+[ -n "${TEND_DEMO_PANE_SCRIPTS:-}" ] && TASK_TO=$P_DOCS
+msg "$PCTL" "$TASK_TO" task \
   'The codegen service is 500ing on the spec fetch retry path. Capture the request id from the last failure and check whether the spec URL still resolves from inside the container.'
 
 

@@ -11,8 +11,9 @@
 # (`<scene> <seconds into that clip>`). Tears the fixture down on exit.
 set -uo pipefail
 
-if [ "${CI:-}" != "true" ] || [ "${GITHUB_ACTIONS:-}" != "true" ]; then
-  echo "record-ios.sh: runs on a CI runner only" >&2
+if [ "${CI:-}" != "true" ] || [ "${GITHUB_ACTIONS:-}" != "true" ] \
+   || [ "${RUNNER_ENVIRONMENT:-}" != "github-hosted" ] || [ ! -d "${RUNNER_TEMP:-}" ]; then
+  echo "record-ios.sh: runs on a GitHub-hosted runner only" >&2
   exit 2
 fi
 OUT_ARG="${1:?usage: record-ios.sh OUT_DIR}"
@@ -24,8 +25,10 @@ OUT="$(cd "$OUT_ARG" && pwd)"
 TOKEN=$(cat "$RUNNER_TEMP/demo-token")
 DERIVED="$RUNNER_TEMP/ios-derived"
 created=()
+failed=0
 
 cleanup() {
+  rm -f "$RUNNER_TEMP/demo-token"
   for udid in "${created[@]}"; do
     xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
     xcrun simctl delete "$udid" >/dev/null 2>&1 || true
@@ -55,12 +58,14 @@ record() { # <slug> <device type prefix>
   # A clean status bar: a fixed time, full signal and battery.
   xcrun simctl status_bar "$udid" override --time "9:41" --dataNetwork wifi --wifiBars 3 \
     --cellularMode active --cellularBars 4 --batteryState charged --batteryLevel 100 || true
-  # Each line simctl prints, stamped: "Recording started" is the clip's 0 s.
-  xcrun simctl io "$udid" recordVideo --codec h264 --force "$OUT/$slug-raw.mp4" 2>&1 \
-    | python3 -u -c 'import sys,time
-for l in sys.stdin: print("%.3f %s" % (time.time(), l.rstrip()), flush=True)' > "$OUT/$slug-rec.log" &
+  # Each line simctl prints, stamped; $! is simctl itself, so it alone
+  # gets the interrupt that finishes the file.
+  xcrun simctl io "$udid" recordVideo --codec h264 --force "$OUT/$slug-raw.mp4" \
+    > >(python3 -u -c 'import sys,time
+for l in sys.stdin: print("%.3f %s" % (time.time(), l.rstrip()), flush=True)' > "$OUT/$slug-rec.log") 2>&1 &
   rec=$!
-  for _ in $(seq 1 50); do grep -q "Recording started" "$OUT/$slug-rec.log" && break; sleep 0.2; done
+  for _ in $(seq 1 50); do grep -q "Recording started" "$OUT/$slug-rec.log" 2>/dev/null && break; sleep 0.2; done
+  grep -q "Recording started" "$OUT/$slug-rec.log" || { echo "record-ios.sh: $slug recorder never started" >&2; failed=1; }
   start=$(awk '/Recording started/ {print $1; exit}' "$OUT/$slug-rec.log")
   TEST_RUNNER_TEND_DEMO_TOUR=1 \
   TEST_RUNNER_TEND_SERVER="http://127.0.0.1:$PORT" \
@@ -68,10 +73,13 @@ for l in sys.stdin: print("%.3f %s" % (time.time(), l.rstrip()), flush=True)' > 
     xcodebuild -project TendiOS.xcodeproj -scheme Tend -configuration Debug \
       -derivedDataPath "$DERIVED" -destination "id=$udid" \
       -only-testing:TendUITests/DemoTourUITests \
-      CODE_SIGN_IDENTITY=- test-without-building > "$OUT/$slug-test.log" 2>&1 || echo "record-ios.sh: $slug tour failed" >&2
+      CODE_SIGN_IDENTITY=- test-without-building > "$OUT/$slug-test.log" 2>&1 \
+    || { echo "record-ios.sh: $slug tour failed" >&2; grep -E ': error: ' "$OUT/$slug-test.log" | head -5 >&2; failed=1; }
   sleep 1
-  pkill -INT -f "recordVideo --codec h264 --force $OUT/$slug-raw.mp4" || true
-  wait "$rec" || true
+  kill -INT "$rec" 2>/dev/null
+  wait "$rec" || { echo "record-ios.sh: $slug recorder failed" >&2; failed=1; }
+  ffprobe -v error -show_entries format=duration -of csv=p=0 "$OUT/$slug-raw.mp4" >/dev/null \
+    || { echo "record-ios.sh: $slug-raw.mp4 does not decode" >&2; failed=1; }
   grep -o 'DEMO-MARK [a-z]* [0-9.]*' "$OUT/$slug-test.log" | sort -u -k3 -n \
     | awk -v s="$start" '{printf "%s %.2f\n", $2, $3 - s}' > "$OUT/$slug-marks.txt"
   xcrun simctl shutdown "$udid" || true
@@ -80,3 +88,4 @@ for l in sys.stdin: print("%.3f %s" % (time.time(), l.rstrip()), flush=True)' > 
 record iphone "iPhone 17 Pro"
 record ipad "iPad Pro 13"
 ls -la "$OUT"
+exit "$failed"

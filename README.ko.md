@@ -53,7 +53,7 @@ tend           # 기존 에이전트 보기, 새 에이전트 시작, 데모 체
 ```
 
 <div align="center">
-  <a href="docs/demo-video/tend-demo-ko.mp4"><img src="docs/demo-video/poster.png" alt="Mac용 Tend 홈에서 에이전트의 질문에 답하는 모습: 에이전트 화면에서 읽은 선택지를 한 번 눌러 보냅니다" width="900" /></a>
+  <a href="docs/demo-video/tend-demo-ko.mp4"><img src="docs/demo-video/poster.png" alt="Mac용 Tend 홈에서 에이전트의 질문에 답한 뒤: 답한 카드가 진행 중으로 옮겨 가고 에이전트 패널에 Working이 표시됩니다" width="900" /></a>
   <br />
   <sub>▶ <a href="docs/demo-video/tend-demo-ko.mp4">70초 데모 영상 보기</a>: Mac용 Tend, 그리고 iPhone과 iPad (<a href="docs/demo-video/tend-demo.mp4">English captions</a>)</sub>
 </div>

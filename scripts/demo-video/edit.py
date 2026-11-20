@@ -22,7 +22,7 @@ CAPTIONS = {
         "home": "Home: what needs you, what's running, what's done.",
         "question": "Answer an agent's question. Tend delivers it to its terminal.",
         "review": "Review finished work with the agent's evidence, then decide.",
-        "explore": "See any pane live, and steer the agent in it.",
+        "explore": "Open a live pane and send the agent a prompt.",
         "menubar": "Always one click away in the menu bar.",
         "iphone": "Also on iPhone…",
         "ipad": "…and iPad.",
@@ -34,7 +34,7 @@ CAPTIONS = {
         "home": "홈: 내 차례, 진행 중, 끝난 일을 한눈에",
         "question": "에이전트의 질문에 답하면 Tend가 그 터미널로 전달합니다",
         "review": "에이전트가 낸 근거를 보고 끝난 작업을 결정합니다",
-        "explore": "어떤 패널이든 실시간으로 보고, 그 자리에서 지시합니다",
+        "explore": "실시간 패널을 열고 에이전트에 프롬프트를 보냅니다",
         "menubar": "메뉴 막대에서 언제나 한 번에",
         "iphone": "iPhone에서도…",
         "ipad": "…iPad에서도",
@@ -51,6 +51,9 @@ MAC_SCENES = [
     ("explore", "menubar", "explore", 1.8, None),
     ("menubar", "end", "menubar", 2.0, (1280, 720, 640, 0)),
 ]
+# The runner's clock, at the right end of the menu bar: covered with the
+# bar's own colour in the menu bar scene (x, y, w, h before the crop).
+CLOCK = (1760, 0, 160, 30)
 
 
 def run(cmd, **kw):
@@ -194,7 +197,7 @@ def main():
     ap.add_argument("--lang", default="en", choices=sorted(CAPTIONS))
     ap.add_argument("--name", default="tend-demo")
     ap.add_argument("--sheets", action="store_true",
-                    help="only write contact sheets (2 per second) of the iOS recordings' constant-rate copies")
+                    help="only write contact sheets (1 frame a second) of the iOS recordings' constant-rate copies")
     args = ap.parse_args()
     if args.sheets:
         work = os.path.join(args.out, "sheets")
@@ -236,7 +239,11 @@ def main():
     for first, last, key, hold, crop in MAC_SCENES:
         pieces = keep_acts(m[first], m[last], logged) if logged else keep(m[first], m[last], frozen, hold)
         raw = os.path.join(work, f"mac-{key}.raw.mp4")
-        pre = f"crop={crop[0]}:{crop[1]}:{crop[2]}:{crop[3]},scale=1920:1080:flags=lanczos," if crop else ""
+        pre = ""
+        if crop:
+            x, y, w, h = CLOCK
+            pre = (f"drawbox=x={x}:y={y}:w={w}:h={h}:color=0xD2D2D2:t=fill,"
+                   f"crop={crop[0]}:{crop[1]}:{crop[2]}:{crop[3]},scale=1920:1080:flags=lanczos,")
         cut(mac, pieces, raw, pre=pre)
         clip = os.path.join(work, f"mac-{key}.mp4")
         overlay(raw, caption(key), clip, start=0.5 if key == "home" else 0.15)

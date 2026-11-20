@@ -53,7 +53,7 @@ tend           # view existing agents, start one here, or try the demo
 ```
 
 <div align="center">
-  <a href="docs/demo-video/tend-demo.mp4"><img src="docs/demo-video/poster.png" alt="Tend for Mac answering an agent's question from Home: the options read off the agent's screen, one click sends the answer" width="900" /></a>
+  <a href="docs/demo-video/tend-demo.mp4"><img src="docs/demo-video/poster.png" alt="Tend for Mac's Home after answering an agent's question: the answered card has moved to In progress and the agent's panel says Working" width="900" /></a>
   <br />
   <sub>▶ <a href="docs/demo-video/tend-demo.mp4">Watch the 70-second demo</a> — Tend for Mac, then iPhone and iPad (<a href="docs/demo-video/tend-demo-ko.mp4">한국어 자막</a>).</sub>
 </div>

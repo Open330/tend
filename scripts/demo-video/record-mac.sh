@@ -16,8 +16,10 @@
 # $RUNNER_TEMP/demo-token, never into OUT_DIR.
 set -uo pipefail
 
-if [ "${CI:-}" != "true" ] || [ "${GITHUB_ACTIONS:-}" != "true" ]; then
-  echo "record-mac.sh: runs on a CI runner only (it takes over the screen, mouse and keyboard)" >&2
+# A GitHub-hosted runner only: a self-hosted one is somebody's machine.
+if [ "${CI:-}" != "true" ] || [ "${GITHUB_ACTIONS:-}" != "true" ] \
+   || [ "${RUNNER_ENVIRONMENT:-}" != "github-hosted" ] || [ ! -d "${RUNNER_TEMP:-}" ]; then
+  echo "record-mac.sh: runs on a GitHub-hosted runner only (it takes over the screen, mouse and keyboard)" >&2
   exit 2
 fi
 
@@ -45,9 +47,19 @@ env -u TMUX -u TMUX_PANE \
   TEND_DEMO_DASHBOARD_TOKEN="$TOKEN" \
   TEND_DEMO_PANE_SCRIPTS="$HERE/panes" \
   bash "$REPO/docs/demo-setup.sh" >/dev/null || { log "demo-setup failed"; exit 1; }
-eval "$(bash "$REPO/scripts/tend-sandbox.sh" env --name tend-demo)"
-SOCKET=$TEND_SOCKET
-tend() { env -u TMUX -u TMUX_PANE "$BIN_DIR/tend" "$@"; }
+# The sandbox's environment, or nothing: a failed export must not leave
+# anything below on an inherited or default socket (as mac-shots/capture.sh).
+sandbox_env=$(bash "$REPO/scripts/tend-sandbox.sh" env --name tend-demo) || { log "no sandbox environment"; exit 1; }
+eval "$sandbox_env"
+FIXTURE_ROOT=/tmp/tend-demo-sandbox
+SOCKET=$FIXTURE_ROOT/tendd.sock
+if [[ "${TEND_SOCKET:-}" != "$SOCKET" || "${TEND_CONFIG:-}" != "$FIXTURE_ROOT"/* || ! -S "$SOCKET" \
+      || "${TEND_TMUX_SOCKET:-}" != "$FIXTURE_ROOT"/* || ! -S "${TEND_TMUX_SOCKET:-}" ]]; then
+  log "the sandbox did not come up at $SOCKET (TEND_SOCKET=${TEND_SOCKET:-unset})"
+  exit 1
+fi
+tend() { env -u TMUX -u TMUX_PANE "$BIN_DIR/tend" --socket "$SOCKET" --config "$TEND_CONFIG" "$@"; }
+tend status >/dev/null 2>&1 || { log "the fixture's tendd is not answering at $SOCKET"; exit 1; }
 tm() { "$TEND_SANDBOX_TMUX" -u -f "$TEND_SANDBOX_TMUX_CONFIG" -S "$TEND_TMUX_SOCKET" "$@"; }
 # An agent's own hook, as the fixture fires them (docs/demo-setup.sh).
 hook() { # <session> <agent> <event> <json>
@@ -95,10 +107,19 @@ defaults write $D NSQuitAlwaysKeepsWindows -bool false
   && tend status >/dev/null 2>&1 || { log "the fixture's tendd is not answering at $SOCKET"; exit 1; }
 TEND_SOCKET="$SOCKET" "$APP/Contents/MacOS/Tend" > "$OUT/app.log" 2>&1 &
 PID=$!
+FF=
+# The app and the recorder this script started, and nothing else.
+cleanup() {
+  [ -n "$FF" ] && kill -INT "$FF" 2>/dev/null && wait "$FF" 2>/dev/null
+  kill "$PID" 2>/dev/null || true
+}
+trap cleanup EXIT
+up=0
 for _ in $(seq 1 60); do
-  "$AX" find "$PID" "Home" >/dev/null 2>&1 && break
+  "$AX" find "$PID" "Home" >/dev/null 2>&1 && { up=1; break; }
   sleep 1
 done
+[ "$up" = 1 ] || { log "Tend's window never showed Home"; screencapture -x "$OUT/steps/00-failed.png"; exit 1; }
 "$AX" raise "$PID" 40 56 1840 920 || log "window not moved"
 osascript -e "tell application \"System Events\" to set frontmost of (first process whose unix id is $PID) to true" || true
 # Let the board, the decision queue and the pane previews arrive.
@@ -123,10 +144,12 @@ centre() { local f; f=$("$AX" find "$PID" "$@") || return 1; set -- $f; echo "$(
 glide() { act 0.9 glide; cliclick -e 500 "m:$1,$2"; }
 point() { local c; c=$(centre "$@") || { log "not found: $*"; return 1; }; set -- $c; glide "$1" "$2"; }
 press() { local c; c=$(centre "$@") || { log "not found: $*"; return 1; }; set -- $c; glide "$1" "$2"; sleep 0.25; cliclick "c:$1,$2"; act 1.6 click; }
+# A beat the story needs: without it the take is not worth editing.
+fail() { log "take failed: $*"; screencapture -x "$OUT/steps/failed.png"; exit 1; }
 type_slowly() { act "$(python3 -c "print(round(len('''$1''')*0.06+0.6,2))")" type; cliclick -w 45 "t:$1"; }
 
 # --- Take --------------------------------------------------------------------
-glide 960 1060
+cliclick "m:960,1060"   # park the cursor; nothing is recorded yet
 ffmpeg -hide_banner -loglevel error -y -f avfoundation -framerate 30 -capture_cursor 1 -capture_mouse_clicks 0 \
   -i "Capture screen 0" -c:v libx264 -preset ultrafast -crf 16 -pix_fmt yuv420p "$OUT/mac-raw.mp4" < /dev/null &
 FF=$!
@@ -147,11 +170,11 @@ step home
 
 # 2. A question: open the agent asking a choice and answer it.
 mark question
-press "rotate the JWT signing keys" || true
+press "rotate the JWT signing keys" || fail "the question card"
 sleep 2.5
 act 2.2 read
 step question-open
-press "staging, then prod" AXButton || press "staging, then prod" || true
+press "staging, then prod" AXButton || press "staging, then prod" || fail "the answer option"
 sleep 1.5
 step question-answered
 # The pane takes the answer and the agent goes back to work
@@ -163,13 +186,13 @@ step question-done
 
 # 3. Review: decide a finished result.
 mark review
-press "Review" AXButton || press "Review" || true
+press "Review" AXButton || press "Review" || fail "Review"
 sleep 2.5
 act 3.0 read
 step review-open
 press "merge" AXButton || true
 sleep 1
-press "Accept" AXButton || press "Accept" || true
+press "Accept" AXButton || press "Accept" || fail "Accept"
 sleep 0.6; act 2.0 read; sleep 1.4
 step review-accepted
 press "Done" AXButton || cliclick kp:esc || true
@@ -177,18 +200,18 @@ sleep 1.5
 
 # 4. Explore: the topology and a live pane.
 mark explore
-press "Explore" || true
+press "Explore" || fail "Explore"
 sleep 2.5
 step explore
 point "Execution topology" || true
 sleep 1.5
-press "500 from the cod" || press "sdk" || true
+press "500 from the cod" || press "sdk" || fail "the sdk agent"
 sleep 1; act 2.4 read; sleep 2
 step explore-sdk
 
 # 5. Steer: send the agent a prompt.
 mark steer
-press "Send a prompt" || true
+press "Send a prompt" || fail "the prompt field"
 sleep 0.6
 type_slowly "retry with the cached spec and open a PR"
 sleep 0.8
@@ -205,7 +228,7 @@ if [ -n "$extra" ]; then
   set -- $extra
   glide $(( $1 + $3 / 2 )) $(( $2 + $4 / 2 )); sleep 0.3; cliclick c:.
 else
-  log "no menu bar extra"
+  fail "no menu bar item"
 fi
 sleep 0.6; act 3.4 read; sleep 1.4
 step menubar
@@ -215,7 +238,9 @@ sleep 1
 mark end
 sleep 1
 
-kill -INT "$FF"; wait "$FF" || true
+kill -INT "$FF"; wait "$FF"; FF=
+# A take that does not decode at the size the edit expects is a failure.
+geometry=$(ffprobe -v error -select_streams v -show_entries stream=width,height -of csv=p=0 "$OUT/mac-raw.mp4") \
+  || fail "the recording does not decode"
+[ "$geometry" = "1920,1080" ] || fail "the recording is $geometry, not 1920x1080"
 log "take done: $(ffprobe -v error -show_entries format=duration -of csv=p=0 "$OUT/mac-raw.mp4")s"
-kill "$PID" 2>/dev/null || true
-exit 0

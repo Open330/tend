@@ -4,7 +4,7 @@ name: Demo video
 # Mac on this runner's own screen, then the iOS app in iPhone and iPad
 # simulators, all against the demo fixture's sandboxed tendd. Raw takes,
 # per-step screenshots and accessibility dumps come back as an artifact;
-# scripts/demo-video/edit.sh cuts and captions them. Runs on a pull request
+# scripts/demo-video/edit.py cuts and captions them. Runs on a pull request
 # labelled `demo-video`. Nothing here runs on a developer's machine.
 on:
   pull_request:

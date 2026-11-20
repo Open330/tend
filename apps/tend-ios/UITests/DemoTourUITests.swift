@@ -12,10 +12,12 @@ final class DemoTourUITests: XCTestCase {
     private var token: String!
 
     override func setUpWithError() throws {
-        continueAfterFailure = true
+        continueAfterFailure = false
         let env = ProcessInfo.processInfo.environment
-        guard env["TEND_DEMO_TOUR"] != nil, let server = env["TEND_SERVER"], let token = env["TEND_TOKEN"] else {
-            throw XCTSkip("set TEST_RUNNER_TEND_DEMO_TOUR, TEST_RUNNER_TEND_SERVER and TEST_RUNNER_TEND_TOKEN")
+        // Only the demo fixture's dashboard, on this machine's loopback.
+        guard env["TEND_DEMO_TOUR"] == "1", let server = env["TEND_SERVER"], let token = env["TEND_TOKEN"],
+              server.hasPrefix("http://127.0.0.1:") else {
+            throw XCTSkip("set TEST_RUNNER_TEND_DEMO_TOUR=1, TEST_RUNNER_TEND_SERVER (loopback) and TEST_RUNNER_TEND_TOKEN")
         }
         self.server = server
         self.token = token
@@ -38,8 +40,14 @@ final class DemoTourUITests: XCTestCase {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: ["user_code": code, "scope": "operate"])
         let done = expectation(description: "approve")
-        URLSession.shared.dataTask(with: request) { _, _, _ in done.fulfill() }.resume()
+        final class Box: @unchecked Sendable { var status = 0 }
+        let box = Box()
+        URLSession.shared.dataTask(with: request) { _, response, _ in
+            box.status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            done.fulfill()
+        }.resume()
         wait(for: [done], timeout: 15)
+        XCTAssertEqual(box.status, 200, "the dashboard did not approve the pairing code")
     }
 
     func testDemoTour() throws {
@@ -55,32 +63,35 @@ final class DemoTourUITests: XCTestCase {
         name.typeText(isPad ? "Demo iPad" : "Demo iPhone")
         app.buttons["scope-operate"].tap()
         app.buttons["pairButton"].tap()
+        // A cold simulator can take a while to reach the dashboard.
         let code = app.staticTexts["userCode"]
-        XCTAssertTrue(code.waitForExistence(timeout: 15), "no pairing code; is the fixture's dashboard up?")
+        XCTAssertTrue(code.waitForExistence(timeout: 60), "no pairing code; is the fixture's dashboard up?")
+        XCTAssertFalse(code.label.isEmpty)
         try approve(code.label)
 
         // Home with the fixture's agents (the iPad may have nothing left to
         // accept: the iPhone run decided the last result).
         let card = app.staticTexts["fix the SSE reconnect backoff"].firstMatch
-        XCTAssertTrue(card.waitForExistence(timeout: 20), "Home never showed the fixture's agents")
+        XCTAssertTrue(card.waitForExistence(timeout: 180), "Home never showed the fixture's agents")
         pause(1.5)
         mark("home")
         pause(isPad ? 5 : 3.5)
 
         // Decide a finished result from the phone: the backfill one; the
         // Mac part of the video already merged the proration fix.
-        let option = app.buttons["publish"].firstMatch
-        if option.waitForExistence(timeout: 3) {
+        // The iPhone decides it (the iPad, after it, has nothing left to).
+        if !isPad {
+            let option = app.buttons["publish"].firstMatch
+            XCTAssertTrue(option.waitForExistence(timeout: 10), "the backfill result is not in Your turn")
             mark("decide")
             if !option.isHittable { app.swipeUp(velocity: .slow); pause(0.8) }
             option.tap()
             pause(1.0)
             let confirm = app.buttons["confirmAccept"].firstMatch
-            if confirm.waitForExistence(timeout: 5) {
-                confirm.tap()
-                _ = app.staticTexts["Accepted."].waitForExistence(timeout: 15)
-            }
-            pause(2.0)
+            XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+            confirm.tap()
+            XCTAssertTrue(app.staticTexts["Accepted."].waitForExistence(timeout: 15), "the accept was not confirmed")
+            pause(2.5)
         }
 
         if app.buttons["lane-inProgress"].exists {
