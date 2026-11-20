@@ -169,6 +169,13 @@ private func watchHighlightFill(
     }
 }
 
+/// A row's informing text: label ink on either tint (secondary falls under
+/// 4.5:1 there, under some system accents too), else the secondary ink
+/// (SwiftUI's semantic secondary is 3.8:1 on the opaque sidebar).
+func watchRowInk(_ highlight: WatchTreeHighlight, _ scheme: ColorScheme) -> Color {
+    highlight == .idle ? TendInk.secondary(scheme) : TendInk.label(scheme)
+}
+
 /// Thin leading accent bar that marks the followed pane without reading as a
 /// selection. It never participates in hit testing.
 private struct WatchFollowedMarker: View {
@@ -500,7 +507,7 @@ private struct WatchPaneRow: View {
                         .layoutPriority(1)
                     TendUnreadDot(pane: pane.id) // WS-A
                     Spacer(minLength: 3)
-                    WatchPaneRowTrailing(pane: pane, onTint: highlight == .selected)
+                    WatchPaneRowTrailing(pane: pane, onTint: highlight != .idle)
                 }
                 .padding(.trailing, 8)
             }
@@ -531,8 +538,9 @@ private struct WatchPaneRow: View {
 /// dot so the column stays quiet. A plain shell shows its command.
 private struct WatchPaneRowTrailing: View {
     let pane: TendWatchPane
-    /// The row is selected: the status word sits on the accent tint.
+    /// The row is selected or followed: its words sit on the accent tint.
     var onTint = false
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         if let status = pane.agentStatus {
@@ -545,7 +553,7 @@ private struct WatchPaneRowTrailing: View {
         } else if let command = pane.pane.currentCommand.nonEmpty {
             Text(command)
                 .font(TendType.meta.monospaced())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(watchRowInk(onTint ? .selected : .idle, colorScheme))
                 .lineLimit(1)
         }
     }
@@ -599,6 +607,7 @@ func firstReadableLine(_ text: String) -> String {
 /// context needed to identify the pane.
 struct WatchFlatPaneRow: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.colorScheme) private var colorScheme
     let pane: TendWatchPane
     let highlight: WatchTreeHighlight
     let selectPane: (TendWatchPaneIdentity) -> Void
@@ -632,17 +641,18 @@ struct WatchFlatPaneRow: View {
                             .layoutPriority(1)
                         TendUnreadDot(pane: pane.id) // WS-A
                         Spacer(minLength: 3)
-                        WatchPaneRowTrailing(pane: pane, onTint: highlight == .selected)
+                        WatchPaneRowTrailing(pane: pane, onTint: highlight != .idle)
                     }
+                    // Secondary ink reads under 4.5:1 on either tint.
                     if let activity = watchPaneActivity(pane) {
                         Text(activity)
                             .font(TendType.detail)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(watchRowInk(highlight, colorScheme))
                             .lineLimit(1)
                     }
                     Text(location)
                         .font(TendType.meta)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(watchRowInk(highlight, colorScheme))
                         .lineLimit(1)
                 }
             }

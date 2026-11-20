@@ -14,6 +14,7 @@ import { CSS_PATH, readTokens, renderCss, renderSwift, SWIFT_PATH } from "../../
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../../..");
 const theme = readFileSync(join(ROOT, "apps/tend-macos/Sources/TendTheme.swift"), "utf8");
 const brand = readFileSync(join(ROOT, "apps/tend-macos/Sources/BrandMark.swift"), "utf8");
+const system = readFileSync(join(ROOT, "apps/tend-macos/Sources/TendDesignSystem.swift"), "utf8");
 const tokens = readTokens();
 
 test("tokens.css and TendDesignTokens.swift are generated from tokens.json", () => {
@@ -29,6 +30,18 @@ test("TendTheme.swift draws its surfaces and metrics from the generated tokens",
     assert.match(body, new RegExp(`TendDesignTokens\\.${camel(token)}\\b`), `TendTheme.${value.swift} reads token ${token}`);
   }
   assert.match(theme, /static let panelFill = [\s\S]*?TendDesignTokens\.lane/);
+  // The shared side-bar and activity-bar values are the web's and iOS's;
+  // the Mac draws its own sidebar surface there, and the material over it.
+  assert.ok(!tokens.color["side-bar"].swift && !tokens.color["activity-bar"].swift, "the Mac does not draw the shared side-bar tokens");
+  for (const surface of ["sideBar", "activityBar"]) {
+    const body = theme.match(new RegExp(`static func ${surface}\\(_ scheme: ColorScheme\\) -> Color \\{\\s*([^\\n]+)`))?.[1] || "";
+    assert.match(body, /TendSurface\.sidebar\(scheme\)/, `TendTheme.${surface} draws the Mac sidebar surface`);
+  }
+  assert.match(system, /static func sidebar\(_ scheme: ColorScheme\) -> Color \{ TendTheme\.token\(TendDesignTokens\.Mac\.surfaceSidebar, scheme\) \}/);
+  // The opaque surface the contrast checks below measure is the default;
+  // the material is opt-in, and never under Reduce Transparency or
+  // Increase Contrast.
+  assert.match(system, /struct TendSidebarBackground[\s\S]*?@AppStorage\(TendPreferences\.sidebarMaterialKey\) private var usesMaterial = false[\s\S]*?if !usesMaterial \|\| reduceTransparency \|\| contrast == \.increased \{\s*TendSurface\.sidebar\(colorScheme\)/);
   for (const metric of ["rowHeight", "sectionHeaderHeight", "statusBarHeight", "activityBarWidth", "controlRadius", "panelRadius"]) {
     assert.match(theme, new RegExp(`static let ${metric} = CGFloat\\(TendDesignTokens\\.Metric\\.${metric}\\)`), metric);
   }
@@ -118,6 +131,40 @@ test("a secondary button's label reads on its rest, hover and pressed fills on e
           const ratio = contrast(over(srgb(ink[scheme]), fill), fill);
           assert.ok(ratio >= 4.5, `${name} on ${state} over ${surface} (${scheme}): ${ratio.toFixed(2)}`);
         }
+      }
+    }
+  }
+});
+
+test("Explore's highlighted rows keep their words readable on the sidebar surface", () => {
+  // WatchViews: a selected row is the accent at 18%, a followed one at 6%,
+  // over the sidebar surface (the opaque value under Reduce Transparency).
+  // State hues and secondary ink fall under 4.5:1 on those tints, so every
+  // informing word on a highlighted row is label ink: the status word
+  // (onTint), a shell's command, and the activity and location lines.
+  const watch = readFileSync(join(ROOT, "apps/tend-macos/Sources/WatchViews.swift"), "utf8");
+  assert.match(watch, /case \.selected: Color\.accentColor\.opacity\(selected\)/);
+  assert.match(watch, /selected: Double = 0\.18/);
+  assert.match(watch, /case \.followed: Color\.accentColor\.opacity\(0\.06\)/);
+  // Idle rows take TendInk.secondary, which the bare-surface matrix above
+  // checks on the sidebar; SwiftUI's semantic .secondary is not checked.
+  assert.match(watch, /func watchRowInk\(_ highlight: WatchTreeHighlight, _ scheme: ColorScheme\) -> Color \{\s*highlight == \.idle \? TendInk\.secondary\(scheme\) : TendInk\.label\(scheme\)\s*\}/);
+  assert.ok(tokens.mac.ink.secondary.text, "secondary is a text ink, so the matrix checks it on the sidebar");
+  const rows = watch.match(/WatchPaneRowTrailing\(pane: pane, onTint: [^)]*\)/g) || [];
+  assert.ok(rows.length >= 2 && rows.every((row) => row.endsWith("onTint: highlight != .idle)")), "every highlighted row is on tint");
+  assert.match(watch, /Text\(command\)\s*\.font\([^\n]*\)\s*\.foregroundStyle\(watchRowInk\(onTint \? \.selected : \.idle, colorScheme\)\)/, "the command");
+  assert.match(watch, /Text\(activity\)\s*\.font\([^\n]*\)\s*\.foregroundStyle\(watchRowInk\(highlight, colorScheme\)\)/, "the activity line");
+  assert.match(watch, /Text\(location\)\s*\.font\([^\n]*\)\s*\.foregroundStyle\(watchRowInk\(highlight, colorScheme\)\)/, "the location line");
+  // Label ink on both tints, for the default accent and the other system
+  // accents (the state hues stand in for purple, red, orange and green).
+  const accents = ["accent", "purple", "red", "orange", "green"];
+  for (const scheme of ["light", "dark"]) {
+    const sidebar = srgb(tokens.mac.surface.sidebar[scheme]).rgb;
+    for (const accent of accents) {
+      for (const alpha of [0.18, 0.06]) {
+        const tint = over({ rgb: srgb(tokens.color[accent][scheme]).rgb, alpha }, sidebar);
+        const ratio = contrast(over(srgb(tokens.mac.ink.label[scheme]), tint), tint);
+        assert.ok(ratio >= 4.5, `label on ${accent} at ${alpha} over the sidebar (${scheme}): ${ratio.toFixed(2)}`);
       }
     }
   }
