@@ -147,7 +147,7 @@ struct FleetWorkCard: View {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 if work.isOrphanHelper {
                     Text("Helper")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(TendType.label)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
                         .background(Color.secondary.opacity(0.15), in: Capsule())
@@ -169,7 +169,7 @@ struct FleetWorkCard: View {
                         Image(systemName: "arrow.turn.down.right")
                             .foregroundStyle(work.lane.tint)
                     }
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(TendType.label)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(TendInk.control(colorScheme), in: Capsule())
@@ -275,17 +275,17 @@ struct FleetCompactRow: View {
                 .frame(width: 8, height: 8)
             if isDecision {
                 Image(systemName: "questionmark.bubble")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(TendType.label.weight(.semibold))
                     .foregroundStyle(tint)
             }
             Text(verbatim: title)
-                .font(.system(size: 13, weight: .medium))
+                .font(TendType.body.weight(.medium))
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if let movedFrom {
                 Image(systemName: "arrow.turn.down.right")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(TendType.label)
                     .foregroundStyle(tint)
                     .help(String(localized: "From \(movedFrom.title)"))
                     .transition(.opacity)
@@ -367,7 +367,7 @@ struct FleetDecisionDetail: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Label(decision.isHumanRequest ? String(localized: "Question") : String(localized: "Review"),
                           systemImage: decision.isHumanRequest ? "questionmark.bubble" : "checklist")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(TendType.label.weight(.semibold))
                         .foregroundStyle(.orange)
                     Text([decision.asker, decision.host.alias, decision.repo].compactMap { $0 }.joined(separator: " · "))
                         .font(TendType.meta)

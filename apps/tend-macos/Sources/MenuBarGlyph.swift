@@ -115,18 +115,21 @@ struct TendGlyphView: View {
                 TendAgentLogo(asset: logo, fallbackSymbol: TendGlyph.tooSmallSymbol, size: size)
             } else {
                 Image(systemName: TendGlyph.tooSmallSymbol)
-                    .font(.system(size: size, weight: .semibold))
+                    // Sized from the frame (drawn to the glyph's own box), not a text role.
+                    .font(.system(size: size, weight: .semibold)) // type-ramp: exempt
                     .foregroundStyle(color)
             }
         case .text(let text):
             Text(verbatim: text)
-                .font(.system(size: size * 0.9, weight: .bold))
+                // Sized from the frame (drawn to the glyph's own box), not a text role.
+                .font(.system(size: size * 0.9, weight: .bold)) // type-ramp: exempt
                 .minimumScaleFactor(0.5)
                 .lineLimit(1)
                 .foregroundStyle(color)
         case .symbol(let name):
             Image(systemName: name)
-                .font(.system(size: size, weight: .semibold))
+                // Sized from the frame (drawn to the glyph's own box), not a text role.
+                .font(.system(size: size, weight: .semibold)) // type-ramp: exempt
                 .foregroundStyle(color)
         }
     }
