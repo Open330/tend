@@ -221,10 +221,16 @@ def main():
     clips = []
     mac = os.path.join(args.takes, "mac-raw.mp4")
     m = marks(os.path.join(args.takes, "marks.txt"))
+    # How far the driver's clock runs ahead of the recording (ffmpeg takes
+    # a moment to deliver its first frame): TAKES_DIR/mac-offset.txt, in
+    # seconds, measured on a visible event such as the popover opening.
+    offset_file = os.path.join(args.takes, "mac-offset.txt")
+    offset = float(open(offset_file).read()) if os.path.exists(offset_file) else 0.0
+    m = {k: v - offset for k, v in m.items()}
     # The driver's log of what it did, when there is one; otherwise still
     # stretches (which on-screen timers can defeat) are shortened.
     act_log = os.path.join(args.takes, "acts.txt")
-    logged = acts(act_log) if os.path.exists(act_log) else None
+    logged = [(t - offset, h) for t, h in acts(act_log)] if os.path.exists(act_log) else None
     frozen = None if logged else freezes(mac)
     plan = []
     for first, last, key, hold, crop in MAC_SCENES:

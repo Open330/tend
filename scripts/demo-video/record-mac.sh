@@ -130,6 +130,9 @@ glide 960 1060
 ffmpeg -hide_banner -loglevel error -y -f avfoundation -framerate 30 -capture_cursor 1 -capture_mouse_clicks 0 \
   -i "Capture screen 0" -c:v libx264 -preset ultrafast -crf 16 -pix_fmt yuv420p "$OUT/mac-raw.mp4" < /dev/null &
 FF=$!
+# The take's clock starts when ffmpeg has written its first frames, not
+# when it was launched (it takes a few seconds to open the screen).
+for _ in $(seq 1 100); do [ -s "$OUT/mac-raw.mp4" ] && break; sleep 0.1; done
 T0=$(python3 -c 'import time;print(time.time())')
 : > "$OUT/marks.txt"; : > "$OUT/acts.txt"
 sleep 2

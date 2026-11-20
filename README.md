@@ -53,6 +53,12 @@ tend           # view existing agents, start one here, or try the demo
 ```
 
 <div align="center">
+  <a href="docs/demo-video/tend-demo.mp4"><img src="docs/demo-video/poster.png" alt="Tend for Mac answering an agent's question from Home: the options read off the agent's screen, one click sends the answer" width="900" /></a>
+  <br />
+  <sub>▶ <a href="docs/demo-video/tend-demo.mp4">Watch the 70-second demo</a> — Tend for Mac, then iPhone and iPad (<a href="docs/demo-video/tend-demo-ko.mp4">한국어 자막</a>).</sub>
+</div>
+
+<div align="center">
   <img src="docs/demo.gif" alt="tend watch: seventeen agent sessions on one screen with the ones that need you first, the inspector, and tend attend jumping to the agent in error" width="900" />
   <br />
   <sub><code>tend watch</code> — the fleet, the inspector, and <code>tend attend</code>.</sub>
