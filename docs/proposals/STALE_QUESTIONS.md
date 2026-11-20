@@ -251,14 +251,15 @@ about now: **the asker is not running anywhere on this host, and its pane no
 longer holds it.** tendd can establish that from the present alone, but only
 from a walk that saw everything:
 
-- **The walk is complete** (`PaneScan::processes_walked`): every backend's
-  scan was complete (a herdr, cmux or zellij observation, or one failed
-  socket, makes it partial), the process table was read (a failed `ps`
-  reads as empty, not as "nothing runs"), every pane had a root process,
-  and no pane's walk stopped at its depth or node limit. On Linux each
-  process's children are read from every one of its threads. The reconcile pass already walks
-  every pane's process tree once; it now reports whether that walk was
-  whole.
+- **The process table was read** (`PaneScan::processes_read`): `ps`
+  answered (a failed `ps` reads as empty, not as "nothing runs"), or on
+  Linux `/proc` was listed. Backend completeness is not required: a
+  partial backend (cmux, zellij, herdr) or a socket that did not answer
+  leaves its panes unwalked, and their agents are then found in the whole
+  table instead (below). Requiring every backend to be complete, as #686
+  did, never held on any host: cmux is always registered and always
+  partial, so 0.10.29 never judged from present state (WAVE10, measured
+  2026-11-21: `pane_observation_complete=false backends=2` on every tick).
 - **The asker is not running**: no bound, not-Stopped row for its session id
   (as before), and no process in any pane was started on it: `codex resume
   <id>`, `claude --resume <id>` / `-r` / `--session-id`, kept per physical
@@ -270,20 +271,44 @@ from a walk that saw everything:
   the first prompt; until then its process is the evidence. On jiun-mini, %8
   was exactly this: an idle `codex --no-daemon resume 01a132f3…` whose row
   was synthetic. A pane check alone would have called it replaced.
-- **Every agent on the host is someone else.** A command line names the
+- **Nothing running unnamed could be the asker.** A command line names the
   session only when it was started by id. `claude --continue`, a session
   picked from a list, or a thread tendd has not bound runs under no name it
-  can read, and could be the asker. So every agent must be accounted for,
-  one by one. In each pane the walk counts every agent process that carries
-  no session id (`ScannedPane::unnamed_agents`), nested or not: same kind,
-  arguments and parentage are also what `exec claude --continue` in another
-  directory looks like, so nothing collapses two of them. Each needs its own
-  named, not-Stopped row in that pane, other than the sessions the pane
-  already names by resume id: one identified agent does not account for a
-  second one beside or under it. Status, name and command line must all be
-  readable for every live process walked; an unreadable one makes the walk
-  incomplete. While any agent is unaccounted for, anywhere on the
-  host, only the bound incarnation counts (Codex review of #686).
+  can read, and could be the asker. The scan lists each such thing
+  (`UnnamedAgent`):
+  - in each walked pane, every agent process that carries no session id,
+    nested or not (same kind, arguments and parentage are also what `exec
+    claude --continue` in another directory looks like, so nothing
+    collapses two of them), and one entry of no kind when the pane's walk
+    did not finish (no root, a limit reached, a read failed on Linux);
+  - outside every walked pane (`PaneScan::outside`), every agent process in
+    the whole table: another terminal, a cmux surface, a zellij pane. A
+    process there started on a session id counts as alive like one in a
+    pane (`outside_resumed`). Codex servers (`app-server`, `exec-server`,
+    `mcp-server` and their daemon) are no session a person talks to and are
+    left out; on Linux a process whose `comm` or `cmdline` cannot be read is
+    an entry of no kind.
+
+  Each named, not-Stopped row accounts for one unnamed agent of its kind in
+  the same place (the pane, or outside every walked pane), other than the
+  sessions a pane already names by resume id; the asker has no such row
+  (it would be alive). What is left blocks the judgement **only for an
+  asker it could be, and only for a while**:
+  - **by kind**: an unnamed `codex` cannot be a Claude Code asker, and the
+    other way round. An entry of no kind could be any.
+  - **by time** (`UNNAMED_AGENT_BOUND`, one hour from the first scan that
+    showed it, carried from scan to scan by pid or pane): a restart or swap
+    tend drives names its session (`--resume <id>`), so an unnamed agent
+    is one a person started by hand, and it gets a named row at its first
+    prompt, which brings its asker's questions back at once. One left
+    unprompted for an hour is not where the conversation is going on. The
+    fold it then allows changes only where the question is shown: it stays
+    under "Can't be answered" with Keep, and only a person closes it. After
+    a daemon restart the hour starts again (conservative).
+
+  Before WAVE10 one unnamed agent anywhere on the host (rtzr's fresh `codex
+  --yolo` in rmux:%492) stopped the inference for every asker, for as long
+  as it ran.
 
 Then the pane needs no history, on any server incarnation:
 
@@ -305,7 +330,8 @@ evidence again inside its transaction, so it closes nothing these rules
 would not fold.
 
 Measured read-only on 2026-11-20 with these rules: no host had an
-unaccounted agent process.
+unaccounted agent process in a pane. Outside panes, jiun-mini and the local
+Mac run only Codex `app-server` processes, which are left out.
 
 ### Grace: long enough for a swap, not a day
 

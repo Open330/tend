@@ -47,7 +47,7 @@ use super::{
     RequestStatus,
 };
 use crate::state::Agent;
-use crate::subject_evidence::{FactKind, PaneScan, SubjectBinding, SubjectFact};
+use crate::subject_evidence::{FactKind, PaneScan, SubjectBinding, SubjectFact, UnnamedAgent};
 use crate::{AgentKind, AgentState};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -97,6 +97,15 @@ const CONFIRM_PERSIST_EVERY: time::Duration = time::Duration::minutes(5);
 /// 30 seconds while tendd is up.
 pub const CONFIRMATION_FRESH: time::Duration = time::Duration::minutes(5);
 /// A scan older than this shows nothing.
+/// How long one unnamed agent (or one pane walk that did not finish) keeps
+/// the present-state judgement from a subject it could be. A restart or
+/// swap that tend drives names its session (`--resume <id>`), and an
+/// agent a person starts unnamed gets a named row at its first prompt,
+/// which brings its question back at once. One left unprompted this long
+/// is not where the conversation goes on, and the fold it then allows is
+/// still reachable under "Can't be answered".
+pub const UNNAMED_AGENT_BOUND: time::Duration = time::Duration::hours(1);
+
 const SCAN_FRESH: time::Duration = time::Duration::minutes(5);
 /// The inactivity floor `stop_rows_without_agent_process` uses.
 const AGENTLESS_PANE_IDLE: time::Duration = time::Duration::hours(1);
@@ -479,7 +488,9 @@ fn judge(
         scan.hosts
             .iter()
             .flat_map(|host| &host.panes)
-            .any(|pane| pane.resumed.iter().any(|id| id == session))
+            .flat_map(|pane| &pane.resumed)
+            .chain(&scan.outside_resumed)
+            .any(|id| id == session)
     }) {
         return Verdict::Alive;
     }
@@ -508,6 +519,7 @@ fn judge(
         let binding = merged_binding(stored.get(session), inputs.bindings.get(session));
         let seen = Seen {
             session,
+            kind: subject.agent_kind,
             row,
             binding: binding.as_ref(),
             agents: inputs.agents,
@@ -528,6 +540,7 @@ fn judge(
 /// What a scan is judged against for one subject.
 struct Seen<'a> {
     session: &'a str,
+    kind: AgentKind,
     /// The subject's own row, never live here (`judge` returned already).
     row: Option<&'a Agent>,
     binding: Option<&'a SubjectBinding>,
@@ -572,7 +585,7 @@ fn scan_evidence(
         .filter(|binding| binding.pane == pane && binding.endpoint == endpoint)
         .and_then(|binding| binding.incarnation);
     let on_bound = bound.is_some() && bound == server.incarnation;
-    let present = present_state(scan, seen.agents);
+    let present = present_state(scan, seen.agents, seen.kind, now);
     let entry = host
         .panes
         .iter()
@@ -643,42 +656,81 @@ fn named(agent: &Agent) -> bool {
         .starts_with(crate::state::SYNTHETIC_SESSION_PREFIX)
 }
 
-/// Whether `scan` can show a subject gone without history: the pass walked
-/// every pane of every backend completely (`processes_walked`), and every
-/// agent running anywhere on the host is accounted for. In each pane, an
-/// agent started on a session id names itself (`resumed`); each one that
-/// carries none (`unnamed_agents`: `claude --continue`, a session picked
-/// from a list, a fresh start) needs its own named, not-Stopped row in that
-/// pane, other than the sessions the pane already names. One unaccounted
-/// agent anywhere could be any subject, so then only the bound incarnation
-/// counts.
-fn present_state(scan: &PaneScan, agents: &[Agent]) -> bool {
-    scan.processes_walked
-        && scan.hosts.iter().flat_map(|host| &host.panes).all(|pane| {
-            let Some(unnamed) = pane.unnamed_agents else {
-                return pane.agent_process == Some(false);
-            };
-            let rows = agents
+/// Whether `scan` can show a subject of `kind` gone without history: the
+/// whole process table was read (`processes_read`), and nothing running
+/// that no session id names could be this subject.
+///
+/// Each unnamed agent (`claude --continue`, a session picked from a list, a
+/// fresh start), in a pane or outside every pane, is first matched with a
+/// named, not-Stopped row of its kind in the same place, other than the
+/// sessions a pane already names; the subject has no such row (`judge`
+/// returned already). What is left blocks the subject only while it
+/// [could be](UnnamedAgent::could_be) one of its kind, and for at most
+/// [`UNNAMED_AGENT_BOUND`] from when a scan first showed it. A pane whose
+/// walk did not finish leaves an entry of no kind, which could be any.
+fn present_state(scan: &PaneScan, agents: &[Agent], kind: AgentKind, now: OffsetDateTime) -> bool {
+    if !scan.processes_read {
+        return false;
+    }
+    let live = |agent: &&Agent| agent.state != AgentState::Stopped && named(agent);
+    let at = |agent: &Agent, pane: &str, endpoint: Option<&str>| {
+        agent.pane.as_deref() == Some(pane)
+            && match (agent.tmux_socket.as_deref(), endpoint) {
+                (Some(socket), Some(endpoint)) => {
+                    crate::backend::pane_endpoint_identity(Some(pane), socket) == endpoint
+                }
+                (None, None) => true,
+                _ => false,
+            }
+    };
+    let panes: Vec<&crate::subject_evidence::ScannedPane> =
+        scan.hosts.iter().flat_map(|host| &host.panes).collect();
+    let in_panes = panes.iter().all(|pane| {
+        let rows = agents
+            .iter()
+            .filter(live)
+            .filter(|agent| {
+                !pane.resumed.contains(&agent.session_id)
+                    && at(agent, &pane.pane_id, pane.endpoint.as_deref())
+            })
+            .map(|agent| agent.kind)
+            .collect();
+        !could_be_subject(&pane.unnamed, rows, kind, now)
+    });
+    let rows = agents
+        .iter()
+        .filter(live)
+        .filter(|agent| {
+            !panes
                 .iter()
-                .filter(|agent| {
-                    agent.state != AgentState::Stopped
-                        && named(agent)
-                        && !pane.resumed.contains(&agent.session_id)
-                        && agent.pane.as_deref() == Some(pane.pane_id.as_str())
-                        && match (agent.tmux_socket.as_deref(), pane.endpoint.as_deref()) {
-                            (Some(socket), Some(endpoint)) => {
-                                crate::backend::pane_endpoint_identity(
-                                    agent.pane.as_deref(),
-                                    socket,
-                                ) == endpoint
-                            }
-                            (None, None) => true,
-                            _ => false,
-                        }
-                })
-                .count();
-            usize::from(unnamed) <= rows
+                .any(|pane| at(agent, &pane.pane_id, pane.endpoint.as_deref()))
         })
+        .map(|agent| agent.kind)
+        .collect();
+    in_panes && !could_be_subject(&scan.outside, rows, kind, now)
+}
+
+/// Whether anything in `unnamed` that `rows` (the kinds of the named rows
+/// in the same place) leave unaccounted could be a subject of `kind` now.
+/// A row accounts for the oldest unnamed agent of its kind, so the newest
+/// are the ones left: the ones that block longest.
+fn could_be_subject(
+    unnamed: &[UnnamedAgent],
+    mut rows: Vec<AgentKind>,
+    kind: AgentKind,
+    now: OffsetDateTime,
+) -> bool {
+    let mut unnamed: Vec<&UnnamedAgent> = unnamed.iter().collect();
+    unnamed.sort_by_key(|agent| agent.since);
+    unnamed.into_iter().any(|agent| {
+        if let Some(own) = agent.kind {
+            if let Some(index) = rows.iter().position(|row| *row == own) {
+                rows.swap_remove(index);
+                return false;
+            }
+        }
+        agent.could_be(kind) && now - agent.since < UNNAMED_AGENT_BOUND
+    })
 }
 
 /// The binding to judge a subject by: the one stored on the item, or the

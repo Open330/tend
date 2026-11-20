@@ -11,9 +11,9 @@ use crate::event::AgentKind;
 use crate::process_snapshot::ProcessInfo;
 use crate::tmux::PaneInfo;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 #[cfg(target_os = "linux")]
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet};
 
 const MAX_DEPTH: u8 = 10;
 const MAX_NODES: usize = 256;
@@ -178,6 +178,23 @@ pub struct CodexPaneScan {
     /// or node limit. Only then does what [`Self::identities`] lacks say
     /// anything.
     pub complete: bool,
+    /// The host's agent processes outside every pane walked here: in a
+    /// backend tendd does not walk (cmux, zellij, a socket that did not
+    /// answer), another terminal, or past a walk's limit. A question's
+    /// subject could be any of them.
+    pub outside: OutsideAgents,
+}
+
+/// Agent processes in no walked pane, from the whole process table.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct OutsideAgents {
+    /// The whole table was read: `ps` answered, or `/proc` was listed.
+    pub read: bool,
+    /// Session ids one of them was explicitly started on.
+    pub resumed: Vec<String>,
+    /// The ones no session id names, by pid; `None` for a process whose
+    /// command could not be read, which could be any agent.
+    pub unnamed: Vec<(u32, Option<AgentKind>)>,
 }
 
 /// Recover detached Codex sessions from an explicit CLI resume id and its
@@ -222,9 +239,21 @@ pub fn scan_codex_panes_with(panes: &[PaneInfo], source: &ProcessSource) -> Code
     let complete = read
         && unique.iter().all(|pane| pane.pane_pid != 0)
         && scanned.iter().all(|(_, _, walked)| *walked);
+    let inside: HashSet<u32> = scanned
+        .iter()
+        .flat_map(|(_, processes, _)| processes.iter().map(|process| process.pid))
+        .collect();
+    #[cfg(not(target_os = "linux"))]
+    let outside = outside_agents(read, table.processes().cloned().map(Ok), &inside);
+    #[cfg(target_os = "linux")]
+    let outside = read_outside_agents(&inside);
     let identities = scanned
         .iter()
-        .map(|(pane, processes, _)| (PaneKey::of(pane), pane_identities(processes)))
+        .map(|(pane, processes, walked)| {
+            let mut identities = pane_identities(processes);
+            identities.whole = *walked;
+            (PaneKey::of(pane), identities)
+        })
         .collect();
     let scanned: Vec<_> = scanned
         .into_iter()
@@ -240,6 +269,7 @@ pub fn scan_codex_panes_with(panes: &[PaneInfo], source: &ProcessSource) -> Code
     CodexPaneScan {
         identities,
         complete,
+        outside,
         resume_bindings: unique_resume_bindings(
             scanned
                 .into_iter()
@@ -247,6 +277,95 @@ pub fn scan_codex_panes_with(panes: &[PaneInfo], source: &ProcessSource) -> Code
         ),
         hosts,
     }
+}
+
+/// [`OutsideAgents`] from every process outside `inside`. An `Err` is a
+/// process that exists but whose command could not be read.
+fn outside_agents(
+    read: bool,
+    processes: impl Iterator<Item = Result<ProcessInfo, u32>>,
+    inside: &HashSet<u32>,
+) -> OutsideAgents {
+    let mut out = OutsideAgents {
+        read,
+        ..OutsideAgents::default()
+    };
+    if !read {
+        return out;
+    }
+    let mut resumed = std::collections::BTreeSet::new();
+    for process in processes {
+        let process = match process {
+            Ok(process) => process,
+            Err(pid) => {
+                if !inside.contains(&pid) {
+                    out.unnamed.push((pid, None));
+                }
+                continue;
+            }
+        };
+        if inside.contains(&process.pid) || codex_server(&process) {
+            continue;
+        }
+        let Some(kind) = agent_kind(&process) else {
+            continue;
+        };
+        match resume_id(&process) {
+            Some(sid) => {
+                resumed.insert(sid.to_owned());
+            }
+            None => out.unnamed.push((process.pid, Some(kind))),
+        }
+    }
+    out.resumed = resumed.into_iter().collect();
+    out.unnamed.sort_unstable_by_key(|(pid, _)| *pid);
+    out
+}
+
+/// A Codex server process (`app-server`, `exec-server`, `mcp-server`, and
+/// the daemon that keeps them): it hosts threads for clients, and is no
+/// session of its own a person could be talking to.
+fn codex_server(process: &ProcessInfo) -> bool {
+    agent_kind(process) == Some(AgentKind::Codex)
+        && process
+            .cmdline
+            .split_whitespace()
+            .any(|arg| matches!(arg, "app-server" | "exec-server" | "mcp-server"))
+}
+
+/// [`outside_agents`] over `/proc`, read now. A process that exists but
+/// whose `comm` or `cmdline` cannot be read is one the walk cannot name.
+#[cfg(target_os = "linux")]
+fn read_outside_agents(inside: &HashSet<u32>) -> OutsideAgents {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return OutsideAgents::default();
+    };
+    let own = std::process::id();
+    let processes = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
+        .filter(|pid| *pid != own && !inside.contains(pid))
+        .filter_map(|pid| {
+            let exists = || std::path::Path::new(&format!("/proc/{pid}")).exists();
+            let read = |file: &str| std::fs::read(format!("/proc/{pid}/{file}"));
+            match (read("comm"), read("cmdline")) {
+                (Ok(comm), Ok(cmdline)) => Some(Ok(ProcessInfo {
+                    pid,
+                    parent_pid: 0,
+                    depth: 0,
+                    comm: String::from_utf8_lossy(&comm).trim().to_string(),
+                    cmdline: cmdline
+                        .split(|b| *b == 0)
+                        .filter(|part| !part.is_empty())
+                        .map(|part| String::from_utf8_lossy(part))
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                })),
+                _ if exists() => Some(Err(pid)),
+                _ => None,
+            }
+        });
+    outside_agents(true, processes, inside)
 }
 
 // A no-daemon TUI owns its hooks and cannot host a shared-server thread.
@@ -313,7 +432,10 @@ pub struct PaneIdentities {
     /// Agent processes that carry no session id: `claude --continue`, a
     /// fresh `codex`, a session picked from a list, a subagent run. Each
     /// counts on its own, nested or not.
-    pub unnamed: u16,
+    pub unnamed: Vec<(u32, AgentKind)>,
+    /// The walk read the whole pane: it had a root, and no read failed or
+    /// stopped at a limit.
+    pub whole: bool,
 }
 
 /// What [`PaneIdentities`] a pane's walk shows.
@@ -327,10 +449,12 @@ fn pane_identities(processes: &[ProcessInfo]) -> PaneIdentities {
     // can name. No inference collapses two of them: same kind, arguments
     // and direct parentage are also what `exec claude --continue` in
     // another directory looks like.
-    let unnamed = agents
+    let mut unnamed: Vec<(u32, AgentKind)> = agents
         .values()
         .filter(|process| resume_id(process).is_none())
-        .count();
+        .filter_map(|process| Some((process.pid, agent_kind(process)?)))
+        .collect();
+    unnamed.sort_unstable_by_key(|(pid, _)| *pid);
     let mut resumed: Vec<String> = resumed_sessions(std::iter::once(processes))
         .into_iter()
         .collect();
@@ -338,7 +462,8 @@ fn pane_identities(processes: &[ProcessInfo]) -> PaneIdentities {
     PaneIdentities {
         agent: !agents.is_empty(),
         resumed,
-        unnamed: u16::try_from(unnamed).unwrap_or(u16::MAX),
+        unnamed,
+        whole: true,
     }
 }
 
@@ -850,8 +975,8 @@ mod tests {
         let scan = scan_codex_panes_with(&[pane("%8", 10), other()], &source(both));
         let here = &scan.identities[&PaneKey::of(&pane("%8", 10))];
         let there = &scan.identities[&PaneKey::of(&other())];
-        assert_eq!((here.resumed.len(), here.unnamed), (1, 0));
-        assert_eq!((there.resumed.len(), there.unnamed), (0, 1));
+        assert_eq!((here.resumed.len(), here.unnamed.len()), (1, 0));
+        assert_eq!((there.resumed.len(), there.unnamed.len()), (0, 1));
     }
 
     #[test]
@@ -876,7 +1001,7 @@ mod tests {
             proc(22, 21, 3, "node_repl", "node_repl"),
         ]);
         assert_eq!(
-            (named.agent, named.resumed.len(), named.unnamed),
+            (named.agent, named.resumed.len(), named.unnamed.len()),
             (true, 1, 0)
         );
         let beside = pane_identities(&[
@@ -884,7 +1009,7 @@ mod tests {
             proc(21, 10, 1, "codex", &format!("codex resume {sid}")),
             proc(30, 10, 1, "claude", "claude --continue"),
         ]);
-        assert_eq!(beside.unnamed, 1);
+        assert_eq!(beside.unnamed, vec![(30, AgentKind::ClaudeCode)]);
         // Nested under it, through a shell, it is still its own session.
         let nested = pane_identities(&[
             proc(10, 1, 0, "zsh", "-zsh"),
@@ -892,7 +1017,7 @@ mod tests {
             proc(25, 21, 2, "zsh", "zsh -c claude"),
             proc(30, 25, 3, "claude", "claude --continue"),
         ]);
-        assert_eq!((nested.resumed.len(), nested.unnamed), (1, 1));
+        assert_eq!((nested.resumed.len(), nested.unnamed.len()), (1, 1));
         // The same flags through a shell, or exec'd directly: each picks
         // its own session.
         let twice = pane_identities(&[
@@ -900,14 +1025,56 @@ mod tests {
             proc(20, 10, 1, "claude", "claude --continue"),
             proc(30, 20, 2, "claude", "claude --continue"),
         ]);
-        assert_eq!(twice.unnamed, 2);
+        assert_eq!(twice.unnamed.len(), 2);
         // A subagent run under a fresh agent: two.
         let sub = pane_identities(&[
             proc(10, 1, 0, "zsh", "-zsh"),
             proc(20, 10, 1, "codex", "codex --yolo"),
             proc(21, 20, 2, "codex", "codex exec do-it"),
         ]);
-        assert_eq!(sub.unnamed, 2);
+        assert_eq!(sub.unnamed.len(), 2);
+    }
+
+    #[test]
+    fn agents_outside_every_walked_pane_are_listed_from_the_whole_table() {
+        let sid = "01a132f3-21bf-76e3-822e-e84855943e22";
+        let inside: HashSet<u32> = [10, 20].into_iter().collect();
+        let processes = vec![
+            Ok(proc(10, 1, 0, "zsh", "-zsh")),
+            Ok(proc(20, 10, 1, "claude", "claude --continue")),
+            // A fresh codex in another terminal, a resume in a cmux surface,
+            // the shared app-server and its daemon, and a shell.
+            Ok(proc(30, 1, 0, "codex", "codex --yolo")),
+            Ok(proc(31, 1, 0, "claude", &format!("claude --resume {sid}"))),
+            Ok(proc(
+                32,
+                1,
+                0,
+                "codex",
+                "/x/bin/codex app-server --listen unix://",
+            )),
+            Ok(proc(
+                33,
+                1,
+                0,
+                "codex",
+                "/x/bin/codex app-server daemon pid-update-loop",
+            )),
+            Ok(proc(34, 1, 0, "codex", "codex -c a=b exec-server --x")),
+            Ok(proc(35, 1, 0, "zsh", "-zsh")),
+            // Exists, but its command could not be read.
+            Err(36),
+        ];
+        let outside = outside_agents(true, processes.clone().into_iter(), &inside);
+        assert!(outside.read);
+        assert_eq!(outside.resumed, vec![sid.to_owned()]);
+        assert_eq!(
+            outside.unnamed,
+            vec![(30, Some(AgentKind::Codex)), (36, None)]
+        );
+        // A table that was not read lists nothing and says so.
+        let unread = outside_agents(false, processes.into_iter(), &inside);
+        assert_eq!(unread, OutsideAgents::default());
     }
 
     #[test]

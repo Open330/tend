@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Questions whose asker has exited now actually fold from present state.
+  In 0.10.29 that judgement required every pane backend to be complete, and
+  the cmux backend every host keeps ready is always partial, so it never
+  ran: jiun-mini kept six week-old questions in Your turn and jiun-mbp
+  three tend recovery items. Now it needs the process table read; agents in
+  a backend tendd does not walk, or in another terminal, are found in the
+  whole table.
+- One agent tendd cannot name (a fresh `codex`, `claude --continue`) no
+  longer holds every question on its host: it blocks only askers of its own
+  kind, and for at most an hour from when tendd first saw it. A Codex
+  `app-server` is not counted as one.
+
 ## [0.10.29] - 2026-11-20
 
 ### Fixed
