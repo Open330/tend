@@ -132,17 +132,18 @@ enum TendStateHue: CaseIterable, Sendable {
 }
 
 /// The leading column's background (the activity bar and the sidebar list):
-/// the system sidebar material, blended with what is behind the window and
-/// following the window's active state, as a native sidebar is. Under
-/// Reduce Transparency or Increase Contrast it is the opaque sidebar surface,
-/// the value every ink in the design is checked against.
+/// the opaque sidebar surface, the value every ink in the design is checked
+/// against. With `TendPreferences.sidebarMaterialKey` on, the system sidebar
+/// material instead (blended with what is behind the window, following its
+/// active state), except under Reduce Transparency or Increase Contrast.
 struct TendSidebarBackground: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
+    @AppStorage(TendPreferences.sidebarMaterialKey) private var usesMaterial = false
 
     var body: some View {
-        if reduceTransparency || contrast == .increased {
+        if !usesMaterial || reduceTransparency || contrast == .increased {
             TendSurface.sidebar(colorScheme)
         } else {
             TendSidebarMaterial()

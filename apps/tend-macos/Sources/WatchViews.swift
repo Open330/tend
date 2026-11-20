@@ -169,6 +169,12 @@ private func watchHighlightFill(
     }
 }
 
+/// A highlighted row's informing text: label ink on either tint (secondary
+/// falls under 4.5:1 there, under some system accents too), else secondary.
+func watchRowInk(_ highlight: WatchTreeHighlight, _ scheme: ColorScheme) -> AnyShapeStyle {
+    highlight == .idle ? AnyShapeStyle(.secondary) : AnyShapeStyle(TendInk.label(scheme))
+}
+
 /// Thin leading accent bar that marks the followed pane without reading as a
 /// selection. It never participates in hit testing.
 private struct WatchFollowedMarker: View {
@@ -531,8 +537,9 @@ private struct WatchPaneRow: View {
 /// dot so the column stays quiet. A plain shell shows its command.
 private struct WatchPaneRowTrailing: View {
     let pane: TendWatchPane
-    /// The row is selected: the status word sits on the accent tint.
+    /// The row is selected or followed: its words sit on the accent tint.
     var onTint = false
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         if let status = pane.agentStatus {
@@ -545,7 +552,7 @@ private struct WatchPaneRowTrailing: View {
         } else if let command = pane.pane.currentCommand.nonEmpty {
             Text(command)
                 .font(TendType.meta.monospaced())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(watchRowInk(onTint ? .selected : .idle, colorScheme))
                 .lineLimit(1)
         }
     }
@@ -599,6 +606,7 @@ func firstReadableLine(_ text: String) -> String {
 /// context needed to identify the pane.
 struct WatchFlatPaneRow: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.colorScheme) private var colorScheme
     let pane: TendWatchPane
     let highlight: WatchTreeHighlight
     let selectPane: (TendWatchPaneIdentity) -> Void
@@ -634,17 +642,16 @@ struct WatchFlatPaneRow: View {
                         Spacer(minLength: 3)
                         WatchPaneRowTrailing(pane: pane, onTint: highlight != .idle)
                     }
-                    // A selected row's tint takes secondary ink under 4.5:1:
-                    // every word on it is label ink.
+                    // Secondary ink reads under 4.5:1 on either tint.
                     if let activity = watchPaneActivity(pane) {
                         Text(activity)
                             .font(TendType.detail)
-                            .foregroundStyle(highlight == .selected ? Color.primary : Color.secondary)
+                            .foregroundStyle(watchRowInk(highlight, colorScheme))
                             .lineLimit(1)
                     }
                     Text(location)
                         .font(TendType.meta)
-                        .foregroundStyle(highlight == .selected ? Color.primary : Color.secondary)
+                        .foregroundStyle(watchRowInk(highlight, colorScheme))
                         .lineLimit(1)
                 }
             }

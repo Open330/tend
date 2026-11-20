@@ -119,6 +119,11 @@ enum TendPreferences {
     static let homeAnimatesMovesKey = "tend.home.animatesMoves"
     /// How Home draws its items: `FleetCardLayout`.
     static let homeCardLayoutKey = "tend.home.cardLayout"
+    /// Opt-in, off by default and with no control yet: the sidebar draws the
+    /// system sidebar material instead of its opaque surface. On by default
+    /// once an on-screen check covers the material over bright, dark and
+    /// colourful backdrops in active and inactive windows.
+    static let sidebarMaterialKey = "tend.appearance.sidebarMaterial"
     static let settingsTabKey = "tend.settings.selectedTab"
     static let fleetSettingsSectionKey = "tend.settings.fleetSection"
     static let workDirectoryKey = "nativeWorkDirectory"

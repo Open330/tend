@@ -113,11 +113,13 @@ Four surfaces:
 | Lane | `#F4F4F6` | `#232325` | a well: fill only, no border |
 | Card | `#FFFFFF` | `#2C2C2F` | fill and an 8% hairline; in light also a 1pt, 6% shadow |
 
-The activity bar and sidebar list draw the system sidebar material
-(`NSVisualEffectView`, `.sidebar`, behind-window, following the window's
-active state); the tab strip and status bar take its opaque value. Under
-Reduce Transparency or Increase Contrast the column is that opaque value too,
-the one every ink is checked against. The shared `side-bar` and
+The activity bar, sidebar list, tab strip and status bar draw the opaque
+sidebar surface, the value every ink is checked against. The system sidebar
+material (`NSVisualEffectView`, `.sidebar`, behind-window, following the
+window's active state) is built but opt-in (`tend.appearance.sidebarMaterial`,
+no control yet, never under Reduce Transparency or Increase Contrast) until an
+on-screen check covers it over bright, dark and colourful backdrops in active
+and inactive windows; CI cannot sample what is behind a window. The shared `side-bar` and
 `activity-bar` tokens stay the web's and iOS's. Content and cards stay opaque. Radii: control 6, option group 8, card 10,
 lane 12, all continuous corners.
 
