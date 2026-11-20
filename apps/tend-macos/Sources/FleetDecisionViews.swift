@@ -652,7 +652,7 @@ struct FleetEvidenceChips: View {
         } icon: {
             Image(systemName: evidence.systemImage)
         }
-        .font(.system(size: 11, weight: .medium))
+        .font(TendType.label)
         .frame(maxWidth: 220)
         .fixedSize(horizontal: false, vertical: true)
         .padding(.horizontal, 7)
@@ -717,7 +717,7 @@ struct FleetVerificationChecks: View {
                     .help(check.command)
                     if !check.passed, !check.tail.isEmpty {
                         Text(verbatim: check.tail)
-                            .font(.system(size: 10, design: .monospaced))
+                            .font(TendType.monoSmall)
                             .foregroundStyle(.secondary)
                             .lineLimit(4)
                             .textSelection(.enabled)
@@ -833,7 +833,7 @@ struct FleetDecisionCard: View {
                 FleetVerificationChecks(verification: verification)
             }
             Text(verbatim: decision.title)
-                .font(.system(size: 13, weight: .semibold))
+                .font(TendType.section)
                 .lineLimit(4)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
@@ -1109,7 +1109,7 @@ struct FleetDecisionOptionRow: View {
         Button(action: choose) {
             HStack(alignment: .top, spacing: 8) {
                 Text(verbatim: "\(number)")
-                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                    .font(TendType.label.weight(.semibold).monospacedDigit())
                     .foregroundStyle(TendInk.label(colorScheme))
                     .frame(width: 18, height: 18)
                     .background(TendInk.control(colorScheme), in: RoundedRectangle(cornerRadius: 5, style: .continuous))

@@ -117,10 +117,10 @@ struct FleetCantAnswerGroup: View {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(TendType.glyph)
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 Text("Can't be answered (\(count))")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(TendType.label.weight(.semibold))
                     .monospacedDigit()
                 Spacer(minLength: 0)
             }
@@ -214,7 +214,7 @@ struct FleetCantAnswerRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(verbatim: decision.title)
-                .font(.system(size: 12, weight: .semibold))
+                .font(TendType.detail.weight(.semibold))
                 .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)

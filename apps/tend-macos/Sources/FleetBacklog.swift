@@ -138,9 +138,9 @@ struct FleetBacklogColumn: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text("Backlog")
-                    .font(.system(size: 13, weight: .bold))
+                    .font(TendType.section)
                 Text("\(records.count)")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(TendType.detail.weight(.semibold))
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 4)
@@ -191,12 +191,12 @@ struct FleetBacklogCard: View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(verbatim: record.title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(TendType.section)
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if let priority = record.plan?.priority {
                     Text(verbatim: "P\(priority)")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(TendType.label)
                         .monospacedDigit()
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
