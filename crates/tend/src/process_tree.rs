@@ -310,10 +310,9 @@ pub struct PaneIdentities {
     /// Session ids a process in it was explicitly started on, whichever way
     /// its hooks run (`--no-daemon` included).
     pub resumed: Vec<String>,
-    /// Top-level agent processes (no agent among their ancestors in the
-    /// pane) that carry no session id: `claude --continue`, a fresh
-    /// `codex`, a session picked from a list. An agent's own children are
-    /// part of it, not counted.
+    /// Agent processes that carry no session id: `claude --continue`, a
+    /// fresh `codex`, a session picked from a list, a subagent run. Each
+    /// counts on its own, nested or not.
     pub unnamed: u16,
 }
 
@@ -324,29 +323,13 @@ fn pane_identities(processes: &[ProcessInfo]) -> PaneIdentities {
         .filter(|process| agent_kind(process).is_some())
         .map(|process| (process.pid, process))
         .collect();
-    let parent_of: HashMap<u32, u32> = processes.iter().map(|p| (p.pid, p.parent_pid)).collect();
-    // The nearest agent among a process's ancestors in the pane.
-    let nearest_agent = |process: &ProcessInfo| {
-        let mut pid = process.parent_pid;
-        for _ in 0..=usize::from(MAX_DEPTH) + 1 {
-            if let Some(agent) = agents.get(&pid) {
-                return Some(*agent);
-            }
-            pid = *parent_of.get(&pid)?;
-        }
-        None
-    };
-    // An agent process is one more session unless it is provably the same
-    // one as the agent it runs under: a launcher shim and the binary it
-    // starts carry the same kind and the same session id, or the same
-    // arguments. Any other agent below an agent (`codex resume a` -> shell
-    // -> `claude --continue`) is its own session.
+    // Every agent process without a session id is one more session nobody
+    // can name. No inference collapses two of them: same kind, arguments
+    // and direct parentage are also what `exec claude --continue` in
+    // another directory looks like.
     let unnamed = agents
         .values()
         .filter(|process| resume_id(process).is_none())
-        .filter(|process| {
-            nearest_agent(process).is_none_or(|parent| !same_session(parent, process))
-        })
         .count();
     let mut resumed: Vec<String> = resumed_sessions(std::iter::once(processes))
         .into_iter()
@@ -357,28 +340,6 @@ fn pane_identities(processes: &[ProcessInfo]) -> PaneIdentities {
         resumed,
         unnamed: u16::try_from(unnamed).unwrap_or(u16::MAX),
     }
-}
-
-/// Whether `child`, an agent process under the agent `parent`, is the same
-/// session: the same kind, and the same explicit session id, or no id, the
-/// same arguments, and `child` started directly by `parent` (a shim
-/// re-executing the real binary). Through anything in between (a shell),
-/// two agents with the same flags can each pick their own session.
-fn same_session(parent: &ProcessInfo, child: &ProcessInfo) -> bool {
-    let args = |process: &ProcessInfo| -> Vec<String> {
-        process
-            .cmdline
-            .split_whitespace()
-            .skip(1)
-            .map(str::to_owned)
-            .collect()
-    };
-    agent_kind(parent) == agent_kind(child)
-        && match (resume_id(parent), resume_id(child)) {
-            (Some(a), Some(b)) => a == b,
-            (None, None) => child.parent_pid == parent.pid && args(parent) == args(child),
-            _ => false,
-        }
 }
 
 /// Every session id a process in these panes was explicitly started on.
@@ -894,7 +855,7 @@ mod tests {
     }
 
     #[test]
-    fn a_shim_is_one_session_and_any_other_nested_agent_is_its_own() {
+    fn every_agent_without_a_session_id_counts_on_its_own() {
         let sid = "01a132f3-21bf-76e3-822e-e84855943e22";
         let named = pane_identities(&[
             proc(10, 1, 0, "zsh", "-zsh"),
@@ -932,22 +893,15 @@ mod tests {
             proc(30, 25, 3, "claude", "claude --continue"),
         ]);
         assert_eq!((nested.resumed.len(), nested.unnamed), (1, 1));
-        // The same flags through a shell: two sessions, each its own pick.
+        // The same flags through a shell, or exec'd directly: each picks
+        // its own session.
         let twice = pane_identities(&[
             proc(10, 1, 0, "zsh", "-zsh"),
             proc(20, 10, 1, "claude", "claude --continue"),
-            proc(25, 20, 2, "zsh", "zsh -c 'cd /other && claude --continue'"),
-            proc(30, 25, 3, "claude", "claude --continue"),
+            proc(30, 20, 2, "claude", "claude --continue"),
         ]);
         assert_eq!(twice.unnamed, 2);
-        // A shim and the binary it starts, with the same arguments: one.
-        let shim = pane_identities(&[
-            proc(10, 1, 0, "zsh", "-zsh"),
-            proc(20, 10, 1, "codex", "codex --yolo"),
-            proc(21, 20, 2, "codex", "/opt/codex/bin/codex --yolo"),
-        ]);
-        assert_eq!(shim.unnamed, 1);
-        // A child with other arguments (a subagent run): its own session.
+        // A subagent run under a fresh agent: two.
         let sub = pane_identities(&[
             proc(10, 1, 0, "zsh", "-zsh"),
             proc(20, 10, 1, "codex", "codex --yolo"),

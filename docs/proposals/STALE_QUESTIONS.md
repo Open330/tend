@@ -274,12 +274,15 @@ from a walk that saw everything:
   session only when it was started by id. `claude --continue`, a session
   picked from a list, or a thread tendd has not bound runs under no name it
   can read, and could be the asker. So every agent must be accounted for,
-  one by one. In each pane the walk counts the top-level agent processes (no
-  agent among their ancestors; an agent's own children are part of it) that
-  carry no session id (`ScannedPane::unnamed_agents`). Each needs its own
+  one by one. In each pane the walk counts every agent process that carries
+  no session id (`ScannedPane::unnamed_agents`), nested or not: same kind,
+  arguments and parentage are also what `exec claude --continue` in another
+  directory looks like, so nothing collapses two of them. Each needs its own
   named, not-Stopped row in that pane, other than the sessions the pane
   already names by resume id: one identified agent does not account for a
-  second one beside it. While any agent is unaccounted for, anywhere on the
+  second one beside or under it. Status, name and command line must all be
+  readable for every live process walked; an unreadable one makes the walk
+  incomplete. While any agent is unaccounted for, anywhere on the
   host, only the bound incarnation counts (Codex review of #686).
 
 Then the pane needs no history, on any server incarnation:
