@@ -25,24 +25,23 @@ no music.
   `tend`; host `local`; agents' prompts from demo-setup. Every frame is OCR'd
   (Vision) and checked for hostnames, `/Users/…`, account names, real repos.
 
-## Scenes
+## Scenes (revised after the Codex challenge)
 
 | # | Time | Shows (real app, fixture data) | Caption (EN / KO) |
 |---|---|---|---|
-| 0 | 0–4 s | Title: Tend icon + name on a plain background. | **Tend** — one place to tend your coding agents / 코딩 에이전트를 한곳에서 돌보는 Tend |
-| 1 | 4–14 s | Tend for Mac opens on **Home**: Your turn / In progress / Finished, grouped by project. Cursor drifts across the three lanes. | Home: what needs you, what's running, what's done. / 홈: 내 차례, 진행 중, 끝난 일을 한눈에 |
-| 2 | 14–25 s | Click a **Your turn** card that asks a choice ("rotate the JWT signing keys…"). The question and its options open; pick "staging, then prod on approval". The card leaves Your turn. | Answer an agent's question without hunting for its terminal. / 터미널을 찾아다니지 않고 에이전트의 질문에 답하기 |
-| 3 | 25–37 s | **Review 5** → the Review sheet: "Merge the proration fix?" with summary, recommendation and the passing test. Choose **merge** → Accept. Count drops to 4. Done. | Decide finished work: summary, evidence, one click. / 끝난 작업 결정: 요약과 근거를 보고 한 번에 |
-| 4 | 37–50 s | **Explore**: Needs attention, then the execution topology host › session › window › pane. Click the `sdk` agent (Error) → its live pane. | Explore every session, window and pane — live. / 모든 세션·창·패널을 실시간으로 |
-| 5 | 50–57 s | **Steer**: type "retry with the cached spec" into *Send a prompt to this agent/pane* → Send; the text arrives in the live pane. | Steer any agent from the same window. / 같은 창에서 어떤 에이전트든 지시하기 |
-| 6 | 57–65 s | Click the **menu bar** item → the popover: agents with states, "6 agents need you · 1 decision". | Always one click away in the menu bar. / 메뉴 막대에서 언제나 한 번에 |
-| 7 | 65–72 s | **iPhone** (simulator, framed): Home's lane strip with Your turn; tap a decision, choose. | Also on iPhone… / iPhone에서도… |
-| 8 | 72–77 s | **iPad**: the wide layout, three lanes side by side. | …and iPad. / …iPad에서도 |
-| 9 | 77–81 s | End card: Tend icon, "macOS · iPhone · iPad", `github.com/Open330/tend`. | — |
+| 1 | 0–7 s | Tend for Mac opens on **Home** (Your turn / In progress / Finished, grouped by project) with the Tend name and icon over the first 2 s; the cursor sweeps the lanes once. | Tend: every coding agent, one Home. / Tend: 모든 코딩 에이전트를 한 화면에 |
+| 2 | 7–19 s | Click the Your turn card "rotate the JWT signing keys…": Tend reads the agent's picker off its screen and shows the options. Click "staging, then prod on approval": the answer is delivered to the agent's pane, it continues, and the card leaves Your turn. | Answer an agent's question; Tend delivers it to its terminal. / 에이전트의 질문에 답하면 Tend가 그 터미널로 전달합니다 |
+| 3 | 19–32 s | **Review** → "Merge the proration fix?": summary, the agent's recommendation and the test it reported. Choose **merge** → Accept; it leaves the decision queue. | Review finished work with the agent's evidence, then decide. / 에이전트가 낸 근거를 보고 끝난 작업을 결정 |
+| 4 | 32–50 s | **Explore** → the `sdk` agent stopped on an error (its live pane, its place under host › session › window shown once as navigation). Type "retry with the cached spec and open a PR" → Send; the pane acknowledges and the agent goes back to Working. | See any pane live and steer the agent in it. / 패널을 실시간으로 보고 그 자리에서 에이전트에 지시 |
+| 5 | 50–57 s | Click the **menu bar** item → the popover with the agents and what needs you (counts as observed, not scripted). Cropped to the window and the menu cluster; clock and user menu out of frame. | Always one click away in the menu bar. / 메뉴 막대에서 언제나 한 번에 |
+| 6 | 57–64 s | **iPhone** (simulator, status bar overridden): the same fleet's Home; accept "Publish the backfilled rollups?". Pairing is out of shot. | Also on iPhone… / iPhone에서도… |
+| 7 | 64–70 s | **iPad** landscape: the three lanes side by side. | …and iPad. / …iPad에서도 |
+| 8 | 70–74 s | End card: icon, "Tend — macOS · iPhone · iPad", `github.com/Open330/tend`. | — |
 
-Optional if time allows and it reads well: a 3 s Settings → Fleet/Accounts beat
-between 6 and 7. Fleet hosts with several machines are skipped: on a runner the
-fixture has one host, and a drawn multi-host board would not be the real app.
+Answers and prompts land in fixture panes that behave like an agent
+(`scripts/demo-video/panes/`): they read what Tend sends, print it, and fire
+the same hooks a real agent fires. Fleet/Accounts are left out (one host on a
+runner; a drawn multi-host board is not the real app).
 
 ## Edit
 
