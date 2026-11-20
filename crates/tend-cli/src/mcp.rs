@@ -701,6 +701,7 @@ fn tool_definitions(config: &tend::config::Config) -> Vec<Value> {
                     "all": { "type": "boolean", "description": "Every Claude/Codex agent, not only capped ones." },
                     "provider": { "type": "string", "enum": ["claude", "codex"] },
                     "to": { "type": "string", "description": "Account name, auto (default), or same to restart each target on its own identified account." },
+                    "from": { "type": "string", "description": "Only agents running on this account (within the scope); one whose account cannot be identified is left alone." },
                     "when_idle": { "type": "boolean", "description": "Keep busy targets pending until idle (daemon job); force takes precedence." },
                     "idle_timeout": { "type": "string", "description": "Maximum idle wait, e.g. 30m or 6h (default 6h). Requires when_idle." },
                     "spread": { "type": "boolean", "description": "Round-robin agents over every account with quota left." },
@@ -5821,6 +5822,7 @@ const SWAP_START_FIELDS: &[&str] = &[
     "all",
     "provider",
     "to",
+    "from",
     "spread",
     "when_idle",
     "idle_timeout",
@@ -5927,6 +5929,7 @@ fn swap_plan(
             for (name, option) in [
                 ("provider", "--provider"),
                 ("to", "--to"),
+                ("from", "--from"),
                 ("idle_timeout", "--idle-timeout"),
                 ("continue_text", "--continue-text"),
                 ("continue_when", "--continue-when"),

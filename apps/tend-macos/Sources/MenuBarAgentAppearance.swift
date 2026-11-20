@@ -84,7 +84,8 @@ struct TendMenuBarAvatar: View {
             .overlay(alignment: .bottomTrailing) {
                 if showsStatus {
                     Image(systemName: item.menuStatusSymbol)
-                        .font(.system(size: max(9, size * 0.34), weight: .bold))
+                        // Sized from the frame (a fraction of the avatar), not a text role.
+                        .font(.system(size: max(9, size * 0.34), weight: .bold)) // type-ramp: exempt
                         .foregroundStyle(item.menuStatusColor)
                         .padding(1.5)
                         .background(.regularMaterial, in: Circle())

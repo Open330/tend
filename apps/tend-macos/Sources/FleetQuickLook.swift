@@ -134,7 +134,7 @@ struct FleetQuickLookView: View {
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(work?.title ?? hosted.map(FleetBoard.owner) ?? "")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(TendType.page)
                     .lineLimit(2)
                 if let hosted {
                     HStack(spacing: 6) {
@@ -165,7 +165,7 @@ struct FleetQuickLookView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Text(status.needsAttention ? "Needs you" : "Now")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(TendType.label.weight(.semibold))
                         .foregroundStyle(status.needsAttention ? Color.orange : Color.secondary)
                     if let since {
                         Text(since, format: .relative(presentation: .numeric, unitsStyle: .abbreviated))
@@ -175,7 +175,7 @@ struct FleetQuickLookView: View {
                     }
                 }
                 Text(now)
-                    .font(.system(size: 13.5, weight: status.needsAttention ? .semibold : .regular))
+                    .font(TendType.body.weight(status.needsAttention ? .semibold : .regular))
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
             }
@@ -200,7 +200,7 @@ struct FleetQuickLookView: View {
     private func summaryRow(_ title: LocalizedStringKey, _ text: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
-                .font(.system(size: 11, weight: .bold))
+                .font(TendType.label.weight(.semibold))
                 .foregroundStyle(.secondary)
             Text(text)
                 .font(TendType.body)
@@ -237,7 +237,7 @@ struct FleetQuickLookView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     Text(previewText(hosted))
-                        .font(.system(size: 11.5, design: .monospaced))
+                        .font(TendType.monoSmall)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(10)

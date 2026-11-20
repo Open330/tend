@@ -154,7 +154,7 @@ struct FleetServersList: View {
             HStack(spacing: 6) {
                 Image(systemName: TendHostIcons.icon(for: host.alias, local: host.local))
                     .foregroundStyle(.secondary)
-                Text(host.alias).font(.system(size: 13, weight: .semibold))
+                Text(host.alias).font(TendType.section)
                 if case .rows(let inventory) = states[host.alias], inventory.collection.state == "complete" {
                     Text(String(localized: "\(inventory.total) listening"))
                         .font(TendType.meta)
@@ -210,7 +210,7 @@ struct FleetServersList: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 Text(row.statusText)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(TendType.label)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 1)
                     .background(Color.secondary.opacity(0.15), in: Capsule())

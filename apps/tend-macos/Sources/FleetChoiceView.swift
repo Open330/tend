@@ -72,7 +72,7 @@ struct FleetChoicePanel<Fallback: View>: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Choice on screen")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(TendType.label.weight(.semibold))
                     .foregroundStyle(.orange)
                 Spacer()
                 if loading { ProgressView().controlSize(.small) }
@@ -87,7 +87,7 @@ struct FleetChoicePanel<Fallback: View>: View {
             }
             if let dialog {
                 Text(dialog.question)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(TendType.section)
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
                 VStack(alignment: .leading, spacing: 6) {
@@ -107,7 +107,7 @@ struct FleetChoicePanel<Fallback: View>: View {
                                         .foregroundStyle(multiSelection.contains(option.number) ? Color.accentColor : Color.secondary)
                                 }
                                 Text("\(option.number)")
-                                    .font(.system(size: 11, weight: .bold).monospacedDigit())
+                                    .font(TendType.label.weight(.semibold).monospacedDigit())
                                     .frame(width: 18, height: 18)
                                     .background(Color.accentColor.opacity(0.15), in: Circle())
                                 VStack(alignment: .leading, spacing: 2) {

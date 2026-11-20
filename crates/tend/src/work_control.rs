@@ -455,6 +455,7 @@ const SWAP_SWITCHES: &[&str] = &[
 const SWAP_VALUE_FLAGS: &[&str] = &[
     "--provider",
     "--to",
+    "--from",
     "--bare",
     "--continue",
     "--continue-text",

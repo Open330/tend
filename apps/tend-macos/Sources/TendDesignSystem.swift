@@ -20,6 +20,23 @@ extension TendType {
     static let tabularMeta = font(TendDesignTokens.Mac.meta)
     /// Commands, paths and pane text. 12pt monospaced.
     static let mono = font(TendDesignTokens.Mac.mono)
+    /// A path or id inside a meta line or a dense evidence row. 11pt monospaced.
+    static let monoSmall = font(TendDesignTokens.Mac.monoSmall)
+
+    // Symbols. A symbol beside text takes that text's role; these are for
+    // symbols that stand alone.
+
+    /// Disclosure chevrons, close marks and separators between path parts,
+    /// and the count inside a 15pt badge disc. 9pt semibold.
+    static let glyph = font(TendDesignTokens.Mac.glyph)
+    /// A row's or the activity bar's own icon. 16pt.
+    static let icon = font(TendDesignTokens.Mac.icon)
+    /// The symbol over an empty state or a short message. 28pt.
+    static let emptyIcon = font(TendDesignTokens.Mac.emptyIcon)
+    /// The symbol heading a sheet's finished or first-run state. 40pt.
+    static let heroIcon = font(TendDesignTokens.Mac.heroIcon)
+    /// The Welcome guide's own mark. 60pt.
+    static let displayIcon = font(TendDesignTokens.Mac.displayIcon)
 
     static func font(_ role: TendDesignTokens.Mac.TypeRole) -> Font {
         let font = Font.system(size: role.size, weight: weight(role.weight), design: role.monospaced ? .monospaced : .default)

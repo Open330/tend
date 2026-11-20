@@ -114,6 +114,10 @@ pub struct SwapRequest {
     /// Restrict to one provider. `None` means Claude and Codex.
     pub provider: Option<AgentKind>,
     pub to: AccountChoice,
+    /// Only agents found on this account (`--from`); the others are
+    /// reported as skipped, and one whose account cannot be identified is
+    /// not taken to be on it.
+    pub from: Option<String>,
     /// Also stop agents that are mid-turn.
     pub force: bool,
     /// Keep busy targets pending in a daemon job.
@@ -155,6 +159,7 @@ impl SwapRequest {
             scope,
             provider: None,
             to: AccountChoice::Auto,
+            from: None,
             force: false,
             when_idle: false,
             idle_timeout: std::time::Duration::from_secs(6 * 3600),
@@ -1986,6 +1991,14 @@ fn assign_accounts(
                 }
             })
             .collect();
+        // `--from` takes only an account bound to the process: the one its
+        // launch line names. The account `aas` marks active is global
+        // state, which a bare agent started earlier may not run on.
+        let bound: Vec<Option<String>> = group
+            .iter()
+            .map(|p| same_aas_account(&p.launch.line))
+            .collect();
+        let (group, current) = from_filter(request, group, current, &bound, provider, &mut steps);
         let assigned = assign(&current, &candidates, &request.to);
         let candidates = Arc::new(candidates);
         for (planned, account) in group.into_iter().zip(assigned) {
@@ -2009,6 +2022,44 @@ fn assign_accounts(
         }
     }
     steps
+}
+
+/// With `--from`, keep only the planned agents whose process-bound account
+/// (`bound`, one per agent) is that account; each other one becomes a
+/// skipped row in `steps`. An agent with no process-bound account is not
+/// taken to be on it. `current` (the identity account choice uses) is
+/// kept alongside the agents that stay.
+fn from_filter(
+    request: &SwapRequest,
+    group: Vec<Planned>,
+    current: Vec<Option<String>>,
+    bound: &[Option<String>],
+    provider: &str,
+    steps: &mut Vec<Step>,
+) -> (Vec<Planned>, Vec<Option<String>>) {
+    let Some(from) = request.from.as_deref() else {
+        return (group, current);
+    };
+    let wanted = tend::accounts::bare_name(from, provider);
+    let mut kept = (Vec::new(), Vec::new());
+    for ((planned, current), account) in group.into_iter().zip(current).zip(bound) {
+        let note = match account.as_deref() {
+            Some(on) if tend::accounts::bare_name(on, provider) == wanted => None,
+            Some(on) => Some(format!("on {on}, not {from} (--from)")),
+            None => Some(format!(
+                "its account could not be identified, so it is not known to be on {from} (--from)"
+            )),
+        };
+        if let Some(note) = note {
+            let mut outcome = SwapOutcome::new(&planned.agent, SwapStatus::Skipped, note);
+            outcome.from.clone_from(account);
+            steps.push(Step::Done(outcome));
+        } else {
+            kept.0.push(planned);
+            kept.1.push(current);
+        }
+    }
+    kept
 }
 
 /// [`assign_accounts`] for a provider that lists `[[accounts]]`: accounts,
@@ -2038,6 +2089,11 @@ fn profile_steps(
         &crate::account_usage::load_default(),
         time::OffsetDateTime::now_utc(),
     );
+    let mut steps = Vec::new();
+    // Here the account is already process-bound: its environment, or the
+    // launch line where that cannot be read.
+    let bound = current.clone();
+    let (group, current) = from_filter(request, group, current, &bound, provider, &mut steps);
     let choice = match &request.to {
         AccountChoice::Named(name) => {
             AccountChoice::Named(tend::accounts::bare_name(name, provider).to_owned())
@@ -2047,25 +2103,32 @@ fn profile_steps(
     let chosen = assign(&current, &ranked, &choice);
     let ranked = Arc::new(ranked);
     let shared = Arc::new((profiles.to_vec(), resolved));
-    group
-        .into_iter()
-        .zip(chosen)
-        .zip(current)
-        .map(|((planned, account), from)| {
-            if request.to == AccountChoice::Same {
-                if let Err(note) = &account {
-                    return Step::Done(SwapOutcome::new(&planned.agent, SwapStatus::Skipped, note));
+    steps.extend(
+        group
+            .into_iter()
+            .zip(chosen)
+            .zip(current)
+            .map(|((planned, account), from)| {
+                if request.to == AccountChoice::Same {
+                    if let Err(note) = &account {
+                        return Step::Done(SwapOutcome::new(
+                            &planned.agent,
+                            SwapStatus::Skipped,
+                            note,
+                        ));
+                    }
                 }
-            }
-            Step::Run(Box::new(PreparedTarget {
-                planned,
-                account,
-                candidates: Arc::clone(&ranked),
-                profiles: Some(Arc::clone(&shared)),
-                profile_from: from,
-            }))
-        })
-        .collect()
+                Step::Run(Box::new(PreparedTarget {
+                    planned,
+                    account,
+                    candidates: Arc::clone(&ranked),
+                    profiles: Some(Arc::clone(&shared)),
+                    profile_from: from,
+                }))
+            })
+            .collect::<Vec<_>>(),
+    );
+    steps
 }
 
 /// Carry one planned target through to its outcome.
@@ -5691,6 +5754,151 @@ pub(crate) mod tests {
     /// No accounts configured and no `aas`: a capped agent is left exactly
     /// where it is, so the `resume-after-limit` rule can resume it on its
     /// reset. Nothing is stopped or typed.
+    /// `--from` keeps only the agents found on that account, with or
+    /// without the provider suffix; any other, and one whose account is
+    /// unknown, is reported as skipped and never run.
+    #[test]
+    fn from_keeps_only_the_agents_on_that_account() {
+        let planned = |pane: &str, line: LaunchLine| Planned {
+            agent: limited(pane, &format!("sid-{pane}")),
+            session_id: format!("sid-{pane}"),
+            source: SessionIdSource::Registry,
+            verified: false,
+            unverified_reason: None,
+            process_start: None,
+            launch: PaneLaunch {
+                agent_pid: 71,
+                top_pid: 71,
+                line,
+                resumed_id: None,
+            },
+            pane: test_pane(pane),
+            backend: tend::backend::default_backend(),
+            shell: Some(true),
+        };
+        let group = || {
+            vec![
+                planned("%1", LaunchLine::from_aas("aas e home@claude").unwrap()),
+                planned("%2", LaunchLine::from_aas("aas e work@claude").unwrap()),
+                planned("%3", LaunchLine::bare("claude")),
+                planned("%4", LaunchLine::from_aas("aas e home@claude").unwrap()),
+            ]
+        };
+        let current = vec![
+            Some("home@claude".to_owned()),
+            Some("work@claude".to_owned()),
+            None,
+            Some("home".to_owned()),
+        ];
+        let mut unfiltered = request(SwapScope::All);
+        let mut steps = Vec::new();
+        let (kept, _) = from_filter(
+            &unfiltered,
+            group(),
+            current.clone(),
+            &current,
+            "claude",
+            &mut steps,
+        );
+        assert_eq!(kept.len(), 4);
+        assert!(steps.is_empty());
+
+        unfiltered.from = Some("home".into());
+        let (kept, accounts) = from_filter(
+            &unfiltered,
+            group(),
+            current.clone(),
+            &current,
+            "claude",
+            &mut steps,
+        );
+        let panes: Vec<_> = kept.iter().map(|p| p.agent.pane.clone().unwrap()).collect();
+        assert_eq!(panes, ["%1", "%4"]);
+        assert_eq!(accounts, [Some("home@claude".into()), Some("home".into())]);
+        let skipped: Vec<_> = steps
+            .iter()
+            .map(|step| match step {
+                Step::Done(outcome) => (
+                    outcome.pane.clone().unwrap(),
+                    outcome.status,
+                    outcome.note.clone(),
+                ),
+                Step::Run(_) => panic!("a filtered agent must not run"),
+            })
+            .collect();
+        assert_eq!(skipped.len(), 2);
+        assert_eq!(skipped[0].0, "%2");
+        assert_eq!(skipped[0].1, SwapStatus::Skipped);
+        assert!(
+            skipped[0].2.contains("on work@claude, not home"),
+            "{}",
+            skipped[0].2
+        );
+        assert_eq!(skipped[1].0, "%3");
+        assert!(
+            skipped[1].2.contains("could not be identified"),
+            "{}",
+            skipped[1].2
+        );
+    }
+
+    /// The account `aas` marks active is global state: a bare agent is not
+    /// taken to be on it by `--from`, though `auto` still steers it away.
+    #[test]
+    fn from_never_takes_a_bare_agent_to_be_on_the_active_account() {
+        let bare = LaunchLine::bare("claude");
+        let candidates = vec![Candidate {
+            name: "home@claude".into(),
+            provider: "claude".into(),
+            eligible: true,
+            active: true,
+            reason: String::new(),
+            remaining_pct: None,
+        }];
+        assert_eq!(
+            current_account(&bare, &candidates).as_deref(),
+            Some("home@claude")
+        );
+        let planned = Planned {
+            agent: limited("%1", "sid-1"),
+            session_id: "sid-1".into(),
+            source: SessionIdSource::Registry,
+            verified: false,
+            unverified_reason: None,
+            process_start: None,
+            launch: PaneLaunch {
+                agent_pid: 71,
+                top_pid: 71,
+                line: bare.clone(),
+                resumed_id: None,
+            },
+            pane: test_pane("%1"),
+            backend: tend::backend::default_backend(),
+            shell: Some(true),
+        };
+        let mut from_home = request(SwapScope::All);
+        from_home.from = Some("home".into());
+        let mut steps = Vec::new();
+        let (kept, _) = from_filter(
+            &from_home,
+            vec![planned],
+            vec![current_account(&bare, &candidates)],
+            &[same_aas_account(&bare)],
+            "claude",
+            &mut steps,
+        );
+        assert!(kept.is_empty());
+        let [Step::Done(outcome)] = steps.as_slice() else {
+            panic!("the bare agent must be reported, not run");
+        };
+        assert_eq!(outcome.status, SwapStatus::Skipped);
+        assert!(
+            outcome.note.contains("could not be identified"),
+            "{}",
+            outcome.note
+        );
+    }
+
     #[test]
     fn with_no_account_backend_a_swap_leaves_the_agent_for_resume_after_limit() {
         let agent = limited("%7", "sid-7");
