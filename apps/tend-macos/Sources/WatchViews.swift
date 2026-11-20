@@ -29,7 +29,7 @@ struct WatchLivePanePanel: View {
                     .font(TendType.detail.weight(.semibold))
                     .fixedSize()
                 Text(verbatim: "\(pane.host.alias) · \(pane.pane.session) › \(pane.pane.windowName) › \(pane.pane.paneID)")
-                    .font(TendType.meta.monospaced())
+                    .font(TendType.monoSmall)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Text(attachedSessionID == nil ? "Read-only" : "Fitted · Interactive")
@@ -552,7 +552,7 @@ private struct WatchPaneRowTrailing: View {
             }
         } else if let command = pane.pane.currentCommand.nonEmpty {
             Text(command)
-                .font(TendType.meta.monospaced())
+                .font(TendType.monoSmall)
                 .foregroundStyle(watchRowInk(onTint ? .selected : .idle, colorScheme))
                 .lineLimit(1)
         }

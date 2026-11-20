@@ -811,7 +811,7 @@ private struct AasWorstMeterCell: View {
         if let meter = account.worstMeter {
             HStack(spacing: 6) {
                 Text(verbatim: meter.label)
-                    .font(TendType.detail.monospaced())
+                    .font(TendType.mono)
                     .foregroundStyle(.secondary)
                 ProgressView(value: meter.fraction)
                     .progressViewStyle(.linear)

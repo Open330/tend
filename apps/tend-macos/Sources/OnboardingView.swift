@@ -140,7 +140,7 @@ struct OnboardingView: View {
                 recheck: { Task { await detectTools() } },
                 openMainWindow: openMainWindow
             )
-            .padding(28)
+            .padding(TendSpace.xxl)
         case .firstAgent:
             OnboardingScrollPage {
                 OnboardingFirstAgentPage(
@@ -169,12 +169,12 @@ struct OnboardingView: View {
             OnboardingScrollPage { OnboardingFlowPage(model: model, openMainWindow: openMainWindow) }
         case .done:
             OnboardingDonePage(dontShowAgain: $dontShowAgain)
-                .padding(28)
+                .padding(TendSpace.xxl)
         }
     }
 
     private var footer: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: TendSpace.s) {
             OnboardingPageIndicator(current: step)
             Spacer()
             if step.previous != nil {
@@ -195,8 +195,8 @@ struct OnboardingView: View {
                     .keyboardShortcut(.defaultAction)
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
+        .padding(.horizontal, TendSpace.xl)
+        .padding(.vertical, TendSpace.m)
     }
 
     private func move(to target: OnboardingStep?) {
@@ -251,7 +251,7 @@ private struct OnboardingScrollPage<Content: View>: View {
         ScrollView {
             content
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(28)
+                .padding(TendSpace.xxl)
         }
     }
 }
@@ -260,8 +260,8 @@ private struct OnboardingPageIndicator: View {
     let current: OnboardingStep
 
     var body: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 6) {
+        HStack(spacing: TendSpace.m) {
+            HStack(spacing: TendSpace.s) {
                 ForEach(OnboardingStep.allCases) { step in
                     Circle()
                         .fill(step == current ? Color.accentColor : Color.secondary.opacity(0.3))
@@ -269,7 +269,7 @@ private struct OnboardingPageIndicator: View {
                 }
             }
             Text("Step \(current.rawValue + 1) of \(OnboardingStep.allCases.count)")
-                .font(.system(size: 12))
+                .font(TendType.detail)
                 .foregroundStyle(.secondary)
         }
         .accessibilityElement(children: .combine)
@@ -282,9 +282,9 @@ private struct OnboardingPageHeader<Detail: View>: View {
     @ViewBuilder let detail: Detail
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: TendSpace.s) {
             Text(title)
-                .font(.title2.weight(.semibold))
+                .font(TendType.page)
             detail
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -322,20 +322,20 @@ private extension View {
 
 private struct OnboardingWelcomePage: View {
     private let columns = [
-        GridItem(.flexible(), spacing: 12),
-        GridItem(.flexible(), spacing: 12),
-        GridItem(.flexible(), spacing: 12),
+        GridItem(.flexible(), spacing: TendSpace.m),
+        GridItem(.flexible(), spacing: TendSpace.m),
+        GridItem(.flexible(), spacing: TendSpace.m),
     ]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            HStack(alignment: .center, spacing: 16) {
+        VStack(alignment: .leading, spacing: TendSpace.xxl) {
+            HStack(alignment: .center, spacing: TendSpace.l) {
                 Image(nsImage: NSApp.applicationIconImage)
                     .resizable()
                     .frame(width: 64, height: 64)
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: TendSpace.s) {
                     Text("Welcome to Tend")
-                        .font(.title2.weight(.semibold))
+                        .font(TendType.page)
                     Text("Tend watches your existing agents and can start new ones in tmux or a native terminal. Every pane, host, and question stays in one window.")
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -343,9 +343,9 @@ private struct OnboardingWelcomePage: View {
             }
 
             Text("One workbench for every agent")
-                .font(.headline)
+                .font(TendType.section)
 
-            LazyVGrid(columns: columns, spacing: 12) {
+            LazyVGrid(columns: columns, spacing: TendSpace.m) {
                 OnboardingSurfaceCard(systemImage: TendSidebarMode.work.systemImage) {
                     Text("Work")
                 } detail: {
@@ -387,13 +387,13 @@ private struct OnboardingSurfaceCard<Title: View, Detail: View>: View {
     @ViewBuilder let detail: Detail
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: TendSpace.s) {
             Image(systemName: systemImage)
-                .font(.title3)
+                .font(TendType.icon)
                 .foregroundStyle(Color.accentColor)
                 .frame(height: 22)
             title
-                .font(.headline)
+                .font(TendType.section)
             detail
                 .font(TendType.detail)
                 .foregroundStyle(.secondary)
@@ -438,13 +438,13 @@ private struct OnboardingChecklistPage: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: TendSpace.l) {
             HStack(alignment: .top) {
                 OnboardingPageHeader(title: "Set up your workspace") {
                     Text("Tend checks again whenever you come back to this window. Nothing here is required to look around.")
                 }
                 Spacer()
-                HStack(spacing: 8) {
+                HStack(spacing: TendSpace.s) {
                     if isDetecting {
                         ProgressView()
                             .controlSize(.small)
@@ -510,7 +510,7 @@ private struct OnboardingChecklistPage: View {
             } else if detectedTools == nil {
                 Text("Looking for tmux on your PATH…")
             } else {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: TendSpace.s) {
                     Text("tmux was not found. Install it with Homebrew, then come back to this window.")
                     if let install = installs.tmux {
                         OnboardingCommandLine(model: model, command: install.command)
@@ -529,10 +529,10 @@ private struct OnboardingChecklistPage: View {
             if detectedTools == nil {
                 Text("Looking for agent CLIs on your PATH…")
             } else if agentTools.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: TendSpace.s) {
                     Text("No agent CLI was found. Install at least one, then come back to this window.")
                     ForEach(installs.agents) { install in
-                        VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: TendSpace.xs) {
                             Text(verbatim: install.displayName)
                                 .font(TendType.detail.weight(.medium))
                                 .foregroundStyle(.primary)
@@ -541,7 +541,7 @@ private struct OnboardingChecklistPage: View {
                     }
                 }
             } else {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: TendSpace.xs) {
                     ForEach(agentTools) { tool in
                         OnboardingAgentToolLine(model: model, tool: tool)
                     }
@@ -633,12 +633,12 @@ private struct OnboardingChecklistRow<Title: View, Detail: View, Action: View>: 
     @ViewBuilder let action: Action
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: TendSpace.m) {
             OnboardingStatusIcon(status: status)
-                .font(.title3)
+                .font(TendType.icon)
                 .frame(width: 22, alignment: .center)
                 .padding(.top, 1)
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: TendSpace.xs) {
                 title
                     .fontWeight(.medium)
                 detail
@@ -650,8 +650,8 @@ private struct OnboardingChecklistRow<Title: View, Detail: View, Action: View>: 
             action
                 .controlSize(.small)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.horizontal, TendSpace.m)
+        .padding(.vertical, TendSpace.m)
     }
 }
 
@@ -677,7 +677,7 @@ private struct OnboardingToolLine: View {
     let tool: InstalledTool
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: TendSpace.s) {
             Text(verbatim: tool.name)
                 .font(TendType.detail.weight(.medium))
                 .foregroundStyle(.primary)
@@ -712,7 +712,7 @@ private struct OnboardingAgentToolLine: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: TendSpace.xs) {
             OnboardingToolLine(tool: tool)
             if signIn == .attention, let login = OnboardingChecklist.signInCommand(program: tool.name) {
                 Label("\(login.displayName) has not been signed in on this Mac yet.", systemImage: "exclamationmark.triangle.fill")
@@ -733,14 +733,14 @@ private struct OnboardingCommandLine: View {
     @State private var copied = false
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: TendSpace.s) {
             Text(verbatim: command)
-                .font(.system(size: 12).monospaced())
+                .font(TendType.mono)
                 .foregroundStyle(.primary)
                 .textSelection(.enabled)
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .padding(.horizontal, 7)
+                .padding(.horizontal, TendSpace.s)
                 .frame(minHeight: 22)
                 .background(
                     RoundedRectangle(cornerRadius: TendTheme.controlRadius, style: .continuous)
@@ -876,16 +876,16 @@ private struct OnboardingFirstAgentPage: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: TendSpace.xl) {
             OnboardingPageHeader(title: "Start your first agent") {
                 Text("Pick a folder and an agent. Tend starts it and opens it as a tab in the workbench. You can skip this and press ⌥⌘T later.")
             }
 
-            VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: TendSpace.l) {
+                VStack(alignment: .leading, spacing: TendSpace.s) {
                     Text("Folder")
-                        .font(.system(size: 12, weight: .semibold))
-                    HStack(spacing: 6) {
+                        .font(TendType.detail.weight(.semibold))
+                    HStack(spacing: TendSpace.s) {
                         TextField("Folder", text: $folder)
                             .tendFieldChrome()
                         Button("Choose…", action: chooseFolder)
@@ -898,9 +898,9 @@ private struct OnboardingFirstAgentPage: View {
                     }
                 }
 
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: TendSpace.s) {
                     Text("Agent")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(TendType.detail.weight(.semibold))
                     if let installed, !installed.isEmpty, let selectedProgram {
                         TendSegmented(
                             selection: Binding(get: { selectedProgram }, set: { program = $0 }),
@@ -909,7 +909,7 @@ private struct OnboardingFirstAgentPage: View {
                             logo: { $0.logo }
                         )
                     } else if installed == nil {
-                        HStack(spacing: 6) {
+                        HStack(spacing: TendSpace.s) {
                             ProgressView().controlSize(.small)
                             Text("Looking for agent CLIs…")
                                 .font(TendType.detail)
@@ -928,7 +928,7 @@ private struct OnboardingFirstAgentPage: View {
             }
             .onboardingPanel(padding: 16)
 
-            HStack(spacing: 10) {
+            HStack(spacing: TendSpace.m) {
                 Button {
                     start()
                 } label: {
@@ -1040,14 +1040,14 @@ private struct OnboardingNotificationsPage: View {
     let requestAuthorization: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: TendSpace.xl) {
             OnboardingPageHeader(title: "Know when an agent needs you") {
                 Text("Agents run while you do something else. Tend tells you when one of them needs you.")
             }
 
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: TendSpace.m) {
                 Text("Tend notifies you when an agent")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(TendType.detail.weight(.semibold))
                 Label("is waiting for your input or a choice", systemImage: "questionmark.bubble")
                 Label("hit an error or is blocked", systemImage: "exclamationmark.octagon")
                 Label("finished a turn", systemImage: "checkmark.circle")
@@ -1056,13 +1056,13 @@ private struct OnboardingNotificationsPage: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .font(.callout)
+            .font(TendType.detail)
             .frame(maxWidth: .infinity, alignment: .leading)
             .onboardingPanel(padding: 16)
 
             authorizationRow
 
-            HStack(spacing: 8) {
+            HStack(spacing: TendSpace.s) {
                 Text("Choose what Tend notifies about in Settings › Notifications.")
                     .font(TendType.detail)
                     .foregroundStyle(.secondary)
@@ -1078,7 +1078,7 @@ private struct OnboardingNotificationsPage: View {
         case nil:
             ProgressView().controlSize(.small)
         case .notDetermined:
-            HStack(spacing: 10) {
+            HStack(spacing: TendSpace.m) {
                 Button {
                     requestAuthorization()
                 } label: {
@@ -1093,7 +1093,7 @@ private struct OnboardingNotificationsPage: View {
             Label("Notifications are allowed.", systemImage: "checkmark.circle.fill")
                 .foregroundStyle(.green)
         case .denied:
-            HStack(spacing: 10) {
+            HStack(spacing: TendSpace.m) {
                 Label("Notifications for Tend are off in System Settings.", systemImage: "bell.slash")
                     .foregroundStyle(.orange)
                 Button("Open System Settings") {
@@ -1113,12 +1113,12 @@ private struct OnboardingWorkbenchPage: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: TendSpace.xl) {
             OnboardingPageHeader(title: "Find your way around") {
                 Text("The workbench is laid out like a code editor, so every part has one job.")
             }
 
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: TendSpace.m) {
                 OnboardingAnatomyRow(systemImage: "rectangle.topthird.inset.filled") {
                     Text("Title row")
                 } detail: {
@@ -1142,18 +1142,18 @@ private struct OnboardingWorkbenchPage: View {
             }
             .onboardingPanel(padding: 16)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: TendSpace.xs) {
                 Text("Keyboard shortcuts")
-                    .font(.system(size: 12, weight: .semibold))
-                    .padding(.bottom, 4)
+                    .font(TendType.detail.weight(.semibold))
+                    .padding(.bottom, TendSpace.xs)
                 ForEach(OnboardingShortcuts.highlights()) { entry in
                     HStack {
                         Text(verbatim: entry.title)
-                            .font(.system(size: 12))
+                            .font(TendType.detail)
                         Spacer(minLength: 12)
                         Text(verbatim: entry.keys)
-                            .font(.system(size: 12, weight: .medium).monospaced())
-                            .padding(.horizontal, 6)
+                            .font(TendType.mono.weight(.medium))
+                            .padding(.horizontal, TendSpace.s)
                             .frame(minHeight: 20)
                             .background(
                                 RoundedRectangle(cornerRadius: 4, style: .continuous)
@@ -1165,7 +1165,7 @@ private struct OnboardingWorkbenchPage: View {
                 Text("Press ⌘/ in the workbench for every shortcut.")
                     .font(TendType.detail)
                     .foregroundStyle(.secondary)
-                    .padding(.top, 4)
+                    .padding(.top, TendSpace.xs)
             }
             .onboardingPanel(padding: 16)
         }
@@ -1178,14 +1178,14 @@ private struct OnboardingAnatomyRow<Title: View, Detail: View>: View {
     @ViewBuilder let detail: Detail
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: TendSpace.m) {
             Image(systemName: systemImage)
-                .font(.title3)
+                .font(TendType.icon)
                 .foregroundStyle(Color.accentColor)
                 .frame(width: 24)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: TendSpace.xxs) {
                 title
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(TendType.detail.weight(.semibold))
                 detail
                     .font(TendType.detail)
                     .foregroundStyle(.secondary)
@@ -1202,12 +1202,12 @@ private struct OnboardingFlowPage: View {
     let openMainWindow: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: TendSpace.xxl) {
             OnboardingPageHeader(title: "How work flows") {
                 Text("For bigger outcomes, describe what done looks like. Agents do the work in stages, and Tend tells you the moment one of them needs you.")
             }
 
-            HStack(alignment: .top, spacing: 6) {
+            HStack(alignment: .top, spacing: TendSpace.s) {
                 OnboardingFlowNode(systemImage: "play.square.stack") {
                     Text("Start Work")
                 } detail: {
@@ -1233,12 +1233,12 @@ private struct OnboardingFlowPage: View {
                 }
             }
 
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: TendSpace.m) {
                 Label("Start Work is in the title row's actions, or press ⌥⌘N.", systemImage: "play.square.stack")
                 Label("Press ⇧⌘P for the command palette: every action, one keystroke away.", systemImage: "command")
                 Label("Open Live Watch with ⇧⌘W to see every pane on every host side by side.", systemImage: "rectangle.on.rectangle")
             }
-            .font(.callout)
+            .font(TendType.detail)
             .foregroundStyle(.secondary)
 
             HStack {
@@ -1266,13 +1266,13 @@ private struct OnboardingFlowNode<Title: View, Detail: View>: View {
     @ViewBuilder let detail: Detail
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: TendSpace.s) {
             Image(systemName: systemImage)
-                .font(.title2)
+                .font(TendType.icon)
                 .foregroundStyle(Color.accentColor)
                 .frame(height: 28)
             title
-                .font(.headline)
+                .font(TendType.section)
             detail
                 .font(TendType.detail)
                 .foregroundStyle(.secondary)
@@ -1287,7 +1287,7 @@ private struct OnboardingFlowNode<Title: View, Detail: View>: View {
 private struct OnboardingFlowArrow: View {
     var body: some View {
         Image(systemName: "arrow.right")
-            .font(.body.weight(.semibold))
+            .font(TendType.section)
             .foregroundStyle(.tertiary)
             .frame(width: 18, height: 132)
             .accessibilityHidden(true)
@@ -1300,13 +1300,13 @@ private struct OnboardingDonePage: View {
     @Binding var dontShowAgain: Bool
 
     var body: some View {
-        VStack(spacing: 18) {
+        VStack(spacing: TendSpace.l) {
             Spacer(minLength: 0)
             Image(systemName: "checkmark.seal.fill")
-                .font(.system(size: 60))
+                .font(TendType.displayIcon)
                 .foregroundStyle(Color.accentColor)
             Text("You're ready")
-                .font(.title2.weight(.semibold))
+                .font(TendType.page)
             Text("Start an agent with ⌥⌘T or Work with ⌥⌘N, jump to whichever agent needs you with ⌘J, and keep an eye on the Inbox.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
@@ -1316,7 +1316,7 @@ private struct OnboardingDonePage: View {
                 .foregroundStyle(.secondary)
             Toggle("Don't show this guide again", isOn: $dontShowAgain)
                 .toggleStyle(.checkbox)
-                .padding(.top, 6)
+                .padding(.top, TendSpace.s)
             Spacer(minLength: 0)
         }
         .frame(maxWidth: 480)

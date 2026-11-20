@@ -128,7 +128,7 @@ struct PipelineEditorView: View {
 
                     if !routesUsingPipeline.isEmpty {
                         Text("Selected by \(routesUsingPipeline.map { String(localized: "match \($0.match)") }.joined(separator: ", "))")
-                            .font(TendType.meta.monospaced())
+                            .font(TendType.monoSmall)
                             .foregroundStyle(.secondary)
                     }
 

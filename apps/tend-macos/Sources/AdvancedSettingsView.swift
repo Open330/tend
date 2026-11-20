@@ -74,7 +74,7 @@ struct AdvancedSettingsPane: View {
             }
             LabeledContent("Socket") {
                 Text(model.client.socketPath)
-                    .font(TendType.detail.monospaced())
+                    .font(TendType.mono)
                     .textSelection(.enabled)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -95,7 +95,7 @@ struct AdvancedSettingsPane: View {
             DisclosureGroup("Show details", isExpanded: $showsDetails) {
                 if let commit = Self.buildCommit {
                     LabeledContent("App build") {
-                        Text(verbatim: commit).font(TendType.detail.monospaced()).textSelection(.enabled)
+                        Text(verbatim: commit).font(TendType.mono).textSelection(.enabled)
                     }
                 }
                 LabeledContent("Daemon generation") {
@@ -125,7 +125,7 @@ struct AdvancedSettingsPane: View {
     private var configurationSection: some View {
         Section("Configuration file") {
             LabeledContent("Path") {
-                HStack(spacing: 6) {
+                HStack(spacing: TendSpace.s) {
                     Group {
                         if store.path.isEmpty {
                             Text("Path unavailable")
@@ -133,7 +133,7 @@ struct AdvancedSettingsPane: View {
                             Text(verbatim: store.path)
                         }
                     }
-                    .font(TendType.detail.monospaced())
+                    .font(TendType.mono)
                     .textSelection(.enabled)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -202,7 +202,7 @@ struct TendRawConfigEditorView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
+            HStack(spacing: TendSpace.s) {
                 Image(systemName: "doc.text")
                     .foregroundStyle(.secondary)
                     .accessibilityHidden(true)
@@ -213,7 +213,7 @@ struct TendRawConfigEditorView: View {
                         Text(verbatim: store.path)
                     }
                 }
-                .font(TendType.detail.monospaced())
+                .font(TendType.mono)
                 .textSelection(.enabled)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -228,22 +228,22 @@ struct TendRawConfigEditorView: View {
                 .controlSize(.small)
                 .disabled(store.isLoading || store.isSaving)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .padding(.horizontal, TendSpace.l)
+            .padding(.vertical, TendSpace.m)
 
             if store.isLaunchDirty {
                 Label("Save or discard launch option changes before editing Raw TOML.", systemImage: "exclamationmark.triangle")
                     .font(TendType.detail)
                     .foregroundStyle(.orange)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 8)
+                    .padding(.horizontal, TendSpace.l)
+                    .padding(.bottom, TendSpace.s)
             }
 
             Divider()
 
             TextEditor(text: $store.draft)
                 .disabled(store.isLoading || store.isSaving || store.isLaunchDirty || !store.isSupported)
-                .font(.system(size: 12, design: .monospaced))
+                .font(TendType.mono)
                 .disableAutocorrection(true)
                 .accessibilityLabel(Text("Configuration file"))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -280,7 +280,7 @@ struct TendRawConfigEditorView: View {
         if let conflict = store.conflictMessage {
             // A concurrent edit, not a bad document: the daemon sent back
             // what is on disk, which is now the baseline.
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: TendSpace.xs) {
                 Label(conflict, systemImage: "arrow.triangle.branch")
                     .foregroundStyle(.orange)
                     .textSelection(.enabled)
@@ -290,7 +290,7 @@ struct TendRawConfigEditorView: View {
         } else if let error = store.saveError {
             // tendd's own parse/validation message, verbatim.
             Label(error, systemImage: "xmark.octagon.fill")
-                .font(TendType.detail.monospaced())
+                .font(TendType.mono)
                 .foregroundStyle(.red)
                 .textSelection(.enabled)
         } else if let error = store.loadError {
@@ -336,11 +336,11 @@ struct TendLaunchArgumentsSections: View {
             }
             if let settings = store.launchDraft {
                 if let program = settings.legacyGuide.program {
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: TendSpace.xs) {
                         Text("Legacy guide options").font(TendType.detail.weight(.semibold))
                         TendSettingsCaption("[mcp.guide].options still supplies \(program)'s fallback. Provider defaults override it, even when empty. These legacy settings are preserved; edit them in Raw TOML if needed.")
                         Text(verbatim: TendLaunchSettings.displayText(settings.legacyGuide.options))
-                            .font(TendType.detail.monospaced())
+                            .font(TendType.mono)
                             .textSelection(.enabled)
                     }
                 }
@@ -383,7 +383,7 @@ struct TendLaunchArgumentsSections: View {
                      : "This tendd does not support launch option forms. Update the daemon or use Raw TOML.")
             }
         } header: {
-            HStack(spacing: 6) {
+            HStack(spacing: TendSpace.s) {
                 Text("Launch arguments")
                 TendSettingsInfoButton(title: "Launch arguments") {
                     Text("Each entry is one literal CLI argument, not a shell command. Options replace the entire inherited list; they are never appended. Changes affect future launches, not running agents.")
@@ -405,10 +405,10 @@ private struct TendLaunchOptionsRow: View {
     let effective: [String]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: TendSpace.s) {
             HStack(alignment: .firstTextBaseline) {
-                Text(verbatim: title).font(.headline)
-                Text(verbatim: detail).font(TendType.detail.monospaced()).foregroundStyle(.secondary)
+                Text(verbatim: title).font(TendType.section)
+                Text(verbatim: detail).font(TendType.mono).foregroundStyle(.secondary)
                 Spacer()
                 Toggle("Override inherited options", isOn: Binding(
                     get: { options != nil },
@@ -425,7 +425,7 @@ private struct TendLaunchOptionsRow: View {
                             set: { options?[index] = $0 }
                         ))
                         .labelsHidden()
-                        .font(.system(.body, design: .monospaced))
+                        .font(TendType.mono)
                         .textFieldStyle(.roundedBorder)
                         Button { options?.swapAt(index, index - 1) } label: {
                             Image(systemName: "arrow.up")
@@ -452,10 +452,10 @@ private struct TendLaunchOptionsRow: View {
                 TendSettingsCaption(inheritLabel)
             }
             Text("Effective options: \(TendLaunchSettings.displayText(effective))")
-                .font(TendType.detail.monospaced())
+                .font(TendType.mono)
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, TendSpace.xxs)
     }
 }

@@ -207,7 +207,7 @@ private struct WorkParticipantCard: View {
             .clipped()
 
             Text(executionLabel)
-            .font(TendType.meta.monospaced())
+            .font(TendType.monoSmall)
             .foregroundStyle(.secondary)
             .lineLimit(1)
             .truncationMode(.middle)
@@ -985,7 +985,7 @@ private struct WindowAgentReportCard: View {
                     }
                     Spacer(minLength: 4)
                     Text(pane.pane.paneID)
-                        .font(TendType.meta.monospaced())
+                        .font(TendType.monoSmall)
                         .foregroundStyle(.secondary)
                     Image(systemName: "chevron.right")
                         .font(TendType.meta.weight(.semibold))
@@ -1032,7 +1032,7 @@ private struct WindowAgentReportCard: View {
                 Text(pane.pane.currentPath)
                     .lineLimit(1)
             }
-            .font(TendType.meta.monospaced())
+            .font(TendType.monoSmall)
             .foregroundStyle(.secondary)
         }
         .padding(14)

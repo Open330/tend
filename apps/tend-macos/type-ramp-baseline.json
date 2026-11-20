@@ -1,18 +1,1 @@
-{
-  "AdvancedSettingsView.swift": {
-    ".system(size: 12, design: .monospaced)": 1
-  },
-  "AutomationSettingsView.swift": {
-    ".system(size: 26)": 1
-  },
-  "OnboardingView.swift": {
-    ".system(size: 12)": 3,
-    ".system(size: 12, weight: .medium)": 1,
-    ".system(size: 12, weight: .semibold)": 5,
-    ".system(size: 60)": 1
-  },
-  "WhatsNewView.swift": {
-    ".system(size: 12)": 1,
-    ".system(size: 13, weight: .semibold)": 1
-  }
-}
+{}

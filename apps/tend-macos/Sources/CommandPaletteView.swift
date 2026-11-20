@@ -513,7 +513,7 @@ struct CommandPaletteView: View {
                     }
                 )
                 Text(verbatim: modeShortcut)
-                    .font(TendType.detail.monospaced()).foregroundStyle(.secondary)
+                    .font(TendType.mono).foregroundStyle(.secondary)
             }
             .padding(16)
             if mode == .navigation, indexing || indexStatus != nil {
@@ -611,14 +611,14 @@ struct CommandPaletteView: View {
                 if !item.isEnabled { Image(systemName: "lock").font(TendType.detail) }
                 if let shortcut = item.shortcut {
                     Text(verbatim: shortcut)
-                        .font(TendType.detail.monospaced())
+                        .font(TendType.mono)
                         .foregroundStyle(.secondary)
                 }
                 if item.stableID == selectedID {
                     Image(systemName: "return").font(TendType.detail)
                 } else if let digit, item.shortcut == nil {
                     Text(verbatim: "⌘\(digit)")
-                        .font(TendType.detail.monospaced())
+                        .font(TendType.mono)
                         .foregroundStyle(.secondary)
                 }
             }

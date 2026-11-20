@@ -216,7 +216,7 @@ struct WorkCommandCenterView: View {
                     .font(TendType.cardTitle)
                 if let path = model.workOptions?.configPath {
                     Text(path)
-                        .font(TendType.meta.monospaced())
+                        .font(TendType.monoSmall)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)

@@ -403,7 +403,7 @@ struct WorkStartView: View {
                         PipelineStagesView(agents: selected.agents)
                         if let layout = selected.layout, !layout.isEmpty {
                             Text("tmux layout \(layout)")
-                                .font(TendType.meta.monospaced())
+                                .font(TendType.monoSmall)
                                 .foregroundStyle(.secondary)
                         }
                     }

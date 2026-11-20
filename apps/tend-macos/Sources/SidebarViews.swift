@@ -1233,7 +1233,7 @@ private struct InboxAgentRow: View {
                         .lineLimit(1)
                     Spacer(minLength: 4)
                     Text(participant.host.alias)
-                        .font(TendType.meta.monospaced())
+                        .font(TendType.monoSmall)
                         .foregroundStyle(.secondary)
                 }
                 Text(summary)
@@ -1384,7 +1384,7 @@ private struct FleetAgentRow: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Text(executionLocation)
-                    .font(TendType.meta.monospaced())
+                    .font(TendType.monoSmall)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }

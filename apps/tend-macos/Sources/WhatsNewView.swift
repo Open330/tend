@@ -17,36 +17,36 @@ struct WhatsNewView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .center, spacing: 14) {
+            HStack(alignment: .center, spacing: TendSpace.m) {
                 Image(nsImage: NSApp.applicationIconImage)
                     .resizable()
                     .frame(width: 48, height: 48)
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: TendSpace.xs) {
                     Text("What's New in Tend \(releases.first?.version ?? version)")
-                        .font(.title3.weight(.semibold))
+                        .font(TendType.page)
                     Text("Highlights of this release.")
-                        .font(.callout)
+                        .font(TendType.detail)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
             }
-            .padding(20)
+            .padding(TendSpace.xl)
 
             TendTheme.border(colorScheme).frame(height: 1)
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: TendSpace.l) {
                     ForEach(releases.flatMap(\.highlights)) { highlight in
-                        HStack(alignment: .top, spacing: 12) {
+                        HStack(alignment: .top, spacing: TendSpace.m) {
                             Image(systemName: highlight.systemImage)
-                                .font(.title3)
+                                .font(TendType.icon)
                                 .foregroundStyle(Color.accentColor)
                                 .frame(width: 26)
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: TendSpace.xxs) {
                                 Text(verbatim: highlight.title)
-                                    .font(.system(size: 13, weight: .semibold))
+                                    .font(TendType.section)
                                 Text(verbatim: highlight.detail)
-                                    .font(.system(size: 12))
+                                    .font(TendType.detail)
                                     .foregroundStyle(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
@@ -58,12 +58,12 @@ struct WhatsNewView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(20)
+                .padding(TendSpace.xl)
             }
 
             TendTheme.border(colorScheme).frame(height: 1)
 
-            HStack(spacing: 8) {
+            HStack(spacing: TendSpace.s) {
                 Button("Open Welcome Guide") {
                     openWindow(id: OnboardingPreferences.windowID)
                     close()
@@ -74,7 +74,7 @@ struct WhatsNewView: View {
                     .buttonStyle(.tendPrimary)
                     .keyboardShortcut(.defaultAction)
             }
-            .padding(14)
+            .padding(TendSpace.m)
         }
         .frame(width: 520, height: 540)
         .background(TendTheme.editor(colorScheme))

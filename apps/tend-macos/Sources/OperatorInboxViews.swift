@@ -944,7 +944,7 @@ private struct CollaborationRequestCard: View {
                     .foregroundStyle(collaborationStatusColor(request.status))
                 Spacer()
                 Text(verbatim: "\(request.from.label) → \(request.to.label)")
-                    .font(TendType.meta.monospaced())
+                    .font(TendType.monoSmall)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }

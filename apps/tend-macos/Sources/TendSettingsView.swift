@@ -307,14 +307,14 @@ struct TendSettingsInfoButton<Content: View>: View {
         .help(title)
         .accessibilityLabel(Text(title))
         .popover(isPresented: $isShown, arrowEdge: .bottom) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(title).font(.headline)
+            VStack(alignment: .leading, spacing: TendSpace.s) {
+                Text(title).font(TendType.section)
                 content
                     .font(TendType.detail)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(14)
+            .padding(TendSpace.m)
             .frame(width: 360, alignment: .leading)
         }
     }
@@ -336,7 +336,7 @@ struct TendSettingsFooter<Status: View, Leading: View>: View {
     var body: some View {
         VStack(spacing: 0) {
             Divider()
-            HStack(spacing: 10) {
+            HStack(spacing: TendSpace.m) {
                 leading
                 status
                     .font(TendType.detail)
@@ -348,12 +348,12 @@ struct TendSettingsFooter<Status: View, Leading: View>: View {
                 Button(revertTitle, action: revert)
                     .disabled(!canRevert || isBusy)
                 Button("Save", action: save)
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.tendPrimary)
                     .keyboardShortcut("s", modifiers: .command)
                     .disabled(!canSave || isBusy)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 10)
+            .padding(.horizontal, TendSpace.xl)
+            .padding(.vertical, TendSpace.m)
         }
         .background(.bar)
     }
@@ -500,7 +500,7 @@ struct TendRestartBar: View {
         if store.restartNotice.isShown(current: model.localDaemonIdentity) {
             VStack(spacing: 0) {
                 Divider()
-                HStack(spacing: 10) {
+                HStack(spacing: TendSpace.m) {
                     Image(systemName: "arrow.clockwise.circle.fill")
                         .foregroundStyle(.orange)
                         .accessibilityHidden(true)
@@ -510,8 +510,8 @@ struct TendRestartBar: View {
                     TendDaemonReloadButton(model: model, title: "Restart")
                         .controlSize(.small)
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 8)
+                .padding(.horizontal, TendSpace.xl)
+                .padding(.vertical, TendSpace.s)
             }
             .background(.bar)
         }
@@ -617,7 +617,7 @@ private struct TendMenuBarSettingsView: View {
         let icon = TendHostIcons.icon(for: host.alias, local: host.local)
         let isCustomText = TendGlyph.kind(icon) != .symbol(icon)
         return GridRow {
-            HStack(spacing: 8) {
+            HStack(spacing: TendSpace.s) {
                 TendGlyphFace(value: icon, gradient: TendMenuBarAgentAppearance(identity: host.alias, symbol: icon, provider: "").gradient, size: 22, glyphSize: 11)
                     .accessibilityHidden(true)
                 Text(verbatim: host.alias)
@@ -746,14 +746,14 @@ private struct TendGeneralSettingsView: View {
 
             Section("Default project folder") {
                 LabeledContent("Folder") {
-                    HStack(spacing: 8) {
+                    HStack(spacing: TendSpace.s) {
                         Group {
                             if workDirectory.isEmpty {
                                 Text("Not set")
                                     .foregroundStyle(.secondary)
                             } else {
                                 Text(verbatim: workDirectory)
-                                    .font(TendType.detail.monospaced())
+                                    .font(TendType.mono)
                                     .textSelection(.enabled)
                             }
                         }
@@ -818,8 +818,8 @@ private struct TendFleetSettingsPane: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
-            .padding(.top, 14)
-            .padding(.bottom, 2)
+            .padding(.top, TendSpace.m)
+            .padding(.bottom, TendSpace.xxs)
             FleetDispatchSettingsView(model: model, section: selection.wrappedValue)
         }
     }
@@ -836,20 +836,20 @@ struct TendFleetSettingsRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: TendSpace.m) {
             Image(systemName: host.local ? "desktopcomputer" : "server.rack")
                 .foregroundStyle(.tint)
                 .frame(width: 28, height: 28)
                 .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: TendTheme.panelRadius))
                 .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 7) {
+            VStack(alignment: .leading, spacing: TendSpace.xs) {
+                HStack(spacing: TendSpace.s) {
                     // The dot's colour is backed by the state in words, so
                     // the state never rests on colour alone.
                     Circle().fill(fleetHostColor(host.state)).frame(width: 7, height: 7)
                         .accessibilityHidden(true)
-                    Text(host.alias).font(.headline)
+                    Text(host.alias).font(TendType.section)
                         .lineLimit(1)
                         .layoutPriority(1)
                     Group {
@@ -874,7 +874,7 @@ struct TendFleetSettingsRow: View {
                         Text("SSH target unavailable")
                     }
                 }
-                .font(TendType.detail.monospaced())
+                .font(TendType.mono)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 Group {
@@ -891,7 +891,7 @@ struct TendFleetSettingsRow: View {
 
             Spacer(minLength: 8)
 
-            VStack(alignment: .trailing, spacing: 4) {
+            VStack(alignment: .trailing, spacing: TendSpace.xs) {
                 Group {
                     if let version = host.tendVersion {
                         Text("tend \(version)")
@@ -911,6 +911,6 @@ struct TendFleetSettingsRow: View {
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, TendSpace.xxs)
     }
 }

@@ -28,7 +28,7 @@ struct TendAccountsSettingsPane: View {
             if moduleOff {
                 Section {
                     Label("The account module is off in tendd", systemImage: "person.2.slash")
-                        .font(.headline)
+                        .font(TendType.section)
                     if Self.notInBuild(swaps.health?.reason) {
                         TendSettingsCaption("This tendd was built without the account module, so no setting turns it on. Install a Tend release, or rebuild tend-cli and tendd with the aas feature (on by default). Usage limits are still seen and resumed without it.")
                     } else {
@@ -46,7 +46,7 @@ struct TendAccountsSettingsPane: View {
                     get: { isEnabled },
                     set: { registry.setEnabled(AasModule.identity.id, $0) }
                 )) {
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: TendSpace.xxs) {
                         Text(verbatim: AasModule.identity.title)
                         // The blurb is the app's own sentence, so it is
                         // translated; the title is a product name and is not.
@@ -88,7 +88,7 @@ private struct TendModuleAvailabilityRow: View {
         switch module.availability {
         case .probing:
             if isEnabled {
-                HStack(spacing: 6) {
+                HStack(spacing: TendSpace.s) {
                     ProgressView().controlSize(.mini)
                     TendSettingsCaption("Looking for it…")
                 }
@@ -104,7 +104,7 @@ private struct TendModuleAvailabilityRow: View {
             .foregroundStyle(.green)
             .labelStyle(.titleAndIcon)
         case .missing(let hint):
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: TendSpace.xxs) {
                 Label(hint, systemImage: "exclamationmark.circle")
                     .font(TendType.detail)
                     .foregroundStyle(.orange)
