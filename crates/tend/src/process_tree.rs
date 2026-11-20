@@ -204,8 +204,9 @@ pub fn scan_codex_panes_with(panes: &[PaneInfo], source: &ProcessSource) -> Code
             let (processes, whole) = table.descendants_walk(pane.pane_pid, MAX_DEPTH, MAX_NODES);
             #[cfg(target_os = "linux")]
             let (processes, whole) = read_descendants_walk(pane.pane_pid);
+            // An unreadable root is no root: the walk is not whole.
             #[cfg(target_os = "linux")]
-            let root = read_proc(pane.pane_pid, 0);
+            let root = read_proc_checked(pane.pane_pid, 0).ok().flatten();
             #[cfg(not(target_os = "linux"))]
             let root = table.get(pane.pane_pid).cloned();
             // A directly exec'd TUI can itself be the pane root process.
@@ -359,8 +360,10 @@ fn pane_identities(processes: &[ProcessInfo]) -> PaneIdentities {
 }
 
 /// Whether `child`, an agent process under the agent `parent`, is the same
-/// session: the same kind, and the same explicit session id, or no id and
-/// the same arguments (a shim re-executing the real binary).
+/// session: the same kind, and the same explicit session id, or no id, the
+/// same arguments, and `child` started directly by `parent` (a shim
+/// re-executing the real binary). Through anything in between (a shell),
+/// two agents with the same flags can each pick their own session.
 fn same_session(parent: &ProcessInfo, child: &ProcessInfo) -> bool {
     let args = |process: &ProcessInfo| -> Vec<String> {
         process
@@ -373,7 +376,7 @@ fn same_session(parent: &ProcessInfo, child: &ProcessInfo) -> bool {
     agent_kind(parent) == agent_kind(child)
         && match (resume_id(parent), resume_id(child)) {
             (Some(a), Some(b)) => a == b,
-            (None, None) => args(parent) == args(child),
+            (None, None) => child.parent_pid == parent.pid && args(parent) == args(child),
             _ => false,
         }
 }
@@ -648,14 +651,17 @@ fn read_descendants_walk(root: u32) -> (Vec<ProcessInfo>, bool) {
             whole = false;
             continue;
         }
-        if let Some(proc) = read_proc(pid, depth) {
-            for child in children(pid, &mut whole) {
-                q.push_back((child, depth.saturating_add(1)));
+        match read_proc_checked(pid, depth) {
+            Ok(Some(proc)) => {
+                for child in children(pid, &mut whole) {
+                    q.push_back((child, depth.saturating_add(1)));
+                }
+                out.push(proc);
             }
-            out.push(proc);
-        } else if std::path::Path::new(&format!("/proc/{pid}")).exists() {
+            // Gone since it was listed.
+            Ok(None) => {}
             // Still there, but unreadable.
-            whole = false;
+            Err(()) => whole = false,
         }
     }
     (out, whole)
@@ -696,6 +702,33 @@ fn read_children_checked(pid: u32) -> Result<Vec<u32>, ()> {
     children.sort_unstable();
     children.dedup();
     Ok(children)
+}
+
+/// [`read_proc`] for evidence: `Ok(None)` when the process is gone, `Err`
+/// when it still exists but its status, name or command line could not be
+/// read (the display fallbacks [`read_proc`] uses are not evidence).
+#[cfg(target_os = "linux")]
+fn read_proc_checked(pid: u32, depth: u8) -> Result<Option<ProcessInfo>, ()> {
+    let exists = || std::path::Path::new(&format!("/proc/{pid}")).exists();
+    let read = |file: &str| std::fs::read(format!("/proc/{pid}/{file}"));
+    let (status, comm, cmdline) = match (read("status"), read("comm"), read("cmdline")) {
+        (Ok(status), Ok(comm), Ok(cmdline)) => (status, comm, cmdline),
+        _ if exists() => return Err(()),
+        _ => return Ok(None),
+    };
+    let parent_pid = parse_ppid(&String::from_utf8_lossy(&status)).ok_or(())?;
+    Ok(Some(ProcessInfo {
+        pid,
+        parent_pid,
+        depth,
+        comm: String::from_utf8_lossy(&comm).trim().to_string(),
+        cmdline: cmdline
+            .split(|b| *b == 0)
+            .filter(|part| !part.is_empty())
+            .map(|part| String::from_utf8_lossy(part))
+            .collect::<Vec<_>>()
+            .join(" "),
+    }))
 }
 
 #[cfg(target_os = "linux")]
@@ -899,6 +932,14 @@ mod tests {
             proc(30, 25, 3, "claude", "claude --continue"),
         ]);
         assert_eq!((nested.resumed.len(), nested.unnamed), (1, 1));
+        // The same flags through a shell: two sessions, each its own pick.
+        let twice = pane_identities(&[
+            proc(10, 1, 0, "zsh", "-zsh"),
+            proc(20, 10, 1, "claude", "claude --continue"),
+            proc(25, 20, 2, "zsh", "zsh -c 'cd /other && claude --continue'"),
+            proc(30, 25, 3, "claude", "claude --continue"),
+        ]);
+        assert_eq!(twice.unnamed, 2);
         // A shim and the binary it starts, with the same arguments: one.
         let shim = pane_identities(&[
             proc(10, 1, 0, "zsh", "-zsh"),
