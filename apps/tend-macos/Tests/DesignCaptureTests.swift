@@ -125,6 +125,17 @@ struct DesignCaptureTests {
             try await window.settle(seconds: 3)
             try write(window.image(), name: name, scheme: scheme)
         }
+
+        // The opt-in sidebar material, list folded (Home) and shown
+        // (Explore). Off-screen the window is never key, so the material
+        // draws its inactive look; the title bar row stays opaque either way.
+        UserDefaults.standard.set(true, forKey: TendPreferences.sidebarMaterialKey)
+        for (selection, name) in [(TendSidebarSelection.workBoard, "home-material"), (.watch, "explore-material")] {
+            model.select(selection)
+            try await window.settle(seconds: 2)
+            try write(window.image(), name: name, scheme: scheme)
+        }
+        UserDefaults.standard.set(false, forKey: TendPreferences.sidebarMaterialKey)
         model.select(.workBoard)
     }
 
@@ -229,6 +240,7 @@ struct DesignCaptureTests {
     private static let preferenceKeys = [
         TendPreferences.homeCardLayoutKey, TendPreferences.settingsTabKey,
         FleetReviewMarks.defaultsKey, FleetReviewMarks.migratedKey,
+        TendPreferences.sidebarMaterialKey,
     ]
 
     /// The host's own persisted values (not the registered defaults, which
