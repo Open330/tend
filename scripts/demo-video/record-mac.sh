@@ -108,15 +108,22 @@ screencapture -x "$OUT/steps/00-start.png"
 
 # --- Recording helpers --------------------------------------------------------
 STEP=0
+# A screenshot per step; the accessibility tree only when STEP_TREES=1 (it
+# takes seconds, and the take would wait on it).
 step() { STEP=$((STEP + 1)); local n; n=$(printf '%02d-%s' "$STEP" "$1")
-  screencapture -x "$OUT/steps/$n.png"; "$AX" tree "$PID" > "$OUT/steps/$n.ax.txt" 2>&1 || true; }
-mark() { echo "$1 $(python3 -c "import time;print(round(time.time()-$T0,2))")" >> "$OUT/marks.txt"; log "mark $1"; }
+  screencapture -x "$OUT/steps/$n.png"
+  [ "${STEP_TREES:-0}" = 1 ] && "$AX" tree "$PID" > "$OUT/steps/$n.ax.txt" 2>&1; return 0; }
+now() { python3 -c "import time;print(round(time.time()-$T0,2))"; }
+# What the viewer should see: `<seconds into the take> <hold> <what>` in
+# acts.txt. The edit keeps each act and its hold and drops the waits between.
+act() { echo "$(now) $1 ${2:-act}" >> "$OUT/acts.txt"; }
+mark() { echo "$1 $(now)" >> "$OUT/marks.txt"; log "mark $1"; }
 # Centre of the first element labelled TEXT (optionally of ROLE).
 centre() { local f; f=$("$AX" find "$PID" "$@") || return 1; set -- $f; echo "$(( $1 + $3 / 2 )) $(( $2 + $4 / 2 ))"; }
-glide() { cliclick -e 500 "m:$1,$2"; }
+glide() { act 0.9 glide; cliclick -e 500 "m:$1,$2"; }
 point() { local c; c=$(centre "$@") || { log "not found: $*"; return 1; }; set -- $c; glide "$1" "$2"; }
-press() { local c; c=$(centre "$@") || { log "not found: $*"; return 1; }; set -- $c; glide "$1" "$2"; sleep 0.25; cliclick "c:$1,$2"; }
-type_slowly() { cliclick -w 45 "t:$1"; }
+press() { local c; c=$(centre "$@") || { log "not found: $*"; return 1; }; set -- $c; glide "$1" "$2"; sleep 0.25; cliclick "c:$1,$2"; act 1.6 click; }
+type_slowly() { act "$(python3 -c "print(round(len('''$1''')*0.06+0.6,2))")" type; cliclick -w 45 "t:$1"; }
 
 # --- Take --------------------------------------------------------------------
 glide 960 1060
@@ -124,7 +131,7 @@ ffmpeg -hide_banner -loglevel error -y -f avfoundation -framerate 30 -capture_cu
   -i "Capture screen 0" -c:v libx264 -preset ultrafast -crf 16 -pix_fmt yuv420p "$OUT/mac-raw.mp4" < /dev/null &
 FF=$!
 T0=$(python3 -c 'import time;print(time.time())')
-: > "$OUT/marks.txt"
+: > "$OUT/marks.txt"; : > "$OUT/acts.txt"
 sleep 2
 
 # 1. Home.
@@ -132,20 +139,21 @@ mark home
 glide 330 330; sleep 1.2
 glide 960 380; sleep 1.2
 glide 1560 420; sleep 1.2
-glide 700 600; sleep 1
+glide 700 600; act 1.2 read; sleep 1
 step home
 
 # 2. A question: open the agent asking a choice and answer it.
 mark question
 press "rotate the JWT signing keys" || true
 sleep 2.5
+act 2.2 read
 step question-open
 press "staging, then prod" AXButton || press "staging, then prod" || true
 sleep 1.5
 step question-answered
 # The pane takes the answer and the agent goes back to work
 # (scripts/demo-video/panes/auth).
-sleep 3
+sleep 1.2; act 2.4 read; sleep 1.8
 cliclick kp:esc || true
 sleep 1
 step question-done
@@ -154,11 +162,12 @@ step question-done
 mark review
 press "Review" AXButton || press "Review" || true
 sleep 2.5
+act 3.0 read
 step review-open
 press "merge" AXButton || true
 sleep 1
 press "Accept" AXButton || press "Accept" || true
-sleep 2
+sleep 0.6; act 2.0 read; sleep 1.4
 step review-accepted
 press "Done" AXButton || cliclick kp:esc || true
 sleep 1.5
@@ -171,7 +180,7 @@ step explore
 point "Execution topology" || true
 sleep 1.5
 press "500 from the cod" || press "sdk" || true
-sleep 3
+sleep 1; act 2.4 read; sleep 2
 step explore-sdk
 
 # 5. Steer: send the agent a prompt.
@@ -181,7 +190,7 @@ sleep 0.6
 type_slowly "retry with the cached spec and open a PR"
 sleep 0.8
 press "Send" AXButton || cliclick kp:return || true
-sleep 4
+sleep 3; act 3.5 read; sleep 3.5
 step steer
 
 # 6. The menu bar.
@@ -195,9 +204,9 @@ if [ -n "$extra" ]; then
 else
   log "no menu bar extra"
 fi
-sleep 2
+sleep 0.6; act 3.4 read; sleep 1.4
 step menubar
-glide 1600 400; sleep 3
+sleep 2
 cliclick kp:esc || true
 sleep 1
 mark end
