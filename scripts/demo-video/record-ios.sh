@@ -55,10 +55,13 @@ record() { # <slug> <device type prefix>
   # A clean status bar: a fixed time, full signal and battery.
   xcrun simctl status_bar "$udid" override --time "9:41" --dataNetwork wifi --wifiBars 3 \
     --cellularMode active --cellularBars 4 --batteryState charged --batteryLevel 100 || true
-  xcrun simctl io "$udid" recordVideo --codec h264 --force "$OUT/$slug-raw.mp4" > "$OUT/$slug-rec.log" 2>&1 &
+  # Each line simctl prints, stamped: "Recording started" is the clip's 0 s.
+  xcrun simctl io "$udid" recordVideo --codec h264 --force "$OUT/$slug-raw.mp4" 2>&1 \
+    | python3 -u -c 'import sys,time
+for l in sys.stdin: print("%.3f %s" % (time.time(), l.rstrip()), flush=True)' > "$OUT/$slug-rec.log" &
   rec=$!
-  sleep 2
-  start=$(python3 -c 'import time;print(time.time())')
+  for _ in $(seq 1 50); do grep -q "Recording started" "$OUT/$slug-rec.log" && break; sleep 0.2; done
+  start=$(awk '/Recording started/ {print $1; exit}' "$OUT/$slug-rec.log")
   TEST_RUNNER_TEND_DEMO_TOUR=1 \
   TEST_RUNNER_TEND_SERVER="http://127.0.0.1:$PORT" \
   TEST_RUNNER_TEND_TOKEN="$TOKEN" \
@@ -67,9 +70,10 @@ record() { # <slug> <device type prefix>
       -only-testing:TendUITests/DemoTourUITests \
       CODE_SIGN_IDENTITY=- test-without-building > "$OUT/$slug-test.log" 2>&1 || echo "record-ios.sh: $slug tour failed" >&2
   sleep 1
-  kill -INT "$rec"; wait "$rec" || true
+  pkill -INT -f "recordVideo --codec h264 --force $OUT/$slug-raw.mp4" || true
+  wait "$rec" || true
   grep -o 'DEMO-MARK [a-z]* [0-9.]*' "$OUT/$slug-test.log" | sort -u -k3 -n \
-    | awk -v s="$start" '{printf "%s %.2f\n", $2, $3 - s + 2}' > "$OUT/$slug-marks.txt"
+    | awk -v s="$start" '{printf "%s %.2f\n", $2, $3 - s}' > "$OUT/$slug-marks.txt"
   xcrun simctl shutdown "$udid" || true
 }
 

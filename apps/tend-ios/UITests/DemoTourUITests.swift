@@ -59,8 +59,10 @@ final class DemoTourUITests: XCTestCase {
         XCTAssertTrue(code.waitForExistence(timeout: 15), "no pairing code; is the fixture's dashboard up?")
         try approve(code.label)
 
-        let accept = app.buttons["acceptButton"].firstMatch
-        XCTAssertTrue(accept.waitForExistence(timeout: 20), "Your turn never showed")
+        // Home with the fixture's agents (the iPad may have nothing left to
+        // accept: the iPhone run decided the last result).
+        let card = app.staticTexts["fix the SSE reconnect backoff"].firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 20), "Home never showed the fixture's agents")
         pause(1.5)
         mark("home")
         pause(isPad ? 5 : 3.5)
@@ -70,7 +72,7 @@ final class DemoTourUITests: XCTestCase {
         let option = app.buttons["publish"].firstMatch
         if option.waitForExistence(timeout: 3) {
             mark("decide")
-            if !option.isHittable { app.swipeUp() ; pause(0.6) }
+            if !option.isHittable { app.swipeUp(velocity: .slow); pause(0.8) }
             option.tap()
             pause(1.0)
             let confirm = app.buttons["confirmAccept"].firstMatch

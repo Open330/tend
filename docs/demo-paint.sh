@@ -64,6 +64,7 @@ case "$state" in
       "$C_GREEN" "$C_RESET" "$C_YELLOW" "$C_RESET" "$C_DIM" "$C_RESET"
     ;;
   choice)
+    printf '%s────────────────────────────────────────────────────%s\n' "$C_DIM" "$C_RESET"
     printf '  %s?%s Which environments should rotate first?\n\n' "$C_YELLOW" "$C_RESET"
     # Numbered, as Claude Code's own picker is: Tend for Mac reads the
     # options off this screen and answers by moving the cursor.

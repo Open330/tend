@@ -5,7 +5,10 @@
 # the hooks an agent would fire, so Tend shows it working again.
 frame=$1
 cat "$frame"
+# The terminal does not echo the line: it is printed once, as a prompt.
+stty -echo 2>/dev/null
 IFS= read -r line || exec cat
+stty echo 2>/dev/null
 printf '\n\033[1;32m›\033[0m %s\n\n' "$line"
 printf '  \033[2m⚙\033[0m ran  openapi-generator generate -i .cache/spec.yaml\n'
 printf '  \033[1;34m▶ working…\033[0m\n'
