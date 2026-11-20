@@ -183,9 +183,18 @@ into another pane or `tend restore`) means alive. Otherwise only these count:
 | Cause | Evidence |
 | --- | --- |
 | `ended` | the provider's own `SessionEnded` hook, recorded when tendd ingests it |
-| `replaced` | a real provider `Started` hook for another session in the pane, recorded before the old row changes; it counts only if the first scan after the hook finds the tmux server on the incarnation the old session was bound on |
-| `pane_gone` | the pane is absent from a complete scan of a socket that answered: for tmux, on the incarnation the session was bound on (kept on the question, so it survives a daemon restart; a question from before the binding was stored has none until its asker is seen again); for rmux, which reports none, from its running endpoint; or the socket answers that no server runs there |
-| `agent_exited` | what tendd already requires to stop a row with no agent process (a complete host, a recognized agent, an hour idle, no agent process, a shell in the foreground), on the same server incarnation |
+| `replaced` | a real provider `Started` hook for another session in the pane, recorded before the old row changes; it counts only if the first scan after the hook finds the tmux server on the incarnation the old session was bound on; or, from present state, another session tendd can name holds the pane with a live row |
+| `pane_gone` | the pane is absent from a complete scan of a socket that answered: for tmux, on the incarnation the session was bound on (kept on the question, so it survives a daemon restart), or from present state; for rmux, which reports none, from its running endpoint; or the socket answers that no server runs there |
+| `agent_exited` | what tendd already requires to stop a row with no agent process (a complete host, a recognized agent, an hour idle, no agent process, a shell in the foreground), on the same server incarnation, or from present state with no live row in the pane |
+
+**Present state** needs a complete walk of every pane's processes on every
+backend, with every agent process found accounted for by a named live row
+or an explicit resume id (an unnamed agent anywhere, such as `claude
+--continue`, could be the asker). Then a session with no live row and no
+process started on it (`codex resume <id>`, `claude --resume <id>`) is
+judged by its pane alone: absent, held by another named session, or a
+shell. A session that is resumed, even unprompted and in another pane or
+account, is alive.
 
 Nothing else is evidence: not a missing row, `binding_unavailable`, a rate
 limit, a failed or partial scan (herdr, cmux and zellij never show absence),
@@ -201,7 +210,7 @@ Every reconcile pass keeps an evidence episode on the request
 `kept_episode`). Alive ends it; gone extends it; unknown pauses it, and more
 than 10 minutes of unknown restarts only the grace clock, never the episode.
 An item is unanswerable when the episode is gone and confirmed by a pass in
-the last 5 minutes, has been for 24 hours, the item is at least 24 hours old, and
+the last 5 minutes, has been for 15 minutes, the item is at least 15 minutes old, and
 the person has not kept this episode. A daemon that was down cannot fold
 anything at start.
 

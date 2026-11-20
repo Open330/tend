@@ -29,6 +29,16 @@ pub struct PeerInterruption {
         with = "time::serde::rfc3339::option"
     )]
     pub healthy_since: Option<OffsetDateTime>,
+    /// When `reason` became what it is now, within this episode: an episode
+    /// that changes reason (an error, then the recipient's row gone) keeps
+    /// `observed_at` but restarts this. Absent on episodes older than the
+    /// field until the next reconcile stamps it.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "time::serde::rfc3339::option"
+    )]
+    pub reason_since: Option<OffsetDateTime>,
 }
 
 /// How long the recipient of a flapping episode (`rate_limited`, `error`)
@@ -382,11 +392,15 @@ impl CollaborationStore {
                         action_request_id: None,
                         decision: None,
                         healthy_since: None,
+                        reason_since: Some(now),
                     });
                 }
                 let info = parent.interruption.as_mut().expect("initialized");
                 // The condition is back: any healthy stretch is over.
                 info.healthy_since = None;
+                if info.reason != current_reason || info.reason_since.is_none() {
+                    info.reason_since = Some(now);
+                }
                 info.reason = current_reason.into();
                 info.reset_at = agent
                     .and_then(|a| a.rate_limited_until)

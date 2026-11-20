@@ -18,8 +18,9 @@
 //!   condition for [`SYSTEM_ASK_STALE_AFTER`], once the item itself has been
 //!   listed for [`SYSTEM_ASK_MIN_VISIBLE`]. A recovery ask
 //!   whose original request came from the operator console, or from a Fleet
-//!   initiator, is never closed for age: a person is that request's
-//!   sender, so the decision is theirs.
+//!   initiator, closes for age only when its recipient vanished (no agent
+//!   row at all): a recipient still there, failing, is the person's to
+//!   decide on.
 //! - **Closing is recorded, not deleted.** The row stays in the mailbox,
 //!   `Cancelled`, with [`SystemAskClosure`] saying why, when, by whom, and
 //!   (for a merged duplicate) which item now covers it.
@@ -208,17 +209,19 @@ fn session_live(session: &str, agents: &[Agent]) -> bool {
 /// Nobody is left to act on an answer about `parent`.
 ///
 /// Recovery: the answer is a decision for the original request's sender,
-/// read off that request. It is abandoned only when that sender is an
-/// agent session (not the operator console, not a Fleet initiator acting
-/// for a person) and the recipient it was about is gone, and either the
-/// sender has no live row either, or the recipient vanished
-/// (`binding_unavailable`: no agent row at all). A vanished recipient
-/// leaves nothing for a person to unblock: no prompt to answer, no account
-/// to fix. What is left is the live sender's own request, which its
-/// obligations keep listing as interrupted and which it (or `tend msg
-/// retire`) can resend or retire; a person's answer would only be a note
-/// on it. A recipient that comes back ends the episode by itself. A reply
-/// wake: the reply's sender session is still gone.
+/// read off that request. It is abandoned only when the recipient it was
+/// about is gone, and either the recipient vanished (`binding_unavailable`:
+/// no agent row at all), or the sender is an agent session with no live row
+/// either. A vanished recipient leaves nothing for anyone to unblock: no
+/// prompt to answer, no account to fix, and the answer "records a decision;
+/// it does not restart, cancel, or spend". That holds whoever sent the
+/// request, the operator console and a Fleet initiator included: what is
+/// left is the original request itself, still listed as interrupted, which
+/// its sender (or `tend msg retire`) can resend or retire. A recipient that
+/// is only failing, rate-limited or stopped still has a row, so a request a
+/// person sent keeps its item for them however old. A recipient that comes
+/// back ends the episode by itself. A reply wake: the reply's sender
+/// session is still gone.
 pub(super) fn abandoned(
     kind: SystemAskKind,
     parent: &CollaborationRequest,
@@ -230,10 +233,10 @@ pub(super) fn abandoned(
                 .interruption
                 .as_ref()
                 .is_some_and(|info| info.active && info.reason == "binding_unavailable");
-            !parent.from.console
-                && parent.initiator.is_none()
-                && !parent.from.agent_session_id.starts_with("tend:")
-                && (vanished || !session_live(&parent.from.agent_session_id, agents))
+            let person_sent = parent.from.console || parent.initiator.is_some();
+            !parent.from.agent_session_id.starts_with("tend:")
+                && (vanished
+                    || (!person_sent && !session_live(&parent.from.agent_session_id, agents)))
                 && super::recovery::exact_agent(&parent.to, agents).is_none()
                 && !session_live(&parent.to.agent_session_id, agents)
         }
@@ -275,6 +278,26 @@ fn waiting_since(kind: SystemAskKind, parent: &CollaborationRequest) -> Option<O
         SystemAskKind::Recovery => parent.interruption.as_ref().map(|info| info.observed_at),
         SystemAskKind::ReplyWake => parent.reply.as_ref().map(|reply| reply.at),
     }
+}
+
+/// Whether `parent` has been in its condition for
+/// [`SYSTEM_ASK_STALE_AFTER`]: since [`waiting_since`] (a legacy parent
+/// with no timestamp at all counts), except for a recovery a person sent
+/// (console or Fleet initiator). [`abandoned`] lets that one close only for
+/// a vanished recipient, so it counts from when the recipient vanished
+/// (`reason_since`), never from an older episode of another reason, and not
+/// at all until that moment is recorded (an episode from before the field,
+/// until the next reconcile stamps it).
+fn stale(kind: SystemAskKind, parent: &CollaborationRequest, now: OffsetDateTime) -> bool {
+    let person_sent = parent.from.console || parent.initiator.is_some();
+    if kind == SystemAskKind::Recovery && person_sent {
+        return parent
+            .interruption
+            .as_ref()
+            .and_then(|info| info.reason_since)
+            .is_some_and(|since| now - since >= SYSTEM_ASK_STALE_AFTER);
+    }
+    waiting_since(kind, parent).is_none_or(|since| now - since >= SYSTEM_ASK_STALE_AFTER)
 }
 
 /// The session an unmarked (backlog) ask is about.
@@ -377,9 +400,7 @@ pub(super) fn settle(
         } else if now - ask.created_at >= SYSTEM_ASK_MIN_VISIBLE
             && ask.waiting.iter().all(|id| {
                 view.get(id).is_some_and(|parent| {
-                    abandoned(ask.kind, parent, agents)
-                        && waiting_since(ask.kind, parent)
-                            .is_none_or(|since| now - since >= SYSTEM_ASK_STALE_AFTER)
+                    abandoned(ask.kind, parent, agents) && stale(ask.kind, parent, now)
                 })
             })
         {
@@ -885,6 +906,19 @@ mod tests {
         put(store, &[aged]).await;
     }
 
+    /// The recipient vanished `days` earlier than recorded.
+    async fn vanished_age(store: &CollaborationStore, id: &str, days: i64) {
+        let mut aged = row(store, id).await;
+        let info = aged.interruption.as_mut().unwrap();
+        info.observed_at -= time::Duration::days(days);
+        let since = info
+            .reason_since
+            .as_mut()
+            .expect("stamped by the reconcile");
+        *since -= time::Duration::days(days);
+        put(store, &[aged]).await;
+    }
+
     /// The recipient's agent row has been missing past the binding grace.
     async fn recipient_vanishes(store: &CollaborationStore, id: &str, agents: &[Agent]) {
         store.reconcile_peer_interruptions(agents).await.unwrap();
@@ -1076,16 +1110,20 @@ mod tests {
         store.reconcile_peer_interruptions(&agents).await.unwrap();
         assert_eq!(open_system(&store).await.len(), 1);
 
-        // A person sent it: the vanished recipient is theirs to decide on.
+        // A person sent it, to a recipient that is failing: theirs to decide
+        // on, however old.
         let store = CollaborationStore::in_memory(CollaborationOptions::default());
-        let (recipient, _gone) = actor("%2", "peer", AgentState::Idle).await;
+        let (recipient, peer) = actor("%2", "peer", AgentState::Error).await;
         let console = Participant::console(recipient.room.clone());
         let parent = claimed(&store, &console, &recipient, "work").await;
-        recipient_vanishes(&store, &parent.id, &[]).await;
+        store
+            .reconcile_peer_interruptions(std::slice::from_ref(&peer))
+            .await
+            .unwrap();
+        episode_age(&store, &parent.id, 30).await;
         let item = open_system(&store).await.remove(0);
         age(&store, &item.id, 30).await;
-        episode_age(&store, &parent.id, 30).await;
-        store.reconcile_peer_interruptions(&[]).await.unwrap();
+        store.reconcile_peer_interruptions(&[peer]).await.unwrap();
         assert!(store
             .cleanup_system_asks(&[], true)
             .await
@@ -1093,6 +1131,66 @@ mod tests {
             .closed
             .is_empty());
         assert_eq!(open_system(&store).await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_person_sent_request_to_a_recipient_that_vanished_a_week_ago_closes() {
+        // As on jiun-mbp: console requests whose recipient has had no row
+        // for weeks (`binding_unavailable`), with and without a Fleet
+        // initiator.
+        let store = CollaborationStore::in_memory(CollaborationOptions::default());
+        let (recipient, _gone) = actor("%2", "peer", AgentState::Idle).await;
+        let console = Participant::console(recipient.room.clone());
+        let parent = claimed(&store, &console, &recipient, "work").await;
+        recipient_vanishes(&store, &parent.id, &[]).await;
+        let item = open_system(&store).await.remove(0);
+        age(&store, &item.id, 30).await;
+        // Six days: still waiting on the person.
+        vanished_age(&store, &parent.id, 6).await;
+        store.reconcile_peer_interruptions(&[]).await.unwrap();
+        assert!(store
+            .cleanup_system_asks(&[], true)
+            .await
+            .unwrap()
+            .closed
+            .is_empty());
+        // A week: nobody can act on an answer.
+        vanished_age(&store, &parent.id, 2).await;
+        let cleanup = store.cleanup_system_asks(&[], false).await.unwrap();
+        assert_eq!(cleanup.closed.len(), 1, "{cleanup:?}");
+        assert_eq!(cleanup.closed[0].reason, SystemAskCloseReason::Stale);
+        assert!(open_system(&store).await.is_empty());
+        // The original request is untouched: still the person's, still
+        // interrupted.
+        let original = row(&store, &parent.id).await;
+        assert_eq!(original.status, RequestStatus::Claimed);
+        assert!(original.interruption.as_ref().is_some_and(|i| i.active));
+    }
+
+    #[tokio::test]
+    async fn a_newly_vanished_recipient_does_not_inherit_an_old_error_age() {
+        // Failing for a month, its row gone only now: the week of being
+        // gone starts now, not with the error.
+        let store = CollaborationStore::in_memory(CollaborationOptions::default());
+        let (recipient, peer) = actor("%2", "peer", AgentState::Error).await;
+        let console = Participant::console(recipient.room.clone());
+        let parent = claimed(&store, &console, &recipient, "work").await;
+        store
+            .reconcile_peer_interruptions(std::slice::from_ref(&peer))
+            .await
+            .unwrap();
+        episode_age(&store, &parent.id, 30).await;
+        let item = open_system(&store).await.remove(0);
+        age(&store, &item.id, 30).await;
+        recipient_vanishes(&store, &parent.id, &[]).await;
+        let cleanup = store.cleanup_system_asks(&[], false).await.unwrap();
+        assert!(cleanup.closed.is_empty(), "{cleanup:?}");
+        let mut aged = row(&store, &parent.id).await;
+        let info = aged.interruption.as_mut().unwrap();
+        *info.reason_since.as_mut().unwrap() -= time::Duration::days(8);
+        put(&store, &[aged]).await;
+        let cleanup = store.cleanup_system_asks(&[], false).await.unwrap();
+        assert_eq!(cleanup.closed.len(), 1, "{cleanup:?}");
     }
 
     #[tokio::test]

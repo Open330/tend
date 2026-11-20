@@ -198,7 +198,7 @@ struct TendHumanRequestEntry: Decodable, Hashable, Sendable {
     let createdAt: String
     /// tendd opened it itself (peer recovery, a reply for a gone sender).
     var system: Bool?
-    /// Nobody can answer it: its asker has been gone for a day
+    /// Nobody can answer it: tendd established its asker gone
     /// (`subject_check_v1`). Folded out of the person's turn.
     var unanswerable: TendUnanswerable?
 

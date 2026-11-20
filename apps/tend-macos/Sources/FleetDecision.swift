@@ -38,7 +38,7 @@ struct FleetDecision: Identifiable, Hashable, Sendable {
     /// read it. Not proof that it exited (a new asker can be missing from a
     /// board read before it started), so see `asksUnlisted(at:)`.
     var askerUnlisted = false
-    /// Nobody can answer it: tendd established its asker gone for a day
+    /// Nobody can answer it: tendd established its asker gone
     /// (`subject_check_v1`). Listed under Can't be answered, not in Your
     /// turn, and not counted.
     var unanswerable: TendUnanswerable?

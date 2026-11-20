@@ -1,6 +1,6 @@
 // Your turn's folded group, **Can't be answered** (docs/proposals/
 // STALE_QUESTIONS.md), as Tend for Mac and the web Home draw it: questions
-// whose asking agent tendd established gone for a day. Not in Your turn and
+// whose asking agent tendd established gone. Not in Your turn and
 // not on the badge; collapsed by default; each says why and since when.
 // Keep puts one back in Your turn; Close all, one per host that allows it
 // (the paired one, or a Fleet host: docs/proposals/FLEET_UNANSWERABLE.md),

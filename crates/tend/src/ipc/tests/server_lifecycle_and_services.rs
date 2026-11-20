@@ -3391,6 +3391,7 @@ async fn unanswerable_fixture() -> (
         );
         observations.set_scan(PaneScan {
             at: time::OffsetDateTime::now_utc(),
+            processes_walked: false,
             hosts: vec![HostScan {
                 kind: crate::backend::HostKind::Tmux,
                 complete: true,

@@ -275,6 +275,7 @@ mod tests {
             action_request_id: Some("human-action".into()),
             decision: None,
             healthy_since: None,
+            reason_since: None,
         });
         commands
             .recv()

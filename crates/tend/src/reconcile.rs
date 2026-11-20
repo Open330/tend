@@ -110,14 +110,18 @@ pub trait LivenessSource: Send + Sync + 'static {
 /// integration colocated with the trait whose contract it leans on.
 /// One reconcile tick's scan as the subject check reads it
 /// (`subject_evidence.rs`): per backend, whether it was complete, the
-/// sockets that answered, and each pane's foreground and agent process.
+/// sockets that answered, each pane's foreground and agent process, and
+/// the sessions a process was explicitly resumed on.
 fn pane_scan(
     at: time::OffsetDateTime,
     observations: &[(HostKind, PaneObservation)],
     workloads: &HashMap<String, crate::WorkloadSummary>,
+    identities: &HashMap<process_tree::PaneKey, process_tree::PaneIdentities>,
+    processes_walked: bool,
 ) -> crate::subject_evidence::PaneScan {
     crate::subject_evidence::PaneScan {
         at,
+        processes_walked,
         hosts: observations
             .iter()
             .map(|(kind, observation)| crate::subject_evidence::HostScan {
@@ -127,15 +131,24 @@ fn pane_scan(
                 panes: observation
                     .panes
                     .iter()
-                    .map(|pane| crate::subject_evidence::ScannedPane {
-                        pane_id: pane.pane_id.clone(),
-                        endpoint: pane.socket.as_deref().map(|socket| {
-                            crate::backend::pane_endpoint_identity(Some(&pane.pane_id), socket)
-                        }),
-                        foreground: pane.current_command.clone(),
-                        agent_process: workloads
-                            .get(&pane.pane_id)
-                            .map(|workload| workload.primary_pid.is_some()),
+                    .map(|pane| {
+                        let key = process_tree::PaneKey::of(pane);
+                        // The identity walk is keyed by the whole pane
+                        // identity; the workload map only by pane id, which
+                        // repeats across sockets.
+                        let identity = identities.get(&key);
+                        crate::subject_evidence::ScannedPane {
+                            pane_id: pane.pane_id.clone(),
+                            endpoint: key.endpoint.clone(),
+                            foreground: pane.current_command.clone(),
+                            agent_process: identity.map(|i| i.agent).or_else(|| {
+                                workloads
+                                    .get(&pane.pane_id)
+                                    .map(|workload| workload.primary_pid.is_some())
+                            }),
+                            resumed: identity.map(|i| i.resumed.clone()).unwrap_or_default(),
+                            unnamed_agents: identity.map(|i| i.unnamed),
+                        }
                     })
                     .collect(),
             })
@@ -692,6 +705,16 @@ impl<L: LivenessSource> Reconciler<L> {
         // ancestry outrank the stored binding, so an idle resumed agent is not
         // left on an id that now belongs to another pane until its next hook.
         let mut codex_hosts = Vec::new();
+        // What the subject check may infer from this walk: only a walk of
+        // every pane of every backend, all complete, says what is not running.
+        let walked = all_complete
+            && codex_scan
+                .as_ref()
+                .map_or(union_panes.is_empty(), |scan| scan.complete);
+        let identities = codex_scan
+            .as_ref()
+            .map(|scan| scan.identities.clone())
+            .unwrap_or_default();
         // Not gated on an existing real row: right after a multiplexer
         // restart the resumed agents may have none, and adopting them is the
         // point.
@@ -768,7 +791,13 @@ impl<L: LivenessSource> Reconciler<L> {
         // What the subject check of human items reads: this scan, with each
         // pane's foreground and whether its workload has an agent process.
         self.store
-            .record_pane_scan(pane_scan(inventory_observed_at, &observations, &workloads))
+            .record_pane_scan(pane_scan(
+                inventory_observed_at,
+                &observations,
+                &workloads,
+                &identities,
+                walked,
+            ))
             .await;
         let store_update_us =
             u64::try_from(reconcile_started.elapsed().as_micros()).unwrap_or(u64::MAX);

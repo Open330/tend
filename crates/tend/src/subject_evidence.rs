@@ -72,6 +72,16 @@ pub struct ScannedPane {
     /// `None` when the walk did not cover it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_process: Option<bool>,
+    /// Session ids a process in the pane was explicitly started on
+    /// (`codex resume <id>`, `claude --resume <id>`), from the same walk.
+    /// A session listed here is back, whatever its row says.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resumed: Vec<String>,
+    /// Top-level agent processes in the pane that carry no session id
+    /// (`claude --continue`, a fresh `codex`); `None` when the identity walk
+    /// did not cover the pane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unnamed_agents: Option<u16>,
 }
 
 /// One backend's part of a scan.
@@ -92,6 +102,13 @@ pub struct PaneScan {
     #[serde(with = "time::serde::rfc3339")]
     pub at: OffsetDateTime,
     pub hosts: Vec<HostScan>,
+    /// This pass walked every pane of every backend completely: every
+    /// backend's scan was complete, the process table was read, and every
+    /// pane's walk finished. Only then can the subject check infer anything
+    /// from what the walk did not find (`ScannedPane::resumed`,
+    /// `agent_process`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub processes_walked: bool,
 }
 
 impl PaneScan {

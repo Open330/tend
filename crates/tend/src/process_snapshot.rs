@@ -30,6 +30,12 @@ pub struct ProcessTable {
 
 #[cfg_attr(target_os = "linux", allow(dead_code))]
 impl ProcessTable {
+    /// Nothing was read (a failed `ps`).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.by_pid.is_empty()
+    }
+
     pub fn from_processes(processes: impl IntoIterator<Item = ProcessInfo>) -> Self {
         let mut table = Self::default();
         for mut process in processes {
@@ -61,6 +67,19 @@ impl ProcessTable {
     }
 
     pub fn descendants(&self, root: u32, max_depth: u8, max_nodes: usize) -> Vec<ProcessInfo> {
+        self.descendants_walk(root, max_depth, max_nodes).0
+    }
+
+    /// [`Self::descendants`], and whether the walk reached every descendant:
+    /// `false` when a process lay past `max_depth` or the walk stopped at
+    /// `max_nodes` with more to visit.
+    pub fn descendants_walk(
+        &self,
+        root: u32,
+        max_depth: u8,
+        max_nodes: usize,
+    ) -> (Vec<ProcessInfo>, bool) {
+        let mut whole = true;
         let mut out = Vec::new();
         let mut seen = HashSet::new();
         let mut queue: VecDeque<(u32, u8)> = self
@@ -71,7 +90,11 @@ impl ProcessTable {
             .collect();
 
         while let Some((pid, depth)) = queue.pop_front() {
-            if depth > max_depth || !seen.insert(pid) || out.len() >= max_nodes {
+            if !seen.insert(pid) {
+                continue;
+            }
+            if depth > max_depth || out.len() >= max_nodes {
+                whole = false;
                 continue;
             }
             let Some(process) = self.by_pid.get(&pid) else {
@@ -84,7 +107,7 @@ impl ProcessTable {
             process.depth = depth;
             out.push(process);
         }
-        out
+        (out, whole)
     }
 }
 

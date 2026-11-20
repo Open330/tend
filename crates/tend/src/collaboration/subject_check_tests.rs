@@ -69,7 +69,8 @@ fn pane<'a>(id: &'a str, endpoint: &'a str, foreground: &'a str, agent: Option<b
     }
 }
 
-/// A complete tmux scan at `at` where `servers` answered.
+/// A complete tmux scan at `at` where `servers` answered, from a pass that
+/// did not walk the panes' processes: only the bound incarnation counts.
 fn scan(
     at: OffsetDateTime,
     servers: &[(&str, Option<ServerIncarnation>)],
@@ -77,6 +78,7 @@ fn scan(
 ) -> PaneScan {
     PaneScan {
         at,
+        processes_walked: false,
         hosts: vec![HostScan {
             kind: HostKind::Tmux,
             complete: true,
@@ -95,6 +97,8 @@ fn scan(
                     endpoint: Some(p.endpoint.into()),
                     foreground: p.foreground.into(),
                     agent_process: p.agent,
+                    resumed: Vec::new(),
+                    unnamed_agents: None,
                 })
                 .collect(),
         }],
@@ -158,8 +162,19 @@ async fn drive(
     hours: i64,
     scan_at: impl Fn(OffsetDateTime) -> Option<PaneScan>,
 ) {
+    drive_for(store, agents, bindings, Duration::hours(hours), scan_at).await;
+}
+
+/// [`drive`] over `window`.
+async fn drive_for(
+    store: &CollaborationStore,
+    agents: &[Agent],
+    bindings: &HashMap<String, SubjectBinding>,
+    window: Duration,
+    scan_at: impl Fn(OffsetDateTime) -> Option<PaneScan>,
+) {
     let now = OffsetDateTime::now_utc();
-    let mut at = now - Duration::hours(hours);
+    let mut at = now - window;
     while at <= now {
         let scan = scan_at(at);
         let inputs = SubjectInputs {
@@ -257,20 +272,20 @@ fn gone_scan(at: OffsetDateTime) -> Option<PaneScan> {
 }
 
 #[tokio::test]
-async fn an_agents_question_whose_pane_is_gone_folds_after_a_day_and_is_never_closed() {
+async fn an_agents_question_whose_pane_is_gone_folds_after_the_grace_and_is_never_closed() {
     let store = CollaborationStore::in_memory(CollaborationOptions::default());
     let asker = participant("otpeek", "%42", "default");
     let q = question(&store, &asker).await;
-    // 23 hours of pane gone: listed, not folded.
-    drive(&store, &[], &everyone(), 23, gone_scan).await;
+    // Ten minutes of pane gone: listed, not folded.
+    drive_for(&store, &[], &everyone(), Duration::minutes(10), gone_scan).await;
     assert!(folded(&store, &q.id).await.is_none());
     let check = get(&store, &q.id).await.subject_check.unwrap();
     assert_eq!(check.state, SubjectState::Gone);
     assert_eq!(check.causes, [GoneCause::PaneGone]);
-    // A day of it.
+    // The grace of it.
     let mut aged = get(&store, &q.id).await;
     let check = aged.subject_check.as_mut().unwrap();
-    check.gone_since = check.gone_since.map(|at| at - Duration::hours(2));
+    check.gone_since = check.gone_since.map(|at| at - Duration::minutes(6));
     put(&store, aged).await;
     pass(
         &store,
@@ -836,9 +851,11 @@ async fn facts_survive_a_restart_and_expire() {
     assert_eq!(sessions, ["fresh"]);
 }
 
-/// A recovery item for a request the person sent from the console.
+/// A recovery item for a request the person sent from the console, its
+/// recipient's binding unavailable for `days`.
 async fn console_recovery(
     store: &CollaborationStore,
+    days: i64,
 ) -> (CollaborationRequest, CollaborationRequest) {
     let recipient = participant("peer", "%2", "default");
     let console = Participant::console(recipient.room.clone());
@@ -860,23 +877,23 @@ async fn console_recovery(
         .reconcile_peer_interruptions(&[errored])
         .await
         .unwrap();
-    // As measured on jiun-mbp: the recipient's binding has been unavailable
-    // for 19 days.
+    // As measured on jiun-mbp: the recipient's binding unavailable, there
+    // for 11 to 20 days.
     let mut parent = get(store, &parent.id).await;
     let info = parent.interruption.as_mut().unwrap();
     info.reason = "binding_unavailable".into();
-    info.observed_at -= Duration::days(19);
+    info.observed_at -= Duration::days(days);
     let item_id = info.action_request_id.clone().unwrap();
     put(store, parent.clone()).await;
-    backdate(store, &item_id, Duration::days(19)).await;
+    backdate(store, &item_id, Duration::days(days)).await;
     store.reconcile_peer_interruptions(&[]).await.unwrap();
     (get(store, &parent.id).await, get(store, &item_id).await)
 }
 
 #[tokio::test]
-async fn a_console_recovery_with_only_binding_unavailable_stays() {
+async fn a_console_recovery_with_only_binding_unavailable_does_not_fold_and_closes_after_a_week() {
     let store = CollaborationStore::in_memory(CollaborationOptions::default());
-    let (_, item) = Box::pin(console_recovery(&store)).await;
+    let (parent, item) = Box::pin(console_recovery(&store, 3)).await;
     assert!(item.needs_human_response());
     // No scan establishes anything: a day of passes changes nothing.
     drive(&store, &[], &everyone(), 25, |_| None).await;
@@ -884,12 +901,26 @@ async fn a_console_recovery_with_only_binding_unavailable_stays() {
     assert!(folded(&store, &item.id).await.is_none());
     store.sweep_system_asks(&[]).await.unwrap();
     assert!(get(&store, &item.id).await.needs_human_response());
+    // Its recipient vanished a week ago: nobody is left for the answer.
+    let mut aged = get(&store, &parent.id).await;
+    let info = aged.interruption.as_mut().unwrap();
+    info.observed_at -= Duration::days(5);
+    *info.reason_since.as_mut().expect("stamped") -= Duration::days(8);
+    put(&store, aged).await;
+    store.sweep_system_asks(&[]).await.unwrap();
+    let closed = get(&store, &item.id).await;
+    assert!(!closed.needs_human_response());
+    assert_eq!(
+        closed.system_ask.unwrap().closed.unwrap().reason,
+        crate::collaboration::system_asks::SystemAskCloseReason::Stale
+    );
+    assert_eq!(get(&store, &parent.id).await.status, RequestStatus::Claimed);
 }
 
 #[tokio::test]
-async fn a_console_recovery_whose_recipient_pane_is_gone_folds_and_is_never_auto_closed() {
+async fn a_console_recovery_whose_recipient_pane_is_gone_folds_and_is_not_closed_within_the_week() {
     let store = CollaborationStore::in_memory(CollaborationOptions::default());
-    let (_, item) = Box::pin(console_recovery(&store)).await;
+    let (_, item) = Box::pin(console_recovery(&store, 3)).await;
     drive(&store, &[], &everyone(), 25, gone_scan).await;
     let gone = folded(&store, &item.id).await.expect("folded");
     assert_eq!(gone.cause, GoneCause::PaneGone);
@@ -897,7 +928,7 @@ async fn a_console_recovery_whose_recipient_pane_is_gone_folds_and_is_never_auto
     store.reconcile_peer_interruptions(&[]).await.unwrap();
     assert!(
         get(&store, &item.id).await.needs_human_response(),
-        "never closed for age"
+        "not closed for age within the week"
     );
 }
 
@@ -905,7 +936,7 @@ async fn a_console_recovery_whose_recipient_pane_is_gone_folds_and_is_never_auto
 async fn closing_a_recovery_item_records_the_dismissal_on_the_original_request_only() {
     let store = CollaborationStore::in_memory(CollaborationOptions::default());
     store.set_close_unanswerable(true);
-    let (parent, item) = Box::pin(console_recovery(&store)).await;
+    let (parent, item) = Box::pin(console_recovery(&store, 3)).await;
     drive(&store, &[], &everyone(), 25, gone_scan).await;
     let gone = folded(&store, &item.id).await.unwrap();
     let before = store.requests.read().await.len();
@@ -1354,7 +1385,7 @@ async fn close_all_rechecks_the_evidence_at_the_commit() {
 #[tokio::test]
 async fn reviewer_missing_covered_parent_is_unknown() {
     let store = CollaborationStore::in_memory(CollaborationOptions::default());
-    let (_, item) = Box::pin(console_recovery(&store)).await;
+    let (_, item) = Box::pin(console_recovery(&store, 3)).await;
     let mut item = get(&store, &item.id).await;
     item.system_ask
         .as_mut()
@@ -1675,4 +1706,263 @@ async fn a_stored_binding_keeps_its_first_incarnation_and_follows_a_move() {
     .await;
     let moved = stored(&get(&store, &q.id).await);
     assert_eq!((moved.pane.as_str(), moved.incarnation), ("%4", Some(A)));
+}
+
+/// `scan`, from a pass that walked every pane's processes completely and
+/// found these `(pane, session)` explicit resumes.
+fn walked(scan: PaneScan, resumed: &[(&str, &str)]) -> PaneScan {
+    let mut scan = PaneScan {
+        processes_walked: true,
+        ..scan
+    };
+    for host in &mut scan.hosts {
+        for pane in &mut host.panes {
+            pane.resumed = resumed
+                .iter()
+                .filter(|(id, _)| *id == pane.pane_id)
+                .map(|(_, session)| (*session).to_owned())
+                .collect();
+            // One agent per pane, named when it was resumed by id.
+            pane.unnamed_agents = Some(u16::from(
+                pane.agent_process == Some(true) && pane.resumed.is_empty(),
+            ));
+        }
+    }
+    scan
+}
+
+/// Pass every five minutes for the grace and a little more, with no
+/// binding anywhere: the asker was gone before tendd recorded one.
+async fn drive_unbound(
+    store: &CollaborationStore,
+    agents: &[Agent],
+    scan_at: impl Fn(OffsetDateTime) -> PaneScan,
+) {
+    drive_for(
+        store,
+        agents,
+        &HashMap::new(),
+        SUBJECT_GONE_GRACE + Duration::minutes(5),
+        |at| Some(scan_at(at)),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn an_asker_gone_before_any_binding_was_recorded_folds_from_present_state() {
+    // As on jiun-mini: week-old questions whose asker has no row, asked
+    // before tendd stored where it was bound.
+    let store = CollaborationStore::in_memory(CollaborationOptions::default());
+    let q = question(&store, &participant("01a16985", "%15", "default")).await;
+    // Without a process walk, absence on an unknown incarnation says nothing.
+    drive_unbound(&store, &[], |at| scan(at, &[("default", Some(B))], &[])).await;
+    assert!(get(&store, &q.id).await.subject_check.is_none());
+    // With one, and no process resumed on it: its pane is gone.
+    drive_unbound(&store, &[], |at| {
+        walked(scan(at, &[("default", Some(B))], &[]), &[])
+    })
+    .await;
+    let gone = folded(&store, &q.id).await.expect("folded");
+    assert_eq!(gone.cause, GoneCause::PaneGone);
+    assert!(get(&store, &q.id).await.needs_human_response());
+}
+
+#[tokio::test]
+async fn a_pane_another_named_session_holds_is_replaced_but_an_unnamed_one_shows_nothing() {
+    let store = CollaborationStore::in_memory(CollaborationOptions::default());
+    let q = question(&store, &participant("01a13356", "%42", "default")).await;
+    let panes = |at| {
+        walked(
+            scan(
+                at,
+                &[("default", Some(B))],
+                &[pane("%42", "default", "codex", Some(true))],
+            ),
+            &[],
+        )
+    };
+    // An agent tendd cannot name yet may be the asker resumed.
+    let mut unnamed = row("x", "%42", "default", AgentState::Idle, Duration::ZERO).await;
+    unnamed.session_id = format!("{}7:default:%42", crate::state::SYNTHETIC_SESSION_PREFIX);
+    drive_unbound(&store, &[unnamed], panes).await;
+    assert!(folded(&store, &q.id).await.is_none());
+    // Another session's own row there: the asker was replaced.
+    let other = row(
+        "01a1f248",
+        "%42",
+        "default",
+        AgentState::Idle,
+        Duration::ZERO,
+    )
+    .await;
+    drive_unbound(&store, &[other], panes).await;
+    assert_eq!(
+        folded(&store, &q.id).await.expect("folded").cause,
+        GoneCause::Replaced
+    );
+}
+
+#[tokio::test]
+async fn a_resumed_or_moved_asker_is_alive_before_its_first_prompt() {
+    // As in jiun-mini's %8: `codex resume <asker>` runs, still unprompted, so
+    // the pane shows only a synthetic row.
+    let store = CollaborationStore::in_memory(CollaborationOptions::default());
+    let q = question(&store, &participant("01a132f3", "%8", "default")).await;
+    let gone_then = |at| walked(scan(at, &[("default", Some(B))], &[]), &[]);
+    drive_unbound(&store, &[], gone_then).await;
+    assert!(folded(&store, &q.id).await.is_some());
+    let resumed = walked(
+        scan(
+            OffsetDateTime::now_utc(),
+            &[("default", Some(B))],
+            &[pane("%8", "default", "codex", Some(true))],
+        ),
+        &[("%8", "01a132f3")],
+    );
+    pass(&store, &[], &HashMap::new(), Some(&resumed)).await;
+    assert!(
+        get(&store, &q.id).await.subject_check.is_none(),
+        "alive ends the episode"
+    );
+    // Swapped to another account and pane: its own live row wins.
+    drive_unbound(&store, &[], gone_then).await;
+    assert!(folded(&store, &q.id).await.is_some());
+    let moved = row(
+        "01a132f3",
+        "%77",
+        "default",
+        AgentState::Idle,
+        Duration::ZERO,
+    )
+    .await;
+    pass(
+        &store,
+        &[moved],
+        &HashMap::new(),
+        Some(&gone_then(OffsetDateTime::now_utc())),
+    )
+    .await;
+    assert!(get(&store, &q.id).await.subject_check.is_none());
+}
+
+#[tokio::test]
+async fn a_shell_where_the_asker_ran_is_agent_exited_from_present_state() {
+    let store = CollaborationStore::in_memory(CollaborationOptions::default());
+    let q = question(&store, &participant("88ce61e3", "%142", "default")).await;
+    drive_unbound(&store, &[], |at| {
+        walked(
+            scan(
+                at,
+                &[("default", Some(B))],
+                &[pane("%142", "default", "zsh", Some(false))],
+            ),
+            &[],
+        )
+    })
+    .await;
+    assert_eq!(
+        folded(&store, &q.id).await.expect("folded").cause,
+        GoneCause::AgentExited
+    );
+}
+
+#[tokio::test]
+async fn an_agent_tendd_cannot_name_anywhere_keeps_an_unbound_asker_unknown() {
+    // `claude --continue` in another pane: no id on its command line, so it
+    // could be the asker. Its absent pane then shows nothing.
+    let store = CollaborationStore::in_memory(CollaborationOptions::default());
+    let q = question(&store, &participant("55115377", "%140", "default")).await;
+    let mut unnamed = row("x", "%99", "default", AgentState::Idle, Duration::ZERO).await;
+    unnamed.session_id = format!("{}7:default:%99", crate::state::SYNTHETIC_SESSION_PREFIX);
+    let elsewhere = |at| {
+        walked(
+            scan(
+                at,
+                &[("default", Some(B))],
+                &[pane("%99", "default", "claude", Some(true))],
+            ),
+            &[],
+        )
+    };
+    drive_unbound(&store, std::slice::from_ref(&unnamed), elsewhere).await;
+    assert!(get(&store, &q.id).await.subject_check.is_none());
+    // No row at all for that agent process: the same.
+    drive_unbound(&store, &[], elsewhere).await;
+    assert!(get(&store, &q.id).await.subject_check.is_none());
+    // Named, it is someone else: the asker is gone.
+    let other = row(
+        "someone",
+        "%99",
+        "default",
+        AgentState::Idle,
+        Duration::ZERO,
+    )
+    .await;
+    drive_unbound(&store, &[other], elsewhere).await;
+    assert_eq!(
+        folded(&store, &q.id).await.expect("folded").cause,
+        GoneCause::PaneGone
+    );
+}
+
+#[tokio::test]
+async fn a_walk_that_was_not_complete_shows_nothing_without_a_binding() {
+    // A complete tmux scan beside an incomplete backend, a failed `ps` or a
+    // cut-off walk: the reconcile reports `processes_walked: false`.
+    let store = CollaborationStore::in_memory(CollaborationOptions::default());
+    let q = question(&store, &participant("01a16985", "%15", "default")).await;
+    drive_unbound(&store, &[], |at| scan(at, &[("default", Some(B))], &[])).await;
+    assert!(get(&store, &q.id).await.subject_check.is_none());
+    // A resume found by that partial walk still counts as alive.
+    let partial = scan(
+        OffsetDateTime::now_utc(),
+        &[("default", Some(B))],
+        &[pane("%3", "default", "codex", Some(true))],
+    );
+    let mut partial = partial;
+    partial.hosts[0].panes[0].resumed = vec!["01a16985".into()];
+    let mut row_gone = get(&store, &q.id).await;
+    row_gone.subject_check = Some(SubjectCheck {
+        episode: "ep_x".into(),
+        state: SubjectState::Gone,
+        gone_since: Some(OffsetDateTime::now_utc() - Duration::hours(1)),
+        confirmed_at: OffsetDateTime::now_utc(),
+        causes: vec![GoneCause::PaneGone],
+        kept_episode: None,
+        pane: Some("%15".into()),
+    });
+    put(&store, row_gone).await;
+    pass(&store, &[], &HashMap::new(), Some(&partial)).await;
+    assert!(
+        get(&store, &q.id).await.subject_check.is_none(),
+        "resumed: alive"
+    );
+}
+
+#[tokio::test]
+async fn one_named_agent_does_not_account_for_another_in_the_same_pane() {
+    // %5 runs `codex resume other` and, beside it, `claude --continue`,
+    // which could be the asker. `other`'s own row is in %5 too.
+    let store = CollaborationStore::in_memory(CollaborationOptions::default());
+    let q = question(&store, &participant("55115377", "%140", "default")).await;
+    let other = row("other", "%5", "default", AgentState::Idle, Duration::ZERO).await;
+    let shared = |unnamed: u16| {
+        move |at| {
+            let mut scan = walked(
+                scan(
+                    at,
+                    &[("default", Some(B))],
+                    &[pane("%5", "default", "codex", Some(true))],
+                ),
+                &[("%5", "other")],
+            );
+            scan.hosts[0].panes[0].unnamed_agents = Some(unnamed);
+            scan
+        }
+    };
+    drive_unbound(&store, std::slice::from_ref(&other), shared(1)).await;
+    assert!(get(&store, &q.id).await.subject_check.is_none());
+    // Only `other` there: every agent is accounted for.
+    drive_unbound(&store, &[other], shared(0)).await;
+    assert!(folded(&store, &q.id).await.is_some());
 }

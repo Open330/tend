@@ -924,7 +924,7 @@ close_unanswerable = true   # default
 ```
 
 `close_unanswerable` lets a person close, in one go, the questions nobody
-can answer any more (their asker established gone for a day; see
+can answer any more (their asker established gone; see
 [REVIEW.md](REVIEW.md)): Close all on Mac, web and iOS, and `tend review
 cleanup --questions --apply`. Each question gets the reply Dismiss sends,
 which is final, and the confirmation says so. `false` hides Close all;
