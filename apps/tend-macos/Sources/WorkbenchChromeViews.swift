@@ -146,7 +146,7 @@ struct WorkspaceTabBar: View {
             }
         }
         .padding(.trailing, 6)
-        .font(.system(size: 12))
+        .font(TendType.detail)
         .foregroundStyle(.secondary)
         .frame(height: height)
         // The strip's bottom border sits under the tabs, so the active tab,
@@ -316,7 +316,7 @@ private struct EditorTab: View {
             Button(action: activate) {
                 HStack(spacing: 6) {
                     Image(systemName: systemImage)
-                        .font(.system(size: 12))
+                        .font(TendType.detail)
                         .foregroundStyle(active ? TendInk.label(colorScheme) : TendInk.secondary(colorScheme))
                         .overlay(alignment: .bottomTrailing) {
                             if let stateColor {
@@ -351,7 +351,7 @@ private struct EditorTab: View {
             // change width as the pointer moves across them.
             Button(action: close) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(TendType.glyph)
             }
             .buttonStyle(.tendIcon(size: 18))
             .opacity(active || hovering ? 1 : 0)
@@ -525,7 +525,7 @@ struct WorkbenchStatusBar: View {
 private struct StatusBarLabelStyle: LabelStyle {
     func makeBody(configuration: Configuration) -> some View {
         HStack(spacing: 4) {
-            configuration.icon.font(.system(size: 11))
+            configuration.icon.font(TendType.meta)
             configuration.title
         }
     }

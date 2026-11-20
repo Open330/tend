@@ -70,7 +70,7 @@ private struct TendUsageLivePopover: View {
 private struct TendUsageStatusLabelStyle: LabelStyle {
     func makeBody(configuration: Configuration) -> some View {
         HStack(spacing: 4) {
-            configuration.icon.font(.system(size: 11))
+            configuration.icon.font(TendType.meta)
             configuration.title.monospacedDigit()
         }
     }
@@ -112,7 +112,7 @@ struct TendUsagePopover: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
                 Text(verbatim: "\(group.providerName) · \(group.hostAliases.joined(separator: ", "))")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(TendType.detail.weight(.semibold))
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 8)
@@ -155,7 +155,7 @@ struct TendUsagePopover: View {
     private func windowRow(_ window: TendUsageWindow) -> some View {
         HStack(spacing: 8) {
             Text(verbatim: window.kind.shortLabel)
-                .font(TendType.detail.monospaced())
+                .font(TendType.mono)
                 .foregroundStyle(.secondary)
                 .frame(width: 20, alignment: .leading)
             TendUsageBar(percent: window.percent, width: 110, height: 6)
@@ -193,7 +193,7 @@ struct TendUsagePopover: View {
                     .lineLimit(1)
                 if paneID != nil {
                     Image(systemName: "arrow.right")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(TendType.glyph)
                         .foregroundStyle(.tertiary)
                 }
             }
@@ -209,7 +209,7 @@ struct TendUsagePopover: View {
     private var hostCostCard: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Live sessions by host")
-                .font(.system(size: 12, weight: .semibold))
+                .font(TendType.detail.weight(.semibold))
             ForEach(hostCosts) { host in
                 costRow(Text(verbatim: host.hostAlias), cost: host.liveCostUSD, sessions: host.sessionCount)
             }

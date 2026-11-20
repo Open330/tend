@@ -382,10 +382,10 @@ struct TendSwapOutcomeRow: View {
                 if outcome.from != nil || outcome.to != nil {
                     HStack(spacing: 4) {
                         Text(verbatim: outcome.from ?? String(localized: "no account"))
-                        Image(systemName: "arrow.right").font(.system(size: 9))
+                        Image(systemName: "arrow.right").font(TendType.glyph)
                         Text(verbatim: outcome.to ?? "—").fontWeight(.semibold)
                     }
-                    .font(TendType.detail.monospaced())
+                    .font(TendType.mono)
                 }
                 if let detail {
                     Text(detail)
@@ -585,7 +585,7 @@ struct TendSwapActivityRow: View {
         HStack(alignment: .top, spacing: 6) {
             Image(systemName: entrySymbol(entry.phase))
                 .foregroundStyle(entryTint(entry.phase))
-                .font(.system(size: 10))
+                .font(TendType.glyph)
                 .frame(width: 12)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {

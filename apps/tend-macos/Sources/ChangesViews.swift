@@ -233,13 +233,13 @@ struct ChangesWorkspaceView: View {
                 branchSummary(snapshot)
             } else if changes.isRefreshing {
                 Text("Reading git status…")
-                    .font(.system(size: 12))
+                    .font(TendType.detail)
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
             if sentNotice {
                 Label("Review sent", systemImage: "checkmark.circle")
-                    .font(.system(size: 12))
+                    .font(TendType.detail)
                     .foregroundStyle(.green)
                     .transition(.opacity)
             }
@@ -305,16 +305,16 @@ struct ChangesWorkspaceView: View {
             } icon: {
                 Image(systemName: "arrow.triangle.branch")
             }
-            .font(.system(size: 12, weight: .medium))
+            .font(TendType.detail.weight(.medium))
             .help(snapshot.root)
             if snapshot.branch.upstream != nil {
                 Text(verbatim: "↑\(snapshot.branch.ahead) ↓\(snapshot.branch.behind)")
-                    .font(.system(size: 12).monospacedDigit())
+                    .font(TendType.detail.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .help(Text("Ahead / behind \(snapshot.branch.upstream ?? "")"))
             }
             Text("\(snapshot.fileCount) files")
-                .font(.system(size: 12))
+                .font(TendType.detail)
                 .foregroundStyle(.secondary)
             ChangeCountsLabel(added: snapshot.totalAdded, deleted: snapshot.totalDeleted, pending: !snapshot.countsLoaded)
         }
@@ -333,7 +333,7 @@ struct ChangesWorkspaceView: View {
             Button("Retry") { changes.refresh() }
                 .buttonStyle(.tendGhost)
         }
-        .font(.system(size: 12))
+        .font(TendType.detail)
         .padding(.horizontal, 12)
         .padding(.vertical, 5)
         .background(Color.orange.opacity(0.1))
@@ -360,7 +360,7 @@ struct ChangesWorkspaceView: View {
             VStack(spacing: 8) {
                 ProgressView().controlSize(.small)
                 Text("Reading git status…")
-                    .font(.system(size: 12))
+                    .font(TendType.detail)
                     .foregroundStyle(.secondary)
             }
         }
@@ -478,14 +478,14 @@ struct ChangesRevisionView: View {
             } icon: {
                 Image(systemName: { if case .commit = revision.spec { "smallcircle.filled.circle" } else { "plusminus" } }())
             }
-            .font(.system(size: 12, weight: .medium))
+            .font(TendType.detail.weight(.medium))
             Text(verbatim: (repo as NSString).lastPathComponent)
-                .font(.system(size: 12))
+                .font(TendType.detail)
                 .foregroundStyle(.secondary)
                 .help(repo)
             if let snapshot = changes.snapshot {
                 Text("\(snapshot.fileCount) files")
-                    .font(.system(size: 12))
+                    .font(TendType.detail)
                     .foregroundStyle(.secondary)
                 ChangeCountsLabel(added: snapshot.totalAdded, deleted: snapshot.totalDeleted)
             } else if changes.isRefreshing {
@@ -543,7 +543,7 @@ struct ChangesRevisionView: View {
             VStack(spacing: 8) {
                 ProgressView().controlSize(.small)
                 Text("Reading the commit…")
-                    .font(.system(size: 12))
+                    .font(TendType.detail)
                     .foregroundStyle(.secondary)
             }
         }
@@ -559,11 +559,11 @@ struct ChangesEmptyState<Actions: View>: View {
     var body: some View {
         VStack(spacing: 9) {
             Image(systemName: systemImage)
-                .font(.system(size: 28))
+                .font(TendType.emptyIcon)
                 .foregroundStyle(.secondary)
             Text(title).font(.headline)
             message
-                .font(.system(size: 12))
+                .font(TendType.detail)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .textSelection(.enabled)
@@ -596,7 +596,7 @@ struct ChangeCountsLabel: View {
                 }
             }
         }
-        .font(.system(size: 12, design: .monospaced))
+        .font(TendType.mono)
         .lineLimit(1)
         .fixedSize()
     }
@@ -644,7 +644,7 @@ private struct ChangesFileList: View {
                     }
                     if snapshot.omittedCount > 0 {
                         Text("\(snapshot.omittedCount) more files not shown")
-                            .font(.system(size: 12))
+                            .font(TendType.detail)
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 14)
                             .padding(.vertical, 8)
@@ -670,7 +670,7 @@ private struct ChangesFileList: View {
         let count = snapshot.files.filter(changes.isViewed).count
         return VStack(alignment: .leading, spacing: 4) {
             Text("\(count) of \(total) viewed")
-                .font(.system(size: 12).monospacedDigit())
+                .font(TendType.detail.monospacedDigit())
                 .foregroundStyle(.secondary)
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
@@ -719,23 +719,23 @@ private struct ChangesFileList: View {
         } label: {
             HStack(spacing: 6) {
                 Text(verbatim: file.kind.rawValue)
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .font(TendType.mono.weight(.semibold))
                     .foregroundStyle(kindColor(file.kind))
                     .frame(width: 12)
                 if file.kind == .conflicted {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 9))
+                        .font(TendType.glyph)
                         .foregroundStyle(.red)
                 }
                 (Text(verbatim: file.fileName).foregroundColor(.primary)
                     + Text(verbatim: file.directory.isEmpty ? "" : "  \(file.directory)").foregroundColor(.secondary))
-                    .font(.system(size: 12))
+                    .font(TendType.detail)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 4)
                 if commentedPaths.contains(file.path) {
                     Image(systemName: "text.bubble")
-                        .font(.system(size: 11))
+                        .font(TendType.meta)
                         .foregroundStyle(.tint)
                 }
                 ChangeCountsLabel(
@@ -831,14 +831,15 @@ private extension View {
 // MARK: - Diff
 
 private enum DiffMetrics {
-    static let fontSize: CGFloat = 12
+    /// The Mono role's size, for the AppKit metrics below.
+    static let fontSize = CGFloat(TendDesignTokens.Mac.mono.size)
     static let rowHeight: CGFloat = 18
     static let numberWidth: CGFloat = 44
     static let markerWidth: CGFloat = 18
     static var gutterWidth: CGFloat { numberWidth * 2 + markerWidth }
     /// One side of the split view numbers only its own file.
     static var splitGutterWidth: CGFloat { numberWidth + markerWidth }
-    static let font = Font.system(size: fontSize, design: .monospaced)
+    static let font = TendType.mono
 
     /// One monospaced cell, for sizing the scrollable width to the longest
     /// line so row backgrounds run edge to edge.
@@ -902,7 +903,7 @@ private struct ChangesDiffPane: View {
     private func header(_ file: ChangedFile) -> some View {
         HStack(spacing: 8) {
             Text(verbatim: file.origPath.map { "\($0) → \(file.path)" } ?? file.path)
-                .font(.system(size: 12, weight: .medium))
+                .font(TendType.detail.weight(.medium))
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .textSelection(.enabled)
@@ -1075,7 +1076,7 @@ private struct ChangesDiffPane: View {
         switch row {
         case .orphanHeader:
             Text("Comments on lines no longer in this diff")
-                .font(.system(size: 12, weight: .semibold))
+                .font(TendType.detail.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .padding(.leading, DiffMetrics.gutterWidth)
                 .padding(.vertical, 6)
@@ -1135,7 +1136,7 @@ private struct ChangesDiffPane: View {
                 Button("Clear") { changes.selection = nil }
                     .buttonStyle(.tendGhost)
                 Text("Shift-click to extend within the hunk")
-                    .font(.system(size: 12))
+                    .font(TendType.detail)
                     .foregroundStyle(.secondary)
             }
             .padding(.leading, DiffMetrics.gutterWidth)
@@ -1167,7 +1168,7 @@ private struct ChangesDiffPane: View {
             .padding(.vertical, 4)
         case .truncated:
             Label("The diff was cut off: it is larger than Tend reads at once.", systemImage: "scissors")
-                .font(.system(size: 12))
+                .font(TendType.detail)
                 .foregroundStyle(.secondary)
                 .padding(.leading, DiffMetrics.gutterWidth)
                 .padding(.vertical, 8)
@@ -1223,7 +1224,7 @@ private struct DiffHunkHeaderRow: View {
         Button(action: toggle) {
             HStack(spacing: 6) {
                 Image(systemName: collapsed ? "chevron.right" : "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(TendType.glyph)
                     .foregroundStyle(.secondary)
                     .frame(width: DiffMetrics.gutterWidth - 12, alignment: .trailing)
                 Text(verbatim: hunk.header)
@@ -1233,7 +1234,7 @@ private struct DiffHunkHeaderRow: View {
                     .fixedSize()
                 if collapsed {
                     Text("\(hunk.lines.count) lines")
-                        .font(.system(size: 11))
+                        .font(TendType.meta)
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
@@ -1447,16 +1448,16 @@ private struct ReviewCommentCard: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Image(systemName: "text.bubble.fill")
-                    .font(.system(size: 11))
+                    .font(TendType.meta)
                     .foregroundStyle(.tint)
                 Text(verbatim: comment.location)
-                    .font(.system(size: 12, design: .monospaced))
+                    .font(TendType.mono)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 if comment.outdated {
                     Text("Outdated")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(TendType.label.weight(.semibold))
                         .foregroundStyle(.orange)
                 }
                 Spacer()
@@ -1472,7 +1473,7 @@ private struct ReviewCommentCard: View {
                 .help("Delete comment")
             }
             Text(verbatim: comment.body)
-                .font(.system(size: 12))
+                .font(TendType.detail)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -1553,7 +1554,7 @@ private struct ReviewSendSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Send review")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(TendType.page)
                 Spacer()
                 recipientControl
             }
@@ -1572,7 +1573,7 @@ private struct ReviewSendSheet: View {
 
             HStack {
                 Text("Preview")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(TendType.detail.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
                 if previewEdited {
@@ -1590,7 +1591,7 @@ private struct ReviewSendSheet: View {
                     previewEdited = $0 != generated
                 }
             ))
-            .font(.system(size: 12, design: .monospaced))
+            .font(TendType.mono)
             .scrollContentBackground(.hidden)
             .padding(6)
             .background(
@@ -1642,7 +1643,7 @@ private struct ReviewSendSheet: View {
             } icon: {
                 Image(systemName: "person.crop.circle")
             }
-            .font(.system(size: 12))
+            .font(TendType.detail)
             .foregroundStyle(.secondary)
         case .work:
             Picker("Send to", selection: $recipient) {
@@ -1666,17 +1667,17 @@ private struct ReviewSendSheet: View {
                 ForEach(draft.comments) { comment in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(verbatim: comment.location)
-                            .font(.system(size: 12, design: .monospaced))
+                            .font(TendType.mono)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
                             .frame(maxWidth: 220, alignment: .leading)
                         Text(verbatim: comment.body)
-                            .font(.system(size: 12))
+                            .font(TendType.detail)
                             .lineLimit(1)
                         if comment.outdated {
                             Text("Outdated")
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(TendType.label.weight(.semibold))
                                 .foregroundStyle(.orange)
                         }
                         Spacer()
@@ -1709,7 +1710,7 @@ private struct ReviewSendSheet: View {
                     .foregroundStyle(.orange)
             }
         }
-        .font(.system(size: 12))
+        .font(TendType.detail)
         .lineLimit(1)
     }
 

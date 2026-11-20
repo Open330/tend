@@ -39,7 +39,7 @@ struct WorkDetailView: View {
                         .font(TendType.detail.weight(.semibold))
                         .foregroundStyle(.secondary)
                     Text(work.title)
-                        .font(.system(size: 22, weight: .semibold))
+                        .font(TendType.page)
                     HStack(spacing: 8) {
                         Label(work.pipelineLabel, systemImage: "point.3.connected.trianglepath.dotted")
                         if let generation = work.pipelineRun?.generation {
@@ -56,7 +56,7 @@ struct WorkDetailView: View {
                     .foregroundStyle(.secondary)
                     if let cwd = work.cwd {
                         Text(cwd)
-                            .font(TendType.detail.monospaced())
+                            .font(TendType.mono)
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                     }
@@ -91,7 +91,7 @@ struct WorkDetailView: View {
 
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Collaborators")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(TendType.cardTitle)
                     LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
                         ForEach(work.participants) { participant in
                             WorkParticipantCard(
@@ -143,7 +143,7 @@ private struct WorkMetric: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(verbatim: value)
-                .font(.system(size: 18, weight: .semibold).monospacedDigit())
+                .font(TendType.page.monospacedDigit())
                 .foregroundStyle(color)
             Text(title)
                 .font(TendType.detail)
@@ -418,7 +418,7 @@ struct FleetAgentDetailView: View {
                         .padding(.top, 9)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(title)
-                            .font(.system(size: 22, weight: .semibold))
+                            .font(TendType.page)
                         // A cap is said once, by the badge, which also
                         // explains it; any other status by its label.
                         if participant.agent.status.isLimited {
@@ -428,7 +428,7 @@ struct FleetAgentDetailView: View {
                                 .foregroundStyle(participant.agent.status.color)
                         }
                         Text(participant.agent.agentSessionID)
-                            .font(TendType.detail.monospaced())
+                            .font(TendType.mono)
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                     }
@@ -529,7 +529,7 @@ struct FleetAgentDetailView: View {
             } else {
                 VStack(spacing: 9) {
                     Image(systemName: "terminal")
-                        .font(.system(size: 30))
+                        .font(TendType.emptyIcon)
                         .foregroundStyle(.secondary)
                     Text("No shell binding")
                         .font(.headline)
@@ -578,7 +578,7 @@ struct FleetHostDetailView: View {
                     HostIdentityBadge(host: host, size: 40)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(host.alias)
-                            .font(.system(size: 22, weight: .semibold))
+                            .font(TendType.page)
                         Group {
                             if host.local {
                                 Text("Local host")
@@ -601,7 +601,7 @@ struct FleetHostDetailView: View {
 
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Execution sessions")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(TendType.cardTitle)
                     Text("Each session is summarized by its windows and the latest retained agent context.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -609,7 +609,7 @@ struct FleetHostDetailView: View {
                     if sessions.isEmpty {
                         VStack(spacing: 8) {
                             Image(systemName: "square.3.layers.3d")
-                                .font(.system(size: 28))
+                                .font(TendType.emptyIcon)
                                 .foregroundStyle(.secondary)
                             Text("No sessions")
                                 .font(.headline)
@@ -747,13 +747,13 @@ struct FleetSessionDetailView: View {
             VStack(alignment: .leading, spacing: 20) {
                 HStack(alignment: .top, spacing: 12) {
                     Image(systemName: "square.3.layers.3d")
-                        .font(.system(size: 28))
+                        .font(TendType.emptyIcon)
                         .foregroundStyle(.tint)
                         .frame(width: 42, height: 42)
                         .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: TendTheme.panelRadius, style: .continuous))
                     VStack(alignment: .leading, spacing: 3) {
                         Text(session.name.isEmpty ? session.sessionID : session.name)
-                            .font(.system(size: 22, weight: .semibold))
+                            .font(TendType.page)
                         Text("\(session.hostAlias) · \(session.windows.count) windows · \(panes.count) panes")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
@@ -777,7 +777,7 @@ struct FleetSessionDetailView: View {
 
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Windows")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(TendType.cardTitle)
                     Text("Open any agent row to inspect its summary, latest response, and Live Pane.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -841,7 +841,7 @@ struct FleetWindowDetailView: View {
 
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Agent reports")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(TendType.cardTitle)
                     Text("Recap and latest response are kept separate; runtime and workload facts come directly from tendd.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -858,7 +858,7 @@ struct FleetWindowDetailView: View {
                 if !relatedMessages.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Collaboration in this window")
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(TendType.cardTitle)
                         Text("\(relatedMessages.count) operator commands and their durable replies")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
@@ -881,13 +881,13 @@ struct FleetWindowDetailView: View {
     private var header: some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: "macwindow")
-                .font(.system(size: 28))
+                .font(TendType.emptyIcon)
                 .foregroundStyle(.tint)
                 .frame(width: 42, height: 42)
                 .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: TendTheme.panelRadius, style: .continuous))
             VStack(alignment: .leading, spacing: 4) {
                 Text(window.name.isEmpty ? window.windowID : window.name)
-                    .font(.system(size: 22, weight: .semibold))
+                    .font(TendType.page)
                 HStack(spacing: 7) {
                     Text("\(window.hostAlias) · \(window.panes.count) panes")
                         .foregroundStyle(.secondary)
@@ -1319,7 +1319,7 @@ private struct HostMetric: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(verbatim: "\(value)\(suffix)")
-                .font(.system(size: 18, weight: .semibold).monospacedDigit())
+                .font(TendType.page.monospacedDigit())
             Text(title)
                 .font(TendType.detail)
                 .foregroundStyle(.secondary)
@@ -1350,7 +1350,7 @@ struct TendEmptyDetail: View {
     var body: some View {
         VStack(spacing: 12) {
             Image(systemName: "square.stack.3d.up")
-                .font(.system(size: 42))
+                .font(TendType.heroIcon)
                 .foregroundStyle(.secondary)
             Text("Tend Workspace")
                 .font(.title2)

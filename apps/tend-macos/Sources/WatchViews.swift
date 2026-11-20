@@ -337,7 +337,7 @@ private struct WatchSessionTree: View {
                             .lineLimit(1)
                         if let singleWindow {
                             Image(systemName: "chevron.right")
-                                .font(.system(size: 7, weight: .bold))
+                                .font(TendType.glyph)
                                 .foregroundStyle(.tertiary)
                             Text(workLabel(singleWindow) ?? (singleWindow.name.isEmpty ? singleWindow.windowID : singleWindow.name))
                                 .font(.callout)
@@ -1021,7 +1021,7 @@ struct FleetPaneInspector: View {
             HostIdentityBadge(identity: pane.host, size: 36)
             VStack(alignment: .leading, spacing: 2) {
                 Text(pane.agent?.aiTitle ?? pane.pane.agentAlias.map { "@\($0)" } ?? pane.pane.title.nonEmpty ?? pane.pane.currentCommand)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(TendType.cardTitle)
                     .lineLimit(2)
                 HStack(spacing: 7) {
                     Text(pane.host.alias)

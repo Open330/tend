@@ -19,7 +19,7 @@ struct ArtifactFileSidebar: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                Text("EXPLORER").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                Text("EXPLORER").font(TendType.label.weight(.semibold)).foregroundStyle(.secondary)
                 Spacer()
                 Menu {
                     Button("This Mac") { model.fileRoot = .init(hostAlias: "local", path: lastLocalFolder.isEmpty ? "~" : lastLocalFolder) }
@@ -43,8 +43,8 @@ struct ArtifactFileSidebar: View {
                     Image(systemName: "folder.fill").foregroundStyle(Color.accentColor)
                     Text(root.name.isEmpty ? root.path : root.name).fontWeight(.semibold).lineLimit(1)
                     Spacer()
-                    Image(systemName: "chevron.down").font(.system(size: 9)).foregroundStyle(.secondary)
-                }.font(.system(size: 12)).padding(.horizontal, 12).padding(.vertical, 8).contentShape(Rectangle())
+                    Image(systemName: "chevron.down").font(TendType.glyph).foregroundStyle(.secondary)
+                }.font(TendType.detail).padding(.horizontal, 12).padding(.vertical, 8).contentShape(Rectangle())
             }.buttonStyle(.plain).keyboardShortcut("g", modifiers: [.command, .shift]).help(root.path).accessibilityLabel("Go to Folder")
             .popover(isPresented: $showLocation, arrowEdge: .trailing) {
                 ArtifactFolderPicker(model: model, root: root) { location in
@@ -117,7 +117,7 @@ struct ArtifactPreviewView: View {
             HStack(spacing: 10) {
                 Image(systemName: location.hostAlias == "local" ? "doc" : "server.rack")
                 Text("\(location.hostAlias) · \(location.path)")
-                    .font(.system(size: 12)).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                    .font(TendType.detail).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
                 Spacer(minLength: 0)
                 if kind == .markdown || kind == .html || kind == .svg {
                     Picker("Display", selection: $source) {
