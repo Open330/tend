@@ -510,6 +510,98 @@ fn failed_readiness(disposition: Option<&str>, readiness: Option<&str>) -> Optio
     }
 }
 
+/// Why a failed attempt failed, in tend's own closed lists, from what its
+/// journal recorded, never text read off a screen or an account name:
+/// - a readiness that was not ready: `readiness_blocked: open_question`
+///   and the like, as [`failed_readiness`];
+/// - otherwise the stage it reached, `<phase>_failed` (`starting_failed`
+///   when it failed before stopping anything), with what that stage
+///   recorded going wrong: the account check of a relaunch on another
+///   account (`verifying_failed: account_mismatched`), or the last effect
+///   the multiplexer refused in that stage (`stopping_failed:
+///   exit_refused`).
+///
+/// `None` only when the attempt cannot be read.
+fn failure_reason(
+    tx: &rusqlite::Transaction<'_>,
+    job: &str,
+    target: u32,
+    attempt: u32,
+) -> rusqlite::Result<Option<String>> {
+    let keys = params![job, target, attempt];
+    let Some(phase) = tx
+        .query_row(
+            "SELECT phase FROM targets WHERE job_id = ?1 AND target_id = ?2 AND attempt = ?3",
+            keys,
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+    else {
+        return Ok(None);
+    };
+    let last = |kind: &str| {
+        tx.query_row(
+            "SELECT value_json, observed_at FROM observations
+             WHERE job_id = ?1 AND target_id = ?2 AND attempt = ?3 AND kind = ?4
+             ORDER BY seq DESC LIMIT 1",
+            params![job, target, attempt, kind],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()
+    };
+    if let Some((readiness, _)) = last("readiness")? {
+        if let Some(reason) = failed_readiness(Some("failed"), Some(&readiness)) {
+            return Ok(Some(reason));
+        }
+    }
+    let stage = match phase.as_str() {
+        "pending" | "started" => "starting",
+        other => other,
+    };
+    let checked = last("account_check")?
+        .and_then(|(json, _)| serde_json::from_str::<Observation>(&json).ok())
+        .and_then(|observation| match observation {
+            Observation::AccountCheck { result, .. }
+                if matches!(
+                    result,
+                    AccountCheck::Mismatched | AccountCheck::Unreadable | AccountCheck::Unmapped
+                ) =>
+            {
+                serde_json::to_value(result)
+                    .ok()
+                    .and_then(|v| v.as_str().map(|r| format!("account_{r}")))
+            }
+            _ => None,
+        })
+        .filter(|_| stage == "verifying");
+    // Only an effect refused in the stage the attempt ended in: one refused
+    // earlier was gone past.
+    let entered = last("phase")?.and_then(|(_, at)| parse_time(&at));
+    let refused = tx
+        .query_row(
+            "SELECT purpose, intent_at FROM effects
+             WHERE job_id = ?1 AND target_id = ?2 AND attempt = ?3 AND state = 'refused'
+             ORDER BY seq DESC LIMIT 1",
+            keys,
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?
+        .filter(|(_, at)| match (entered, parse_time(at)) {
+            (Some(entered), Some(at)) => at >= entered,
+            (None, _) => true,
+            (Some(_), None) => false,
+        })
+        .map(|(purpose, _)| format!("{purpose}_refused"));
+    Ok(Some(match checked.or(refused) {
+        Some(detail) => format!("{stage}_failed: {detail}"),
+        None => format!("{stage}_failed"),
+    }))
+}
+
+fn parse_time(at: &str) -> Option<time::OffsetDateTime> {
+    time::OffsetDateTime::parse(at, &time::format_description::well_known::Rfc3339).ok()
+}
+
 /// A job as read back.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct JobStatus {
@@ -1375,6 +1467,13 @@ impl SwapJobStore {
                     ),
                 });
             }
+            // A failure with no reason of its own is given the one its
+            // journal shows, read before its phase is overwritten.
+            let derived = match (disposition, reason) {
+                (Disposition::Failed, None) => failure_reason(&tx, job, target, attempt)?,
+                _ => None,
+            };
+            let reason = reason.or(derived.as_deref());
             let changed = tx.execute(
                 "UPDATE targets SET disposition = ?4, reason = COALESCE(?5, reason), phase = 'finished'
                  WHERE job_id = ?1 AND target_id = ?2 AND attempt = ?3 AND disposition IS NULL",

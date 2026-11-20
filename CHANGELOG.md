@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A daemon swap target that failed outside readiness now records why, as
+  readiness failures already did: the stage it reached (`stopping_failed`,
+  `launching_failed`, `verifying_failed`, …) with what went wrong there in
+  tend's own words, the relaunch's account check
+  (`verifying_failed: account_mismatched`) or the last effect the
+  multiplexer refused in that stage (`stopping_failed: exit_refused`), and
+  `worker_unavailable` when the job's worker could not start. It is stored
+  with the target, so `tend swap --status` and the swap history keep it
+  after the job's evidence is pruned.
+
 ## [0.10.27] - 2026-11-20
 
 ### Added

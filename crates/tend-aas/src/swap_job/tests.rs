@@ -1757,3 +1757,122 @@ fn a_failed_target_reads_why_its_readiness_failed() {
     );
     assert_eq!(super::failed_readiness(Some("failed"), None), None);
 }
+
+/// A failed target with no reason of its own is given the one its journal
+/// shows when it is settled: the stage it reached, and what went wrong
+/// there in tend's own words; a reason given, or another disposition, is
+/// left as it is.
+#[test]
+fn a_failed_target_records_where_and_why_it_failed() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let lease = store.acquire(&me("a", 1), &alive).unwrap();
+    let job = running(&store, &lease, "k", 6);
+    let phase = |target: u32, phase: Phase| {
+        store
+            .observe(&lease, &job, target, 1, &Observation::Phase { phase })
+            .unwrap();
+    };
+    let refused = |target: u32, purpose: Purpose| {
+        let mut journal = store.journal(&lease, &job, target, 1);
+        let effect = effect(purpose, Op::Key(Key::Enter));
+        journal.before(&effect).unwrap();
+        journal.after(&effect, Transport::Refused).unwrap();
+    };
+    let check = |target: u32, result: AccountCheck| {
+        store
+            .observe(
+                &lease,
+                &job,
+                target,
+                1,
+                &Observation::AccountCheck {
+                    result,
+                    observed: Some("other".into()),
+                    source: "process_environ".into(),
+                },
+            )
+            .unwrap();
+    };
+    // 0: refused in the stage it ended in.
+    phase(0, Phase::Stopping);
+    refused(0, Purpose::Exit);
+    // 1: a refusal in an earlier stage was gone past.
+    phase(1, Phase::Stopping);
+    refused(1, Purpose::Interrupt);
+    phase(1, Phase::Launching);
+    // 2: landed on another account.
+    phase(2, Phase::Verifying);
+    check(2, AccountCheck::Mismatched);
+    // 3: never reached a stage.
+    // 4: failed with its own reason; 5: not a failure.
+    phase(4, Phase::Stopping);
+    phase(5, Phase::Stopping);
+    for target in 0..4 {
+        store
+            .finish_target(&lease, &job, target, 1, Disposition::Failed)
+            .unwrap();
+    }
+    store
+        .finish_target_with_reason(
+            &lease,
+            &job,
+            4,
+            1,
+            Disposition::Failed,
+            Some("worker_unavailable"),
+        )
+        .unwrap();
+    store
+        .finish_target(&lease, &job, 5, 1, Disposition::Swapped)
+        .unwrap();
+    let status = store.status(&job).unwrap();
+    let reasons: Vec<_> = status
+        .targets
+        .iter()
+        .map(|target| target.reason.as_deref())
+        .collect();
+    assert_eq!(
+        reasons,
+        [
+            Some("stopping_failed: exit_refused"),
+            Some("launching_failed"),
+            Some("verifying_failed: account_mismatched"),
+            Some("starting_failed"),
+            Some("worker_unavailable"),
+            None,
+        ]
+    );
+}
+
+/// A readiness that was not ready is the reason, as it reads back.
+#[test]
+fn a_failed_target_records_its_readiness() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let lease = store.acquire(&me("a", 1), &alive).unwrap();
+    let job = running(&store, &lease, "k", 1);
+    for observation in [
+        Observation::Phase {
+            phase: Phase::Readiness,
+        },
+        Observation::Readiness {
+            result: Readiness::Unsettled,
+            why: Some("never_quiet".into()),
+        },
+    ] {
+        store.observe(&lease, &job, 0, 1, &observation).unwrap();
+    }
+    store
+        .finish_target(&lease, &job, 0, 1, Disposition::Failed)
+        .unwrap();
+    let reason = store.hold().query_row(
+        "SELECT reason FROM targets WHERE job_id = ?1",
+        [&job],
+        |row| row.get::<_, Option<String>>(0),
+    );
+    assert_eq!(
+        reason.unwrap().as_deref(),
+        Some("readiness_unsettled: never_quiet")
+    );
+}

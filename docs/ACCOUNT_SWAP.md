@@ -414,6 +414,15 @@ is not the safer default.
 | `--detach` | Returns as soon as the daemon accepted the job, printing its key, instead of following it. |
 | `--cancel <key>` | Asks a daemon swap job to start no further target, then waits for it to end. |
 
+A failed target in `--status` names why in tend's own words, never text read
+off the screen or an account name:
+
+| Reason | Meaning |
+| ------ | ------- |
+| `readiness_<result>[: <why>]` | The relaunch never became ready (`blocked`, `exited`, `unsettled`), with the blocker or what the screen lacked. |
+| `<stage>_failed[: <detail>]` | It failed in that stage (`starting`, `stopping`, `launching`, `verifying`, `follow_through`). The detail is the relaunch's account check (`account_mismatched`, `account_unreadable`, `account_unmapped`) or the last effect the multiplexer refused in that stage (`exit_refused`, `relaunch_refused`, …). |
+| `worker_unavailable` | The daemon could not start the job's worker; nothing was done. |
+
 `continue_when = "limited"` sends the follow-up only to agents whose turn was
 cut off: by a usage cap, or by the swap itself when `--force` stopped them
 mid-turn. An idle or finished agent, and one waiting on your answer or choice,
