@@ -1912,8 +1912,14 @@ impl<E: Engine> Service<E> {
                         "worker_unavailable",
                     )
                 } else {
-                    this.store
-                        .finish_target(&this.lease, job, target, attempt, Disposition::Failed)
+                    this.store.finish_target_with_reason(
+                        &this.lease,
+                        job,
+                        target,
+                        attempt,
+                        Disposition::Failed,
+                        Some("worker_unavailable"),
+                    )
                 };
                 if let Err(error) = settled {
                     recorded = Err(error);
