@@ -282,6 +282,12 @@ rm -rf "$FRAME_DIR"; mkdir -p "$FRAME_DIR"
 frame() { # <slug> <agent> <state> <prompt> [tool]... → echoes the pane command
   local slug="$1"; shift
   bash "$PAINT" "$@" > "$FRAME_DIR/$slug"
+  # TEND_DEMO_PANE_SCRIPTS: a directory of executables named after slugs
+  # that take over those panes (the demo video's panes that answer).
+  if [ -n "${TEND_DEMO_PANE_SCRIPTS:-}" ] && [ -x "$TEND_DEMO_PANE_SCRIPTS/$slug" ]; then
+    printf 'exec %s %s' "$TEND_DEMO_PANE_SCRIPTS/$slug" "$FRAME_DIR/$slug"
+    return
+  fi
   # `exec cat` holds the pane open on a quiet stdin, keeping the frame on
   # screen with clean scrollback for the whole take.
   printf 'cat %s; exec cat' "$FRAME_DIR/$slug"

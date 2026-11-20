@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# The demo video's `sdk` pane: the agent stopped on an error, then steered
+# from Tend for Mac. Shows the painted frame ($1); the first line typed into
+# it is taken as a new prompt: echoed, acknowledged, and reported through
+# the hooks an agent would fire, so Tend shows it working again.
+frame=$1
+cat "$frame"
+IFS= read -r line || exec cat
+printf '\n\033[1;32m›\033[0m %s\n\n' "$line"
+printf '  \033[2m⚙\033[0m ran  openapi-generator generate -i .cache/spec.yaml\n'
+printf '  \033[1;34m▶ working…\033[0m\n'
+json=$(printf '%s' "$line" | python3 -c 'import json,sys; print(json.dumps({"session_id":"s-sdk","prompt":sys.stdin.read()}))')
+tend hook claude --event user_prompt_submit <<<"$json" >/dev/null 2>&1
+tend hook claude --event pre_tool_use <<<'{"session_id":"s-sdk","tool_name":"Bash"}' >/dev/null 2>&1
+exec cat

@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# The demo video's `auth` pane: Claude Code's choice picker, answered from
+# Tend for Mac. Shows the painted frame ($1), follows the arrow keys Tend
+# sends, and on Enter prints the answer and fires the hooks an agent that
+# took it would (back to work), through the sandbox's own `tend`.
+frame=$1
+cat "$frame"
+cursor=1
+labels=("" "staging, then prod on approval" "all environments at once" "prod only — staging already rotated")
+while IFS= read -rsn1 key; do
+  if [ "$key" = $'\033' ]; then
+    read -rsn2 -t 0.2 rest
+    case "$rest" in
+      "[A") [ "$cursor" -gt 1 ] && cursor=$((cursor - 1)) ;;
+      "[B") [ "$cursor" -lt 3 ] && cursor=$((cursor + 1)) ;;
+    esac
+  elif [ -z "$key" ]; then
+    printf '\n\033[1;35m●\033[0m User chose: %s\n\n' "${labels[$cursor]}"
+    printf '  \033[2m⚙\033[0m rotating staging signing keys…\n'
+    tend hook claude --event post_tool_use <<<'{"session_id":"s-auth","tool_name":"AskUserQuestion"}' >/dev/null 2>&1
+    tend hook claude --event pre_tool_use <<<'{"session_id":"s-auth","tool_name":"Bash"}' >/dev/null 2>&1
+    exec cat
+  fi
+done
