@@ -88,21 +88,21 @@ struct DesignCaptureTests {
 
         // Home at the window's minimum size, both layouts.
         let narrow = OffscreenWindow(ContentView(model: model).environmentObject(model), scheme: scheme, size: Self.minimumWindow)
+        defer { narrow.close() }
         for (layout, name) in [(FleetCardLayout.emphasis, "home-narrow"), (.compact, "home-compact-narrow")] {
             UserDefaults.standard.set(layout.rawValue, forKey: TendPreferences.homeCardLayoutKey)
             try await narrow.settle(seconds: 2)
             try write(narrow.image(), name: name, scheme: scheme)
         }
-        narrow.close()
         UserDefaults.standard.set(FleetCardLayout.emphasis.rawValue, forKey: TendPreferences.homeCardLayoutKey)
 
         // The fixture's agents spread over three hosts, at both sizes.
         let hosts = Self.board(spreading: model)
         for (size, name) in [(CGSize(width: 1440, height: 900), "home-hosts"), (Self.minimumWindow, "home-hosts-narrow")] {
             let window = OffscreenWindow(FleetHomeView(model: model, homeBoard: hosts).environmentObject(model), scheme: scheme, size: size)
+            defer { window.close() }
             try await window.settle(seconds: 2)
             try write(window.image(), name: name, scheme: scheme)
-            window.close()
         }
 
         // The Review sheet. Pressing its toolbar button through the
@@ -110,9 +110,9 @@ struct DesignCaptureTests {
         // it up.
         let review = OffscreenWindow(FleetHomeView(model: model, homeBoard: model.homeBoard, presentsReview: true).environmentObject(model),
                                      scheme: scheme, size: CGSize(width: 1440, height: 900))
+        defer { review.close() }
         try await review.settle(seconds: 3)
         try write(review.sheetImage(), name: "home-review", scheme: scheme)
-        review.close()
 
         model.isPresentingWorkStart = true
         try await window.settle(seconds: 2)
@@ -149,10 +149,23 @@ struct DesignCaptureTests {
         let board = FleetHomeBoard()
         guard let local = snapshot.hosts.first(where: \.local), let remote = local.remote else { return board }
         let aliases = [local.alias, "jiun-mini", "rtzr"]
-        let sessions = Array(Set(remote.agents.compactMap(\.tmuxSession))).sorted()
-        func alias(_ session: String?) -> String {
-            guard let session, let index = sessions.firstIndex(of: session) else { return local.alias }
-            return aliases[index % aliases.count]
+        // Each tmux session (by its panes, which the snapshot matched to
+        // agents) goes to one host, so a unit's agents stay together; an
+        // agent with no matched pane is dealt out on its own.
+        let sessions = Array(Set(remote.panes.map(\.session))).sorted()
+        func alias(session: String) -> String {
+            aliases[(sessions.firstIndex(of: session) ?? 0) % aliases.count]
+        }
+        // The pane the snapshot itself matched to each agent decides it.
+        var unattached = 0
+        var agentHost: [String: String] = [:]
+        for hosted in snapshot.hostedAgents where hosted.host.local {
+            if let pane = hosted.pane {
+                agentHost[hosted.agent.agentSessionID] = alias(session: pane.session)
+            } else {
+                unattached += 1
+                agentHost[hosted.agent.agentSessionID] = aliases[unattached % aliases.count]
+            }
         }
         let hosts = aliases.map { name in
             TendFleetHost(
@@ -161,8 +174,8 @@ struct DesignCaptureTests {
                 error: nil, tendVersion: local.tendVersion, daemonGeneration: local.daemonGeneration,
                 labels: local.labels, annotations: local.annotations,
                 remote: TendRemoteSnapshot(
-                    agents: remote.agents.filter { alias($0.tmuxSession) == name },
-                    panes: remote.panes.filter { alias($0.session) == name }
+                    agents: remote.agents.filter { agentHost[$0.agentSessionID] == name },
+                    panes: remote.panes.filter { alias(session: $0.session) == name }
                 ),
                 capabilities: local.capabilities
             )
@@ -170,6 +183,11 @@ struct DesignCaptureTests {
         let spread = TendExecutionSnapshot(hosts: hosts + snapshot.hosts.filter { !$0.local })
         let now = Date()
         let agents = FleetBoard.homeAgents(spread, now: now)
+        // An all-local board must not pass for a three-host one, and every
+        // agent that had its pane still has it.
+        #expect(Set(spread.hostedAgents.map(\.host.alias)) == Set(aliases), "the spread left a host without agents")
+        #expect(spread.hostedAgents.filter { $0.pane != nil }.count == snapshot.hostedAgents.filter { $0.host.local && $0.pane != nil }.count,
+                "the spread lost an agent's pane")
         board.setHosts(spread.hosts.map(\.identity))
         board.setConnected(true)
         board.setWorks(FleetBoard.works(groups: spread.workGroups(pipelineRuns: model.pipelineRuns), agents: agents, now: now))
@@ -206,7 +224,12 @@ struct DesignCaptureTests {
         }
     }
 
-    private static let preferenceKeys = [TendPreferences.homeCardLayoutKey, TendPreferences.settingsTabKey]
+    /// The layout and tab the capture sets, and the review marks a mounted
+    /// Home may migrate or prune.
+    private static let preferenceKeys = [
+        TendPreferences.homeCardLayoutKey, TendPreferences.settingsTabKey,
+        FleetReviewMarks.defaultsKey, FleetReviewMarks.migratedKey,
+    ]
 
     /// The host's own persisted values (not the registered defaults, which
     /// `object(forKey:)` would also return), so an absent key stays absent.
@@ -263,10 +286,25 @@ private final class OffscreenWindow {
         Self.draw(host)
     }
 
+    /// The sheet over the window's own background: its material is
+    /// translucent and would export with clear pixels.
     func sheetImage() -> NSBitmapImageRep? {
-        guard let content = window.attachedSheet?.contentView else { return nil }
-        content.layoutSubtreeIfNeeded()
-        return Self.draw(content)
+        guard let content = window.attachedSheet?.contentView, let sheet = Self.draw(content),
+              let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: sheet.pixelsWide, pixelsHigh: sheet.pixelsHigh,
+                                         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+              let context = NSGraphicsContext(bitmapImageRep: rep) else { return nil }
+        rep.size = sheet.size
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        let bounds = NSRect(origin: .zero, size: sheet.size)
+        window.appearance?.performAsCurrentDrawingAppearance {
+            NSColor.windowBackgroundColor.setFill()
+            bounds.fill()
+        }
+        sheet.draw(in: bounds, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        NSGraphicsContext.restoreGraphicsState()
+        return rep
     }
 
     func closeSheet() {
