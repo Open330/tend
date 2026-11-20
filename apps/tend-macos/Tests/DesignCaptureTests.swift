@@ -294,10 +294,11 @@ private final class OffscreenWindow {
                                          bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
                                          colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
               let context = NSGraphicsContext(bitmapImageRep: rep) else { return nil }
+        // The context draws one unit per pixel; `size` stays the points.
         rep.size = sheet.size
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = context
-        let bounds = NSRect(origin: .zero, size: sheet.size)
+        let bounds = NSRect(x: 0, y: 0, width: sheet.pixelsWide, height: sheet.pixelsHigh)
         window.appearance?.performAsCurrentDrawingAppearance {
             NSColor.windowBackgroundColor.setFill()
             bounds.fill()
