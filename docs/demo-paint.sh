@@ -64,10 +64,13 @@ case "$state" in
       "$C_GREEN" "$C_RESET" "$C_YELLOW" "$C_RESET" "$C_DIM" "$C_RESET"
     ;;
   choice)
+    printf '%s────────────────────────────────────────────────────%s\n' "$C_DIM" "$C_RESET"
     printf '  %s?%s Which environments should rotate first?\n\n' "$C_YELLOW" "$C_RESET"
-    printf '     %s❯%s staging, then prod on approval\n' "$C_GREEN" "$C_RESET"
-    printf '       all environments at once\n'
-    printf '       prod only — staging already rotated\n'
+    # Numbered, as Claude Code's own picker is: Tend for Mac reads the
+    # options off this screen and answers by moving the cursor.
+    printf '   %s❯ 1. staging, then prod on approval%s\n' "$C_GREEN" "$C_RESET"
+    printf '     2. all environments at once\n'
+    printf '     3. prod only — staging already rotated\n'
     ;;
   error)
     printf '  %s✗ 500 from the codegen service after 3 retries%s\n' "$C_RED" "$C_RESET"

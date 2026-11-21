@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A 70-second product demo video, `docs/demo-video/tend-demo.mp4` (and
+  `tend-demo-ko.mp4` with Korean captions), linked from the README: Tend
+  for Mac's Home, answering an agent's question, deciding a finished
+  result, Explore and steering an agent, the menu bar, then the iPhone and
+  iPad apps. It is the real apps on a GitHub macOS runner and its
+  simulators against the demo fixture; `.github/workflows/demo-video.yml`
+  records the raw takes on a PR labelled `demo-video`, and
+  `scripts/demo-video/edit.py` cuts and captions them
+  ([docs/demo-video/README.md](docs/demo-video/README.md)).
+
 ## [0.10.30] - 2026-11-21
 
 ### Fixed
