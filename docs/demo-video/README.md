@@ -1,6 +1,6 @@
 # The demo video
 
-`tend-demo.mp4` (English captions) and `tend-demo-ko.mp4` (Korean), 68 s,
+`tend-demo.mp4` (English captions) and `tend-demo-ko.mp4` (Korean), 71 s,
 1920×1080, H.264. `poster.png` is the README's still. Storyboard:
 [STORYBOARD.md](STORYBOARD.md).
 
@@ -18,11 +18,16 @@ from anyone's own agents, hosts or accounts.
    takes, a screenshot per step, and the driver's logs are the
    `demo-takes` artifact. Nothing runs on a developer's machine.
 2. `scripts/demo-video/edit.py TAKES OUT --sheets` writes contact sheets of
-   the simulator recordings; pick the iPhone and iPad windows into
-   `TAKES/ios-cuts.json` (seconds on those sheets' timeline). Measure how
+   the simulator recordings, one frame a second by seeking the raw file;
+   pick the iPhone and iPad windows into `TAKES/ios-cuts.json` (seconds on
+   the raw recording). A simulator recording only has frames where the
+   screen changed, and decoding it straight through comes out seconds off,
+   so the edit takes each frame by its own seek as well. Measure how
    far the Mac take lags the driver's clock on a visible event (the menu
    bar popover opening) into `TAKES/mac-offset.txt`. The ones used for
-   this cut are kept here.
+   this cut are kept here. This cut's iPad shot is from the previous take
+   (the same workflow and fixture): in the last one its Your turn lane was
+   still loading when the tour ended.
 3. `edit.py TAKES OUT` and `edit.py TAKES OUT --lang ko`: the Mac scenes
    keep what the driver logged it did (`acts.txt`) and drop the waits;
    captions are drawn with AppKit (`cards.swift`).
