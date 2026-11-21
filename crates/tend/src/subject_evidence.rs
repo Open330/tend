@@ -77,11 +77,80 @@ pub struct ScannedPane {
     /// A session listed here is back, whatever its row says.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub resumed: Vec<String>,
-    /// Top-level agent processes in the pane that carry no session id
-    /// (`claude --continue`, a fresh `codex`); `None` when the identity walk
-    /// did not cover the pane.
+    /// What in the pane no session id names: each agent process without
+    /// one (`claude --continue`, a fresh `codex`), or, when the walk did not
+    /// cover the whole pane, one entry of no kind for the rest.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unnamed: Vec<UnnamedAgent>,
+}
+
+/// Something a scan found running that no session id names, so it could
+/// be any session of its kind.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnnamedAgent {
+    /// The same thing in the next scan: `pid:<pid>@<start>` for a process,
+    /// `pane:<endpoint>:<incarnation>:<pane>` for a pane walk that did not
+    /// finish.
+    pub key: String,
+    /// `None`: what it runs could not be read, so it could be any agent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub unnamed_agents: Option<u16>,
+    pub kind: Option<crate::event::AgentKind>,
+    /// When a scan first showed it, carried from scan to scan by `key`
+    /// ([`SubjectObservations::set_scan`]); the daemon's start for one it
+    /// found running then.
+    #[serde(with = "time::serde::rfc3339")]
+    pub since: OffsetDateTime,
+}
+
+impl UnnamedAgent {
+    /// An agent process no session id names, with its start time when it
+    /// could be read. Without one, the key is this scan's alone, so it is
+    /// never carried and the process stays new for as long as it runs.
+    #[must_use]
+    pub fn process(
+        pid: u32,
+        start: Option<&str>,
+        kind: Option<crate::event::AgentKind>,
+        at: OffsetDateTime,
+    ) -> Self {
+        Self {
+            key: start.map_or_else(
+                || format!("pid:{pid}@unread:{}", at.unix_timestamp_nanos()),
+                |start| format!("pid:{pid}@{start}"),
+            ),
+            kind,
+            since: at,
+        }
+    }
+
+    /// The part of a pane its walk did not reach, on the server
+    /// incarnation it was seen on: a restarted server reuses pane ids.
+    #[must_use]
+    pub fn unwalked(
+        pane: &str,
+        endpoint: Option<&str>,
+        incarnation: Option<ServerIncarnation>,
+        at: OffsetDateTime,
+    ) -> Self {
+        Self {
+            key: format!(
+                "pane:{}:{}:{pane}",
+                endpoint.unwrap_or_default(),
+                incarnation.map_or_else(
+                    || format!("unknown@{}", at.unix_timestamp_nanos()),
+                    |server| format!("{}.{}", server.pid, server.start_time),
+                ),
+            ),
+            kind: None,
+            since: at,
+        }
+    }
+
+    /// Whether this could be a session of `kind`.
+    #[must_use]
+    pub fn could_be(&self, kind: crate::event::AgentKind) -> bool {
+        self.kind.is_none_or(|own| own == kind)
+    }
 }
 
 /// One backend's part of a scan.
@@ -102,16 +171,54 @@ pub struct PaneScan {
     #[serde(with = "time::serde::rfc3339")]
     pub at: OffsetDateTime,
     pub hosts: Vec<HostScan>,
-    /// This pass walked every pane of every backend completely: every
-    /// backend's scan was complete, the process table was read, and every
-    /// pane's walk finished. Only then can the subject check infer anything
-    /// from what the walk did not find (`ScannedPane::resumed`,
-    /// `agent_process`).
+    /// The whole process table was read this pass, so [`Self::outside`]
+    /// and each pane's `unnamed` list everything running that no session
+    /// id names. Only then can the subject check infer anything from what
+    /// the walk did not find.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub processes_walked: bool,
+    pub processes_read: bool,
+    /// Agent processes in no pane listed here: in a backend tendd does not
+    /// walk (cmux, zellij), a socket that did not answer, another terminal.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outside: Vec<UnnamedAgent>,
+    /// Sessions a process outside every pane was explicitly started on.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outside_resumed: Vec<String>,
 }
 
 impl PaneScan {
+    /// Everything unnamed in this scan, in panes and outside them.
+    pub fn unnamed(&self) -> impl Iterator<Item = &UnnamedAgent> {
+        self.hosts
+            .iter()
+            .flat_map(|host| &host.panes)
+            .flat_map(|pane| &pane.unnamed)
+            .chain(&self.outside)
+    }
+
+    /// Keep, for each unnamed thing `previous` already showed (same key,
+    /// same kind), the time it was first seen.
+    pub fn carry_since(&mut self, previous: &PaneScan) {
+        let seen: std::collections::HashMap<
+            (&str, Option<crate::event::AgentKind>),
+            OffsetDateTime,
+        > = previous
+            .unnamed()
+            .map(|agent| ((agent.key.as_str(), agent.kind), agent.since))
+            .collect();
+        let carry = |agent: &mut UnnamedAgent| {
+            if let Some(since) = seen.get(&(agent.key.as_str(), agent.kind)) {
+                agent.since = agent.since.min(*since);
+            }
+        };
+        for host in &mut self.hosts {
+            for pane in &mut host.panes {
+                pane.unnamed.iter_mut().for_each(carry);
+            }
+        }
+        self.outside.iter_mut().for_each(carry);
+    }
+
     /// The complete scan of `kind`, if this pass had one.
     #[must_use]
     pub fn complete_host(&self, kind: HostKind) -> Option<&HostScan> {
@@ -254,7 +361,10 @@ impl SubjectObservations {
     /// hook came before it: the server answered with the incarnation the
     /// predecessor was bound on both before the hook (the binding) and after
     /// it (this scan), so no restart happened in between, or it did not.
-    pub fn set_scan(&self, scan: PaneScan) {
+    pub fn set_scan(&self, mut scan: PaneScan) {
+        if let Some(previous) = self.scan() {
+            scan.carry_since(&previous);
+        }
         let settled = self.unverified.lock().map_or_else(
             |_| Vec::new(),
             |mut pending| {
