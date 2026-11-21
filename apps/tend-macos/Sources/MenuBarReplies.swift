@@ -84,4 +84,11 @@ final class TendMenuBarState: ObservableObject {
         guard let scope else { return displayedAgents }
         return displayedAgents.filter(scope.contains)
     }
+
+    /// The empty list's message. An open group that empties says so instead
+    /// of "No agents need attention", which the needs-you line below (always
+    /// fleet-wide) could contradict.
+    var emptyListMessage: String {
+        scope == nil ? String(localized: "No agents need attention") : String(localized: "No agents in this group")
+    }
 }

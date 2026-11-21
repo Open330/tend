@@ -766,3 +766,20 @@ private struct MenuReplyError: LocalizedError {
                                                 hosted: quiet.hostedAgents, unread: center.unreadPanes).isEmpty)
     #expect(TendAttentionSummary.make(agents: quiet.hostedAgents, messages: [], unread: [], paneKey: \.id).needsYouLine == nil)
 }
+
+/// An open group whose last agent left, while an agent elsewhere still
+/// needs the person: the empty list must not claim nobody needs attention
+/// above the fleet-wide "1 agent needs you".
+@Test @MainActor func menuBarEmptyGroupDoesNotContradictNeedsYouLine() throws {
+    let elsewhere = try menuBarSnapshot([("waiting", "waiting_input", "1")], workspace: "project-b", work: "OTHER")
+    let gone = try menuBarSnapshot([("left", "idle", "1")], workspace: "project-a", work: "BUILD")
+    let chips = TendMenuBarChip.activity(gone.hostedAgents.map { TendMenuBarAgent(hosted: $0, unread: true) }, grouping: .work)
+    guard case .group(let scope) = try #require(chips.first).destination else { Issue.record("Expected Work destination"); return }
+    let state = TendMenuBarState()
+    state.agents = TendMenuBarAgentOrder.popoverAgents([], hosted: elsewhere.hostedAgents, unread: [])
+    #expect(state.emptyListMessage == "No agents need attention")
+    state.scope = scope
+    #expect(state.visibleAgents.isEmpty)
+    #expect(TendAttentionSummary.make(agents: elsewhere.hostedAgents, messages: [], unread: [], paneKey: \.id).needsYouLine == "1 agent needs you")
+    #expect(state.emptyListMessage == "No agents in this group")
+}
