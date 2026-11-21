@@ -199,7 +199,9 @@ final class TendMenuBarAgentController: NSObject, NSPopoverDelegate {
         lastInputs = currentInputs()
         state.updateDraftAgents(model.executionSnapshot.hostedAgents, unread: model.attention.unreadPanes)
         candidates = order.update(model.executionSnapshot.hostedAgents, unread: model.attention.unreadPanes)
-        var content = candidates
+        let listed = TendMenuBarAgentOrder.popoverAgents(
+            candidates, hosted: model.executionSnapshot.hostedAgents, unread: model.attention.unreadPanes)
+        var content = listed
         if popover?.isShown == true {
             // Keep the reading/keyboard order stable while acknowledging cards.
             // Reviewed rows disappear together when the popover is dismissed.
@@ -210,7 +212,7 @@ final class TendMenuBarAgentController: NSObject, NSPopoverDelegate {
                 return TendMenuBarAgent(hosted: hosted, unread: unread)
             }
             let kept = Set(content.map(\.id))
-            content.append(contentsOf: candidates.filter { !kept.contains($0.id) })
+            content.append(contentsOf: listed.filter { !kept.contains($0.id) })
         }
         if let selected = state.selectedID, !content.contains(where: { $0.id == selected }),
            let hosted = model.executionSnapshot.hostedAgents.first(where: { $0.id == selected }) {

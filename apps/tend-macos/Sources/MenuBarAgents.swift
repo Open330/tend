@@ -106,6 +106,22 @@ struct TendMenuBarAgentOrder {
             return a == b ? $0.id < $1.id : a > b
         }
     }
+
+    /// The popover's list: the folded cluster's candidates plus every agent
+    /// the attention summary counts as needing the person, read or not, so
+    /// the list and the "needs you" line under it follow one rule
+    /// (`TendAgentStatus.needsAttention`). Acknowledging hides a chip, never
+    /// an agent that still needs the person.
+    static func popoverAgents(_ candidates: [TendMenuBarAgent], hosted: [TendHostedAgent],
+                              unread: Set<TendWatchPaneIdentity>) -> [TendMenuBarAgent] {
+        let present = Set(candidates.map(\.id))
+        let attention = hosted.filter { $0.agent.status.needsAttention && !present.contains($0.id) }
+            .map { TendMenuBarAgent(hosted: $0, unread: TendAgentAttentionCenter.paneIdentity(for: $0).map(unread.contains) ?? false) }
+            .sorted { $0.id < $1.id }
+        // Attention first, as `update` orders it.
+        let split = candidates.firstIndex { !$0.status.needsAttention } ?? candidates.endIndex
+        return Array(candidates[..<split]) + attention + Array(candidates[split...])
+    }
 }
 
 /// One hovered capsule, with local gaps on either side. Coordinates remain
