@@ -16,7 +16,8 @@ final class DemoTourUITests: XCTestCase {
         let env = ProcessInfo.processInfo.environment
         // Only the demo fixture's dashboard, on this machine's loopback.
         guard env["TEND_DEMO_TOUR"] == "1", let server = env["TEND_SERVER"], let token = env["TEND_TOKEN"],
-              server.hasPrefix("http://127.0.0.1:") else {
+              let url = URLComponents(string: server), url.scheme == "http", url.host == "127.0.0.1",
+              url.port != nil, url.user == nil, url.password == nil, url.path.isEmpty else {
             throw XCTSkip("set TEST_RUNNER_TEND_DEMO_TOUR=1, TEST_RUNNER_TEND_SERVER (loopback) and TEST_RUNNER_TEND_TOKEN")
         }
         self.server = server

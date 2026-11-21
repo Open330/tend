@@ -52,7 +52,7 @@ MAC_SCENES = [
     ("menubar", "end", "menubar", 2.0, (1280, 720, 640, 0)),
 ]
 # The runner's clock, at the right end of the menu bar: covered with the
-# bar's own colour in the menu bar scene (x, y, w, h before the crop).
+# bar's own colour in every Mac scene (x, y, w, h before any crop).
 CLOCK = (1760, 0, 160, 30)
 
 
@@ -146,14 +146,37 @@ def duration(path):
                                 capture_output=True, text=True, check=True).stdout)
 
 
+def seek_frames(video, pieces, out, vf):
+    """`pieces` of `video` at FPS, each frame taken by its own seek.
+    Simulator recordings only carry a frame when the screen changes, and
+    decoding one straight through lands seconds off what a seek shows (and
+    what the marks and the sheets agree with); a seek per frame is exact."""
+    import shutil, tempfile
+    from concurrent.futures import ThreadPoolExecutor
+    frames_dir = tempfile.mkdtemp(prefix="frames-", dir=os.path.dirname(out) or ".")
+    times = [a + i / FPS for a, b in pieces for i in range(int(round((b - a) * FPS)))]
+
+    def grab(item):
+        i, t = item
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{t:.3f}", "-i", video, "-frames:v", "1",
+                        "-vf", vf, os.path.join(frames_dir, f"{i:05d}.png")], check=True, timeout=120)
+
+    with ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as pool:
+        list(pool.map(grab, enumerate(times)))
+    # ffmpeg can exit 0 on a seek that yields nothing: every frame must exist.
+    missing = [i for i in range(len(times)) if not os.path.exists(os.path.join(frames_dir, f"{i:05d}.png"))]
+    if missing:
+        raise RuntimeError(f"{video}: no frame for {len(missing)} of {len(times)} seeks (first at {times[missing[0]]:.3f} s)")
+    run(["ffmpeg", "-v", "error", "-y", "-framerate", str(FPS), "-i", os.path.join(frames_dir, "%05d.png"),
+         "-vf", "format=yuv420p", "-c:v", "libx264", "-preset", "medium", "-crf", "14", out])
+    shutil.rmtree(frames_dir)
+
+
 def device(video, pieces, out, work, cards, rotate, height, radius):
-    """An iOS clip of `pieces`, rounded, on the background. The recording is
-    first made constant-frame-rate (simulator recordings only carry a frame
-    when the screen changes, and seeking in them lands seconds off); the
-    pieces are seconds on that timeline (see `--sheets`)."""
-    cfr = cfr_copy(video, work, rotate, height)
+    """An iOS clip of `pieces` (seconds on the raw recording, as a seek
+    shows them), rounded, on the background."""
     raw = os.path.join(work, os.path.basename(out) + ".raw.mp4")
-    cut(cfr, pieces, raw)
+    seek_frames(video, pieces, raw, ("transpose=2," if rotate else "") + f"scale=-2:{height}:flags=lanczos")
     w = int(subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries", "stream=width",
                             "-of", "csv=p=0", raw], capture_output=True, text=True).stdout)
     mask = os.path.join(work, f"mask-{w}x{height}.png")
@@ -166,13 +189,18 @@ def device(video, pieces, out, work, cards, rotate, height, radius):
          "-map", "[v]", "-t", f"{duration(raw)}", "-c:v", "libx264", "-preset", "medium", "-crf", "14", out])
 
 
-def cfr_copy(video, work, rotate, height):
-    out = os.path.join(work, os.path.basename(video).replace(".mp4", f"-cfr{height}.mp4"))
-    if not os.path.exists(out):
-        vf = ("transpose=2," if rotate else "") + f"fps={FPS},scale=-2:{height}:flags=lanczos"
-        run(["ffmpeg", "-v", "error", "-y", "-i", video, "-vf", vf, "-c:v", "libx264", "-preset", "fast",
-             "-crf", "14", out])
-    return out
+def sheet(video, start, end, out, rotate):
+    """One frame a second of [start, end) of a raw recording, by seeking."""
+    frames = []
+    for i, t in enumerate(range(int(start), int(end))):
+        f = f"{out}-{i:03d}.png"
+        vf = ("transpose=2," if rotate else "") + "scale=-2:300"
+        run(["ffmpeg", "-v", "error", "-y", "-ss", str(t), "-i", video, "-frames:v", "1", "-vf", vf, f])
+        frames.append(f)
+    run(["ffmpeg", "-v", "error", "-y", "-framerate", "1", "-i", f"{out}-%03d.png",
+         "-vf", "tile=10x" + str((len(frames) + 9) // 10), "-frames:v", "1", out + ".png"])
+    for f in frames:
+        os.remove(f)
 
 
 def xfade_all(clips, out, d=0.4):
@@ -197,16 +225,18 @@ def main():
     ap.add_argument("--lang", default="en", choices=sorted(CAPTIONS))
     ap.add_argument("--name", default="tend-demo")
     ap.add_argument("--sheets", action="store_true",
-                    help="only write contact sheets (1 frame a second) of the iOS recordings' constant-rate copies")
+                    help="only write contact sheets (1 frame a second) of the iOS recordings")
     args = ap.parse_args()
     if args.sheets:
+        # From each recording's `home` mark to its end, one frame a second,
+        # labelled by the second it starts at: pick ios-cuts.json from these.
         work = os.path.join(args.out, "sheets")
         os.makedirs(work, exist_ok=True)
-        for slug, rotate, height in (("iphone", False, 940), ("ipad", True, 860)):
-            cfr = cfr_copy(os.path.join(args.takes, f"{slug}-raw.mp4"), work, rotate, height)
-            run(["ffmpeg", "-v", "error", "-y", "-i", cfr, "-vf", "fps=1,scale=160:-1,tile=20x20",
-                 os.path.join(work, f"{slug}-sheet-%d.png")])
-            print(slug, round(duration(cfr), 1), "s")
+        for slug, rotate in (("iphone", False), ("ipad", True)):
+            video = os.path.join(args.takes, f"{slug}-raw.mp4")
+            start = max(0, marks(os.path.join(args.takes, f"{slug}-marks.txt"))["home"] - 10)
+            sheet(video, start, duration(video), os.path.join(work, f"{slug}-from-{int(start)}s"), rotate)
+            print(slug, f"sheet from {int(start)} s")
         return
     text = CAPTIONS[args.lang]
     work = os.path.join(args.out, f"work-{args.lang}")
@@ -239,11 +269,10 @@ def main():
     for first, last, key, hold, crop in MAC_SCENES:
         pieces = keep_acts(m[first], m[last], logged) if logged else keep(m[first], m[last], frozen, hold)
         raw = os.path.join(work, f"mac-{key}.raw.mp4")
-        pre = ""
+        x, y, w, h = CLOCK
+        pre = f"drawbox=x={x}:y={y}:w={w}:h={h}:color=0xD2D2D2:t=fill,"
         if crop:
-            x, y, w, h = CLOCK
-            pre = (f"drawbox=x={x}:y={y}:w={w}:h={h}:color=0xD2D2D2:t=fill,"
-                   f"crop={crop[0]}:{crop[1]}:{crop[2]}:{crop[3]},scale=1920:1080:flags=lanczos,")
+            pre += f"crop={crop[0]}:{crop[1]}:{crop[2]}:{crop[3]},scale=1920:1080:flags=lanczos,"
         cut(mac, pieces, raw, pre=pre)
         clip = os.path.join(work, f"mac-{key}.mp4")
         overlay(raw, caption(key), clip, start=0.5 if key == "home" else 0.15)
@@ -258,8 +287,8 @@ def main():
     overlay(clips[0], title, titled, start=0.0, end=2.6, fade=0.35)
     clips[0] = titled
 
-    # iOS windows: seconds on each recording's constant-frame-rate copy,
-    # picked from its contact sheet (--sheets) into TAKES_DIR/ios-cuts.json.
+    # iOS windows: seconds on each raw recording, picked from its contact
+    # sheet (--sheets) into TAKES_DIR/ios-cuts.json.
     cuts = json.load(open(os.path.join(args.takes, "ios-cuts.json")))
     iphone, ipad = [tuple(p) for p in cuts["iphone"]], [tuple(p) for p in cuts["ipad"]]
     for slug, pieces, rotate, height, radius in (("iphone", iphone, False, 940, 64), ("ipad", ipad, True, 860, 28)):

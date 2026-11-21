@@ -39,7 +39,10 @@ swiftc -O "$HERE/ax.swift" -o "$AX" || { log "ax helper did not build"; exit 1; 
 
 # --- The fixture ------------------------------------------------------------
 TOKEN=$(openssl rand -hex 24)
-printf '%s' "$TOKEN" > "$RUNNER_TEMP/demo-token"
+# Private, and gone if this step fails (record-ios.sh, which reads it, is
+# then skipped and would not remove it).
+(umask 077; printf '%s' "$TOKEN" > "$RUNNER_TEMP/demo-token")
+trap 'rm -f "$RUNNER_TEMP/demo-token"' EXIT
 env -u TMUX -u TMUX_PANE \
   TEND_DEMO_TMUX="$TMUX_BIN" \
   TEND_DEMO_BIN_DIR="$BIN_DIR" \
@@ -110,8 +113,10 @@ PID=$!
 FF=
 # The app and the recorder this script started, and nothing else.
 cleanup() {
+  local status=$?
   [ -n "$FF" ] && kill -INT "$FF" 2>/dev/null && wait "$FF" 2>/dev/null
   kill "$PID" 2>/dev/null || true
+  [ "$status" -eq 0 ] || rm -f "$RUNNER_TEMP/demo-token"
 }
 trap cleanup EXIT
 up=0

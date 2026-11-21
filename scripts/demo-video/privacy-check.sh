@@ -21,12 +21,24 @@ ffmpeg -v error -y -i "$VIDEO" -vf fps=2 "$OUT/frames/%04d.png"
 # in this file: put one extended regex per line in a file outside the
 # repository and pass it as PRIVACY_PATTERNS.
 pattern='/Users/|/home/[a-z]|\brunner\b|Mac-[0-9]|\.local\b|@[a-z0-9-]+\.[a-z]{2,}|\b[0-9a-f]{24,}\b'
+# Each pattern is its own -e, so a private file cannot change the others'
+# meaning; an empty file adds nothing.
+args=(-e "$pattern")
 if [ -n "${PRIVACY_PATTERNS:-}" ]; then
-  extra=$(grep -v '^[[:space:]]*$' "$PRIVACY_PATTERNS" | paste -sd'|' -)
-  [ -n "$extra" ] && pattern="$pattern|$extra"
+  [ -r "$PRIVACY_PATTERNS" ] || { echo "privacy-check: cannot read $PRIVACY_PATTERNS" >&2; exit 2; }
+  while IFS= read -r line || [ -n "$line" ]; do
+    [[ "$line" =~ ^[[:space:]]*$ ]] || args+=(-e "$line")
+  done < "$PRIVACY_PATTERNS"
 fi
-if grep -inE "$pattern" "$OUT/ocr.txt"; then
-  echo "privacy-check: hits above; look at those frames" >&2
-  exit 1
-fi
+# grep: 0 = hits, 1 = clean, anything else (a bad pattern, an unreadable
+# file) is a failed check, never a pass.
+set +e
+grep -inE "${args[@]}" "$OUT/ocr.txt"
+status=$?
+set -e
+case $status in
+  0) echo "privacy-check: hits above; look at those frames" >&2; exit 1 ;;
+  1) ;;
+  *) echo "privacy-check: the scan itself failed (grep status $status)" >&2; exit 2 ;;
+esac
 echo "privacy-check: $(cut -f2 "$OUT/ocr.txt" | sort -u | wc -l | tr -d ' ') distinct lines, no hits"
