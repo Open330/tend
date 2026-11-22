@@ -10,7 +10,7 @@ private func agent(_ fields: [String: Any]) throws -> TendAgent {
 
 /// The agent detail says each fact once: with the request card shown, the
 /// Summary tab does not repeat the card's message or its latest prompt.
-@Test func agentDetailSummaryDoesNotRepeatTheRequestCard() throws {
+@Test @MainActor func agentDetailSummaryDoesNotRepeatTheRequestCard() throws {
     let failed = try agent(["last_response": "500 from the codegen service", "last_prompt": "regenerate the client"])
     #expect(InboxAgentRequestCard.waitingText(failed) == "500 from the codegen service")
     #expect(FleetAgentDetailView.summaryBelowCard(failed, cardShown: true) == nil)
@@ -25,4 +25,11 @@ private func agent(_ fields: [String: Any]) throws -> TendAgent {
     let promptOnly = try agent(["last_prompt": "regenerate the client"])
     #expect(FleetAgentDetailView.summaryBelowCard(promptOnly, cardShown: true) == nil)
     #expect(FleetAgentDetailView.summaryBelowCard(promptOnly, cardShown: false) == "regenerate the client")
+
+    // A long notification is the card's to show, whole: nothing caps it, so
+    // dropping it from the Summary tab loses nothing.
+    let long = (1...30).map { "line \($0)" }.joined(separator: "\n")
+    let longAsk = try agent(["state": "waiting_input", "last_notification": long])
+    #expect(InboxAgentRequestCard.waitingText(longAsk) == long)
+    #expect(FleetAgentDetailView.summaryBelowCard(longAsk, cardShown: true) == nil)
 }

@@ -10,18 +10,9 @@ struct InboxAgentRequestCard: View {
     let requests: [TendOperatorMessage]
     let openInLiveWatch: () -> Void
 
-    private var state: String { participant.agent.state }
-
-    private var stateSymbol: String {
-        switch state {
-        case "waiting_input", "waiting_choice": "questionmark.bubble"
-        case "blocked": "hand.raised"
-        case "error", "failed": "exclamationmark.triangle"
-        case "working", "starting": "bolt"
-        case "done": "checkmark.circle"
-        default: "circle"
-        }
-    }
+    /// The normalized status, as the header and every list say it (an idle
+    /// agent owing a reply reads "Asked you", not "Idle").
+    private var status: TendAgentStatus { participant.agent.status }
 
     /// The most specific text about what the agent is waiting on: its last
     /// notification (the input request itself), then the reply it stopped at,
@@ -44,9 +35,13 @@ struct InboxAgentRequestCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Label(agentStateLabel(state), systemImage: stateSymbol)
-                    .font(.headline)
-                    .foregroundStyle(agentStateColor(state))
+                // A cap is said by the header's badge, which explains it and
+                // offers the switch.
+                if !status.isLimited {
+                    Label(status.label(), systemImage: status.symbol)
+                        .font(.headline)
+                        .foregroundStyle(status.color)
+                }
                 if let since = participant.agent.stateEnteredAt {
                     Text("since \(compactTimestamp(since))")
                         .font(TendType.detail)
@@ -66,7 +61,8 @@ struct InboxAgentRequestCard: View {
             }
 
             if let waitingText {
-                MarkdownContent(source: waitingText, lineLimit: 8, font: .body)
+                // In full: the Summary tab no longer repeats it.
+                MarkdownContent(source: waitingText, font: .body)
             } else {
                 Text("No request text was retained for this agent.")
                     .font(TendType.meta)
