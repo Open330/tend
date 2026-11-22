@@ -387,12 +387,15 @@ struct FleetAgentDetailView: View {
 
     private var client: TendIPCClient { model.client }
 
-    private var summary: String? {
-        participant.agent.lastResponse
-            ?? participant.agent.recap
-            ?? participant.agent.lastNotification
-            ?? participant.agent.aiTitle
-            ?? participant.agent.lastPrompt
+    /// The Summary tab's text: the agent's latest words, unless the request
+    /// card above already shows that text (or, once it shows the prompt, the
+    /// prompt). Each fact is said once on this screen.
+    static func summaryBelowCard(_ agent: TendAgent, cardShown: Bool) -> String? {
+        let candidates = [agent.lastResponse, agent.recap, agent.lastNotification, agent.aiTitle, agent.lastPrompt]
+        guard let summary = candidates.lazy.compactMap({ $0 }).first(where: { !$0.isEmpty }) else { return nil }
+        guard cardShown else { return summary }
+        if summary == InboxAgentRequestCard.waitingText(agent) || summary == agent.lastPrompt { return nil }
+        return summary
     }
 
     /// Agents the Inbox lists under "Needs attention" get the request card
@@ -420,10 +423,11 @@ struct FleetAgentDetailView: View {
                         Text(title)
                             .font(TendType.page)
                         // A cap is said once, by the badge, which also
-                        // explains it; any other status by its label.
+                        // explains it; any other status by its label, unless
+                        // the request card below says it (with its time).
                         if participant.agent.status.isLimited {
                             TendRateLimitBadge(agent: participant.agent, target: TendAgentActionTarget(participant)) // WS-C usage
-                        } else {
+                        } else if !needsAttention {
                             Text(participant.agent.status.label())
                                 .foregroundStyle(participant.agent.status.color)
                         }
@@ -460,7 +464,6 @@ struct FleetAgentDetailView: View {
                     InboxAgentRequestCard(
                         participant: participant,
                         requests: participant.openRequests(in: model.operatorMessages),
-                        work: model.workGroup(for: participant),
                         openInLiveWatch: { model.openInLiveWatch(participant) }
                     )
                 }
@@ -489,8 +492,10 @@ struct FleetAgentDetailView: View {
         switch selectedTab {
         case .summary:
             VStack(alignment: .leading, spacing: 18) {
-                if let summary, !summary.isEmpty {
+                if let summary = Self.summaryBelowCard(participant.agent, cardShown: needsAttention) {
                     MarkdownContent(source: summary, font: .body)
+                } else if needsAttention {
+                    EmptyView()
                 } else {
                     Text("No retained summary")
                         .foregroundStyle(.secondary)
@@ -499,6 +504,9 @@ struct FleetAgentDetailView: View {
                 GroupBox("Execution location") {
                     Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
                         AgentFact(label: "Host", value: participant.host.alias)
+                        if let work = InboxAgentRequestCard.workLabel(participant, work: model.workGroup(for: participant)) {
+                            AgentFact(label: "Work", value: work)
+                        }
                         AgentFact(label: "Backend", value: participant.pane?.hostKind ?? "—")
                         AgentFact(label: "Session", value: participant.agent.tmuxSession ?? participant.pane?.session ?? "—")
                         AgentFact(label: "Window", value: participant.pane.map { $0.windowName.isEmpty ? $0.windowID : "\($0.windowName) (\($0.windowID))" } ?? "—")
