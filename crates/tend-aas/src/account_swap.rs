@@ -2257,7 +2257,7 @@ fn swap_one(
             outcome.note = planned_follow_up(request.continue_evidence, *verified, text, reason);
         }
         if *fresh {
-            outcome.note = fresh_note(&outcome.note);
+            outcome.note = fresh_note(FRESH_PLANNED, &outcome.note);
         }
         return outcome;
     }
@@ -2370,7 +2370,7 @@ fn swap_one(
     };
     // What was actually launched, if anything.
     if target.launched_fresh.get() {
-        outcome.note = fresh_note(&outcome.note);
+        outcome.note = fresh_note(FRESH_START, &outcome.note);
     } else if target.resumed_on_exit.get() {
         outcome.note = format!("{RESUMED_ON_EXIT}; {}", outcome.note);
         outcome.command.clone_from(&target.resume_command);
@@ -4160,22 +4160,28 @@ fn this_launch_runs(io: &dyn io::SwapIo, target: &Target) -> bool {
     )
 }
 
-/// The note prefix of a swap that started its agent anew: it was never
-/// prompted, so it had no saved conversation to resume.
+/// The note prefix of a swap that relaunched its agent to start anew: it
+/// was never prompted, so it had no saved conversation to resume. What
+/// follows says whether the relaunch came up.
 pub const FRESH_START: &str =
-    "fresh_start: never prompted, so nothing to resume; started a new conversation";
+    "fresh_start: never prompted, so nothing to resume; relaunched to start a new conversation";
 
 /// The note prefix of a swap planned as a fresh start whose agent may have
 /// saved a conversation as it exited: the resume was launched instead.
 pub const RESUMED_ON_EXIT: &str = "resumed_on_exit: a conversation may have been saved as the \
      agent exited, so it was relaunched to resume it instead of starting a new one";
 
-/// `note` behind [`FRESH_START`].
-fn fresh_note(note: &str) -> String {
+/// A dry run's [`FRESH_START`]: nothing is launched.
+const FRESH_PLANNED: &str =
+    "fresh_start: never prompted, so nothing to resume; would start a new conversation";
+
+/// `note` behind `prefix` ([`FRESH_START`] or [`FRESH_PLANNED`]). What
+/// follows says how the launch went.
+fn fresh_note(prefix: &str, note: &str) -> String {
     if note.is_empty() {
-        FRESH_START.to_owned()
+        prefix.to_owned()
     } else {
-        format!("{FRESH_START}; {note}")
+        format!("{prefix}; {note}")
     }
 }
 
