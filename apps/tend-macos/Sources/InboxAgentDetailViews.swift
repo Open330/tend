@@ -1,44 +1,30 @@
 import SwiftUI
 
 /// Why an agent sits in the Inbox: the state it is stuck in, the operator
-/// requests it still owes, its latest prompt and reply, and where it runs.
+/// requests it still owes, and its latest prompt and reply. Where it runs is
+/// the detail screen's Execution location, said there once.
 /// Shown at the top of the agent detail so a "Needs attention" selection
 /// explains itself without leaving the Inbox.
 struct InboxAgentRequestCard: View {
     let participant: TendHostedAgent
     let requests: [TendOperatorMessage]
-    let work: TendWorkGroup?
     let openInLiveWatch: () -> Void
 
-    private var state: String { participant.agent.state }
-
-    private var stateSymbol: String {
-        switch state {
-        case "waiting_input", "waiting_choice": "questionmark.bubble"
-        case "blocked": "hand.raised"
-        case "error", "failed": "exclamationmark.triangle"
-        case "working", "starting": "bolt"
-        case "done": "checkmark.circle"
-        default: "circle"
-        }
-    }
+    /// The normalized status, as the header and every list say it (an idle
+    /// agent owing a reply reads "Asked you", not "Idle").
+    private var status: TendAgentStatus { participant.agent.status }
 
     /// The most specific text about what the agent is waiting on: its last
     /// notification (the input request itself), then the reply it stopped at,
     /// then its recap.
-    private var waitingText: String? {
-        nonEmpty(participant.agent.lastNotification)
-            ?? nonEmpty(participant.agent.lastResponse)
-            ?? nonEmpty(participant.agent.recap)
+    private var waitingText: String? { Self.waitingText(participant.agent) }
+
+    static func waitingText(_ agent: TendAgent) -> String? {
+        nonEmpty(agent.lastNotification) ?? nonEmpty(agent.lastResponse) ?? nonEmpty(agent.recap)
     }
 
-    private var paneLocation: String? {
-        guard let pane = participant.pane else { return participant.agent.pane }
-        let window = pane.windowName.isEmpty ? pane.stableWindowID : pane.windowName
-        return "\(pane.session) › \(window) · \(pane.paneID)"
-    }
-
-    private var workLabel: String? {
+    /// `workspace › work` for the agent's Work, from its group or its pane.
+    static func workLabel(_ participant: TendHostedAgent, work: TendWorkGroup?) -> String? {
         if let work {
             return "\(work.workspaceID) › \(work.workID)"
         }
@@ -49,10 +35,14 @@ struct InboxAgentRequestCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Label(agentStateLabel(state), systemImage: stateSymbol)
-                    .font(.headline)
-                    .foregroundStyle(agentStateColor(state))
-                if let since = participant.agent.stateEnteredAt {
+                // A cap is said by the header's badge, which explains it and
+                // offers the switch.
+                if !status.isLimited {
+                    Label(status.label(), systemImage: status.symbol)
+                        .font(.headline)
+                        .foregroundStyle(status.color)
+                }
+                if !status.isLimited, let since = participant.agent.stateEnteredAt {
                     Text("since \(compactTimestamp(since))")
                         .font(TendType.detail)
                         .foregroundStyle(.secondary)
@@ -71,7 +61,8 @@ struct InboxAgentRequestCard: View {
             }
 
             if let waitingText {
-                MarkdownContent(source: waitingText, lineLimit: 8, font: .body)
+                // In full: the Summary tab no longer repeats it.
+                MarkdownContent(source: waitingText, font: .body)
             } else {
                 Text("No request text was retained for this agent.")
                     .font(TendType.meta)
@@ -95,21 +86,6 @@ struct InboxAgentRequestCard: View {
                         .font(TendType.detail.weight(.semibold))
                         .foregroundStyle(.secondary)
                     MarkdownContent(source: prompt, lineLimit: 4)
-                }
-            }
-
-            Divider()
-
-            Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 6) {
-                InboxAgentFact(label: "Host", value: participant.host.alias)
-                if let paneLocation {
-                    InboxAgentFact(label: "Pane", value: paneLocation)
-                }
-                if let workLabel {
-                    InboxAgentFact(label: "Work", value: workLabel)
-                }
-                if let cwd = nonEmpty(participant.agent.cwd ?? participant.pane?.currentPath) {
-                    InboxAgentFact(label: "Directory", value: cwd)
                 }
             }
         }
@@ -173,23 +149,6 @@ private struct InboxAgentRequestRow: View {
         .padding(9)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
-    }
-}
-
-private struct InboxAgentFact: View {
-    let label: LocalizedStringKey
-    let value: String
-
-    var body: some View {
-        GridRow {
-            Text(label)
-                .foregroundStyle(.secondary)
-                .frame(width: 74, alignment: .leading)
-            Text(value)
-                .textSelection(.enabled)
-                .lineLimit(2)
-        }
-        .font(TendType.meta)
     }
 }
 
