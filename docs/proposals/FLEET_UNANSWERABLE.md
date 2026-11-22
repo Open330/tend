@@ -130,6 +130,15 @@ struct FleetCloseUnanswerable {
     one whose ancestry cannot be read. A process an agent detached on
     purpose (reparented to `launchd`/`init`) is not caught; that is the
     same reach `ssh` gives it.
+  - **Windows**: the IPC transport reports no caller pid there, so the
+    commands are refused on a Windows controller ("could not tell who is
+    asking"); use the dashboard.
+  - Verified 2026-11-22 against jiun-mini with a scratch controller: from
+    an agent's shell both are refused; from a terminal Keep succeeded, a
+    Close of the kept question was refused before sending ("not listed"),
+    and Close of another folded question closed exactly it (`by: person,
+    surface: cli, actor: cli:<user>`, `via_fleet.controller` the machine
+    name).
 
 ### Surfaces
 
