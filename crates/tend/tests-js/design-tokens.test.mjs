@@ -42,6 +42,12 @@ test("TendTheme.swift draws its surfaces and metrics from the generated tokens",
   // the material is opt-in, and never under Reduce Transparency or
   // Increase Contrast.
   assert.match(system, /struct TendSidebarBackground[\s\S]*?@AppStorage\(TendPreferences\.sidebarMaterialKey\) private var usesMaterial = false[\s\S]*?if !usesMaterial \|\| reduceTransparency \|\| contrast == \.increased \{\s*TendSurface\.sidebar\(colorScheme\)/);
+  // Settings ▸ General ▸ Appearance is the material's one switch: bound to
+  // the same key, off by default, and never registered on.
+  const settings = readFileSync(join(ROOT, "apps/tend-macos/Sources/TendSettingsView.swift"), "utf8");
+  assert.match(settings, /@AppStorage\(TendPreferences\.sidebarMaterialKey\) private var translucentSidebar = false/);
+  assert.match(settings, /Toggle\("Translucent sidebar", isOn: \$translucentSidebar\)/);
+  assert.doesNotMatch(settings, /sidebarMaterialKey: true/);
   for (const metric of ["rowHeight", "sectionHeaderHeight", "statusBarHeight", "activityBarWidth", "controlRadius", "panelRadius"]) {
     assert.match(theme, new RegExp(`static let ${metric} = CGFloat\\(TendDesignTokens\\.Metric\\.${metric}\\)`), metric);
   }

@@ -105,7 +105,7 @@ struct NewAgentView: View {
 
                 Section("Task") {
                     TextEditor(text: $prompt)
-                        .font(.body)
+                        .font(TendType.body)
                         .frame(minHeight: 72)
                         .overlay(alignment: .topLeading) {
                             if prompt.isEmpty {

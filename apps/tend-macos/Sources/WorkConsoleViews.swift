@@ -128,7 +128,7 @@ struct WorkStartView: View {
             Form {
                 Section {
                     TextEditor(text: $taskBody)
-                        .font(.body)
+                        .font(TendType.body)
                         .frame(minHeight: 120)
                         .overlay(alignment: .topLeading) {
                             if taskBody.isEmpty {
@@ -922,7 +922,7 @@ struct PromptComposerStatus: View {
                     .popover(isPresented: $showsDetails) {
                         ScrollView {
                             Text(verbatim: feedback.message)
-                                .font(.callout)
+                                .font(TendType.detail)
                                 .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(12)
@@ -1265,7 +1265,7 @@ struct WorkTemplatesSheet: View {
         VStack(spacing: 0) {
             HStack {
                 Text("Work Templates")
-                    .font(.title3.weight(.semibold))
+                    .font(TendType.page)
                 Spacer()
                 Button("Done") { model.isPresentingTemplates = false }
                     .buttonStyle(.tendPrimary)

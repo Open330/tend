@@ -74,7 +74,7 @@ struct InboxAgentRequestCard: View {
                 MarkdownContent(source: waitingText, lineLimit: 8, font: .body)
             } else {
                 Text("No request text was retained for this agent.")
-                    .font(.subheadline)
+                    .font(TendType.meta)
                     .foregroundStyle(.secondary)
             }
 
@@ -189,7 +189,7 @@ private struct InboxAgentFact: View {
                 .textSelection(.enabled)
                 .lineLimit(2)
         }
-        .font(.subheadline)
+        .font(TendType.meta)
     }
 }
 

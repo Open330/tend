@@ -488,7 +488,7 @@ private struct WorkPlanStepRow: View {
                     .frame(width: 16)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(headline)
-                        .font(.subheadline.weight(.medium))
+                        .font(TendType.meta.weight(.medium))
                     if let detail {
                         Text(detail)
                             .font(TendType.detail)
@@ -593,18 +593,18 @@ struct WorkRoutesEditor: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 18, alignment: .trailing)
             Text(route.match)
-                .font(.callout.monospaced())
+                .font(TendType.detail.monospaced())
                 .lineLimit(1)
             Image(systemName: "arrow.right")
                 .font(TendType.meta)
                 .foregroundStyle(.tertiary)
             if let pipeline = route.pipeline {
                 Text(pipeline)
-                    .font(.callout.weight(.medium))
+                    .font(TendType.detail.weight(.medium))
                     .foregroundStyle(Color.primary)
             } else {
                 Text("no pipeline")
-                    .font(.callout)
+                    .font(TendType.detail)
                     .foregroundStyle(Color.orange)
             }
             if let workspace = route.workspace, !workspace.isEmpty {
@@ -663,7 +663,7 @@ struct WorkRoutesEditor: View {
             HStack(spacing: 8) {
                 TextField("Match", text: $draft.match, prompt: Text("match (regex, for example ^eng- or .*)"))
                     .labelsHidden()
-                    .font(.callout.monospaced())
+                    .font(TendType.detail.monospaced())
                     .disabled(draft.existing)
                 Picker("Pipeline", selection: $draft.pipeline) {
                     Text("no pipeline").tag("")

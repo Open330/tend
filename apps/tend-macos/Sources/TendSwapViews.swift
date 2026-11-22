@@ -187,7 +187,7 @@ struct TendSwapSheet: View {
             .pickerStyle(.menu)
             if case .typed = choice {
                 TextField("Account", text: $typedAccount, prompt: Text(verbatim: "work@claude"))
-                    .font(.callout.monospaced())
+                    .font(TendType.detail.monospaced())
             }
             if isLocal, isReadingAccounts, offeredAccounts.isEmpty {
                 HStack(spacing: 6) {
@@ -234,7 +234,7 @@ struct TendSwapSheet: View {
             Toggle("Send a follow-up so the agent carries on", isOn: $sendFollowUp)
             if sendFollowUp {
                 TextField("Follow-up", text: $followUp, prompt: Text("The [swap] follow-up from config.toml"))
-                    .font(.callout.monospaced())
+                    .font(TendType.detail.monospaced())
                 Text("Typed only into a relaunch confirmed to be on the same conversation, and only for agents whose turn was cut off.")
                     .font(TendType.detail)
                     .foregroundStyle(.secondary)

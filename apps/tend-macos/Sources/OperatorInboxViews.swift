@@ -231,7 +231,7 @@ struct TendOperatorInboxView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Commands and replies")
-                        .font(.subheadline.weight(.semibold))
+                        .font(TendType.meta.weight(.semibold))
                     Text("\(visibleMessages.count) conversations across reachable hosts")
                         .font(TendType.detail)
                         .foregroundStyle(.secondary)
@@ -344,7 +344,7 @@ private struct OperatorMessageRow: View {
             HStack(spacing: 7) {
                 Circle().fill(statusColor).frame(width: 7, height: 7)
                 Text(message.counterpart.label)
-                    .font(.subheadline.weight(.semibold))
+                    .font(TendType.meta.weight(.semibold))
                     .lineLimit(1)
                 Spacer(minLength: 6)
                 Text(request.needsHumanResponse ? String(localized: "Needs Action") : collaborationStatusLabel(request.reply?.status ?? request.status))
@@ -370,10 +370,10 @@ private struct OperatorMessageRow: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Label("Sent", systemImage: "paperplane.fill")
-                    .font(.subheadline.weight(.semibold))
+                    .font(TendType.meta.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Text(inboxPreview(request.body))
-                    .font(.callout)
+                    .font(TendType.detail)
                     .foregroundStyle(.primary)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
@@ -383,7 +383,7 @@ private struct OperatorMessageRow: View {
                 VStack(alignment: .leading, spacing: 7) {
                     HStack {
                         Label(message.hasUnreadReply ? "New Reply" : "Reply", systemImage: "arrowshape.turn.up.left.fill")
-                            .font(.subheadline.weight(.semibold))
+                            .font(TendType.meta.weight(.semibold))
                             .foregroundStyle(message.hasUnreadReply ? Color.orange : Color.secondary)
                         Spacer()
                         Text(compactInboxTimestamp(reply.at))
@@ -391,7 +391,7 @@ private struct OperatorMessageRow: View {
                             .foregroundStyle(.secondary)
                     }
                     Text(inboxPreview(reply.body))
-                        .font(.callout)
+                        .font(TendType.detail)
                         .foregroundStyle(.primary)
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
@@ -403,7 +403,7 @@ private struct OperatorMessageRow: View {
                 )
             } else if request.needsHumanResponse {
                 Label("Your response is required", systemImage: "person.crop.circle.badge.exclamationmark")
-                    .font(.callout).foregroundStyle(.orange)
+                    .font(TendType.detail).foregroundStyle(.orange)
             } else if message.needsHumanDecision {
                 // The request itself is blocked/declined/failed and no reply
                 // will arrive, so name the decision instead of a wait.
@@ -411,11 +411,11 @@ private struct OperatorMessageRow: View {
                     "Needs your decision: \(inboxStatusTitle(request.status))",
                     systemImage: "exclamationmark.triangle.fill"
                 )
-                .font(.callout)
+                .font(TendType.detail)
                 .foregroundStyle(.red)
             } else if message.isAwaitingAgentReply {
                 Label("Waiting for this agent to reply", systemImage: "clock")
-                    .font(.callout)
+                    .font(TendType.detail)
                     .foregroundStyle(.secondary)
             }
         }
@@ -547,14 +547,14 @@ private struct OperatorMessageDetail: View {
                             "Needs your decision: \(inboxStatusTitle(request.status)). The agent will not reply to this request.",
                             systemImage: "exclamationmark.triangle.fill"
                         )
-                        .font(.subheadline.weight(.medium))
+                        .font(TendType.meta.weight(.medium))
                         .foregroundStyle(.red)
                         .padding(14)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Color.red.opacity(0.06), in: RoundedRectangle(cornerRadius: TendTheme.panelRadius, style: .continuous))
                     } else if message.isAwaitingAgentReply {
                         Label("Waiting for this agent to reply", systemImage: "clock")
-                            .font(.subheadline.weight(.medium))
+                            .font(TendType.meta.weight(.medium))
                             .foregroundStyle(.secondary)
                             .padding(14)
                             .frame(maxWidth: .infinity, alignment: .leading)

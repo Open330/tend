@@ -195,7 +195,7 @@ struct DesignCaptureTests {
         let report = try JSONDecoder().decode(TendAutomationTestReport.self, from: Data("""
         {"rule": "nudge-waiting", "enabled": true, "engine_enabled": true, "candidates": [
           {"pane": "%3", "agent_session_id": "s-billing", "agent": "billing", "state": "idle", "decision": "fire", "fire_at": "2026-11-22T09:10:00Z"},
-          {"pane": "%5", "agent_session_id": "s-data", "agent": "data", "state": "working", "decision": "not_idle", "detail": "working for 2m"}
+          {"pane": "%5", "agent_session_id": "s-data", "agent": "data", "state": "working", "decision": "event_mismatch", "detail": "working for 2m"}
         ]}
         """.utf8))
         try await capture(AutomationTestSheet(report: report), name: "automation-test", scheme: scheme, size: CGSize(width: 560, height: 460))

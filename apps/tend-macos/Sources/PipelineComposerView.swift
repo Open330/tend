@@ -97,7 +97,7 @@ struct PipelineComposerView: View {
             Text("What should the line-up look like?")
                 .font(.headline)
             TextEditor(text: $session.description)
-                .font(.body)
+                .font(TendType.body)
                 .frame(minHeight: 72, maxHeight: 110)
                 .padding(6)
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
@@ -196,7 +196,7 @@ struct PipelineComposerView: View {
                     .font(.headline)
                 TextField("Name", text: $session.name, prompt: Text("for example implement-review"))
                     .labelsHidden()
-                    .font(.body.monospaced())
+                    .font(TendType.body.monospaced())
                     .frame(maxWidth: 260)
                     .disabled(session.isDrafting)
                 Spacer()
@@ -380,7 +380,7 @@ private struct ComposerAgentRow: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(verbatim: "@\(agent.alias)")
-                .font(.subheadline.weight(.semibold))
+                .font(TendType.meta.weight(.semibold))
                 .frame(width: 110, alignment: .leading)
                 .lineLimit(1)
             TendAgentProgramChip(program: agent.program)

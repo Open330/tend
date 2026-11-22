@@ -232,7 +232,7 @@ struct WatchHostTree: View {
                     HStack(spacing: 6) {
                         HostIdentityBadge(host: group.host, size: 16)
                         Text(group.host.alias)
-                            .font(.callout.weight(.semibold))
+                            .font(TendType.detail.weight(.semibold))
                             .lineLimit(1)
                         Spacer(minLength: 4)
                         Text(verbatim: "\(group.paneCount)")
@@ -333,14 +333,14 @@ private struct WatchSessionTree: View {
                             .foregroundStyle(singleWindow == nil ? Color.secondary : Color.accentColor)
                             .frame(width: 17)
                         Text(session.name.isEmpty ? session.sessionID : session.name)
-                            .font(.callout)
+                            .font(TendType.detail)
                             .lineLimit(1)
                         if let singleWindow {
                             Image(systemName: "chevron.right")
                                 .font(TendType.glyph)
                                 .foregroundStyle(.tertiary)
                             Text(workLabel(singleWindow) ?? (singleWindow.name.isEmpty ? singleWindow.windowID : singleWindow.name))
-                                .font(.callout)
+                                .font(TendType.detail)
                                 .foregroundStyle(workLabel(singleWindow) == nil ? Color.secondary : Color.accentColor)
                                 .lineLimit(1)
                         }
@@ -429,7 +429,7 @@ private struct WatchWindowTree: View {
                             .foregroundStyle(logicalWork == nil ? Color.secondary : Color.accentColor)
                             .frame(width: 17)
                         Text(logicalWork ?? (window.name.isEmpty ? window.windowID : window.name))
-                            .font(.callout)
+                            .font(TendType.detail)
                             .fontWeight(logicalWork == nil ? .regular : .medium)
                             .lineLimit(1)
                         Spacer(minLength: 3)
@@ -502,7 +502,7 @@ private struct WatchPaneRow: View {
                         .foregroundStyle(.secondary)
                         .frame(width: 17)
                     Text(title)
-                        .font(.callout)
+                        .font(TendType.detail)
                         .lineLimit(1)
                         .layoutPriority(1)
                     TendUnreadDot(pane: pane.id) // WS-A
@@ -636,7 +636,7 @@ struct WatchFlatPaneRow: View {
                         // The name first: a short one ("auth") was cut to
                         // "a…" to make room for the status beside it.
                         Text(title)
-                            .font(.callout.weight(.medium))
+                            .font(TendType.detail.weight(.medium))
                             .lineLimit(1)
                             .layoutPriority(1)
                         TendUnreadDot(pane: pane.id) // WS-A
@@ -771,7 +771,7 @@ struct FleetPaneInspector: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 HStack(spacing: 6) {
                                     Text(overviewTitle(item))
-                                        .font(.subheadline.weight(item.id == pane.id ? .semibold : .regular))
+                                        .font(TendType.meta.weight(item.id == pane.id ? .semibold : .regular))
                                     if let agent = item.agent {
                                         Text(agent.status.label())
                                             .font(TendType.meta.weight(.medium))

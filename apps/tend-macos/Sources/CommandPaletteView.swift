@@ -600,7 +600,7 @@ struct CommandPaletteView: View {
                     .foregroundStyle(item.tint ?? Color.primary)
                     .frame(width: 22)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(item.title).font(.body).lineLimit(1)
+                    Text(item.title).font(TendType.body).lineLimit(1)
                     if !item.subtitle.isEmpty {
                         Text(item.subtitle).font(TendType.detail).foregroundStyle(.secondary).lineLimit(1)
                             .truncationMode(.middle)

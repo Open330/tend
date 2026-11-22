@@ -34,7 +34,7 @@ struct TendMenuBarContent: View {
                 }
                 if let scope = state.scope {
                     HStack {
-                        Text(verbatim: scope.title).font(.subheadline.weight(.semibold))
+                        Text(verbatim: scope.title).font(TendType.meta.weight(.semibold))
                         Spacer()
                         Button("All groups") { state.scope = nil; select(nil) }.buttonStyle(.plain).foregroundStyle(.secondary)
                     }
@@ -62,7 +62,7 @@ struct TendMenuBarContent: View {
                                             HStack {
                                                 TendGlyphFace(value: chip.appearance.symbol, gradient: chip.appearance.gradient, size: 28, glyphSize: 12)
                                                 VStack(alignment: .leading) {
-                                                    Text(verbatim: chip.name).font(.subheadline.weight(.semibold))
+                                                    Text(verbatim: chip.name).font(TendType.meta.weight(.semibold))
                                                     Text(verbatim: chip.location).font(TendType.meta).foregroundStyle(.secondary)
                                                 }
                                                 Spacer()

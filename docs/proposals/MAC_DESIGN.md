@@ -126,10 +126,11 @@ Four surfaces:
 The activity bar, sidebar list, tab strip and status bar draw the opaque
 sidebar surface, the value every ink is checked against. The system sidebar
 material (`NSVisualEffectView`, `.sidebar`, behind-window, following the
-window's active state) is built but opt-in (`tend.appearance.sidebarMaterial`,
-no control yet, never under Reduce Transparency or Increase Contrast) until an
-on-screen check covers it over bright, dark and colourful backdrops in active
-and inactive windows; CI cannot sample what is behind a window. The title bar row of the column (under the traffic lights) is always the
+window's active state) is opt-in: Settings ▸ General ▸ Appearance ▸
+Translucent sidebar (`tend.appearance.sidebarMaterial`, off by default, never
+under Reduce Transparency or Increase Contrast). It stays off by default until
+an on-screen check covers it over bright, dark and colourful backdrops in
+active and inactive windows; CI cannot sample what is behind a window. The title bar row of the column (under the traffic lights) is always the
 opaque strip surface, in every sidebar state: the material starts below it
 (`SidebarTitleBarTests`). The shared `side-bar` and
 `activity-bar` tokens stay the web's and iOS's. Content and cards stay opaque. Radii: control 6, option group 8, card 10,
@@ -281,7 +282,12 @@ The capture includes the Review sheet (Home opens with it up, since pressing
 its button through the accessibility tree does not open it off-screen), Home
 at the window's minimum size in both layouts, and Home with the fixture's
 agents spread over three hosts (`home-hosts*`: drawn only, the names are
-labels and nothing is sent to them).
+labels and nothing is sent to them). It also draws the Work, agent and host
+detail screens (`detail-*`; the fixture runs no managed Work, so the Work screen
+shows one made of two fixture agents), the Work Templates sheet (the only
+reachable form of the Command Center), the Automation rule editor, empty and
+filled, and its free test sheet (`automation-*`), and every onboarding step
+(`onboarding-*`).
 
 ## 5. Plan
 

@@ -95,7 +95,7 @@ struct AasMenuBarPanel: View {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 12) {
                             ForEach(groups) { group in
-                                Text(verbatim: group.title).font(.subheadline.weight(.semibold))
+                                Text(verbatim: group.title).font(TendType.meta.weight(.semibold))
                                 ForEach(group.accounts) { account in
                                     AasMenuBarAccountRow(account: account, now: context.date)
                                 }
@@ -142,7 +142,7 @@ private struct AasMenuBarAccountRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
-                Text(verbatim: account.name).font(.subheadline.weight(.semibold)).lineLimit(1).help(account.email ?? account.name)
+                Text(verbatim: account.name).font(TendType.meta.weight(.semibold)).lineLimit(1).help(account.email ?? account.name)
                 if account.active {
                     Text("Active account").font(TendType.meta).foregroundStyle(.green)
                 }
