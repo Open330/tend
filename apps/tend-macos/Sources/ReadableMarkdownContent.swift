@@ -230,7 +230,7 @@ struct ReadableMarkdownContent: View {
                 ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(item.marker)
-                            .font(.body.monospacedDigit())
+                            .font(TendType.body.monospacedDigit())
                             .foregroundStyle(.secondary)
                             .frame(minWidth: 14, alignment: .trailing)
                         MarkdownContent(source: item.text, font: .body)

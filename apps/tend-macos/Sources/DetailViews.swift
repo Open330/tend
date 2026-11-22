@@ -52,7 +52,7 @@ struct WorkDetailView: View {
                             Label(work.hostAliases.joined(separator: ", "), systemImage: "network")
                         }
                     }
-                    .font(.subheadline)
+                    .font(TendType.meta)
                     .foregroundStyle(.secondary)
                     if let cwd = work.cwd {
                         Text(cwd)
@@ -143,7 +143,7 @@ private struct WorkMetric: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(verbatim: value)
-                .font(TendType.page.monospacedDigit())
+                .font(TendType.cardTitle.monospacedDigit())
                 .foregroundStyle(color)
             Text(title)
                 .font(TendType.detail)
@@ -199,7 +199,7 @@ private struct WorkParticipantCard: View {
                     MarkdownContent(source: summary, lineLimit: 4, selectable: false)
                 } else {
                     Text("Waiting for work context")
-                        .font(.subheadline)
+                        .font(TendType.meta)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -272,7 +272,7 @@ private struct PipelinePlaceholderCard: View {
                     MarkdownContent(source: task, lineLimit: 4, selectable: false)
                 } else {
                     Text("No live execution is currently bound.")
-                        .font(.subheadline)
+                        .font(TendType.meta)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -603,7 +603,7 @@ struct FleetHostDetailView: View {
                     Text("Execution sessions")
                         .font(TendType.cardTitle)
                     Text("Each session is summarized by its windows and the latest retained agent context.")
-                        .font(.subheadline)
+                        .font(TendType.meta)
                         .foregroundStyle(.secondary)
 
                     if sessions.isEmpty {
@@ -755,7 +755,7 @@ struct FleetSessionDetailView: View {
                         Text(session.name.isEmpty ? session.sessionID : session.name)
                             .font(TendType.page)
                         Text("\(session.hostAlias) · \(session.windows.count) windows · \(panes.count) panes")
-                            .font(.subheadline)
+                            .font(TendType.meta)
                             .foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 8)
@@ -779,7 +779,7 @@ struct FleetSessionDetailView: View {
                     Text("Windows")
                         .font(TendType.cardTitle)
                     Text("Open any agent row to inspect its summary, latest response, and Live Pane.")
-                        .font(.subheadline)
+                        .font(TendType.meta)
                         .foregroundStyle(.secondary)
                 }
 
@@ -843,7 +843,7 @@ struct FleetWindowDetailView: View {
                     Text("Agent reports")
                         .font(TendType.cardTitle)
                     Text("Recap and latest response are kept separate; runtime and workload facts come directly from tendd.")
-                        .font(.subheadline)
+                        .font(TendType.meta)
                         .foregroundStyle(.secondary)
                 }
 
@@ -860,7 +860,7 @@ struct FleetWindowDetailView: View {
                         Text("Collaboration in this window")
                             .font(TendType.cardTitle)
                         Text("\(relatedMessages.count) operator commands and their durable replies")
-                            .font(.subheadline)
+                            .font(TendType.meta)
                             .foregroundStyle(.secondary)
                         ForEach(relatedMessages.prefix(5)) { message in
                             WindowCollaborationRow(message: message) {
@@ -999,7 +999,7 @@ private struct WindowAgentReportCard: View {
                 reportSection("Summary", source: summary, lineLimit: separateResponse == nil ? 9 : 6)
             } else {
                 Text("No agent-authored task summary has been retained yet.")
-                    .font(.callout)
+                    .font(TendType.detail)
                     .foregroundStyle(.secondary)
             }
             if let separateResponse {
@@ -1099,7 +1099,7 @@ private struct WindowCollaborationRow: View {
                     .frame(width: 18)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(message.request.body)
-                        .font(.subheadline.weight(.medium))
+                        .font(TendType.meta.weight(.medium))
                         .lineLimit(2)
                     if let reply = message.request.reply {
                         MarkdownContent(source: reply.body, lineLimit: 3, selectable: false, font: TendType.detail)
@@ -1247,7 +1247,7 @@ private struct FleetResourceSummaryRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(fleetPaneDisplayTitle(pane))
-                        .font(.subheadline.weight(.medium))
+                        .font(TendType.meta.weight(.medium))
                         .lineLimit(1)
                     if let agent = pane.agent {
                         Text(agent.status.label())
@@ -1319,7 +1319,7 @@ private struct HostMetric: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(verbatim: "\(value)\(suffix)")
-                .font(TendType.page.monospacedDigit())
+                .font(TendType.cardTitle.monospacedDigit())
             Text(title)
                 .font(TendType.detail)
                 .foregroundStyle(.secondary)
@@ -1340,7 +1340,7 @@ private struct AgentFact: View {
             Text(value)
                 .textSelection(.enabled)
         }
-        .font(.subheadline)
+        .font(TendType.meta)
     }
 }
 

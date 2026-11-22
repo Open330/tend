@@ -756,7 +756,7 @@ private struct AasAccountRow: View {
                     .frame(width: 8, height: 8)
                     .accessibilityLabel(account.active ? Text("Active account") : Text("Not active"))
                 Text(verbatim: account.name)
-                    .font(.body.weight(account.active ? .semibold : .regular))
+                    .font(TendType.body.weight(account.active ? .semibold : .regular))
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .layoutPriority(1)

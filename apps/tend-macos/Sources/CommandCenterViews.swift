@@ -340,7 +340,7 @@ struct WorkCommandCenterView: View {
                     .background(TendTheme.panelFill, in: RoundedRectangle(cornerRadius: TendTheme.panelRadius, style: .continuous))
             } else {
                 Text("Reading pipelines from the tend config…")
-                    .font(.callout)
+                    .font(TendType.detail)
                     .foregroundStyle(.secondary)
                     .padding(14)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -387,7 +387,7 @@ struct WorkCommandCenterView: View {
                 ForEach(Array(remoteOnly.enumerated()), id: \.offset) { _, entry in
                     HStack(spacing: 10) {
                         Text(entry.pipeline.name)
-                            .font(.callout.weight(.medium))
+                            .font(TendType.detail.weight(.medium))
                         Text("on host \(entry.host)")
                             .font(TendType.detail)
                             .foregroundStyle(.secondary)
@@ -550,7 +550,7 @@ private struct CommandCenterStatusLine: View {
             Image(systemName: symbol)
                 .foregroundStyle(color)
             Text(verbatim: "\(value)")
-                .font(TendType.page.monospacedDigit())
+                .font(TendType.cardTitle.monospacedDigit())
             Text(title)
                 .font(TendType.detail)
                 .foregroundStyle(.secondary)
@@ -759,7 +759,7 @@ private struct WorkCommandCard: View {
                     }
                 }
                 Text(work.pipelineLabel)
-                    .font(.subheadline)
+                    .font(TendType.meta)
                     .foregroundStyle(.secondary)
                 HStack(spacing: 14) {
                     Label {

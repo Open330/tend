@@ -16732,6 +16732,36 @@
         }
       }
     },
+    "Translucent sidebar" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "반투명 사이드바"
+          }
+        }
+      }
+    },
+    "The sidebar shows a tint of the desktop behind the window." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "사이드바에 창 뒤 바탕화면의 색이 은은하게 비칩니다."
+          }
+        }
+      }
+    },
+    "Off while Reduce Transparency or Increase Contrast is on in Accessibility settings." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "손쉬운 사용에서 '투명도 줄이기'나 '대비 증가'가 켜져 있으면 꺼집니다."
+          }
+        }
+      }
+    },
     "System follows the current macOS appearance automatically." : {
       "localizations" : {
         "ko" : {

@@ -363,7 +363,7 @@ struct TendRateLimitBadge: View {
             }
             .buttonStyle(.tendGhost)
         }
-        .font(.callout)
+        .font(TendType.detail)
         .padding(14)
         .frame(width: 320, alignment: .leading)
     }

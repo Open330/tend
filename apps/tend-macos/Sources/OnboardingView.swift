@@ -87,13 +87,20 @@ struct OnboardingView: View {
     @ObservedObject var model: AppModel
     @Environment(\.openWindow) private var openWindow
     @Environment(\.colorScheme) private var colorScheme
-    @State private var step: OnboardingStep = .welcome
+    @State private var step: OnboardingStep
     @State private var dontShowAgain = true
     @State private var detectedTools: [InstalledTool]?
     @State private var isDetectingTools = false
     @State private var supportsAgentStart: Bool?
     @State private var authorization: TendUserNotifications.Authorization?
     @State private var hostWindow: NSWindow?
+
+    /// `initialStep` lets the off-screen capture draw each step; the app
+    /// always starts at the welcome page.
+    init(model: AppModel, initialStep: OnboardingStep = .welcome) {
+        self.model = model
+        _step = State(initialValue: initialStep)
+    }
 
     var body: some View {
         VStack(spacing: 0) {

@@ -82,7 +82,7 @@ struct PipelineEditorView: View {
                                 .font(TendType.detail)
                                 .foregroundStyle(.secondary)
                             TextEditor(text: $definition.prompt)
-                                .font(.body)
+                                .font(TendType.body)
                                 .frame(minHeight: 56, maxHeight: 120)
                             Text("Placeholders: {{work}}, {{workspace}}, {{cwd}}, {{request}}, {{ticket.title}}. Without {{request}} the operator's body is prepended automatically.")
                                 .font(TendType.meta)
@@ -261,7 +261,7 @@ struct PipelineEditorView: View {
                 )
             ) {
                 TextEditor(text: agent.prompt)
-                    .font(.body)
+                    .font(TendType.body)
                     .frame(minHeight: 70, maxHeight: 160)
             } label: {
                 Text(agent.wrappedValue.prompt.isEmpty ? "Prompt (optional)" : "Prompt")

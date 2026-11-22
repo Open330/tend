@@ -836,7 +836,7 @@ private struct FleetCombinedReplySheet: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             TextEditor(text: $reply)
-                .font(.body)
+                .font(TendType.body)
                 .frame(minHeight: 90, maxHeight: 140)
                 .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.secondary.opacity(0.3)))
                 .disabled(drafting || sending)

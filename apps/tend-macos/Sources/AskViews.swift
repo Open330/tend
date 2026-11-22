@@ -41,7 +41,7 @@ struct TendAskView: View {
                         .font(TendType.meta)
                         .foregroundStyle(.tertiary)
                     Text(activeConversation.title)
-                        .font(.subheadline.weight(.medium))
+                        .font(TendType.meta.weight(.medium))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -85,7 +85,7 @@ struct TendAskView: View {
                                 Text("Enable Global Ask")
                             }
                         }
-                        .font(.subheadline.weight(.semibold))
+                        .font(TendType.meta.weight(.semibold))
                         Group {
                             if model.askConfigurationPendingReload {
                                 Text("The grant is saved. Reload tendd to apply it; tmux sessions will remain running.")
@@ -376,12 +376,12 @@ private struct AskComposerEditor: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             TextEditor(text: $text)
-                .font(.body)
+                .font(TendType.body)
                 .scrollContentBackground(.hidden)
 
             if text.isEmpty {
                 Text(placeholder)
-                    .font(.body)
+                    .font(TendType.body)
                     .foregroundStyle(.secondary)
                     // NSTextView uses these insets for its first baseline. Keeping
                     // the overlay inside the same padded container also gives it
@@ -452,7 +452,7 @@ private struct AskConversationTurn: View {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text("Waiting for \(providerTitle)…")
-                        .font(.subheadline)
+                        .font(TendType.meta)
                         .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 4)
