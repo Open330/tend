@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The demo video (`docs/demo-video/`) is re-recorded on 0.10.31. Its menu
+  bar shot now shows the popover listing the agents that need you, in
+  agreement with its "4 agents need you" line (#689). All scenes, the iPad
+  included, come from one take.
+
 ## [0.10.31] - 2026-11-22
 
 ### Added

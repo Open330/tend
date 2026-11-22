@@ -1,6 +1,6 @@
 # The demo video
 
-`tend-demo.mp4` (English captions) and `tend-demo-ko.mp4` (Korean), 71 s,
+`tend-demo.mp4` (English captions) and `tend-demo-ko.mp4` (Korean), 71 s, recorded on 0.10.31,
 1920×1080, H.264. `poster.png` is the README's still. Storyboard:
 [STORYBOARD.md](STORYBOARD.md).
 
@@ -25,9 +25,7 @@ from anyone's own agents, hosts or accounts.
    so the edit takes each frame by its own seek as well. Measure how
    far the Mac take lags the driver's clock on a visible event (the menu
    bar popover opening) into `TAKES/mac-offset.txt`. The ones used for
-   this cut are kept here. This cut's iPad shot is from the previous take
-   (the same workflow and fixture): in the last one its Your turn lane was
-   still loading when the tour ended.
+   this cut are kept here.
 3. `edit.py TAKES OUT` and `edit.py TAKES OUT --lang ko`: the Mac scenes
    keep what the driver logged it did (`acts.txt`) and drop the waits;
    captions are drawn with AppKit (`cards.swift`).
