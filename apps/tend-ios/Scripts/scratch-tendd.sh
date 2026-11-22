@@ -5,6 +5,8 @@
 #   apps/tend-ios/Scripts/scratch-tendd.sh up      # build nothing; start and seed
 #   apps/tend-ios/Scripts/scratch-tendd.sh seed    # add another question + result
 #   apps/tend-ios/Scripts/scratch-tendd.sh seed-home  # agents at work and finished
+#   apps/tend-ios/Scripts/scratch-tendd.sh seed-gone  # two questions whose askers end:
+#                                                     # Can't be answered after 15 min
 #   apps/tend-ios/Scripts/scratch-tendd.sh down
 #
 # It never touches the tend you use: everything runs through
@@ -110,6 +112,32 @@ seed_home() {
   done
 }
 
+# Two questions whose asking agents end 25 s later (their panes close).
+# tendd folds them under Can't be answered once the asker has been gone for
+# its grace (15 minutes) and the questions are that old too.
+seed_gone() {
+  eval "$("$SANDBOX" env --name "$NAME")"
+  local n; n=$(date +%s)
+  # A nonce in each question, which the UI test checks before it closes
+  # anything: it ties the ids to this seeding on this daemon.
+  local nonce; nonce=$(openssl rand -hex 6)
+  for i in 1 2; do
+    tmux new-window -d -n "gone$i-$n" \
+      "printf '%s' '{\"session_id\":\"ios-gone$i-$n\",\"prompt\":\"old task\"}' | $WRAP/tend hook claude --event user_prompt_submit; $WRAP/tend msg attention 'Old question nobody will read [$nonce] (gone$i-$n)' --action choice; sleep 25"
+  done
+  # Their request ids, which the UI test requires before it closes anything.
+  local ids="" waited=0
+  until ids=$(curl -fsS -H "Authorization: Bearer $(token)" "http://127.0.0.1:$PORT/api/decisions" \
+      | python3 -c 'import json,sys; n=sys.argv[1]; d=json.load(sys.stdin); print(",".join(sorted(i["request_id"] for h in d["hosts"] if h.get("local") for i in h["queue"]["items"] if i.get("kind")=="human_request" and any(i.get("body","").endswith("(gone%d-%s)" % (k,n)) for k in (1,2)))))' "$n") \
+      && [ "$(printf '%s' "$ids" | tr ',' '\n' | grep -c .)" -eq 2 ]; do
+    waited=$((waited + 1)); [ "$waited" -lt 50 ] || die "the seeded questions never reached the queue"
+    sleep 0.2
+  done
+  echo "TEND_GONE_IDS=$ids"
+  echo "TEND_GONE_NONCE=$nonce"
+  echo "Can't be answered from $(date -d "@$((n + 960))" +%H:%M 2>/dev/null || date -r $((n + 960)) +%H:%M)"
+}
+
 up() {
   [ -n "${TMUX:-}" ] && ALLOW=--allow-inside-tmux || ALLOW=
   wrappers
@@ -181,7 +209,8 @@ case "${1:-}" in
   up) up ;;
   seed) seed ;;
   seed-home) seed_home ;;
+  seed-gone) seed_gone ;;
   token) token ;;
   down) down ;;
-  *) die "usage: $0 up|seed|seed-home|token|down" ;;
+  *) die "usage: $0 up|seed|seed-home|seed-gone|token|down" ;;
 esac
