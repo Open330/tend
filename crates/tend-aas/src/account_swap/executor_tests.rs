@@ -65,6 +65,12 @@ struct FakeIo {
     held_at_capture: RefCell<Vec<bool>>,
     /// The next captures that fail.
     blind: Cell<usize>,
+    /// Whether the target's conversation reads as saved: from the running
+    /// agent, and once it has exited.
+    saved_live: Cell<tend::agent_conversation::Saved>,
+    saved_exit: Cell<tend::agent_conversation::Saved>,
+    /// Whether the planned agent is still the pane's, as planned.
+    owner_ok: Cell<bool>,
     /// The pane's foreground process, and from when (virtual time) it is
     /// that; before then, or with none, it cannot be read.
     foreground: RefCell<Option<(String, Duration)>>,
@@ -102,6 +108,9 @@ impl FakeIo {
             forgotten: RefCell::new(Vec::new()),
             hook_is_registered: Cell::new(false),
             launch_mark: RefCell::new(None),
+            saved_live: Cell::new(tend::agent_conversation::Saved::No),
+            saved_exit: Cell::new(tend::agent_conversation::Saved::No),
+            owner_ok: Cell::new(true),
             watched: RefCell::new(None),
             held_at_capture: RefCell::new(Vec::new()),
             blind: Cell::new(0),
@@ -168,6 +177,18 @@ impl SwapIo for FakeIo {
             .borrow()
             .clone()
             .map_or(super::LaunchMark::Unreadable, super::LaunchMark::Carries)
+    }
+
+    fn conversation_saved(&self, _pid: u32) -> tend::agent_conversation::Saved {
+        self.saved_live.get()
+    }
+
+    fn saved_after_exit(&self) -> tend::agent_conversation::Saved {
+        self.saved_exit.get()
+    }
+
+    fn still_planned(&self, _pid: u32, _start: Option<&str>) -> bool {
+        self.owner_ok.get()
     }
 
     fn capture(&self) -> Option<String> {
@@ -292,6 +313,12 @@ fn target(kind: AgentKind, direct: bool, busy: bool) -> Target {
         cwd: "/work".into(),
         kind,
         session_id: "S".into(),
+        fresh: Cell::new(false),
+        resume_command: None,
+        saved_roots: Vec::new(),
+        resumed_on_exit: Cell::new(false),
+        launched_fresh: Cell::new(false),
+        process_start: Some("start".into()),
         busy,
         conversation_verified: true,
         evidence: super::ContinueEvidence::Binding,
@@ -338,7 +365,12 @@ fn codex_agent() -> React {
         }
         if line == "text \"\\r\"" {
             match io.previous().as_deref() {
-                Some("text \"RELAUNCH\"") => {
+                // The relaunch, or the resume a fresh start falls back to,
+                // with or without its launch id exported.
+                Some(typed)
+                    if typed.starts_with("text \"")
+                        && (typed.ends_with("RELAUNCH\"") || typed.ends_with("RESUME\"")) =>
+                {
                     io.agent_appears_in(Duration::from_secs(1));
                     io.show(CODEX_IDLE);
                 }
@@ -918,6 +950,113 @@ fn a_bound_relaunch_gets_its_follow_up_and_its_draft_back() {
         Some((ContinueDecision::Allowed, None, true))
     );
     assert_eq!(asked, [Some(31)]);
+}
+
+/// A fresh Claude target: planned with nothing saved to resume.
+fn fresh_claude() -> Target {
+    let target = Target {
+        resume_command: Some("RESUME".into()),
+        ..target(AgentKind::ClaudeCode, false, false)
+    };
+    target.fresh.set(true);
+    target
+}
+
+/// Run `target` on `io` with no follow-up: what it returned, and which
+/// bound process the account was read on.
+fn run_fresh(io: &FakeIo, target: &Target) -> (Result<String, Refusal>, Vec<Option<u32>>) {
+    let asked = RefCell::new(Vec::new());
+    let check = |_: &Target, bound: Option<u32>| {
+        asked.borrow_mut().push(bound);
+        Ok(AccountVerdict {
+            check: AccountCheck::Matched,
+            observed: None,
+            source: "test",
+            note: String::new(),
+        })
+    };
+    let mut observer = NoObserver;
+    let runner = Runner::new(io, &mut observer);
+    let result = execute(&runner, target, &launch(), "RELAUNCH", None, &check);
+    drop(runner);
+    (result, asked.into_inner())
+}
+
+/// A fresh start (nothing was saved to resume): the relaunched Claude is
+/// the one process started under the planned id, its account is read on
+/// it, and the report does not say it resumed.
+#[test]
+fn a_fresh_claude_start_binds_its_session_id_and_says_relaunched() {
+    let io = FakeIo::new(CODEX_WITH_DRAFT, codex_agent());
+    *io.argvs.borrow_mut() = Some(vec![(31, Some(words(&["claude", "--session-id", "S"])))]);
+    let target = fresh_claude();
+    let (result, asked) = run_fresh(&io, &target);
+    let note = result.unwrap();
+    assert!(note.starts_with("relaunched"), "{note}");
+    assert!(!note.contains("resumed"), "{note}");
+    assert!(!note.contains("unconfirmed"), "{note}");
+    assert_eq!(asked, [Some(31)]);
+    assert!(target.launched_fresh.get());
+    // A process resuming "S" is not the fresh start, nor is a new id.
+    for argv in [
+        &["claude", "--resume", "S"][..],
+        &["claude", "--session-id", "T"],
+    ] {
+        let io = FakeIo::new(CODEX_WITH_DRAFT, codex_agent());
+        *io.argvs.borrow_mut() = Some(vec![(31, Some(words(argv)))]);
+        let (result, asked) = run_fresh(&io, &fresh_claude());
+        assert!(result.unwrap().contains("binding unconfirmed"));
+        assert_eq!(asked, [None]);
+    }
+}
+
+/// A first prompt saved while the swap was preparing (after the plan's
+/// recheck), or the pane's agent no longer the planned process: the agent
+/// is left alone, with nothing typed into it or signalled.
+#[test]
+fn a_fresh_start_that_changed_before_the_stop_is_left_alone() {
+    use tend::agent_conversation::Saved;
+    for (saved, owner) in [
+        (Saved::Yes, true),
+        (Saved::Unknown, true),
+        (Saved::No, false),
+    ] {
+        let io = FakeIo::new(CODEX_WITH_DRAFT, codex_agent());
+        io.saved_live.set(saved);
+        io.owner_ok.set(owner);
+        let target = fresh_claude();
+        let (result, asked) = run_fresh(&io, &target);
+        assert!(
+            matches!(&result, Err(Refusal::Kept(note)) if note.contains("left alone")),
+            "{result:?}"
+        );
+        assert!(io.sent().is_empty(), "{:?}", io.sent());
+        assert!(asked.is_empty());
+        assert!(!target.launched_fresh.get());
+        assert!(!target.resumed_on_exit.get());
+    }
+}
+
+/// Possibly saved as it exited: resumed with the resume line after all.
+#[test]
+fn a_conversation_saved_on_exit_is_resumed_instead() {
+    use tend::agent_conversation::Saved;
+    for saved in [Saved::Yes, Saved::Unknown] {
+        let io = FakeIo::new(CODEX_WITH_DRAFT, codex_agent());
+        io.saved_exit.set(saved);
+        *io.argvs.borrow_mut() = Some(vec![(31, Some(words(&["claude", "--resume", "S"])))]);
+        let target = fresh_claude();
+        let (result, asked) = run_fresh(&io, &target);
+        let note = result.unwrap();
+        assert!(note.starts_with("resumed"), "{note}");
+        let sent = io.sent();
+        assert!(sent.iter().any(|l| l.contains("RESUME")), "{sent:?}");
+        assert!(!sent.iter().any(|l| l.contains("RELAUNCH")), "{sent:?}");
+        assert!(!target.fresh.get());
+        assert!(!target.launched_fresh.get());
+        assert!(target.resumed_on_exit.get());
+        assert_eq!(asked, [Some(31)]);
+    }
 }
 
 /// No process resuming exactly the conversation: neither the follow-up nor

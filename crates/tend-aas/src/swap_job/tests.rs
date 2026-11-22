@@ -1511,6 +1511,7 @@ fn deferred_marker_rejects_every_kind_of_existing_effect_and_observation() {
                 process_start: None,
                 conversation_id: "x".into(),
                 verified: true,
+                fresh: false,
             },
         )
         .unwrap();

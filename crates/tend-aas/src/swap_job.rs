@@ -335,6 +335,13 @@ pub(crate) enum Observation {
         process_start: Option<String>,
         conversation_id: String,
         verified: bool,
+        /// Planned as a fresh start: nothing was saved under the
+        /// conversation (the agent was never prompted), so the relaunch
+        /// starts a new one instead of resuming, unless the agent turns out
+        /// to have saved one as it exits. Absent when planned to resume,
+        /// and in journals written before it.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        fresh: bool,
     },
     /// The account the relaunched process actually runs on.
     AccountCheck {

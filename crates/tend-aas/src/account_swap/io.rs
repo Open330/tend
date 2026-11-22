@@ -80,6 +80,23 @@ pub(super) trait SwapIo: Clock {
         let _ = pid;
         super::LaunchMark::Unreadable
     }
+    /// Whether the target's conversation is saved now, read from the
+    /// running agent `pid` itself. Unknown unless it can be told.
+    fn conversation_saved(&self, pid: u32) -> tend::agent_conversation::Saved {
+        let _ = pid;
+        tend::agent_conversation::Saved::Unknown
+    }
+    /// Whether it is saved now that the agent has exited, read where it was
+    /// found to write when planned.
+    fn saved_after_exit(&self) -> tend::agent_conversation::Saved {
+        tend::agent_conversation::Saved::Unknown
+    }
+    /// Whether `pid` is still the pane's agent, started at `start` (as
+    /// planned). Not without a start time to compare.
+    fn still_planned(&self, pid: u32, start: Option<&str>) -> bool {
+        let _ = (pid, start);
+        false
+    }
 }
 
 /// What a path names, as far as a launch cares.
@@ -257,6 +274,28 @@ impl SwapIo for LiveIo<'_> {
 
     fn launch_id_of(&self, pid: u32) -> super::LaunchMark {
         launch_id_of(&tend::accounts::process_environ(pid))
+    }
+
+    fn conversation_saved(&self, pid: u32) -> tend::agent_conversation::Saved {
+        super::conversation_saved(self.target.kind, pid, &self.target.session_id)
+    }
+
+    fn still_planned(&self, pid: u32, start: Option<&str>) -> bool {
+        let pane_pid = self.target.pane_pid.get();
+        let owner =
+            super::find_launch(&super::pane_processes(pane_pid), pane_pid, self.target.kind)
+                .map(|launch| launch.agent_pid);
+        start.is_some()
+            && owner == Some(pid)
+            && tend::agent_conversation::process_start(pid).as_deref() == start
+    }
+
+    fn saved_after_exit(&self) -> tend::agent_conversation::Saved {
+        super::saved_at(
+            self.target.kind,
+            &self.target.session_id,
+            &self.target.saved_roots,
+        )
     }
 
     fn capture(&self) -> Option<String> {

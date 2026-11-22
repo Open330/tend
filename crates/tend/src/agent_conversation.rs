@@ -480,6 +480,100 @@ fn parse_lsof_names(text: &str) -> Vec<PathBuf> {
     paths
 }
 
+/// Whether a conversation has been written down where a resume would look
+/// for it. An agent that was started and never prompted has a session id
+/// but nothing saved under it: resuming that id fails ("No conversation
+/// found") and leaves the pane at its shell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Saved {
+    /// A transcript or rollout for the conversation exists.
+    Yes,
+    /// Where this agent writes was read, and nothing is saved there.
+    No,
+    /// It cannot be told; a swap resumes as it always did.
+    Unknown,
+}
+
+/// Whether Claude's conversation `session_id` has a transcript
+/// (`<config dir>/projects/<dir>/<id>.jsonl`). `No` only when the config
+/// dir holding this exact process's `sessions/<pid>.json` (pid, id and
+/// start time all matching) was found and every project dir was read.
+#[must_use]
+pub fn claude_saved(pid: u32, session_id: &str) -> Saved {
+    let Some(start) = process_start(pid) else {
+        return Saved::Unknown;
+    };
+    let saved = claude_saved_in(pid, &start, session_id, &claude_roots(pid));
+    // The process may have been replaced while it was read.
+    if process_start(pid).as_deref() != Some(start.as_str()) {
+        return Saved::Unknown;
+    }
+    saved
+}
+
+/// [`claude_saved`] for the process `pid` started at `start`, over `roots`.
+#[must_use]
+pub fn claude_saved_in(pid: u32, start: &str, session_id: &str, roots: &[PathBuf]) -> Saved {
+    if uuid::Uuid::parse_str(session_id).is_err() {
+        return Saved::Unknown;
+    }
+    let own = roots.iter().any(|root| {
+        read_bounded(
+            &root.join("sessions").join(format!("{pid}.json")),
+            MAX_SESSION_FILE,
+        )
+        .and_then(|bytes| parse_claude_session(&bytes))
+        .is_some_and(|file| {
+            file.pid == pid && file.session_id == session_id && same_start(&file.proc_start, start)
+        })
+    });
+    if !own {
+        return Saved::Unknown;
+    }
+    claude_transcript_in(session_id, roots)
+}
+
+/// Whether a transcript for `session_id` is under any of `roots`, read
+/// without a process: `No` only when every root was read in full.
+#[must_use]
+pub fn claude_transcript_in(session_id: &str, roots: &[PathBuf]) -> Saved {
+    if uuid::Uuid::parse_str(session_id).is_err() || roots.is_empty() {
+        return Saved::Unknown;
+    }
+    let name = format!("{session_id}.jsonl");
+    let mut unknown = false;
+    for root in roots {
+        let projects = match std::fs::read_dir(root.join("projects")) {
+            Ok(projects) => projects,
+            // A config dir that has never saved a conversation has no
+            // `projects` yet.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => {
+                unknown = true;
+                continue;
+            }
+        };
+        for project in projects {
+            let Ok(project) = project else {
+                unknown = true;
+                continue;
+            };
+            match std::fs::symlink_metadata(project.path().join(&name)) {
+                Ok(_) => return Saved::Yes,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                // Not a directory (a stray file in `projects`) holds nothing.
+                Err(_) if project.file_type().is_ok_and(|kind| kind.is_file()) => {}
+                Err(_) => unknown = true,
+            }
+        }
+    }
+    if unknown {
+        Saved::Unknown
+    } else {
+        Saved::No
+    }
+}
+
 fn read_bounded(path: &Path, limit: u64) -> Option<Vec<u8>> {
     use std::io::Read;
     let file = std::fs::File::open(path).ok()?;
@@ -804,5 +898,68 @@ mod tests {
         assert_eq!(open_rollouts(Some(&a)), open_rollouts(Some(&a_again)));
         assert_ne!(open_rollouts(Some(&a)), open_rollouts(Some(&b)));
         assert_ne!(open_rollouts(Some(&a)), open_rollouts(None));
+    }
+
+    #[test]
+    fn a_claude_session_without_a_transcript_is_not_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("profile");
+        std::fs::create_dir_all(root.join("sessions")).unwrap();
+        let session = format!(r#"{{"pid":42,"sessionId":"{A}","procStart":"7"}}"#);
+        std::fs::write(root.join("sessions/42.json"), session).unwrap();
+        let roots = [root.clone()];
+        // Never prompted: a session file, no projects at all yet.
+        assert_eq!(claude_saved_in(42, "7", A, &roots), Saved::No);
+        // Another conversation's transcript is not this one.
+        std::fs::create_dir_all(root.join("projects/-w")).unwrap();
+        std::fs::write(root.join("projects/-w").join(format!("{B}.jsonl")), "{}\n").unwrap();
+        assert_eq!(claude_saved_in(42, "7", A, &roots), Saved::No);
+        // Its own transcript, in any project directory.
+        std::fs::write(root.join("projects/-w").join(format!("{A}.jsonl")), "{}\n").unwrap();
+        assert_eq!(claude_saved_in(42, "7", A, &roots), Saved::Yes);
+        assert_eq!(claude_transcript_in(A, &roots), Saved::Yes);
+    }
+
+    #[test]
+    fn a_claude_transcript_cannot_be_ruled_out_without_the_process_s_own_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("profile");
+        std::fs::create_dir_all(root.join("projects/-w")).unwrap();
+        // No session file names this process: where it writes is unknown.
+        assert_eq!(
+            claude_saved_in(42, "7", A, std::slice::from_ref(&root)),
+            Saved::Unknown
+        );
+        std::fs::create_dir_all(root.join("sessions")).unwrap();
+        // One for another conversation, or left by an earlier process with
+        // the same pid, does not count either.
+        for file in [
+            format!(r#"{{"pid":42,"sessionId":"{B}","procStart":"7"}}"#),
+            format!(r#"{{"pid":42,"sessionId":"{A}","procStart":"6"}}"#),
+        ] {
+            std::fs::write(root.join("sessions/42.json"), file).unwrap();
+            assert_eq!(
+                claude_saved_in(42, "7", A, std::slice::from_ref(&root)),
+                Saved::Unknown
+            );
+        }
+        assert_eq!(claude_transcript_in("not-a-uuid", &[root]), Saved::Unknown);
+        assert_eq!(claude_transcript_in(A, &[]), Saved::Unknown);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_project_is_not_an_absent_transcript() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("profile");
+        let project = root.join("projects/-w");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join(format!("{A}.jsonl")), "{}\n").unwrap();
+        std::fs::set_permissions(&project, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let saved = claude_transcript_in(A, std::slice::from_ref(&root));
+        std::fs::set_permissions(&project, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // Root can read anything; elsewhere the transcript cannot be seen.
+        assert_ne!(saved, Saved::No);
     }
 }

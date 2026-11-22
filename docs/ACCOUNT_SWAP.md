@@ -144,7 +144,25 @@ For each agent, tend:
    Codex, and a Claude that does not exit, get `SIGTERM`, then `SIGKILL`;
 4. types the same launch line back, on the new account, with `--resume <id>`
    (Claude) or `resume <id>` (Codex). Flags and their values are kept; the
-   initial prompt is dropped so the task is not restarted;
+   initial prompt is dropped so the task is not restarted. A Claude that was
+   started and never prompted has nothing saved to resume (`claude --resume`
+   would stop at "No conversation found" and leave the pane at its shell).
+   It starts a new conversation on the new account instead, under the same
+   id (`--session-id <id>`), in the same directory with the same flags. That
+   needs positive evidence that nothing is saved: the config dir holding
+   this very process's session file (its pid, id and start time) found, and
+   every project dir read with no transcript for the id. Anything that
+   cannot be read resumes as before. It is checked when planning, again
+   right before the stop (a saved conversation, or a pane whose agent is no
+   longer the planned process, leaves it alone), and once the agent has
+   exited (if a transcript may have appeared, the resume is launched
+   instead, noted `resumed_on_exit`). The relaunch is bound by its
+   `--session-id`, which never counts as a resume. The result note starts
+   with `fresh_start` when it was launched that way, and the job journal's
+   binding records `fresh: true` for a target planned that way. Codex always
+   resumes: a never-prompted Codex is not registered by its hooks, so it is
+   skipped, and a frontend's thread may live in an app-server store tend
+   cannot read, so its absence is never established;
 5. waits for the resumed agent to appear and its screen to settle, answering
    the startup dialogs a new account brings up: Claude's folder trust, Codex's
    folder trust, its update prompt (skipped, nothing installed), "Working

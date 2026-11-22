@@ -55,6 +55,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `tend swap` no longer kills a Claude that was started but never prompted.
+  Such an agent has no saved conversation, so the relaunch's `--resume <id>`
+  stopped at "No conversation found" and left the pane at its shell. When
+  its own config dir shows no transcript, it now starts a new conversation
+  under the same session id (`--session-id`) on the new account, in the
+  same directory with the same flags. This is checked again at the stop and
+  after the exit. The result note starts with `fresh_start` and the job
+  journal records it. Codex is unchanged: a never-prompted Codex was
+  already skipped.
 - Questions whose asker has exited now actually fold from present state.
   In 0.10.29 that judgement required every pane backend to be complete, and
   the cmux backend every host keeps ready is always partial, so it never
