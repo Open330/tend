@@ -42,7 +42,7 @@ struct InboxAgentRequestCard: View {
                         .font(.headline)
                         .foregroundStyle(status.color)
                 }
-                if let since = participant.agent.stateEnteredAt {
+                if !status.isLimited, let since = participant.agent.stateEnteredAt {
                     Text("since \(compactTimestamp(since))")
                         .font(TendType.detail)
                         .foregroundStyle(.secondary)
