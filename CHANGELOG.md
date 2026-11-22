@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `docs/PUSH_SETUP.md`: the steps to turn on iOS notifications on the
+  dashboard's host. It covers the App ID capability, the APNs key, and
+  where each value goes in `[dashboard.push]`.
+- Tend for iOS: `scratch-tendd.sh seed-gone` seeds two questions whose
+  askers end, so they reach **Can't be answered** after the 15-minute
+  grace. It prints their request ids and a nonce. A UI test, run only when
+  given those (and only against a dashboard on this machine), then pairs
+  for hosts and new work, keeps one question, closes the rest with Close
+  all, and checks that Settings says the dashboard sends no
+  notifications. Before it touches anything, it requires that the
+  dashboard's only Can't be answered questions are exactly those ids,
+  carrying that nonce.
+
 ### Changed
 
 - The demo video (`docs/demo-video/`) is re-recorded on 0.10.31. Its menu
