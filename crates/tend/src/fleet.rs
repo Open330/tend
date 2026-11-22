@@ -983,7 +983,8 @@ pub struct FleetDecisionKeep {
     pub actor: String,
     /// The surface the person used: one of the subject check's surfaces.
     pub surface: String,
-    /// The controller's Fleet alias.
+    /// The controller's machine name (its Fleet alias, always `local`,
+    /// only when the machine has none).
     pub controller: String,
 }
 

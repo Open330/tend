@@ -47,7 +47,7 @@ struct FleetCloseUnanswerable {
     items: Vec<CloseItem>,          // { request_id, episode }
     actor: String,
     surface: String,                // one of SURFACES: "web", "ios", "mac"
-    controller: String,             // the controller's Fleet alias
+    controller: String,             // the controller's machine name
 }
 ```
 
@@ -61,7 +61,8 @@ struct FleetCloseUnanswerable {
   unchanged and every reader already knows it), and `actor` is the identity
   the controller authenticated (`web:<email>`, `device:<id>`). The Fleet hop
   is recorded beside it, not in place of it: the relay's audit line gains
-  `"via": "fleet", "controller": "<alias>"`, and the controller audits the
+  `"via": "fleet", "controller": "<hostname>"` (the controller's machine
+  name: its own Fleet alias is always `local`), and the controller audits the
   send as it does `ReviewDispose`. No new surface value and no closure
   schema change.
 - Results are the existing `KeepOutcome` and `CloseOutcome`, carried back in
