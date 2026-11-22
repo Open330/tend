@@ -69,6 +69,8 @@ struct FakeIo {
     /// agent, and once it has exited.
     saved_live: Cell<tend::agent_conversation::Saved>,
     saved_exit: Cell<tend::agent_conversation::Saved>,
+    /// Whether the planned agent is still the pane's, as planned.
+    owner_ok: Cell<bool>,
     /// The pane's foreground process, and from when (virtual time) it is
     /// that; before then, or with none, it cannot be read.
     foreground: RefCell<Option<(String, Duration)>>,
@@ -108,6 +110,7 @@ impl FakeIo {
             launch_mark: RefCell::new(None),
             saved_live: Cell::new(tend::agent_conversation::Saved::No),
             saved_exit: Cell::new(tend::agent_conversation::Saved::No),
+            owner_ok: Cell::new(true),
             watched: RefCell::new(None),
             held_at_capture: RefCell::new(Vec::new()),
             blind: Cell::new(0),
@@ -182,6 +185,10 @@ impl SwapIo for FakeIo {
 
     fn saved_after_exit(&self) -> tend::agent_conversation::Saved {
         self.saved_exit.get()
+    }
+
+    fn still_planned(&self, _pid: u32, _start: Option<&str>) -> bool {
+        self.owner_ok.get()
     }
 
     fn capture(&self) -> Option<String> {
@@ -310,6 +317,8 @@ fn target(kind: AgentKind, direct: bool, busy: bool) -> Target {
         resume_command: None,
         saved_roots: Vec::new(),
         resumed_on_exit: Cell::new(false),
+        launched_fresh: Cell::new(false),
+        process_start: Some("start".into()),
         busy,
         conversation_verified: true,
         evidence: super::ContinueEvidence::Binding,
@@ -943,19 +952,18 @@ fn a_bound_relaunch_gets_its_follow_up_and_its_draft_back() {
     assert_eq!(asked, [Some(31)]);
 }
 
-/// A fresh Codex target with a launch id, on `io`.
-fn fresh_codex() -> Target {
+/// A fresh Claude target: planned with nothing saved to resume.
+fn fresh_claude() -> Target {
     let target = Target {
-        launch_id: Some("L".into()),
         resume_command: Some("RESUME".into()),
-        ..target(AgentKind::Codex, false, false)
+        ..target(AgentKind::ClaudeCode, false, false)
     };
     target.fresh.set(true);
     target
 }
 
-/// Run `target` on `io` with no follow-up; what it returned, what was
-/// typed, and which bound process the account was read on.
+/// Run `target` on `io` with no follow-up: what it returned, and which
+/// bound process the account was read on.
 fn run_fresh(io: &FakeIo, target: &Target) -> (Result<String, Refusal>, Vec<Option<u32>>) {
     let asked = RefCell::new(Vec::new());
     let check = |_: &Target, bound: Option<u32>| {
@@ -974,90 +982,81 @@ fn run_fresh(io: &FakeIo, target: &Target) -> (Result<String, Refusal>, Vec<Opti
     (result, asked.into_inner())
 }
 
-/// A fresh start (nothing was saved to resume): the relaunched Codex is the
-/// one bare Codex in the pane carrying this launch's mark, its account is
-/// read on it, and the report does not say it resumed.
+/// A fresh start (nothing was saved to resume): the relaunched Claude is
+/// the one process started under the planned id, its account is read on
+/// it, and the report does not say it resumed.
 #[test]
-fn a_fresh_codex_start_binds_the_new_thread_and_says_relaunched() {
+fn a_fresh_claude_start_binds_its_session_id_and_says_relaunched() {
     let io = FakeIo::new(CODEX_WITH_DRAFT, codex_agent());
-    *io.argvs.borrow_mut() = Some(vec![(31, Some(words(&["codex", "--yolo"])))]);
-    *io.launch_mark.borrow_mut() = Some("L".into());
-    let target = fresh_codex();
+    *io.argvs.borrow_mut() = Some(vec![(31, Some(words(&["claude", "--session-id", "S"])))]);
+    let target = fresh_claude();
     let (result, asked) = run_fresh(&io, &target);
     let note = result.unwrap();
     assert!(note.starts_with("relaunched"), "{note}");
     assert!(!note.contains("resumed"), "{note}");
     assert!(!note.contains("unconfirmed"), "{note}");
     assert_eq!(asked, [Some(31)]);
-    assert!(
-        io.sent().iter().any(|l| l.contains("RELAUNCH")),
-        "{:?}",
-        io.sent()
-    );
-}
-
-/// Without this launch's own mark, a bare Codex in the pane is not the
-/// relaunch: nothing is bound, so no dialog, draft or follow-up goes to it.
-#[test]
-fn a_fresh_codex_without_this_launch_s_mark_is_not_bound() {
-    for mark in [None, Some("other")] {
+    assert!(target.launched_fresh.get());
+    // A process resuming "S" is not the fresh start, nor is a new id.
+    for argv in [
+        &["claude", "--resume", "S"][..],
+        &["claude", "--session-id", "T"],
+    ] {
         let io = FakeIo::new(CODEX_WITH_DRAFT, codex_agent());
-        *io.argvs.borrow_mut() = Some(vec![(31, Some(words(&["codex", "--yolo"])))]);
-        *io.launch_mark.borrow_mut() = mark.map(str::to_owned);
-        let (result, asked) = run_fresh(&io, &fresh_codex());
-        let note = result.unwrap();
-        assert!(note.contains("binding unconfirmed"), "{note}");
-        assert!(
-            !io.sent().iter().any(|l| l.contains("half typed")),
-            "{:?}",
-            io.sent()
-        );
+        *io.argvs.borrow_mut() = Some(vec![(31, Some(words(argv)))]);
+        let (result, asked) = run_fresh(&io, &fresh_claude());
+        assert!(result.unwrap().contains("binding unconfirmed"));
         assert_eq!(asked, [None]);
     }
-    // A fork or another subcommand is not a fresh start either.
-    let io = FakeIo::new(CODEX_WITH_DRAFT, codex_agent());
-    *io.argvs.borrow_mut() = Some(vec![(31, Some(words(&["codex", "fork", "S"])))]);
-    *io.launch_mark.borrow_mut() = Some("L".into());
-    let (_, asked) = run_fresh(&io, &fresh_codex());
-    assert_eq!(asked, [None]);
 }
 
 /// A first prompt saved while the swap was preparing (after the plan's
-/// recheck): the agent is left alone, with nothing typed into it.
+/// recheck), or the pane's agent no longer the planned process: the agent
+/// is left alone, with nothing typed into it or signalled.
 #[test]
-fn a_conversation_saved_before_the_stop_leaves_a_fresh_start_alone() {
-    for saved in [
-        tend::agent_conversation::Saved::Yes,
-        tend::agent_conversation::Saved::Unknown,
+fn a_fresh_start_that_changed_before_the_stop_is_left_alone() {
+    use tend::agent_conversation::Saved;
+    for (saved, owner) in [
+        (Saved::Yes, true),
+        (Saved::Unknown, true),
+        (Saved::No, false),
     ] {
         let io = FakeIo::new(CODEX_WITH_DRAFT, codex_agent());
         io.saved_live.set(saved);
-        let (result, asked) = run_fresh(&io, &fresh_codex());
+        io.owner_ok.set(owner);
+        let target = fresh_claude();
+        let (result, asked) = run_fresh(&io, &target);
         assert!(
             matches!(&result, Err(Refusal::Kept(note)) if note.contains("left alone")),
             "{result:?}"
         );
         assert!(io.sent().is_empty(), "{:?}", io.sent());
         assert!(asked.is_empty());
+        assert!(!target.launched_fresh.get());
+        assert!(!target.resumed_on_exit.get());
     }
 }
 
-/// Saved as it exited: resumed with the resume line after all.
+/// Possibly saved as it exited: resumed with the resume line after all.
 #[test]
 fn a_conversation_saved_on_exit_is_resumed_instead() {
-    let io = FakeIo::new(CODEX_WITH_DRAFT, codex_agent());
-    io.saved_exit.set(tend::agent_conversation::Saved::Yes);
-    let target = fresh_codex();
-    let (result, asked) = run_fresh(&io, &target);
-    let note = result.unwrap();
-    assert!(note.starts_with("resumed"), "{note}");
-    let sent = io.sent();
-    assert!(sent.iter().any(|l| l.contains("RESUME")), "{sent:?}");
-    assert!(!sent.iter().any(|l| l.contains("RELAUNCH")), "{sent:?}");
-    assert!(!target.fresh.get());
-    assert!(target.resumed_on_exit.get());
-    // The default argv resumes "S": bound as a resume.
-    assert_eq!(asked, [Some(20)]);
+    use tend::agent_conversation::Saved;
+    for saved in [Saved::Yes, Saved::Unknown] {
+        let io = FakeIo::new(CODEX_WITH_DRAFT, codex_agent());
+        io.saved_exit.set(saved);
+        *io.argvs.borrow_mut() = Some(vec![(31, Some(words(&["claude", "--resume", "S"])))]);
+        let target = fresh_claude();
+        let (result, asked) = run_fresh(&io, &target);
+        let note = result.unwrap();
+        assert!(note.starts_with("resumed"), "{note}");
+        let sent = io.sent();
+        assert!(sent.iter().any(|l| l.contains("RESUME")), "{sent:?}");
+        assert!(!sent.iter().any(|l| l.contains("RELAUNCH")), "{sent:?}");
+        assert!(!target.fresh.get());
+        assert!(!target.launched_fresh.get());
+        assert!(target.resumed_on_exit.get());
+        assert_eq!(asked, [Some(31)]);
+    }
 }
 
 /// No process resuming exactly the conversation: neither the follow-up nor
