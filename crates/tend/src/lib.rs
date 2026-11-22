@@ -67,6 +67,7 @@ pub mod discovery;
 pub mod error;
 pub mod event;
 pub mod fleet;
+pub mod fleet_decisions;
 mod fleet_wait;
 pub mod history;
 pub mod home_board;

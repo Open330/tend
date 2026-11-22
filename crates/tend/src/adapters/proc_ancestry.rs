@@ -193,6 +193,75 @@ where
     false
 }
 
+/// Whether an agent process (`claude`, `codex`, …) is among `start_pid`'s
+/// ancestors: a command an agent's tool call runs, however deep. `None`
+/// when the chain could not be read to its end, so it cannot be told.
+#[must_use]
+pub fn agent_in_ancestry(start_pid: u32) -> Option<bool> {
+    #[cfg(target_os = "linux")]
+    {
+        agent_in_ancestry_with(start_pid, parent_pid, |pid| {
+            std::fs::read(format!("/proc/{pid}/cmdline"))
+                .ok()
+                .map(|raw| String::from_utf8_lossy(&raw).into_owned())
+        })
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let seen = std::cell::RefCell::new(std::collections::HashMap::new());
+        let lookup = |pid: u32| {
+            seen.borrow_mut()
+                .entry(pid)
+                .or_insert_with(|| crate::process_snapshot::parent_and_cmdline(pid))
+                .clone()
+        };
+        agent_in_ancestry_with(
+            start_pid,
+            |pid| lookup(pid).and_then(|(parent, _)| parent),
+            |pid| lookup(pid).map(|(_, cmdline)| cmdline),
+        )
+    }
+}
+
+/// Whether a command line (NUL- or space-separated) runs an agent: any of
+/// its words names an agent program, so a path with spaces in it or a
+/// launcher in front (`node …/cli.js`, `aas exec`) still counts, or it runs
+/// an agent's package. A word that only looks like one (an argument named
+/// `codex`) refuses a person too; that is the safe side.
+fn runs_an_agent(argv: &str) -> bool {
+    const PACKAGES: [&str; 4] = [
+        "@anthropic-ai/claude-code",
+        "/claude/versions/",
+        "@openai/codex",
+        "/codex/codex-",
+    ];
+    argv.split(|c: char| c == '\0' || c.is_whitespace())
+        .filter(|word| !word.is_empty())
+        .any(|word| crate::discovery::classify_command(word).is_some())
+        || PACKAGES.iter().any(|package| argv.contains(package))
+}
+
+/// [`agent_in_ancestry`] over injected lookups.
+pub fn agent_in_ancestry_with<P, A>(start_pid: u32, parent_of: P, argv_of: A) -> Option<bool>
+where
+    P: Fn(u32) -> Option<u32>,
+    A: Fn(u32) -> Option<String>,
+{
+    let mut cur = start_pid;
+    for _ in 0..MAX_DEPTH {
+        let parent = parent_of(cur)?;
+        if parent <= 1 || parent == cur {
+            return Some(false);
+        }
+        let argv = argv_of(parent)?;
+        if runs_an_agent(&argv) {
+            return Some(true);
+        }
+        cur = parent;
+    }
+    None
+}
+
 /// Codex global options that take their value as the next argument.
 #[doc(hidden)]
 pub const CODEX_VALUE_OPTIONS: &[&str] = &[
@@ -243,6 +312,47 @@ pub fn codex_subcommand(command_line: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_agent_anywhere_above_the_caller_is_found_and_a_broken_chain_is_not_a_no() {
+        // tend <- zsh -c <- claude <- zsh <- tmux, as an agent's tool call.
+        let tree: HashMap<u32, (u32, &str)> = [
+            (50, (40, "tend review close x --host h")),
+            (40, (30, "/bin/zsh -c tend review close")),
+            (30, (20, "/Users/me/.local/bin/claude --resume abc")),
+            (20, (10, "-zsh")),
+            (10, (1, "tmux new-session")),
+        ]
+        .into_iter()
+        .collect();
+        let parent = |pid: u32| tree.get(&pid).map(|(parent, _)| *parent);
+        let argv = |pid: u32| tree.get(&pid).map(|(_, argv)| (*argv).to_owned());
+        assert_eq!(agent_in_ancestry_with(50, parent, argv), Some(true));
+        // The person's shell: nothing above it is an agent.
+        assert_eq!(agent_in_ancestry_with(20, parent, argv), Some(false));
+        // A path with spaces, NUL-separated as Linux gives it, and an agent
+        // behind a launcher.
+        let spaced = |pid: u32| match pid {
+            30 => Some("/opt/My Tools/codex\0app-server\0--managed-daemon".to_owned()),
+            _ => argv(pid),
+        };
+        assert_eq!(agent_in_ancestry_with(50, parent, spaced), Some(true));
+        let node = |pid: u32| match pid {
+            30 => Some(
+                "node /opt/lib/node_modules/@anthropic-ai/claude-code/cli.js --resume x".to_owned(),
+            ),
+            _ => argv(pid),
+        };
+        assert_eq!(agent_in_ancestry_with(50, parent, node), Some(true));
+        let native = |pid: u32| match pid {
+            30 => Some("/Users/me/.local/share/claude/versions/2.1.330 --resume x".to_owned()),
+            _ => argv(pid),
+        };
+        assert_eq!(agent_in_ancestry_with(50, parent, native), Some(true));
+        // A parent that cannot be read cannot be told.
+        let unreadable = |pid: u32| (pid != 30).then(|| argv(pid)).flatten();
+        assert_eq!(agent_in_ancestry_with(50, parent, unreadable), None);
+    }
     use std::collections::HashMap;
 
     #[cfg(target_os = "linux")]

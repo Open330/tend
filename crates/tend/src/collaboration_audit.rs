@@ -164,7 +164,8 @@ pub struct CollaborationAuditContext {
 /// Where a Fleet decision came from (`docs/proposals/FLEET_UNANSWERABLE.md`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FleetVia {
-    /// The controller's Fleet alias.
+    /// The controller's machine name (its own Fleet alias is always
+    /// `local`).
     pub controller: String,
     /// The person, as the controller authenticated them.
     pub actor: String,

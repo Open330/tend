@@ -218,6 +218,70 @@ impl Client {
     }
 }
 
+/// Long enough for both Fleet round trips the daemon may make (read the
+/// episode there, then send the decision), each bounded by
+/// `fleet_decisions::FLEET_WRITE_TIMEOUT`, and the local overhead: a client
+/// that gave up sooner would report a failure for a decision the daemon
+/// then applies.
+const ON_HOST_TIMEOUT: Duration =
+    Duration::from_secs(2 * crate::fleet_decisions::FLEET_WRITE_TIMEOUT.as_secs() + 10);
+
+impl Client {
+    async fn call_on_host(
+        &self,
+        req: &serde_json::Value,
+    ) -> Result<serde_json::Value, RuntimeError> {
+        let response = self.call_with_timeout(req, ON_HOST_TIMEOUT).await?;
+        if response["ok"].as_bool().unwrap_or(false) {
+            Ok(response)
+        } else {
+            Err(super::response_error(&response))
+        }
+    }
+
+    /// Keep `request_id` on Fleet host `host`, as the person
+    /// (`decision_on_host_v1`). Without `episode`, the one it is folded in
+    /// there now.
+    pub async fn decision_keep_on_host(
+        &self,
+        host: &str,
+        request_id: &str,
+        episode: Option<&str>,
+    ) -> Result<crate::collaboration::subject_check::KeepOutcome, RuntimeError> {
+        let req = serde_json::json!({
+            "protocol": PROTOCOL_VERSION,
+            "kind": "decision_keep_on_host",
+            "host": host,
+            "request_id": request_id,
+            "episode": episode,
+            "origin": crate::decision_queue::operator_origin(),
+        });
+        field(&self.call_on_host(&req).await?, "decision_keep")
+    }
+
+    /// Close `request_id` on Fleet host `host`, as the person, exactly as
+    /// Close all would there (`decision_on_host_v1`).
+    pub async fn decision_close_on_host(
+        &self,
+        host: &str,
+        request_id: &str,
+        episode: Option<&str>,
+    ) -> Result<crate::collaboration::subject_check::CloseOutcome, RuntimeError> {
+        let req = serde_json::json!({
+            "protocol": PROTOCOL_VERSION,
+            "kind": "decision_close_on_host",
+            "host": host,
+            "request_id": request_id,
+            "episode": episode,
+            "origin": crate::decision_queue::operator_origin(),
+        });
+        field(
+            &self.call_on_host(&req).await?,
+            "decision_close_unanswerable",
+        )
+    }
+}
+
 impl Client {
     /// Apply a Fleet Keep on this host, as the operator, recording where it
     /// came from in the collaboration audit.

@@ -195,6 +195,35 @@ pub(super) enum RequestBody {
         #[serde(default)]
         via_fleet: Option<crate::collaboration_audit::FleetVia>,
     },
+    /// Keep one of another Fleet host's unanswerable questions, sent from
+    /// here over Fleet (`decision_on_host_v1`): what the dashboard's
+    /// `POST /api/decisions/keep` with `host` does, for the CLI. The console
+    /// origin is required, and a caller in an agent's pane or under an agent
+    /// process is refused: over this socket an agent could otherwise decide
+    /// for the person on every host.
+    /// Without `episode`, the one the question is folded in there now, as
+    /// that host's queue lists it.
+    DecisionKeepOnHost {
+        host: String,
+        request_id: String,
+        #[serde(default)]
+        episode: Option<String>,
+        #[serde(default)]
+        origin: Option<collaboration::CollaborationOrigin>,
+    },
+    /// Close one question on another Fleet host (`decision_on_host_v1`),
+    /// exactly as Close all would close it there, under that host's rules:
+    /// only while it is folded, in that episode and not kept. One question
+    /// at a time, by id; Close all stays on the dashboard. As for
+    /// `decision_keep_on_host`.
+    DecisionCloseOnHost {
+        host: String,
+        request_id: String,
+        #[serde(default)]
+        episode: Option<String>,
+        #[serde(default)]
+        origin: Option<collaboration::CollaborationOrigin>,
+    },
     /// Durable Work records, backlog order (`work_backlog_v1`). With
     /// `stage`, only records at that stage.
     WorkBacklog {
@@ -1203,6 +1232,7 @@ pub(super) const CAPABILITIES: &[&str] = &[
     collaboration::system_asks::SYSTEM_ASK_CLEANUP_CAPABILITY,
     collaboration::subject_check::SUBJECT_CHECK_CAPABILITY,
     collaboration::subject_check::DECISION_VIA_FLEET_CAPABILITY,
+    collaboration::subject_check::DECISION_ON_HOST_CAPABILITY,
     crate::work::WORK_BACKLOG_CAPABILITY,
     crate::work::WORK_VERIFY_CAPABILITY,
     crate::work_complete::CAPABILITY,

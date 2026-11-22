@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `tend review close <id>` closes exactly one question that can't be
+  answered, and `tend review keep <id> --host <alias>` / `tend review close
+  <id> --host <alias>` keep or close one on another Fleet host over the same
+  route as the dashboard, with the same refusals and the holding host's
+  `via_fleet` record. Refused from an agent's pane or under an agent.
+
 - `docs/PUSH_SETUP.md`: the steps to turn on iOS notifications on the
   dashboard's host. It covers the App ID capability, the APNs key, and
   where each value goes in `[dashboard.push]`.

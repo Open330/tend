@@ -64,6 +64,11 @@ pub const SUBJECT_CHECK_CAPABILITY: &str = "subject_check_v1";
 /// over an older daemon fails closed instead of closing without them.
 pub const DECISION_VIA_FLEET_CAPABILITY: &str = "decision_via_fleet_v1";
 
+/// `hello` capability: the daemon takes `decision_keep_on_host` and
+/// `decision_close_on_host`, a person's Keep or Close of another Fleet
+/// host's question sent from this host (`tend review keep|close --host`).
+pub const DECISION_ON_HOST_CAPABILITY: &str = "decision_on_host_v1";
+
 /// `hello` capability, only while `[review] close_unanswerable` is on:
 /// `decision_close_unanswerable` closes what it is given.
 pub const CLOSE_UNANSWERABLE_CAPABILITY: &str = "close_unanswerable_v1";
