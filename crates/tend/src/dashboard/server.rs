@@ -4066,7 +4066,12 @@ mod tests {
             assert_eq!(sent[1].0, "ctl");
             assert_eq!(sent[1].1["actor"], "web:token");
             assert_eq!(sent[1].1["surface"], "web");
-            assert_eq!(sent[1].1["controller"], "here");
+            // This machine's name, not its Fleet alias, which is `local`
+            // on every controller.
+            assert_eq!(
+                sent[1].1["controller"],
+                crate::fleet::local_hostname().unwrap()
+            );
         }
         // A host reporting what it was not asked about is not believed.
         assert_eq!(keep("liar").await.status(), StatusCode::BAD_GATEWAY);

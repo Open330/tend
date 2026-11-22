@@ -30,16 +30,31 @@ use crate::topology::{PaneKey, WindowKey};
 use crate::work_control::WorkCommandOutput;
 
 /// This machine's name: `/etc/hostname`, then `$HOSTNAME`, then Windows'
-/// `%COMPUTERNAME%`.
+/// `%COMPUTERNAME%`, then the operating system's own (`/proc/sys/kernel/hostname`, or
+/// `gethostname` through sysinfo). A
+/// macOS daemon under launchd has neither the file nor the variables.
 #[must_use]
 pub fn local_hostname() -> Option<String> {
+    let named = |value: String| {
+        let value = value.trim().to_string();
+        (!value.is_empty()).then_some(value)
+    };
     std::fs::read_to_string("/etc/hostname")
         .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .or_else(|| std::env::var("HOSTNAME").ok())
-        .or_else(|| std::env::var("COMPUTERNAME").ok())
-        .filter(|value| !value.trim().is_empty())
+        .and_then(named)
+        .or_else(|| std::env::var("HOSTNAME").ok().and_then(named))
+        .or_else(|| std::env::var("COMPUTERNAME").ok().and_then(named))
+        .or_else(|| os_hostname().and_then(named))
+}
+
+#[cfg(target_os = "linux")]
+fn os_hostname() -> Option<String> {
+    std::fs::read_to_string("/proc/sys/kernel/hostname").ok()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn os_hostname() -> Option<String> {
+    sysinfo::System::host_name()
 }
 
 /// An id that is stable for one boot of this machine: the kernel's boot id
@@ -1928,6 +1943,15 @@ fn valid_dns_subdomain(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn this_machine_has_a_name_without_hostname_variables() {
+        // tendd under launchd sees no `$HOSTNAME`, and macOS has no
+        // `/etc/hostname`: the operating system still names the machine.
+        let name = os_hostname().expect("the OS names this machine");
+        assert!(!name.trim().is_empty());
+        assert!(local_hostname().is_some());
+    }
     use crate::SessionKey;
     use tempfile::tempdir;
     use tokio::io::{AsyncWriteExt, BufReader};
