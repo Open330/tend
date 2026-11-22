@@ -193,6 +193,61 @@ where
     false
 }
 
+/// Whether an agent process (`claude`, `codex`, …) is among `start_pid`'s
+/// ancestors: a command an agent's tool call runs, however deep. `None`
+/// when the chain could not be read to its end, so it cannot be told.
+#[must_use]
+pub fn agent_in_ancestry(start_pid: u32) -> Option<bool> {
+    #[cfg(target_os = "linux")]
+    {
+        agent_in_ancestry_with(start_pid, parent_pid, |pid| {
+            std::fs::read(format!("/proc/{pid}/cmdline"))
+                .ok()
+                .map(|raw| String::from_utf8_lossy(&raw).into_owned())
+        })
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let seen = std::cell::RefCell::new(std::collections::HashMap::new());
+        let lookup = |pid: u32| {
+            seen.borrow_mut()
+                .entry(pid)
+                .or_insert_with(|| crate::process_snapshot::parent_and_cmdline(pid))
+                .clone()
+        };
+        agent_in_ancestry_with(
+            start_pid,
+            |pid| lookup(pid).and_then(|(parent, _)| parent),
+            |pid| lookup(pid).map(|(_, cmdline)| cmdline),
+        )
+    }
+}
+
+/// [`agent_in_ancestry`] over injected lookups.
+pub fn agent_in_ancestry_with<P, A>(start_pid: u32, parent_of: P, argv_of: A) -> Option<bool>
+where
+    P: Fn(u32) -> Option<u32>,
+    A: Fn(u32) -> Option<String>,
+{
+    let mut cur = start_pid;
+    for _ in 0..MAX_DEPTH {
+        let parent = parent_of(cur)?;
+        if parent <= 1 || parent == cur {
+            return Some(false);
+        }
+        let argv = argv_of(parent)?;
+        let program = argv
+            .split(|c: char| c == '\0' || c.is_whitespace())
+            .find(|arg| !arg.is_empty())
+            .unwrap_or_default();
+        if crate::discovery::classify_command(program).is_some() {
+            return Some(true);
+        }
+        cur = parent;
+    }
+    None
+}
+
 /// Codex global options that take their value as the next argument.
 #[doc(hidden)]
 pub const CODEX_VALUE_OPTIONS: &[&str] = &[
@@ -243,6 +298,28 @@ pub fn codex_subcommand(command_line: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_agent_anywhere_above_the_caller_is_found_and_a_broken_chain_is_not_a_no() {
+        // tend <- zsh -c <- claude <- zsh <- tmux, as an agent's tool call.
+        let tree: HashMap<u32, (u32, &str)> = [
+            (50, (40, "tend review close x --host h")),
+            (40, (30, "/bin/zsh -c tend review close")),
+            (30, (20, "/Users/me/.local/bin/claude --resume abc")),
+            (20, (10, "-zsh")),
+            (10, (1, "tmux new-session")),
+        ]
+        .into_iter()
+        .collect();
+        let parent = |pid: u32| tree.get(&pid).map(|(parent, _)| *parent);
+        let argv = |pid: u32| tree.get(&pid).map(|(_, argv)| (*argv).to_owned());
+        assert_eq!(agent_in_ancestry_with(50, parent, argv), Some(true));
+        // The person's shell: nothing above it is an agent.
+        assert_eq!(agent_in_ancestry_with(20, parent, argv), Some(false));
+        // A parent that cannot be read cannot be told.
+        let unreadable = |pid: u32| (pid != 30).then(|| argv(pid)).flatten();
+        assert_eq!(agent_in_ancestry_with(50, parent, unreadable), None);
+    }
     use std::collections::HashMap;
 
     #[cfg(target_os = "linux")]

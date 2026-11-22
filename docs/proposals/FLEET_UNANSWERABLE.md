@@ -111,6 +111,25 @@ struct FleetCloseUnanswerable {
   under its sign-in. A remote folded group on the Mac does the same: it is
   listed, and Keep or Close all opens that host's group on the dashboard.
   A native transport for the Mac would be its own design.
+- **The CLI** (WAVE12): `tend review keep <id> --host <alias>` and `tend
+  review close <id> --host <alias>` ask the local tendd, which sends the
+  same `DecisionKeep` / `DecisionCloseUnanswerable` over Fleet through the
+  code the dashboard uses (`crate::fleet_decisions`): the same refusals,
+  the same check that the answer covers exactly what was asked, and
+  `via_fleet {controller, actor: "cli:<user>", surface: "cli"}` on the
+  holding host; this host records the send (`target: "fleet:<alias>"`).
+  Close is one question by id; Close all stays on the dashboard.
+  - **Why the CLI may have it.** The dashboard authenticates the person;
+    the IPC socket cannot, and the socket refuses `fleet_command` with
+    these operations so an agent cannot decide for the person on every
+    host. The CLI's caller is the same Unix user who can already `ssh` to
+    that host and run `tend review cleanup --questions --apply` there, so
+    the path adds no authority. It still refuses an agent: the console
+    origin is required, and a caller in an agent's pane or with an agent
+    process (`claude`, `codex`, …) among its ancestors is refused, as is
+    one whose ancestry cannot be read. A process an agent detached on
+    purpose (reparented to `launchd`/`init`) is not caught; that is the
+    same reach `ssh` gives it.
 
 ### Surfaces
 

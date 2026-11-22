@@ -10,7 +10,7 @@ use anyhow::{bail, Context, Result};
 use std::fmt::Write as _;
 use tend::collaboration::subject_check::{
     CloseItem, CloseOutcome, GoneCause as SubjectGoneCause, CLOSE_UNANSWERABLE_CAPABILITY,
-    CLOSE_UNANSWERABLE_OFF, SUBJECT_CHECK_CAPABILITY,
+    CLOSE_UNANSWERABLE_OFF, DECISION_ON_HOST_CAPABILITY, SUBJECT_CHECK_CAPABILITY,
 };
 use tend::collaboration::system_asks::{
     SystemAskCleanup, SystemAskCloseReason, SystemAskKind, SYSTEM_ASK_CLEANUP_CAPABILITY,
@@ -361,6 +361,23 @@ enum Action {
     Keep {
         /// The request id, as `tend review queue` prints it.
         id: String,
+        /// The Fleet host the question is on, kept over Fleet under that
+        /// host's rules. Only from your own terminal: an agent is refused.
+        #[arg(long)]
+        host: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Close one question that can't be answered, as Close all would close
+    /// it: its asker gets the declined reply, and it is recorded as closed
+    /// by you. Only while it is folded and not kept.
+    Close {
+        /// The request id, as `tend review queue` prints it.
+        id: String,
+        /// The Fleet host the question is on, closed over Fleet under that
+        /// host's rules. Only from your own terminal: an agent is refused.
+        #[arg(long)]
+        host: Option<String>,
         #[arg(long)]
         json: bool,
     },
@@ -467,7 +484,11 @@ pub(crate) async fn run(args: Args, client: &Client) -> Result<()> {
             questions,
             json,
         } => cleanup(client, apply, questions, json).await,
-        Action::Keep { id, json } => keep(client, &id, json).await,
+        Action::Keep { id, host, json } => match host {
+            Some(host) => keep_on_host(client, &host, &id, json).await,
+            None => keep(client, &id, json).await,
+        },
+        Action::Close { id, host, json } => close(client, host.as_deref(), &id, json).await,
         Action::Show { id, json } => show(client, &id, json).await,
         Action::Accept(a) => dispose(client, DispositionKind::Accepted, a).await,
         Action::Return(a) => dispose(client, DispositionKind::Returned, a).await,
@@ -860,6 +881,101 @@ async fn keep(client: &Client, id: &str, json: bool) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Fail unless this tendd sends Keep and Close to other Fleet hosts.
+async fn require_on_host(client: &Client) -> Result<()> {
+    let hello = client
+        .hello(std::time::Duration::from_secs(3))
+        .await
+        .context("asking tendd what it supports")?;
+    if !hello
+        .capabilities
+        .iter()
+        .any(|c| c == DECISION_ON_HOST_CAPABILITY)
+    {
+        bail!("this tendd cannot keep or close another host's questions ({DECISION_ON_HOST_CAPABILITY}); restart it with the same tend build");
+    }
+    Ok(())
+}
+
+/// `tend review keep <id> --host <h>`.
+async fn keep_on_host(client: &Client, host: &str, id: &str, json: bool) -> Result<()> {
+    require_on_host(client).await?;
+    let kept = client.decision_keep_on_host(host, id, None).await?;
+    if json {
+        println!("{}", serde_json::to_string(&kept)?);
+    } else {
+        println!(
+            "kept {} on {host}: it stays in your turn until its subject comes back and goes again",
+            kept.request_id
+        );
+    }
+    Ok(())
+}
+
+/// `tend review close <id> [--host <h>]`: exactly this one question.
+async fn close(client: &Client, host: Option<&str>, id: &str, json: bool) -> Result<()> {
+    let outcome = if let Some(host) = host {
+        require_on_host(client).await?;
+        client.decision_close_on_host(host, id, None).await?
+    } else {
+        close_here(client, id).await?
+    };
+    if json {
+        println!("{}", serde_json::to_string(&outcome)?);
+        return Ok(());
+    }
+    let place = host.map(|host| format!(" on {host}")).unwrap_or_default();
+    if outcome.closed.iter().any(|closed| closed == id) {
+        println!("closed {id}{place}: its asker gets the declined reply");
+        return Ok(());
+    }
+    let reason = outcome
+        .skipped
+        .iter()
+        .find(|skip| skip.request_id == id)
+        .map_or("no reason given", |skip| skip.reason.as_str());
+    bail!("{id}{place} was not closed: {reason}");
+}
+
+/// Close `id` on this host, in the episode the queue lists it in.
+async fn close_here(client: &Client, id: &str) -> Result<CloseOutcome> {
+    require_queue_capability(client).await?;
+    let hello = client
+        .hello(std::time::Duration::from_secs(3))
+        .await
+        .context("asking tendd what it supports")?;
+    let has = |cap: &str| hello.capabilities.iter().any(|c| c == cap);
+    if !has(SUBJECT_CHECK_CAPABILITY) {
+        bail!("this tendd does not judge questions' subjects ({SUBJECT_CHECK_CAPABILITY}); restart it with the same tend build");
+    }
+    if !has(CLOSE_UNANSWERABLE_CAPABILITY) {
+        bail!("{CLOSE_UNANSWERABLE_OFF}");
+    }
+    let queue = client
+        .decision_queue(
+            &tend::decision_queue::operator_origin(),
+            tend::decision_queue::MAX_QUEUE_LIMIT,
+        )
+        .await?;
+    let Some(episode) = unanswerable_entries(&queue)
+        .into_iter()
+        .find(|entry| entry.request_id == id)
+        .and_then(|entry| entry.unanswerable.map(|u| u.episode))
+    else {
+        bail!("{id} is not listed as a question that can't be answered; nothing to close");
+    };
+    client
+        .decision_close_unanswerable(
+            &[CloseItem {
+                request_id: id.to_owned(),
+                episode,
+            }],
+            "cli",
+        )
+        .await
+        .map_err(Into::into)
 }
 
 fn render_cleanup(cleanup: &SystemAskCleanup, now: OffsetDateTime) -> String {

@@ -293,7 +293,9 @@ async fn route(
         | RequestBody::DecisionHistory { .. }
         | RequestBody::SystemAskCleanup { .. }
         | RequestBody::DecisionKeep { .. }
-        | RequestBody::DecisionCloseUnanswerable { .. }) => {
+        | RequestBody::DecisionCloseUnanswerable { .. }
+        | RequestBody::DecisionKeepOnHost { .. }
+        | RequestBody::DecisionCloseOnHost { .. }) => {
             Box::pin(decisions::handle(ctx, conn, turn, body)).await
         }
         body @ (RequestBody::WorkBacklog { .. }

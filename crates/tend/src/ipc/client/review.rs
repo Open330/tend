@@ -219,6 +219,50 @@ impl Client {
 }
 
 impl Client {
+    /// Keep `request_id` on Fleet host `host`, as the person
+    /// (`decision_on_host_v1`). Without `episode`, the one it is folded in
+    /// there now.
+    pub async fn decision_keep_on_host(
+        &self,
+        host: &str,
+        request_id: &str,
+        episode: Option<&str>,
+    ) -> Result<crate::collaboration::subject_check::KeepOutcome, RuntimeError> {
+        let req = serde_json::json!({
+            "protocol": PROTOCOL_VERSION,
+            "kind": "decision_keep_on_host",
+            "host": host,
+            "request_id": request_id,
+            "episode": episode,
+            "origin": crate::decision_queue::operator_origin(),
+        });
+        field(&self.call_checked(&req).await?, "decision_keep")
+    }
+
+    /// Close `request_id` on Fleet host `host`, as the person, exactly as
+    /// Close all would there (`decision_on_host_v1`).
+    pub async fn decision_close_on_host(
+        &self,
+        host: &str,
+        request_id: &str,
+        episode: Option<&str>,
+    ) -> Result<crate::collaboration::subject_check::CloseOutcome, RuntimeError> {
+        let req = serde_json::json!({
+            "protocol": PROTOCOL_VERSION,
+            "kind": "decision_close_on_host",
+            "host": host,
+            "request_id": request_id,
+            "episode": episode,
+            "origin": crate::decision_queue::operator_origin(),
+        });
+        field(
+            &self.call_checked(&req).await?,
+            "decision_close_unanswerable",
+        )
+    }
+}
+
+impl Client {
     /// Apply a Fleet Keep on this host, as the operator, recording where it
     /// came from in the collaboration audit.
     pub async fn decision_keep_from_fleet(

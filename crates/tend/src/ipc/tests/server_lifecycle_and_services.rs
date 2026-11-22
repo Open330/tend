@@ -3410,6 +3410,63 @@ async fn unanswerable_fixture() -> (
 }
 
 #[tokio::test]
+async fn keep_and_close_on_another_host_are_the_persons_alone() {
+    use crate::collaboration::subject_check::DECISION_ON_HOST_CAPABILITY;
+    let dir = tempdir().unwrap();
+    let sock = dir.path().join("tend-on-host.sock");
+    let (mailbox, pairs, registry) = unanswerable_fixture().await;
+    let server = Server::new(sock.clone(), registry).with_collaboration(mailbox.clone());
+    let (tx, rx) = broadcast::channel(1);
+    let handle = tokio::spawn(async move { server.run(rx).await.unwrap() });
+    wait_for_socket(&sock).await;
+    let client = Client::new(sock.clone());
+    let hello = client
+        .hello(std::time::Duration::from_secs(3))
+        .await
+        .unwrap();
+    assert!(hello
+        .capabilities
+        .iter()
+        .any(|c| c == DECISION_ON_HOST_CAPABILITY));
+    // An agent's origin can do neither.
+    for kind in ["decision_keep_on_host", "decision_close_on_host"] {
+        let refused = raw_call(
+            &sock,
+            &serde_json::json!({"protocol": crate::ipc::PROTOCOL_VERSION, "kind": kind,
+                "host": "mini", "request_id": pairs[0].request_id,
+                "origin": {"pane": "%1", "socket": "default", "console": false}}),
+        )
+        .await;
+        assert_eq!(refused["ok"], false, "{refused}");
+        assert!(
+            refused["error"]
+                .as_str()
+                .unwrap()
+                .contains("operator-console"),
+            "{refused}"
+        );
+    }
+    // The console origin: refused here either way, as an agent's call when
+    // this test runs under one, or for want of Fleet; never applied.
+    let refused = client
+        .decision_close_on_host("mini", &pairs[0].request_id, None)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        refused.contains("only the person") || refused.contains("fleet is not enabled"),
+        "{refused}"
+    );
+    let queue = client
+        .decision_queue(&crate::decision_queue::operator_origin(), 50)
+        .await
+        .unwrap();
+    assert_eq!(queue.unanswerable_count, 2, "nothing was kept or closed");
+    tx.send(()).unwrap();
+    handle.await.unwrap();
+}
+
+#[tokio::test]
 #[allow(clippy::too_many_lines)] // one switch, both settings
 async fn keep_and_close_unanswerable_are_operator_actions_and_close_follows_its_switch() {
     use crate::collaboration::subject_check::{

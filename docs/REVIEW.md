@@ -223,6 +223,15 @@ ignore both and list the item as before.
 - **Keep** (`decision_keep {request_id, episode}`, `POST
   /api/decisions/keep`, `tend review keep <id>`) puts the item back in the
   person's turn until its subject is seen alive and then gone again.
+- **Close one** (`tend review close <id>`) closes exactly that question, as
+  Close all below would.
+- **On another Fleet host**, `tend review keep <id> --host <alias>` and
+  `tend review close <id> --host <alias>` (`decision_keep_on_host`,
+  `decision_close_on_host`, `decision_on_host_v1`) go over the same Fleet
+  route as the dashboard's `host`, with the same refusals, and the holding
+  host records `via_fleet`. They are the person's alone: the console origin,
+  and a caller that is neither in an agent's pane nor under an agent
+  process, is required.
 - **Close all** (`decision_close_unanswerable {items: [{request_id,
   episode}], by_label?}`, `POST /api/decisions/close-unanswerable`, `tend
   review cleanup --questions --apply`) declines exactly the listed pairs, in
