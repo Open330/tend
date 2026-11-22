@@ -1,6 +1,6 @@
 # The demo video
 
-`tend-demo.mp4` (English captions) and `tend-demo-ko.mp4` (Korean), 71 s,
+`tend-demo.mp4` (English captions) and `tend-demo-ko.mp4` (Korean), 71 s, recorded on 0.10.31,
 1920×1080, H.264. `poster.png` is the README's still. Storyboard:
 [STORYBOARD.md](STORYBOARD.md).
 
