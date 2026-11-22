@@ -256,17 +256,23 @@ pub fn claude_conversation(pid: u32) -> Conversation {
 /// One variable out of a same-user process's environment. Never logged or
 /// kept; `None` when unreadable.
 fn process_env(pid: u32, name: &str) -> Option<String> {
+    process_env_read(pid, name).ok().flatten()
+}
+
+/// [`process_env`], telling an environment that could not be read
+/// (`Err`) from one without the variable (`Ok(None)`).
+fn process_env_read(pid: u32, name: &str) -> Result<Option<String>, ()> {
     #[cfg(target_os = "linux")]
-    let bytes = read_bounded(Path::new(&format!("/proc/{pid}/environ")), MAX_ENVIRON)?;
+    let bytes = read_bounded(Path::new(&format!("/proc/{pid}/environ")), MAX_ENVIRON).ok_or(())?;
     #[cfg(not(target_os = "linux"))]
-    let bytes = crate::accounts::process_environ_raw(pid)?;
+    let bytes = crate::accounts::process_environ_raw(pid).ok_or(())?;
     let prefix = format!("{name}=");
-    bytes
+    Ok(bytes
         .split(|byte| *byte == 0)
         .filter_map(|entry| std::str::from_utf8(entry).ok())
         .find_map(|entry| entry.strip_prefix(&prefix))
         .filter(|value| !value.is_empty())
-        .map(str::to_owned)
+        .map(str::to_owned))
 }
 
 /// The Codex thread a rollout path names: `rollout-<time>-<thread id>.jsonl`
@@ -405,8 +411,33 @@ fn open_files(pid: u32) -> Option<Vec<PathBuf>> {
     )
 }
 
+/// Every regular file `pid` has open, or `None` unless each descriptor
+/// was read: a listing that may have missed one cannot show that nothing
+/// is open.
+#[cfg(target_os = "linux")]
+fn open_files_complete(pid: u32) -> Option<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    for entry in std::fs::read_dir(format!("/proc/{pid}/fd")).ok()? {
+        let entry = entry.ok()?;
+        let meta = std::fs::metadata(entry.path()).ok()?;
+        if meta.is_file() {
+            let path = std::fs::read_link(entry.path()).ok()?;
+            if path.is_absolute() {
+                paths.push(path);
+            }
+        }
+    }
+    Some(paths)
+}
+
+/// `lsof`'s listing is only kept when it succeeded ([`open_files`]).
+#[cfg(not(target_os = "linux"))]
+fn open_files_complete(pid: u32) -> Option<Vec<PathBuf>> {
+    open_files(pid)
+}
+
 /// The paths of the regular files `pid` has open, from `lsof`, or `None`
-/// when they cannot be listed in time.
+/// when they cannot be listed in time, or `lsof` says it failed.
 #[cfg(all(unix, not(target_os = "linux")))]
 fn open_files(pid: u32) -> Option<Vec<PathBuf>> {
     use std::process::{Command, Stdio};
@@ -441,7 +472,11 @@ fn open_files(pid: u32) -> Option<Vec<PathBuf>> {
     let deadline = std::time::Instant::now() + LSOF_TIMEOUT;
     loop {
         match child.try_wait() {
-            Ok(Some(_)) => break,
+            Ok(Some(status)) if status.success() => break,
+            Ok(Some(_)) => {
+                let _ = reader.join();
+                return None;
+            }
             Ok(None) if std::time::Instant::now() < deadline => {
                 std::thread::sleep(std::time::Duration::from_millis(20));
             }
@@ -496,67 +531,116 @@ pub enum Saved {
 
 /// Whether Claude's conversation `session_id` has a transcript
 /// (`<config dir>/projects/<dir>/<id>.jsonl`). `No` only when the config
-/// dir holding this exact process's `sessions/<pid>.json` was found and
-/// its projects were read.
+/// dir holding this exact process's `sessions/<pid>.json` (pid, id and
+/// start time all matching) was found and every project dir was read.
 #[must_use]
 pub fn claude_saved(pid: u32, session_id: &str) -> Saved {
-    claude_saved_in(pid, session_id, &claude_roots(pid))
+    let Some(start) = process_start(pid) else {
+        return Saved::Unknown;
+    };
+    let saved = claude_saved_in(pid, &start, session_id, &claude_roots(pid));
+    // The process may have been replaced while it was read.
+    if process_start(pid).as_deref() != Some(start.as_str()) {
+        return Saved::Unknown;
+    }
+    saved
 }
 
-/// [`claude_saved`] over `roots`.
+/// [`claude_saved`] for the process `pid` started at `start`, over `roots`.
 #[must_use]
-pub fn claude_saved_in(pid: u32, session_id: &str, roots: &[PathBuf]) -> Saved {
+pub fn claude_saved_in(pid: u32, start: &str, session_id: &str, roots: &[PathBuf]) -> Saved {
     if uuid::Uuid::parse_str(session_id).is_err() {
         return Saved::Unknown;
     }
-    let name = format!("{session_id}.jsonl");
-    let mut own_read = false;
-    let mut own_known = false;
-    for root in roots {
-        let own = read_bounded(
+    let own = roots.iter().any(|root| {
+        read_bounded(
             &root.join("sessions").join(format!("{pid}.json")),
             MAX_SESSION_FILE,
         )
         .and_then(|bytes| parse_claude_session(&bytes))
-        .is_some_and(|file| file.pid == pid && file.session_id == session_id);
-        own_known |= own;
-        match std::fs::read_dir(root.join("projects")) {
-            Ok(projects) => {
-                for project in projects.flatten() {
-                    if std::fs::symlink_metadata(project.path().join(&name)).is_ok() {
-                        return Saved::Yes;
-                    }
-                }
-                own_read |= own;
-            }
+        .is_some_and(|file| {
+            file.pid == pid && file.session_id == session_id && same_start(&file.proc_start, start)
+        })
+    });
+    if !own {
+        return Saved::Unknown;
+    }
+    claude_transcript_in(session_id, roots)
+}
+
+/// Whether a transcript for `session_id` is under any of `roots`, read
+/// without a process: `No` only when every root was read in full.
+#[must_use]
+pub fn claude_transcript_in(session_id: &str, roots: &[PathBuf]) -> Saved {
+    if uuid::Uuid::parse_str(session_id).is_err() || roots.is_empty() {
+        return Saved::Unknown;
+    }
+    let name = format!("{session_id}.jsonl");
+    let mut unknown = false;
+    for root in roots {
+        let projects = match std::fs::read_dir(root.join("projects")) {
+            Ok(projects) => projects,
             // A config dir that has never saved a conversation has no
             // `projects` yet.
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => own_read |= own,
-            Err(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => {
+                unknown = true;
+                continue;
+            }
+        };
+        for project in projects {
+            let Ok(project) = project else {
+                unknown = true;
+                continue;
+            };
+            match std::fs::symlink_metadata(project.path().join(&name)) {
+                Ok(_) => return Saved::Yes,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                // Not a directory (a stray file in `projects`) holds nothing.
+                Err(_) if project.file_type().is_ok_and(|kind| kind.is_file()) => {}
+                Err(_) => unknown = true,
+            }
         }
     }
-    if own_known && own_read {
-        Saved::No
-    } else {
+    if unknown {
         Saved::Unknown
+    } else {
+        Saved::No
     }
 }
 
-/// Whether Codex's thread `session_id` has a rollout. Codex keeps the
+/// Whether Codex's thread `session_id` has been saved. Codex keeps the
 /// rollout of its thread open while it runs and writes none until the
-/// first turn, so `No` needs the process's open files listed with no
-/// rollout among them, and no rollout for the id under its sessions.
+/// first turn, so `No` needs the process's open files listed in full with
+/// no rollout among them, its `CODEX_HOME` known, and nothing for the id
+/// stored under that home ([`codex_rollout_in`]).
 #[must_use]
 pub fn codex_saved(pid: u32, session_id: &str) -> Saved {
-    let Some(open) = open_files(pid) else {
+    let Some(start) = process_start(pid) else {
         return Saved::Unknown;
     };
-    let mut homes: Vec<PathBuf> = process_env(pid, "CODEX_HOME")
-        .map(PathBuf::from)
-        .into_iter()
-        .collect();
-    homes.extend(dirs::home_dir().map(|home| home.join(".codex")));
-    codex_saved_in(&open, session_id, &homes)
+    let Some(open) = open_files_complete(pid) else {
+        return Saved::Unknown;
+    };
+    let Some(home) = codex_home(pid) else {
+        return Saved::Unknown;
+    };
+    let saved = codex_saved_in(&open, session_id, &[home]);
+    if process_start(pid).as_deref() != Some(start.as_str()) {
+        return Saved::Unknown;
+    }
+    saved
+}
+
+/// The `CODEX_HOME` the Codex process `pid` runs with: its own variable,
+/// or `~/.codex` when its environment was read and has none. `None` when
+/// the environment cannot be read.
+#[must_use]
+pub fn codex_home(pid: u32) -> Option<PathBuf> {
+    match process_env_read(pid, "CODEX_HOME").ok()? {
+        Some(home) => Some(PathBuf::from(home)),
+        None => dirs::home_dir().map(|home| home.join(".codex")),
+    }
 }
 
 /// [`codex_saved`] given the open files and the homes to look in.
@@ -565,38 +649,66 @@ pub fn codex_saved_in(open: &[PathBuf], session_id: &str, homes: &[PathBuf]) -> 
     if uuid::Uuid::parse_str(session_id).is_err() {
         return Saved::Unknown;
     }
-    if open.iter().any(|path| rollout_thread_id(path).is_some()) {
+    if open.iter().any(|path| {
+        rollout_thread_id(path).is_some()
+            || path
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with("rollout-"))
+    }) {
         return Saved::Yes;
     }
-    let suffix = format!("-{session_id}.jsonl");
-    for home in homes {
-        match rollout_named(&home.join("sessions"), &suffix, 3) {
-            Ok(true) => return Saved::Yes,
-            Ok(false) => {}
-            Err(()) => return Saved::Unknown,
-        }
-    }
-    Saved::No
+    codex_rollout_in(session_id, homes)
 }
 
-/// Whether a file ending in `suffix` sits `depth` directories under `dir`
-/// (`sessions/YYYY/MM/DD`). A missing tree holds none; one that cannot be
-/// read is an error.
-fn rollout_named(dir: &Path, suffix: &str, depth: usize) -> Result<bool, ()> {
+/// Whether anything stored for the thread `session_id` is under `homes`,
+/// read without a process: any file under `sessions/` or
+/// `archived_sessions/` whose name carries the id (a rollout, archived or
+/// compressed). `No` only when every tree was read in full.
+#[must_use]
+pub fn codex_rollout_in(session_id: &str, homes: &[PathBuf]) -> Saved {
+    if uuid::Uuid::parse_str(session_id).is_err() || homes.is_empty() {
+        return Saved::Unknown;
+    }
+    let mut unknown = false;
+    for home in homes {
+        for tree in ["sessions", "archived_sessions"] {
+            match stored_under(&home.join(tree), session_id, 5) {
+                Ok(true) => return Saved::Yes,
+                Ok(false) => {}
+                Err(()) => unknown = true,
+            }
+        }
+    }
+    if unknown {
+        Saved::Unknown
+    } else {
+        Saved::No
+    }
+}
+
+/// Whether a file whose name carries `id` is within `depth` levels under
+/// `dir`, following directory symlinks. A missing tree holds none; any
+/// entry that cannot be read is an error, as is a tree deeper than
+/// `depth`.
+fn stored_under(dir: &Path, id: &str, depth: usize) -> Result<bool, ()> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(_) => return Err(()),
     };
-    for entry in entries.flatten() {
-        if depth == 0 {
-            if entry.file_name().to_string_lossy().ends_with(suffix) {
+    for entry in entries {
+        let entry = entry.map_err(|_| ())?;
+        if entry.file_name().to_string_lossy().contains(id) {
+            return Ok(true);
+        }
+        let meta = std::fs::metadata(entry.path()).map_err(|_| ())?;
+        if meta.is_dir() {
+            if depth == 0 {
+                return Err(());
+            }
+            if stored_under(&entry.path(), id, depth - 1)? {
                 return Ok(true);
             }
-        } else if entry.file_type().is_ok_and(|kind| kind.is_dir())
-            && rollout_named(&entry.path(), suffix, depth - 1)?
-        {
-            return Ok(true);
         }
     }
     Ok(false)
@@ -933,18 +1045,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("profile");
         std::fs::create_dir_all(root.join("sessions")).unwrap();
-        let session = format!(r#"{{"pid":42,"sessionId":"{A}","procStart":"1"}}"#);
+        let session = format!(r#"{{"pid":42,"sessionId":"{A}","procStart":"7"}}"#);
         std::fs::write(root.join("sessions/42.json"), session).unwrap();
         let roots = [root.clone()];
         // Never prompted: a session file, no projects at all yet.
-        assert_eq!(claude_saved_in(42, A, &roots), Saved::No);
+        assert_eq!(claude_saved_in(42, "7", A, &roots), Saved::No);
         // Another conversation's transcript is not this one.
         std::fs::create_dir_all(root.join("projects/-w")).unwrap();
         std::fs::write(root.join("projects/-w").join(format!("{B}.jsonl")), "{}\n").unwrap();
-        assert_eq!(claude_saved_in(42, A, &roots), Saved::No);
+        assert_eq!(claude_saved_in(42, "7", A, &roots), Saved::No);
         // Its own transcript, in any project directory.
         std::fs::write(root.join("projects/-w").join(format!("{A}.jsonl")), "{}\n").unwrap();
-        assert_eq!(claude_saved_in(42, A, &roots), Saved::Yes);
+        assert_eq!(claude_saved_in(42, "7", A, &roots), Saved::Yes);
+        assert_eq!(claude_transcript_in(A, &roots), Saved::Yes);
     }
 
     #[test]
@@ -954,15 +1067,40 @@ mod tests {
         std::fs::create_dir_all(root.join("projects/-w")).unwrap();
         // No session file names this process: where it writes is unknown.
         assert_eq!(
-            claude_saved_in(42, A, std::slice::from_ref(&root)),
+            claude_saved_in(42, "7", A, std::slice::from_ref(&root)),
             Saved::Unknown
         );
-        // One for another conversation does not count either.
         std::fs::create_dir_all(root.join("sessions")).unwrap();
-        let other = format!(r#"{{"pid":42,"sessionId":"{B}","procStart":"1"}}"#);
-        std::fs::write(root.join("sessions/42.json"), other).unwrap();
-        assert_eq!(claude_saved_in(42, A, &[root]), Saved::Unknown);
-        assert_eq!(claude_saved_in(42, "not-a-uuid", &[]), Saved::Unknown);
+        // One for another conversation, or left by an earlier process with
+        // the same pid, does not count either.
+        for file in [
+            format!(r#"{{"pid":42,"sessionId":"{B}","procStart":"7"}}"#),
+            format!(r#"{{"pid":42,"sessionId":"{A}","procStart":"6"}}"#),
+        ] {
+            std::fs::write(root.join("sessions/42.json"), file).unwrap();
+            assert_eq!(
+                claude_saved_in(42, "7", A, std::slice::from_ref(&root)),
+                Saved::Unknown
+            );
+        }
+        assert_eq!(claude_transcript_in("not-a-uuid", &[root]), Saved::Unknown);
+        assert_eq!(claude_transcript_in(A, &[]), Saved::Unknown);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_project_is_not_an_absent_transcript() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("profile");
+        let project = root.join("projects/-w");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join(format!("{A}.jsonl")), "{}\n").unwrap();
+        std::fs::set_permissions(&project, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let saved = claude_transcript_in(A, std::slice::from_ref(&root));
+        std::fs::set_permissions(&project, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // Root can read anything; elsewhere the transcript cannot be seen.
+        assert_ne!(saved, Saved::No);
     }
 
     #[test]
@@ -989,5 +1127,34 @@ mod tests {
         let open = [day.join(format!("rollout-2026-11-22T10-00-00-{A}.jsonl"))];
         let empty = dir.path().join("empty");
         assert_eq!(codex_saved_in(&open, B, &[empty]), Saved::Yes);
+        // No home to look in rules nothing out.
+        assert_eq!(codex_saved_in(&[], B, &[]), Saved::Unknown);
+    }
+
+    #[test]
+    fn an_archived_or_compressed_codex_rollout_is_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join(".codex");
+        std::fs::create_dir_all(home.join("archived_sessions")).unwrap();
+        std::fs::write(
+            home.join("archived_sessions")
+                .join(format!("rollout-2026-11-22T10-00-01-{B}.jsonl.zst")),
+            "",
+        )
+        .unwrap();
+        assert_eq!(codex_rollout_in(B, &[home]), Saved::Yes);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_codex_day_is_followed() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join(".codex");
+        let elsewhere = dir.path().join("elsewhere/22");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::write(elsewhere.join(format!("rollout-x-{B}.jsonl")), "").unwrap();
+        std::fs::create_dir_all(home.join("sessions/2026/11")).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, home.join("sessions/2026/11/22")).unwrap();
+        assert_eq!(codex_rollout_in(B, &[home]), Saved::Yes);
     }
 }

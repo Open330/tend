@@ -65,6 +65,10 @@ struct FakeIo {
     held_at_capture: RefCell<Vec<bool>>,
     /// The next captures that fail.
     blind: Cell<usize>,
+    /// Whether the target's conversation reads as saved: from the running
+    /// agent, and once it has exited.
+    saved_live: Cell<tend::agent_conversation::Saved>,
+    saved_exit: Cell<tend::agent_conversation::Saved>,
     /// The pane's foreground process, and from when (virtual time) it is
     /// that; before then, or with none, it cannot be read.
     foreground: RefCell<Option<(String, Duration)>>,
@@ -102,6 +106,8 @@ impl FakeIo {
             forgotten: RefCell::new(Vec::new()),
             hook_is_registered: Cell::new(false),
             launch_mark: RefCell::new(None),
+            saved_live: Cell::new(tend::agent_conversation::Saved::No),
+            saved_exit: Cell::new(tend::agent_conversation::Saved::No),
             watched: RefCell::new(None),
             held_at_capture: RefCell::new(Vec::new()),
             blind: Cell::new(0),
@@ -168,6 +174,14 @@ impl SwapIo for FakeIo {
             .borrow()
             .clone()
             .map_or(super::LaunchMark::Unreadable, super::LaunchMark::Carries)
+    }
+
+    fn conversation_saved(&self, _pid: u32) -> tend::agent_conversation::Saved {
+        self.saved_live.get()
+    }
+
+    fn saved_after_exit(&self) -> tend::agent_conversation::Saved {
+        self.saved_exit.get()
     }
 
     fn capture(&self) -> Option<String> {
@@ -292,7 +306,10 @@ fn target(kind: AgentKind, direct: bool, busy: bool) -> Target {
         cwd: "/work".into(),
         kind,
         session_id: "S".into(),
-        fresh: false,
+        fresh: Cell::new(false),
+        resume_command: None,
+        saved_roots: Vec::new(),
+        resumed_on_exit: Cell::new(false),
         busy,
         conversation_verified: true,
         evidence: super::ContinueEvidence::Binding,
@@ -339,7 +356,12 @@ fn codex_agent() -> React {
         }
         if line == "text \"\\r\"" {
             match io.previous().as_deref() {
-                Some("text \"RELAUNCH\"") => {
+                // The relaunch, or the resume a fresh start falls back to,
+                // with or without its launch id exported.
+                Some(typed)
+                    if typed.starts_with("text \"")
+                        && (typed.ends_with("RELAUNCH\"") || typed.ends_with("RESUME\"")) =>
+                {
                     io.agent_appears_in(Duration::from_secs(1));
                     io.show(CODEX_IDLE);
                 }
@@ -921,17 +943,20 @@ fn a_bound_relaunch_gets_its_follow_up_and_its_draft_back() {
     assert_eq!(asked, [Some(31)]);
 }
 
-/// A fresh start (nothing was saved to resume): the relaunched Codex is the
-/// one agent in the pane resuming nothing, its account is read on it, and
-/// the report does not say it resumed.
-#[test]
-fn a_fresh_codex_start_binds_the_new_thread_and_says_relaunched() {
-    let io = FakeIo::new(CODEX_WITH_DRAFT, codex_agent());
-    *io.argvs.borrow_mut() = Some(vec![(31, Some(words(&["codex", "--yolo"])))]);
+/// A fresh Codex target with a launch id, on `io`.
+fn fresh_codex() -> Target {
     let target = Target {
-        fresh: true,
+        launch_id: Some("L".into()),
+        resume_command: Some("RESUME".into()),
         ..target(AgentKind::Codex, false, false)
     };
+    target.fresh.set(true);
+    target
+}
+
+/// Run `target` on `io` with no follow-up; what it returned, what was
+/// typed, and which bound process the account was read on.
+fn run_fresh(io: &FakeIo, target: &Target) -> (Result<String, Refusal>, Vec<Option<u32>>) {
     let asked = RefCell::new(Vec::new());
     let check = |_: &Target, bound: Option<u32>| {
         asked.borrow_mut().push(bound);
@@ -943,19 +968,96 @@ fn a_fresh_codex_start_binds_the_new_thread_and_says_relaunched() {
         })
     };
     let mut observer = NoObserver;
-    let runner = Runner::new(&io, &mut observer);
-    let result = execute(&runner, &target, &launch(), "RELAUNCH", None, &check);
-    let observations = runner.observations();
+    let runner = Runner::new(io, &mut observer);
+    let result = execute(&runner, target, &launch(), "RELAUNCH", None, &check);
     drop(runner);
+    (result, asked.into_inner())
+}
+
+/// A fresh start (nothing was saved to resume): the relaunched Codex is the
+/// one bare Codex in the pane carrying this launch's mark, its account is
+/// read on it, and the report does not say it resumed.
+#[test]
+fn a_fresh_codex_start_binds_the_new_thread_and_says_relaunched() {
+    let io = FakeIo::new(CODEX_WITH_DRAFT, codex_agent());
+    *io.argvs.borrow_mut() = Some(vec![(31, Some(words(&["codex", "--yolo"])))]);
+    *io.launch_mark.borrow_mut() = Some("L".into());
+    let target = fresh_codex();
+    let (result, asked) = run_fresh(&io, &target);
     let note = result.unwrap();
     assert!(note.starts_with("relaunched"), "{note}");
     assert!(!note.contains("resumed"), "{note}");
     assert!(!note.contains("unconfirmed"), "{note}");
-    assert_eq!(asked.into_inner(), [Some(31)]);
-    assert_eq!(
-        decision(&observations),
-        Some((ContinueDecision::NotDue, None, true))
+    assert_eq!(asked, [Some(31)]);
+    assert!(
+        io.sent().iter().any(|l| l.contains("RELAUNCH")),
+        "{:?}",
+        io.sent()
     );
+}
+
+/// Without this launch's own mark, a bare Codex in the pane is not the
+/// relaunch: nothing is bound, so no dialog, draft or follow-up goes to it.
+#[test]
+fn a_fresh_codex_without_this_launch_s_mark_is_not_bound() {
+    for mark in [None, Some("other")] {
+        let io = FakeIo::new(CODEX_WITH_DRAFT, codex_agent());
+        *io.argvs.borrow_mut() = Some(vec![(31, Some(words(&["codex", "--yolo"])))]);
+        *io.launch_mark.borrow_mut() = mark.map(str::to_owned);
+        let (result, asked) = run_fresh(&io, &fresh_codex());
+        let note = result.unwrap();
+        assert!(note.contains("binding unconfirmed"), "{note}");
+        assert!(
+            !io.sent().iter().any(|l| l.contains("half typed")),
+            "{:?}",
+            io.sent()
+        );
+        assert_eq!(asked, [None]);
+    }
+    // A fork or another subcommand is not a fresh start either.
+    let io = FakeIo::new(CODEX_WITH_DRAFT, codex_agent());
+    *io.argvs.borrow_mut() = Some(vec![(31, Some(words(&["codex", "fork", "S"])))]);
+    *io.launch_mark.borrow_mut() = Some("L".into());
+    let (_, asked) = run_fresh(&io, &fresh_codex());
+    assert_eq!(asked, [None]);
+}
+
+/// A first prompt saved while the swap was preparing (after the plan's
+/// recheck): the agent is left alone, with nothing typed into it.
+#[test]
+fn a_conversation_saved_before_the_stop_leaves_a_fresh_start_alone() {
+    for saved in [
+        tend::agent_conversation::Saved::Yes,
+        tend::agent_conversation::Saved::Unknown,
+    ] {
+        let io = FakeIo::new(CODEX_WITH_DRAFT, codex_agent());
+        io.saved_live.set(saved);
+        let (result, asked) = run_fresh(&io, &fresh_codex());
+        assert!(
+            matches!(&result, Err(Refusal::Kept(note)) if note.contains("left alone")),
+            "{result:?}"
+        );
+        assert!(io.sent().is_empty(), "{:?}", io.sent());
+        assert!(asked.is_empty());
+    }
+}
+
+/// Saved as it exited: resumed with the resume line after all.
+#[test]
+fn a_conversation_saved_on_exit_is_resumed_instead() {
+    let io = FakeIo::new(CODEX_WITH_DRAFT, codex_agent());
+    io.saved_exit.set(tend::agent_conversation::Saved::Yes);
+    let target = fresh_codex();
+    let (result, asked) = run_fresh(&io, &target);
+    let note = result.unwrap();
+    assert!(note.starts_with("resumed"), "{note}");
+    let sent = io.sent();
+    assert!(sent.iter().any(|l| l.contains("RESUME")), "{sent:?}");
+    assert!(!sent.iter().any(|l| l.contains("RELAUNCH")), "{sent:?}");
+    assert!(!target.fresh.get());
+    assert!(target.resumed_on_exit.get());
+    // The default argv resumes "S": bound as a resume.
+    assert_eq!(asked, [Some(20)]);
 }
 
 /// No process resuming exactly the conversation: neither the follow-up nor
