@@ -49,7 +49,7 @@ struct TendMenuBarContent: View {
                     }
                 } else {
                     if state.visibleAgents.isEmpty {
-                        Label("No agents need attention", systemImage: "checkmark.circle")
+                        Label(state.emptyListMessage, systemImage: "checkmark.circle")
                             .foregroundStyle(.secondary)
                     } else {
                         ScrollView {

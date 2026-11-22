@@ -740,3 +740,46 @@ private struct MenuReplyError: LocalizedError {
         #expect(TendMenuBarPolling.idle(distanceToMenuBar: distance) * 3000 <= max(distance, 200))
     }
 }
+
+/// The demo bug: four Your-turn agents already seen showed "No agents need
+/// attention" above "4 agents need you". The popover list and the line
+/// under it now count the same agents.
+@Test @MainActor func menuBarPopoverListAgreesWithNeedsYouLine() throws {
+    let center = TendAgentAttentionCenter(defaults: nil)
+    var order = TendMenuBarAgentOrder()
+    let snap = try menuBarSnapshot([("a", "waiting_input", "1"), ("b", "waiting_input", "1"),
+                                    ("c", "waiting_input", "1"), ("d", "waiting_input", "1"), ("e", "idle", "1")])
+    center.ingest(snap)
+    center.markAllRead()
+    let candidates = order.update(snap.hostedAgents, unread: center.unreadPanes)
+    #expect(candidates.isEmpty)
+    let listed = TendMenuBarAgentOrder.popoverAgents(candidates, hosted: snap.hostedAgents, unread: center.unreadPanes)
+    let summary = TendAttentionSummary.make(agents: snap.hostedAgents, messages: [], unread: [], paneKey: \.id)
+    #expect(summary.agents == 4)
+    #expect(summary.needsYouLine == "4 agents need you")
+    #expect(listed.map(\.id) == ["local:a", "local:b", "local:c", "local:d"])
+    #expect(listed.filter(\.status.needsAttention).count == summary.agents)
+    // Nothing needing the person: the empty list and no line agree too.
+    let quiet = try menuBarSnapshot([("a", "idle", "2")])
+    center.ingest(quiet); center.markAllRead()
+    #expect(TendMenuBarAgentOrder.popoverAgents(order.update(quiet.hostedAgents, unread: center.unreadPanes),
+                                                hosted: quiet.hostedAgents, unread: center.unreadPanes).isEmpty)
+    #expect(TendAttentionSummary.make(agents: quiet.hostedAgents, messages: [], unread: [], paneKey: \.id).needsYouLine == nil)
+}
+
+/// An open group whose last agent left, while an agent elsewhere still
+/// needs the person: the empty list must not claim nobody needs attention
+/// above the fleet-wide "1 agent needs you".
+@Test @MainActor func menuBarEmptyGroupDoesNotContradictNeedsYouLine() throws {
+    let elsewhere = try menuBarSnapshot([("waiting", "waiting_input", "1")], workspace: "project-b", work: "OTHER")
+    let gone = try menuBarSnapshot([("left", "idle", "1")], workspace: "project-a", work: "BUILD")
+    let chips = TendMenuBarChip.activity(gone.hostedAgents.map { TendMenuBarAgent(hosted: $0, unread: true) }, grouping: .work)
+    guard case .group(let scope) = try #require(chips.first).destination else { Issue.record("Expected Work destination"); return }
+    let state = TendMenuBarState()
+    state.agents = TendMenuBarAgentOrder.popoverAgents([], hosted: elsewhere.hostedAgents, unread: [])
+    #expect(state.emptyListMessage == "No agents need attention")
+    state.scope = scope
+    #expect(state.visibleAgents.isEmpty)
+    #expect(TendAttentionSummary.make(agents: elsewhere.hostedAgents, messages: [], unread: [], paneKey: \.id).needsYouLine == "1 agent needs you")
+    #expect(state.emptyListMessage == "No agents in this group")
+}

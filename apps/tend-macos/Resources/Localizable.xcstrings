@@ -22333,6 +22333,16 @@
         }
       }
     },
+    "No agents in this group" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 그룹에는 에이전트가 없습니다"
+          }
+        }
+      }
+    },
     "No agents need attention" : {
       "localizations" : {
         "ko" : {
