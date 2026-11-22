@@ -48,6 +48,8 @@ test("TendTheme.swift draws its surfaces and metrics from the generated tokens",
   assert.match(settings, /@AppStorage\(TendPreferences\.sidebarMaterialKey\) private var translucentSidebar = false/);
   assert.match(settings, /Toggle\("Translucent sidebar", isOn: \$translucentSidebar\)/);
   assert.doesNotMatch(settings, /sidebarMaterialKey: true/);
+  // Renaming the stored key would silently drop the choice people made.
+  assert.match(settings, /static let sidebarMaterialKey = "tend\.appearance\.sidebarMaterial"/);
   for (const metric of ["rowHeight", "sectionHeaderHeight", "statusBarHeight", "activityBarWidth", "controlRadius", "panelRadius"]) {
     assert.match(theme, new RegExp(`static let ${metric} = CGFloat\\(TendDesignTokens\\.Metric\\.${metric}\\)`), metric);
   }
