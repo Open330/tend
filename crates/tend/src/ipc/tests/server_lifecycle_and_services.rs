@@ -3409,6 +3409,53 @@ async fn unanswerable_fixture() -> (
     (mailbox, pairs, registry)
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn an_on_host_decision_waits_for_a_slow_fleet_round_trip() {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+    // A daemon that takes longer than an ordinary call: the Fleet reply
+    // came back slowly. The client must still see the decision it made.
+    let dir = tempdir().unwrap();
+    let sock = dir.path().join("slow.sock");
+    let listener = tokio::net::UnixListener::bind(&sock).unwrap();
+    tokio::spawn(async move {
+        loop {
+            let Ok((stream, _)) = listener.accept().await else {
+                return;
+            };
+            tokio::spawn(async move {
+                let (reader, mut writer) = stream.into_split();
+                let mut lines = tokio::io::BufReader::new(reader).lines();
+                // The hello, then the request.
+                if lines.next_line().await.ok().flatten().is_none() {
+                    return;
+                }
+                let _ = writer.write_all(b"{\"ok\":true}\n").await;
+                if lines.next_line().await.ok().flatten().is_none() {
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(3500)).await;
+                let _ = writer
+                    .write_all(
+                        b"{\"ok\":true,\"decision_keep\":{\"request_id\":\"r1\",\"episode\":\"e1\"},\"decision_close_unanswerable\":{\"closed\":[\"r1\"],\"skipped\":[]}}\n",
+                    )
+                    .await;
+            });
+        }
+    });
+    let client = Client::new(sock.clone());
+    let kept = client
+        .decision_keep_on_host("mini", "r1", None)
+        .await
+        .unwrap();
+    assert_eq!(kept.request_id, "r1");
+    let closed = client
+        .decision_close_on_host("mini", "r1", None)
+        .await
+        .unwrap();
+    assert_eq!(closed.closed, vec!["r1".to_owned()]);
+}
+
 #[tokio::test]
 async fn keep_and_close_on_another_host_are_the_persons_alone() {
     use crate::collaboration::subject_check::DECISION_ON_HOST_CAPABILITY;

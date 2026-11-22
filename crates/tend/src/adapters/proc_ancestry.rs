@@ -223,6 +223,24 @@ pub fn agent_in_ancestry(start_pid: u32) -> Option<bool> {
     }
 }
 
+/// Whether a command line (NUL- or space-separated) runs an agent: any of
+/// its words names an agent program, so a path with spaces in it or a
+/// launcher in front (`node …/cli.js`, `aas exec`) still counts, or it runs
+/// an agent's package. A word that only looks like one (an argument named
+/// `codex`) refuses a person too; that is the safe side.
+fn runs_an_agent(argv: &str) -> bool {
+    const PACKAGES: [&str; 4] = [
+        "@anthropic-ai/claude-code",
+        "/claude/versions/",
+        "@openai/codex",
+        "/codex/codex-",
+    ];
+    argv.split(|c: char| c == '\0' || c.is_whitespace())
+        .filter(|word| !word.is_empty())
+        .any(|word| crate::discovery::classify_command(word).is_some())
+        || PACKAGES.iter().any(|package| argv.contains(package))
+}
+
 /// [`agent_in_ancestry`] over injected lookups.
 pub fn agent_in_ancestry_with<P, A>(start_pid: u32, parent_of: P, argv_of: A) -> Option<bool>
 where
@@ -236,11 +254,7 @@ where
             return Some(false);
         }
         let argv = argv_of(parent)?;
-        let program = argv
-            .split(|c: char| c == '\0' || c.is_whitespace())
-            .find(|arg| !arg.is_empty())
-            .unwrap_or_default();
-        if crate::discovery::classify_command(program).is_some() {
+        if runs_an_agent(&argv) {
             return Some(true);
         }
         cur = parent;
@@ -316,6 +330,25 @@ mod tests {
         assert_eq!(agent_in_ancestry_with(50, parent, argv), Some(true));
         // The person's shell: nothing above it is an agent.
         assert_eq!(agent_in_ancestry_with(20, parent, argv), Some(false));
+        // A path with spaces, NUL-separated as Linux gives it, and an agent
+        // behind a launcher.
+        let spaced = |pid: u32| match pid {
+            30 => Some("/opt/My Tools/codex\0app-server\0--managed-daemon".to_owned()),
+            _ => argv(pid),
+        };
+        assert_eq!(agent_in_ancestry_with(50, parent, spaced), Some(true));
+        let node = |pid: u32| match pid {
+            30 => Some(
+                "node /opt/lib/node_modules/@anthropic-ai/claude-code/cli.js --resume x".to_owned(),
+            ),
+            _ => argv(pid),
+        };
+        assert_eq!(agent_in_ancestry_with(50, parent, node), Some(true));
+        let native = |pid: u32| match pid {
+            30 => Some("/Users/me/.local/share/claude/versions/2.1.330 --resume x".to_owned()),
+            _ => argv(pid),
+        };
+        assert_eq!(agent_in_ancestry_with(50, parent, native), Some(true));
         // A parent that cannot be read cannot be told.
         let unreadable = |pid: u32| (pid != 30).then(|| argv(pid)).flatten();
         assert_eq!(agent_in_ancestry_with(50, parent, unreadable), None);
