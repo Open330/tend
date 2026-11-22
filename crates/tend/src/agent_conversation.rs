@@ -480,6 +480,128 @@ fn parse_lsof_names(text: &str) -> Vec<PathBuf> {
     paths
 }
 
+/// Whether a conversation has been written down where a resume would look
+/// for it. An agent that was started and never prompted has a session id
+/// but nothing saved under it: resuming that id fails ("No conversation
+/// found") and leaves the pane at its shell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Saved {
+    /// A transcript or rollout for the conversation exists.
+    Yes,
+    /// Where this agent writes was read, and nothing is saved there.
+    No,
+    /// It cannot be told; a swap resumes as it always did.
+    Unknown,
+}
+
+/// Whether Claude's conversation `session_id` has a transcript
+/// (`<config dir>/projects/<dir>/<id>.jsonl`). `No` only when the config
+/// dir holding this exact process's `sessions/<pid>.json` was found and
+/// its projects were read.
+#[must_use]
+pub fn claude_saved(pid: u32, session_id: &str) -> Saved {
+    claude_saved_in(pid, session_id, &claude_roots(pid))
+}
+
+/// [`claude_saved`] over `roots`.
+#[must_use]
+pub fn claude_saved_in(pid: u32, session_id: &str, roots: &[PathBuf]) -> Saved {
+    if uuid::Uuid::parse_str(session_id).is_err() {
+        return Saved::Unknown;
+    }
+    let name = format!("{session_id}.jsonl");
+    let mut own_read = false;
+    let mut own_known = false;
+    for root in roots {
+        let own = read_bounded(
+            &root.join("sessions").join(format!("{pid}.json")),
+            MAX_SESSION_FILE,
+        )
+        .and_then(|bytes| parse_claude_session(&bytes))
+        .is_some_and(|file| file.pid == pid && file.session_id == session_id);
+        own_known |= own;
+        match std::fs::read_dir(root.join("projects")) {
+            Ok(projects) => {
+                for project in projects.flatten() {
+                    if std::fs::symlink_metadata(project.path().join(&name)).is_ok() {
+                        return Saved::Yes;
+                    }
+                }
+                own_read |= own;
+            }
+            // A config dir that has never saved a conversation has no
+            // `projects` yet.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => own_read |= own,
+            Err(_) => {}
+        }
+    }
+    if own_known && own_read {
+        Saved::No
+    } else {
+        Saved::Unknown
+    }
+}
+
+/// Whether Codex's thread `session_id` has a rollout. Codex keeps the
+/// rollout of its thread open while it runs and writes none until the
+/// first turn, so `No` needs the process's open files listed with no
+/// rollout among them, and no rollout for the id under its sessions.
+#[must_use]
+pub fn codex_saved(pid: u32, session_id: &str) -> Saved {
+    let Some(open) = open_files(pid) else {
+        return Saved::Unknown;
+    };
+    let mut homes: Vec<PathBuf> = process_env(pid, "CODEX_HOME")
+        .map(PathBuf::from)
+        .into_iter()
+        .collect();
+    homes.extend(dirs::home_dir().map(|home| home.join(".codex")));
+    codex_saved_in(&open, session_id, &homes)
+}
+
+/// [`codex_saved`] given the open files and the homes to look in.
+#[must_use]
+pub fn codex_saved_in(open: &[PathBuf], session_id: &str, homes: &[PathBuf]) -> Saved {
+    if uuid::Uuid::parse_str(session_id).is_err() {
+        return Saved::Unknown;
+    }
+    if open.iter().any(|path| rollout_thread_id(path).is_some()) {
+        return Saved::Yes;
+    }
+    let suffix = format!("-{session_id}.jsonl");
+    for home in homes {
+        match rollout_named(&home.join("sessions"), &suffix, 3) {
+            Ok(true) => return Saved::Yes,
+            Ok(false) => {}
+            Err(()) => return Saved::Unknown,
+        }
+    }
+    Saved::No
+}
+
+/// Whether a file ending in `suffix` sits `depth` directories under `dir`
+/// (`sessions/YYYY/MM/DD`). A missing tree holds none; one that cannot be
+/// read is an error.
+fn rollout_named(dir: &Path, suffix: &str, depth: usize) -> Result<bool, ()> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(_) => return Err(()),
+    };
+    for entry in entries.flatten() {
+        if depth == 0 {
+            if entry.file_name().to_string_lossy().ends_with(suffix) {
+                return Ok(true);
+            }
+        } else if entry.file_type().is_ok_and(|kind| kind.is_dir())
+            && rollout_named(&entry.path(), suffix, depth - 1)?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn read_bounded(path: &Path, limit: u64) -> Option<Vec<u8>> {
     use std::io::Read;
     let file = std::fs::File::open(path).ok()?;
@@ -804,5 +926,68 @@ mod tests {
         assert_eq!(open_rollouts(Some(&a)), open_rollouts(Some(&a_again)));
         assert_ne!(open_rollouts(Some(&a)), open_rollouts(Some(&b)));
         assert_ne!(open_rollouts(Some(&a)), open_rollouts(None));
+    }
+
+    #[test]
+    fn a_claude_session_without_a_transcript_is_not_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("profile");
+        std::fs::create_dir_all(root.join("sessions")).unwrap();
+        let session = format!(r#"{{"pid":42,"sessionId":"{A}","procStart":"1"}}"#);
+        std::fs::write(root.join("sessions/42.json"), session).unwrap();
+        let roots = [root.clone()];
+        // Never prompted: a session file, no projects at all yet.
+        assert_eq!(claude_saved_in(42, A, &roots), Saved::No);
+        // Another conversation's transcript is not this one.
+        std::fs::create_dir_all(root.join("projects/-w")).unwrap();
+        std::fs::write(root.join("projects/-w").join(format!("{B}.jsonl")), "{}\n").unwrap();
+        assert_eq!(claude_saved_in(42, A, &roots), Saved::No);
+        // Its own transcript, in any project directory.
+        std::fs::write(root.join("projects/-w").join(format!("{A}.jsonl")), "{}\n").unwrap();
+        assert_eq!(claude_saved_in(42, A, &roots), Saved::Yes);
+    }
+
+    #[test]
+    fn a_claude_transcript_cannot_be_ruled_out_without_the_process_s_own_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("profile");
+        std::fs::create_dir_all(root.join("projects/-w")).unwrap();
+        // No session file names this process: where it writes is unknown.
+        assert_eq!(
+            claude_saved_in(42, A, std::slice::from_ref(&root)),
+            Saved::Unknown
+        );
+        // One for another conversation does not count either.
+        std::fs::create_dir_all(root.join("sessions")).unwrap();
+        let other = format!(r#"{{"pid":42,"sessionId":"{B}","procStart":"1"}}"#);
+        std::fs::write(root.join("sessions/42.json"), other).unwrap();
+        assert_eq!(claude_saved_in(42, A, &[root]), Saved::Unknown);
+        assert_eq!(claude_saved_in(42, "not-a-uuid", &[]), Saved::Unknown);
+    }
+
+    #[test]
+    fn a_codex_thread_without_a_rollout_is_not_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join(".codex");
+        let homes = [home.clone()];
+        assert_eq!(codex_saved_in(&[], B, &homes), Saved::No);
+        let day = home.join("sessions/2026/11/22");
+        std::fs::create_dir_all(&day).unwrap();
+        std::fs::write(
+            day.join(format!("rollout-2026-11-22T10-00-00-{A}.jsonl")),
+            "",
+        )
+        .unwrap();
+        assert_eq!(codex_saved_in(&[], B, &homes), Saved::No);
+        std::fs::write(
+            day.join(format!("rollout-2026-11-22T10-00-01-{B}.jsonl")),
+            "",
+        )
+        .unwrap();
+        assert_eq!(codex_saved_in(&[], B, &homes), Saved::Yes);
+        // A rollout open in the process is a saved thread, whichever it is.
+        let open = [day.join(format!("rollout-2026-11-22T10-00-00-{A}.jsonl"))];
+        let empty = dir.path().join("empty");
+        assert_eq!(codex_saved_in(&open, B, &[empty]), Saved::Yes);
     }
 }

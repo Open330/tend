@@ -648,6 +648,33 @@ fn resume_free_args(args: &[String], kind: AgentKind) -> Vec<String> {
     kept
 }
 
+/// How a relaunch comes back to its conversation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Start<'a> {
+    /// Resume the saved conversation with this id.
+    Resume(&'a str),
+    /// Nothing was ever saved under this id (the agent was never
+    /// prompted), so there is nothing to resume: start a new conversation.
+    /// Claude starts it under the same id; Codex gets a new thread.
+    Fresh(&'a str),
+}
+
+impl<'a> From<&'a str> for Start<'a> {
+    fn from(session_id: &'a str) -> Self {
+        Self::Resume(session_id)
+    }
+}
+
+fn start_suffix(kind: AgentKind, start: Start<'_>) -> Vec<String> {
+    match start {
+        Start::Resume(session_id) => resume_suffix(kind, session_id),
+        Start::Fresh(session_id) => match kind {
+            AgentKind::ClaudeCode => vec!["--session-id".into(), session_id.into()],
+            _ => Vec::new(),
+        },
+    }
+}
+
 fn resume_suffix(kind: AgentKind, session_id: &str) -> Vec<String> {
     match kind {
         // A relaunch should come up on its conversation, not on a menu:
@@ -660,12 +687,12 @@ fn resume_suffix(kind: AgentKind, session_id: &str) -> Vec<String> {
 }
 
 /// The agent's own arguments for a relaunch: what it ran with (less its old
-/// resume), then the resume of `session_id`. For Codex, with
+/// resume), then how it comes back ([`Start`]). For Codex, with
 /// `tend::codex_launch`'s startup overrides over the whole list, so a
 /// setting the user passed for either key stays theirs.
-fn relaunch_args(args: &[String], kind: AgentKind, session_id: &str) -> Vec<String> {
+fn relaunch_args(args: &[String], kind: AgentKind, start: Start<'_>) -> Vec<String> {
     let mut words = resume_free_args(args, kind);
-    words.extend(resume_suffix(kind, session_id));
+    words.extend(start_suffix(kind, start));
     if kind == AgentKind::Codex {
         words = tend::codex_launch::with_startup_overrides(&words);
     }
@@ -674,13 +701,14 @@ fn relaunch_args(args: &[String], kind: AgentKind, session_id: &str) -> Vec<Stri
 
 /// The line to type back into the pane: the same launch, on `account`,
 /// resuming `session_id`.
-pub fn relaunch_line(
+pub fn relaunch_line<'a>(
     line: &LaunchLine,
     kind: AgentKind,
-    session_id: &str,
+    start: impl Into<Start<'a>>,
     account: &str,
     bare: BareMode,
 ) -> Result<String, String> {
+    let start = start.into();
     let mut words: Vec<String> = Vec::new();
     if let Some(at) = line.account_at {
         words.extend(line.tokens[..at].iter().cloned());
@@ -701,7 +729,7 @@ pub fn relaunch_line(
             }
             _ => args,
         };
-        words.extend(relaunch_args(args, kind, session_id));
+        words.extend(relaunch_args(args, kind, start));
     } else {
         if bare == BareMode::Skip {
             return Err("started without aas; use --bare wrap to move it onto an account".into());
@@ -710,7 +738,7 @@ pub fn relaunch_line(
         words.extend(relaunch_args(
             line.tokens.get(1..).unwrap_or(&[]),
             kind,
-            session_id,
+            start,
         ));
     }
     // Typed into the pane's own shell: PowerShell under rmux on Windows.
@@ -721,15 +749,15 @@ pub fn relaunch_line(
 /// account's `env K=V … <agent>` prefix, then the agent's own flags. An
 /// agent started through `aas` (or any other wrapper) loses the wrapper,
 /// keeps its arguments.
-pub fn profile_relaunch_line(
+pub fn profile_relaunch_line<'a>(
     line: &LaunchLine,
     kind: AgentKind,
-    session_id: &str,
+    start: impl Into<Start<'a>>,
     profile: &tend::accounts::AccountProfile,
 ) -> Result<String, String> {
     let (program, args) = agent_program_and_args(line, kind);
     let mut words = profile.launch_prefix(&program);
-    words.extend(relaunch_args(args, kind, session_id));
+    words.extend(relaunch_args(args, kind, start.into()));
     let dialect = tend::shell::Dialect::native();
     if cfg!(windows) {
         return Err(
@@ -1897,10 +1925,13 @@ fn plan(
                         continue;
                     }
                 };
+                let fresh = conversation_saved(agent.kind, launch.agent_pid, &session_id)
+                    == tend::agent_conversation::Saved::No;
                 planned.push(Planned {
                     agent: agent.clone(),
                     session_id,
                     source,
+                    fresh,
                     verified: matches!(
                         runtime,
                         tend::agent_conversation::Conversation::Verified(_)
@@ -2153,6 +2184,7 @@ fn swap_one(
         source,
         verified,
         unverified_reason,
+        fresh,
         process_start: _,
         launch,
         pane,
@@ -2195,6 +2227,9 @@ fn swap_one(
         outcome.status = SwapStatus::Planned;
         if let Some((text, reason)) = due {
             outcome.note = planned_follow_up(request.continue_evidence, *verified, text, reason);
+        }
+        if *fresh {
+            outcome.note = fresh_note(&outcome.note);
         }
         return outcome;
     }
@@ -2248,6 +2283,7 @@ fn swap_one(
             .unwrap_or_else(|| pane.current_path.clone()),
         kind: agent.kind,
         session_id: session_id.clone(),
+        fresh: *fresh,
         busy: agent.state == AgentState::Working,
         conversation_verified: *verified,
         evidence: request.continue_evidence,
@@ -2268,6 +2304,7 @@ fn swap_one(
         process_start: planned.process_start.clone(),
         conversation_id: session_id.clone(),
         verified: *verified,
+        fresh: *fresh,
     };
     let io = io::LiveIo {
         backend,
@@ -2298,6 +2335,9 @@ fn swap_one(
         Some(hooks) => format!("{note}; {hooks}"),
         None => note,
     };
+    if *fresh {
+        outcome.note = fresh_note(&outcome.note);
+    }
     outcome.continue_withheld = withheld;
     outcome.follow_up = report;
     outcome
@@ -2488,17 +2528,13 @@ fn relaunch_command(
         &tend::accounts::ResolvedAccounts,
     )>,
 ) -> Result<(String, preflight::Prerequisites), String> {
-    let Planned {
-        agent,
-        session_id,
-        launch,
-        ..
-    } = planned;
+    let Planned { agent, launch, .. } = planned;
+    let start = planned_start(planned);
     let provider = provider_name(agent.kind).unwrap_or_default();
     match profiles {
         Some((profiles, _)) => match tend::accounts::find_profile(profiles, provider, account) {
             Some(profile) => Ok((
-                profile_relaunch_line(&launch.line, agent.kind, session_id, profile)?,
+                profile_relaunch_line(&launch.line, agent.kind, start, profile)?,
                 profile_prerequisites(&launch.line, agent.kind, profile),
             )),
             None => Err(format!(
@@ -2506,7 +2542,7 @@ fn relaunch_command(
             )),
         },
         None => Ok((
-            relaunch_line(&launch.line, agent.kind, session_id, account, request.bare)?,
+            relaunch_line(&launch.line, agent.kind, start, account, request.bare)?,
             aas_prerequisites(&launch.line, agent.kind),
         )),
     }
@@ -2568,6 +2604,10 @@ pub(crate) struct Planned {
     source: SessionIdSource,
     verified: bool,
     unverified_reason: Option<String>,
+    /// Nothing was ever saved under `session_id` (the agent was never
+    /// prompted): the relaunch starts a new conversation instead of
+    /// resuming one, which would fail and leave the pane at its shell.
+    fresh: bool,
     /// The agent process's start time when planned; checked again right
     /// before it is stopped.
     process_start: Option<String>,
@@ -2639,6 +2679,30 @@ fn record_source(kind: AgentKind) -> Option<SessionIdSource> {
     }
 }
 
+/// Whether `pid`'s conversation `session_id` is saved where a resume would
+/// find it ([`tend::agent_conversation::Saved`]).
+fn conversation_saved(
+    kind: AgentKind,
+    pid: u32,
+    session_id: &str,
+) -> tend::agent_conversation::Saved {
+    use tend::agent_conversation::{claude_saved, codex_saved, Saved};
+    match kind {
+        AgentKind::ClaudeCode => claude_saved(pid, session_id),
+        AgentKind::Codex => codex_saved(pid, session_id),
+        _ => Saved::Unknown,
+    }
+}
+
+/// How `planned`'s relaunch comes back to its conversation.
+fn planned_start(planned: &Planned) -> Start<'_> {
+    if planned.fresh {
+        Start::Fresh(&planned.session_id)
+    } else {
+        Start::Resume(&planned.session_id)
+    }
+}
+
 fn conversation_for(
     registry: Option<&str>,
     argv: Option<&str>,
@@ -2690,6 +2754,18 @@ fn still_as_planned(planned: &Planned) -> Result<(), String> {
         planned.agent.kind,
     )
     .map(|launch| launch.agent_pid);
+    // Planned to start anew: a conversation saved since then (the agent was
+    // prompted in between) would be lost to the new one.
+    if planned.fresh
+        && conversation_saved(planned.agent.kind, pid, &planned.session_id)
+            != tend::agent_conversation::Saved::No
+    {
+        return Err(
+            "the agent was planned with nothing to resume, but now has a conversation; \
+             left alone, swap it again"
+                .into(),
+        );
+    }
     let now = planned
         .verified
         .then(|| runtime_conversation(planned.agent.kind, pid));
@@ -2957,6 +3033,9 @@ struct Target {
     cwd: String,
     kind: AgentKind,
     session_id: String,
+    /// Nothing to resume: the relaunch starts a new conversation
+    /// ([`Start::Fresh`]).
+    fresh: bool,
     /// Mid-turn when the swap began (`--force`).
     busy: bool,
     /// The conversation was read from the stopped process itself.
@@ -3149,11 +3228,7 @@ fn execute(
     target.homes.booted("readiness ended");
     ready?;
     let binding = launch_vetoed(
-        resume_binding(
-            &io.agent_argvs(target.pane_pid.get()),
-            target.kind,
-            &target.session_id,
-        ),
+        target_binding(&io.agent_argvs(target.pane_pid.get()), target),
         target.launch_id.as_deref(),
         |pid| io.launch_id_of(pid),
     );
@@ -3182,6 +3257,7 @@ fn execute(
         withheld,
         &answered,
         &checked,
+        target.fresh,
     ))
 }
 
@@ -3507,7 +3583,7 @@ fn observed(
 /// The arguments of the one relaunched process bound to the conversation.
 fn bound_argv(io: &dyn io::SwapIo, target: &Target) -> Option<Vec<String>> {
     let candidates = io.agent_argvs(target.pane_pid.get());
-    let pid = resume_binding(&candidates, target.kind, &target.session_id).pid()?;
+    let pid = target_binding(&candidates, target).pid()?;
     candidates
         .into_iter()
         .find(|(candidate, _)| *candidate == pid)
@@ -3566,6 +3642,53 @@ pub(crate) fn resume_binding(
     }
 }
 
+/// The one process a fresh Codex start ([`Start::Fresh`]) is: the pane's
+/// only agent of `kind` that resumes nothing. Its thread is new, so no id
+/// can bind it; the launch id ([`launch_vetoed`]) still tells it apart.
+pub(crate) fn fresh_binding(candidates: &[io::AgentArgv], kind: AgentKind) -> ResumeBinding {
+    let mut fresh = Vec::new();
+    let mut unreadable = false;
+    for (pid, argv) in candidates {
+        match argv {
+            None => unreadable = true,
+            Some(argv) => {
+                let Some(program) = argv
+                    .iter()
+                    .take(2)
+                    .position(|word| tend::discovery::classify_command(word) == Some(kind))
+                else {
+                    continue;
+                };
+                let words = &argv[program + 1..];
+                let resumes = match kind {
+                    AgentKind::Codex => codex_resumed(words),
+                    _ => claude_resumed(words),
+                };
+                if resumes.is_empty() {
+                    fresh.push(*pid);
+                }
+            }
+        }
+    }
+    match (fresh.as_slice(), unreadable) {
+        ([pid], false) => ResumeBinding::Bound(*pid),
+        ([], false) => ResumeBinding::Missing,
+        ([] | [_], true) => ResumeBinding::Unreadable,
+        _ => ResumeBinding::Ambiguous,
+    }
+}
+
+/// Which relaunched process `target` is, by how it was started: the one
+/// resuming (or, for Claude, starting under) its conversation id, or the
+/// one fresh Codex.
+fn target_binding(candidates: &[io::AgentArgv], target: &Target) -> ResumeBinding {
+    if target.fresh && target.kind == AgentKind::Codex {
+        fresh_binding(candidates, target.kind)
+    } else {
+        resume_binding(candidates, target.kind, &target.session_id)
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum ArgvResume {
     /// Resumes exactly `session_id`, once.
@@ -3604,13 +3727,32 @@ pub(crate) fn argv_resumes(argv: &[String], kind: AgentKind, session_id: &str) -
 /// Every conversation Claude's arguments resume (`None`: the picker, or a
 /// mode that gives the resumed conversation a new session id —
 /// `--fork-session`, `--session-id` — so it is not the one planned).
+///
+/// `--session-id <id>` with nothing resumed or continued starts a new
+/// conversation under that id: it names that one (a fresh start, see
+/// [`Start::Fresh`]).
 fn claude_resumed(words: &[String]) -> Vec<Option<&str>> {
     let mut named = Vec::new();
+    let mut new_ids: Vec<Option<&str>> = Vec::new();
+    let mut continued = false;
     let mut i = 0;
     while let Some(word) = words.get(i) {
         let word = word.as_str();
         if word == "--" {
             break;
+        }
+        if word == "--continue" || word == "-c" {
+            continued = true;
+        }
+        if word == "--session-id" {
+            new_ids.push(
+                words
+                    .get(i + 1)
+                    .map(String::as_str)
+                    .filter(|next| !next.starts_with('-')),
+            );
+        } else if let Some(id) = word.strip_prefix("--session-id=") {
+            new_ids.push(Some(id).filter(|id| !id.is_empty()));
         }
         if word == "--fork-session" || word == "--session-id" || word.starts_with("--session-id=") {
             named.push(None);
@@ -3629,6 +3771,13 @@ fn claude_resumed(words: &[String]) -> Vec<Option<&str>> {
             named.push(Some(id));
         }
         i += 1;
+    }
+    // Only `--session-id <id>` (and no resume, continue or fork): the
+    // conversation started under that id.
+    if let ([Some(id)], false) = (new_ids.as_slice(), continued) {
+        if named.len() == 1 {
+            return vec![Some(*id)];
+        }
     }
     named
 }
@@ -3896,14 +4045,24 @@ fn this_launch_runs(io: &dyn io::SwapIo, target: &Target) -> bool {
     let Some(ours) = target.launch_id.as_deref() else {
         return false;
     };
-    let binding = resume_binding(
-        &io.agent_argvs(target.pane_pid.get()),
-        target.kind,
-        &target.session_id,
-    );
+    let binding = target_binding(&io.agent_argvs(target.pane_pid.get()), target);
     binding.pid().is_some_and(
         |pid| matches!(io.launch_id_of(pid), LaunchMark::Carries(theirs) if theirs == ours),
     )
+}
+
+/// The note prefix of a swap that started its agent anew: it was never
+/// prompted, so it had no saved conversation to resume.
+pub const FRESH_START: &str =
+    "fresh_start: never prompted, so nothing to resume; started a new conversation";
+
+/// `note` behind [`FRESH_START`].
+fn fresh_note(note: &str) -> String {
+    if note.is_empty() {
+        FRESH_START.to_owned()
+    } else {
+        format!("{FRESH_START}; {note}")
+    }
 }
 
 /// The note prefix of a swap whose relaunched Codex waits on the hook review.
@@ -3959,6 +4118,7 @@ fn halt(runner: &Runner) -> Refusal {
 
 /// After a usable resume: send the follow-up, see whether a turn started,
 /// and type back the half-typed prompt. The note for the report.
+#[allow(clippy::too_many_arguments)] // what the run decided, each on its own
 fn follow_through(
     runner: &Runner,
     follow_up: Option<&str>,
@@ -3967,6 +4127,7 @@ fn follow_through(
     withheld: Option<WithheldReason>,
     answered: &[&'static str],
     checked: &str,
+    fresh: bool,
 ) -> String {
     let answers = if answered.is_empty() {
         checked.to_owned()
@@ -3985,10 +4146,12 @@ fn follow_through(
         }
         _ => note,
     };
-    let resumed = if draft_allowed {
-        "resumed"
-    } else {
-        "relaunched; resume binding unconfirmed"
+    // A fresh start resumed nothing ([`FRESH_START`] says so).
+    let resumed = match (fresh, draft_allowed) {
+        (false, true) => "resumed",
+        (false, false) => "relaunched; resume binding unconfirmed",
+        (true, true) => "relaunched",
+        (true, false) => "relaunched; binding unconfirmed",
     };
     if let Some(reason) = withheld {
         return restore(format!("{resumed}{answers}; follow-up withheld ({reason})"));
@@ -4954,6 +5117,98 @@ pub(crate) mod tests {
         assert_eq!(resume_suffix(AgentKind::ClaudeCode, "S"), ["--resume", "S"]);
     }
 
+    /// Nothing saved to resume: Claude starts a new conversation under the
+    /// same id, Codex a new thread, each with its own flags kept.
+    #[test]
+    fn a_fresh_relaunch_resumes_nothing_and_still_binds() {
+        let claude = relaunch_line(
+            &LaunchLine::bare("aas e a claude --model opus --resume old"),
+            AgentKind::ClaudeCode,
+            Start::Fresh("S"),
+            "b",
+            BareMode::Wrap,
+        )
+        .unwrap();
+        assert!(claude.starts_with("aas e b "), "{claude}");
+        assert!(claude.ends_with("--model opus --session-id S"), "{claude}");
+        assert!(!claude.contains("--resume"), "{claude}");
+        let codex = relaunch_line(
+            &LaunchLine::bare("codex --yolo resume old"),
+            AgentKind::Codex,
+            Start::Fresh("S"),
+            "b",
+            BareMode::Wrap,
+        )
+        .unwrap();
+        assert!(
+            codex.ends_with("-c 'tui.resume_cwd=\"session\"' --yolo"),
+            "{codex}"
+        );
+        assert!(!codex.contains("resume S"), "{codex}");
+        // Claude's new conversation is bound by its id.
+        let argv = |words: &[&str]| words.iter().map(|w| (*w).to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            argv_resumes(
+                &argv(&["claude", "--model", "opus", "--session-id", "S"]),
+                AgentKind::ClaudeCode,
+                "S"
+            ),
+            ArgvResume::Exact
+        );
+        assert_eq!(
+            argv_resumes(
+                &argv(&["claude", "--session-id=S"]),
+                AgentKind::ClaudeCode,
+                "S"
+            ),
+            ArgvResume::Exact
+        );
+        // With a resume or continue it is a new id for an old conversation.
+        for words in [
+            &["claude", "--session-id", "S", "--continue"][..],
+            &["claude", "--session-id", "S", "--resume", "T"],
+            &["claude", "--session-id", "S", "--resume", "S"],
+            &["claude", "--session-id", "S", "--fork-session"],
+        ] {
+            assert_ne!(
+                argv_resumes(&argv(words), AgentKind::ClaudeCode, "S"),
+                ArgvResume::Exact,
+                "{words:?}"
+            );
+        }
+        // Codex's new thread: the one agent in the pane that resumes nothing.
+        let fresh = |pid: u32, words: &[&str]| (pid, Some(argv(words)));
+        assert_eq!(
+            fresh_binding(&[fresh(7, &["codex", "--yolo"])], AgentKind::Codex),
+            ResumeBinding::Bound(7)
+        );
+        assert_eq!(
+            fresh_binding(
+                &[
+                    fresh(7, &["codex", "--yolo"]),
+                    fresh(8, &["codex", "resume", "S"])
+                ],
+                AgentKind::Codex
+            ),
+            ResumeBinding::Bound(7)
+        );
+        assert_eq!(
+            fresh_binding(
+                &[fresh(7, &["codex"]), fresh(8, &["codex", "--yolo"])],
+                AgentKind::Codex
+            ),
+            ResumeBinding::Ambiguous
+        );
+        assert_eq!(
+            fresh_binding(&[fresh(7, &["codex"]), (8, None)], AgentKind::Codex),
+            ResumeBinding::Unreadable
+        );
+        assert_eq!(
+            fresh_binding(&[fresh(8, &["codex", "resume", "S"])], AgentKind::Codex),
+            ResumeBinding::Missing
+        );
+    }
+
     #[test]
     fn a_relaunch_line_exports_its_launch_id() {
         assert_eq!(
@@ -5765,6 +6020,7 @@ pub(crate) mod tests {
             source: SessionIdSource::Registry,
             verified: false,
             unverified_reason: None,
+            fresh: false,
             process_start: None,
             launch: PaneLaunch {
                 agent_pid: 71,
@@ -5865,6 +6121,7 @@ pub(crate) mod tests {
             source: SessionIdSource::Registry,
             verified: false,
             unverified_reason: None,
+            fresh: false,
             process_start: None,
             launch: PaneLaunch {
                 agent_pid: 71,
@@ -5909,6 +6166,7 @@ pub(crate) mod tests {
             source: SessionIdSource::Registry,
             verified: false,
             unverified_reason: None,
+            fresh: false,
             process_start: None,
             launch: PaneLaunch {
                 agent_pid: 71,

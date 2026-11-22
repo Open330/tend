@@ -292,6 +292,7 @@ fn target(kind: AgentKind, direct: bool, busy: bool) -> Target {
         cwd: "/work".into(),
         kind,
         session_id: "S".into(),
+        fresh: false,
         busy,
         conversation_verified: true,
         evidence: super::ContinueEvidence::Binding,
@@ -918,6 +919,43 @@ fn a_bound_relaunch_gets_its_follow_up_and_its_draft_back() {
         Some((ContinueDecision::Allowed, None, true))
     );
     assert_eq!(asked, [Some(31)]);
+}
+
+/// A fresh start (nothing was saved to resume): the relaunched Codex is the
+/// one agent in the pane resuming nothing, its account is read on it, and
+/// the report does not say it resumed.
+#[test]
+fn a_fresh_codex_start_binds_the_new_thread_and_says_relaunched() {
+    let io = FakeIo::new(CODEX_WITH_DRAFT, codex_agent());
+    *io.argvs.borrow_mut() = Some(vec![(31, Some(words(&["codex", "--yolo"])))]);
+    let target = Target {
+        fresh: true,
+        ..target(AgentKind::Codex, false, false)
+    };
+    let asked = RefCell::new(Vec::new());
+    let check = |_: &Target, bound: Option<u32>| {
+        asked.borrow_mut().push(bound);
+        Ok(AccountVerdict {
+            check: AccountCheck::Matched,
+            observed: None,
+            source: "test",
+            note: String::new(),
+        })
+    };
+    let mut observer = NoObserver;
+    let runner = Runner::new(&io, &mut observer);
+    let result = execute(&runner, &target, &launch(), "RELAUNCH", None, &check);
+    let observations = runner.observations();
+    drop(runner);
+    let note = result.unwrap();
+    assert!(note.starts_with("relaunched"), "{note}");
+    assert!(!note.contains("resumed"), "{note}");
+    assert!(!note.contains("unconfirmed"), "{note}");
+    assert_eq!(asked.into_inner(), [Some(31)]);
+    assert_eq!(
+        decision(&observations),
+        Some((ContinueDecision::NotDue, None, true))
+    );
 }
 
 /// No process resuming exactly the conversation: neither the follow-up nor

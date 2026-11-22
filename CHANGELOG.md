@@ -47,6 +47,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `tend swap` no longer kills an agent that was started but never prompted.
+  Such an agent has no saved conversation, so the relaunch's `--resume <id>`
+  stopped at "No conversation found" and left the pane at its shell. The
+  agent now starts a new conversation on the new account, with the same
+  directory and flags: Claude under the same session id
+  (`--session-id`), Codex as a new thread. The result note starts with
+  `fresh_start`, and the job journal records it.
 - Questions whose asker has exited now actually fold from present state.
   In 0.10.29 that judgement required every pane backend to be complete, and
   the cmux backend every host keeps ready is always partial, so it never

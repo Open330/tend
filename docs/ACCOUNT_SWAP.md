@@ -144,7 +144,17 @@ For each agent, tend:
    Codex, and a Claude that does not exit, get `SIGTERM`, then `SIGKILL`;
 4. types the same launch line back, on the new account, with `--resume <id>`
    (Claude) or `resume <id>` (Codex). Flags and their values are kept; the
-   initial prompt is dropped so the task is not restarted;
+   initial prompt is dropped so the task is not restarted. An agent that was
+   started and never prompted has nothing saved to resume (`claude --resume`
+   would stop at "No conversation found" and leave the pane at its shell).
+   So when the agent's own config dir holds no transcript for its session
+   (Claude), or the Codex process has no rollout open and none exists for its
+   thread, it starts a new conversation on the new account instead: Claude
+   with `--session-id <same id>`, Codex without `resume`. The same flags and
+   directory are used. This is checked when planning and again right before the stop.
+   A conversation saved in between leaves the agent alone. The result note
+   starts with `fresh_start`, and the job journal's binding records
+   `fresh: true`;
 5. waits for the resumed agent to appear and its screen to settle, answering
    the startup dialogs a new account brings up: Claude's folder trust, Codex's
    folder trust, its update prompt (skipped, nothing installed), "Working
