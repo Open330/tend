@@ -728,7 +728,7 @@ private struct AutomationLogRow: View {
 
 /// `automation_test`: what the rule would do against the live registry,
 /// having fired nothing.
-private struct AutomationTestSheet: View {
+struct AutomationTestSheet: View {
     @Environment(\.dismiss) private var dismiss
     let report: TendAutomationTestReport
 

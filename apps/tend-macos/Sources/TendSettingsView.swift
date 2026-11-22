@@ -119,10 +119,9 @@ enum TendPreferences {
     static let homeAnimatesMovesKey = "tend.home.animatesMoves"
     /// How Home draws its items: `FleetCardLayout`.
     static let homeCardLayoutKey = "tend.home.cardLayout"
-    /// Opt-in, off by default and with no control yet: the sidebar draws the
-    /// system sidebar material instead of its opaque surface. On by default
-    /// once an on-screen check covers the material over bright, dark and
-    /// colourful backdrops in active and inactive windows.
+    /// Opt-in, off by default (Settings ▸ General ▸ Appearance ▸ Translucent
+    /// sidebar): the sidebar draws the system sidebar material instead of its
+    /// opaque surface. Never under Reduce Transparency or Increase Contrast.
     static let sidebarMaterialKey = "tend.appearance.sidebarMaterial"
     static let settingsTabKey = "tend.settings.selectedTab"
     static let fleetSettingsSectionKey = "tend.settings.fleetSection"
@@ -679,6 +678,9 @@ private struct TendMenuBarSettingsView: View {
 
 private struct TendGeneralSettingsView: View {
     @AppStorage(TendPreferences.appearanceKey) private var appearance = TendAppearance.system.rawValue
+    @AppStorage(TendPreferences.sidebarMaterialKey) private var translucentSidebar = false
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
     @AppStorage(TendPreferences.showWorkbenchOnLaunchKey) private var showWorkbenchOnLaunch = true
     @AppStorage(TendPreferences.homeAnimatesMovesKey) private var homeAnimatesMoves = true
     @AppStorage(TendPreferences.homeCardLayoutKey) private var homeCardLayout: FleetCardLayout = .emphasis
@@ -700,6 +702,12 @@ private struct TendGeneralSettingsView: View {
                     }
                 }
                 TendSettingsCaption("System follows the current macOS appearance automatically.")
+                Toggle("Translucent sidebar", isOn: $translucentSidebar)
+                if reduceTransparency || contrast == .increased {
+                    TendSettingsCaption("Off while Reduce Transparency or Increase Contrast is on in Accessibility settings.")
+                } else {
+                    TendSettingsCaption("The sidebar shows a tint of the desktop behind the window.")
+                }
             }
 
             TendLanguageSettingsSection()

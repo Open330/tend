@@ -63,6 +63,13 @@ struct DesignCaptureTests {
             ).environmentObject(model), name: "menubar", scheme: scheme, size: CGSize(width: 380, height: 560), fit: true)
             try await capture(OnboardingView(model: model).environmentObject(model),
                               name: "onboarding", scheme: scheme, size: CGSize(width: 760, height: 600))
+            for step in OnboardingStep.allCases where step != .welcome {
+                try await capture(OnboardingView(model: model, initialStep: step).environmentObject(model),
+                                  name: "onboarding-\(step)", scheme: scheme, size: CGSize(width: 760, height: 600))
+            }
+            try await capture(WorkTemplatesSheet(model: model).environmentObject(model),
+                              name: "work-templates", scheme: scheme, size: CGSize(width: 960, height: 720))
+            try await automation(model, scheme: scheme)
             try await capture(WhatsNewView(), name: "whats-new", scheme: scheme, size: CGSize(width: 560, height: 520), fit: true)
         }
 
@@ -128,6 +135,17 @@ struct DesignCaptureTests {
             try write(window.image(), name: name, scheme: scheme)
         }
 
+        // The detail screens a sidebar row opens: a Work, an agent, a host.
+        var details: [(TendSidebarSelection, String)] = []
+        if let work = model.workGroups.first { details.append((.work(work.identity), "detail-work")) }
+        if let agent = model.hostedAgents.first { details.append((.agent(agent.id), "detail-agent")) }
+        if let host = model.fleetHosts.first { details.append((.host(host.id), "detail-host")) }
+        for (selection, name) in details {
+            model.select(selection)
+            try await window.settle(seconds: 2)
+            try write(window.image(), name: name, scheme: scheme)
+        }
+
         // The opt-in sidebar material, list folded (Home) and shown
         // (Explore). Off-screen the window is never key, so the material
         // draws its inactive look; the title bar row stays opaque either way.
@@ -148,6 +166,29 @@ struct DesignCaptureTests {
                               name: "settings-\(tab.rawValue)", scheme: scheme, size: CGSize(width: 820, height: 680))
         }
         TendSettingsOpener.select(.general)
+    }
+
+    /// The Automation rule editor, empty and with a rule filled in, and the
+    /// free test sheet with one agent that would fire and one skipped.
+    private func automation(_ model: AppModel, scheme: ColorScheme) async throws {
+        let store = AutomationStore.shared
+        var draft = TendAutomationRuleDraft()
+        try await capture(AutomationRuleEditor(draft: draft, existingNames: [], model: model, store: store).environmentObject(model),
+                          name: "automation-editor-new", scheme: scheme, size: CGSize(width: 720, height: 760), fit: true)
+        draft.name = "nudge-waiting"
+        draft.event = .idleFor
+        draft.idleFor = "10m"
+        draft.action = .sendPrompt
+        draft.text = "Continue with the next step of the plan."
+        try await capture(AutomationRuleEditor(draft: draft, existingNames: [], model: model, store: store).environmentObject(model),
+                          name: "automation-editor", scheme: scheme, size: CGSize(width: 720, height: 760), fit: true)
+        let report = try JSONDecoder().decode(TendAutomationTestReport.self, from: Data("""
+        {"rule": "nudge-waiting", "enabled": true, "engine_enabled": true, "candidates": [
+          {"pane": "%3", "agent_session_id": "s-billing", "agent": "billing", "state": "idle", "decision": "fire", "fire_at": "2026-11-22T09:10:00Z"},
+          {"pane": "%5", "agent_session_id": "s-data", "agent": "data", "state": "working", "decision": "not_idle", "detail": "working for 2m"}
+        ]}
+        """.utf8))
+        try await capture(AutomationTestSheet(report: report), name: "automation-test", scheme: scheme, size: CGSize(width: 560, height: 460))
     }
 
     /// The app window's minimum content size (ContentView's frame).
