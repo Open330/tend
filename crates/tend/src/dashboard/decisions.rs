@@ -133,6 +133,13 @@ fn local_alias(hosts: &[crate::fleet::FleetHostSnapshot]) -> String {
         .map_or_else(|| "this host".into(), |host| host.alias.clone())
 }
 
+/// What a relay records as the controller of a Keep or Close all sent
+/// from here: this machine's name. Its Fleet alias is always `local`,
+/// which names no host on the relay's side.
+fn controller_name(hosts: &[crate::fleet::FleetHostSnapshot]) -> String {
+    crate::fleet::local_hostname().unwrap_or_else(|| local_alias(hosts))
+}
+
 fn state_label(state: crate::fleet::FleetHostState) -> String {
     serde_json::to_value(state)
         .ok()
@@ -1110,7 +1117,7 @@ async fn keep_remote(
             episode: keep.episode.clone(),
             actor: by.to_owned(),
             surface: surface.to_owned(),
-            controller: local_alias(hosts),
+            controller: controller_name(hosts),
         },
     };
     let result = fleet
@@ -1169,7 +1176,7 @@ async fn close_remote(
             items: close.items.clone(),
             actor: by.to_owned(),
             surface: surface.to_owned(),
-            controller: local_alias(hosts),
+            controller: controller_name(hosts),
         },
     };
     let result = fleet
