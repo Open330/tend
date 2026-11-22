@@ -137,7 +137,6 @@ struct DesignCaptureTests {
 
         // The detail screens a sidebar row opens: a Work, an agent, a host.
         var details: [(TendSidebarSelection, String)] = []
-        if let work = model.workGroups.first { details.append((.work(work.identity), "detail-work")) }
         if let agent = model.hostedAgents.first { details.append((.agent(agent.id), "detail-agent")) }
         if let host = model.fleetHosts.first { details.append((.host(host.id), "detail-host")) }
         for (selection, name) in details {
@@ -145,6 +144,17 @@ struct DesignCaptureTests {
             try await window.settle(seconds: 2)
             try write(window.image(), name: name, scheme: scheme)
         }
+
+        // The fixture runs no managed Work, so the Work screen draws one
+        // made of two of its agents (as an observed, tmux-tagged Work is).
+        let work = model.workGroups.first ?? TendWorkGroup(
+            identity: TendWorkIdentity(workspaceID: "tend", workID: "PROTOCOL-COMPAT"),
+            pipelineRun: nil, participants: Array(model.hostedAgents.prefix(2)))
+        let detail = OffscreenWindow(WorkDetailView(work: work, model: model).environmentObject(model),
+                                     scheme: scheme, size: CGSize(width: 1180, height: 900))
+        defer { detail.close() }
+        try await detail.settle(seconds: 2)
+        try write(detail.image(), name: "detail-work", scheme: scheme)
 
         // The opt-in sidebar material, list folded (Home) and shown
         // (Explore). Off-screen the window is never key, so the material
