@@ -95,6 +95,7 @@ impl PaneBackend for CollaborationWakeBackend {
 pub(crate) struct RefusingWakeBackend {
     pub(crate) panes: Vec<PaneInfo>,
     pub(crate) attempts: Arc<Mutex<Vec<(String, String)>>>,
+    pub(crate) frames: Mutex<std::collections::VecDeque<String>>,
     pub(crate) accepting: Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -115,7 +116,7 @@ impl PaneBackend for RefusingWakeBackend {
     }
 
     fn capture_pane(&self, _pane_id: &str) -> Option<String> {
-        None
+        self.frames.lock().unwrap().pop_front()
     }
 
     fn pane_pid_map(&self) -> HashMap<u32, String> {

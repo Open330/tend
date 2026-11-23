@@ -1118,6 +1118,7 @@ async fn a_failed_typed_wake_does_not_block_the_hook_offer() {
     let backend: tend::SharedBackend = Arc::new(RefusingWakeBackend {
         panes,
         attempts: attempts.clone(),
+        frames: Mutex::default(),
         accepting: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     });
     for _ in 0..3 {
@@ -1147,6 +1148,85 @@ async fn a_failed_typed_wake_does_not_block_the_hook_offer() {
         .await
         .unwrap();
     assert_eq!(offers[0]["request_id"], request.id.as_str());
+}
+
+#[tokio::test]
+async fn approved_idle_codex_wakes_through_the_hook_without_submitting_a_draft() {
+    use tend::collaboration::turn_offer::TurnBoundaryEvent;
+    let frame = |input: &str| format!("\n\x1b[1m›\x1b[0m {input}\n\n  Codex · ~/repo\n");
+    let empty = frame("\x1b[2mAsk Codex to do anything\x1b[0m");
+    let draft = frame("Ask Codex to do anything"); // Same words, user style.
+    let cases = [
+        (
+            true,
+            vec![empty.clone(), frame("Check Tend inbox.")],
+            true,
+            true,
+        ),
+        (true, vec![draft], false, false),
+        (
+            true,
+            vec![empty.clone(), frame("Check Tend inbox. draft")],
+            true,
+            false,
+        ),
+        (false, vec![empty], false, false),
+    ];
+    for (authorized, frames, pasted, submitted) in cases {
+        let store = tend::Store::shared();
+        add_agent(&store, "%1", "sender", AgentKind::Codex).await;
+        add_agent(&store, "%2", "recipient", AgentKind::Codex).await;
+        let panes = vec![collaboration_pane("%1", "0"), collaboration_pane("%2", "1")];
+        let participants = tend::collaboration::participants_from(&store.snapshot().await, &panes);
+        let find = |pane: &str| {
+            participants
+                .iter()
+                .find(|p| p.pane == pane)
+                .unwrap()
+                .clone()
+        };
+        let (sender, recipient) = (find("%1"), find("%2"));
+        let mailbox = CollaborationStore::in_memory(CollaborationOptions::default());
+        mailbox.set_hook_transport(true);
+        let request = mailbox
+            .create(
+                sender,
+                recipient.clone(),
+                NewRequest {
+                    user_authorized: authorized,
+                    body: "original review instructions".into(),
+                    ..NewRequest::default()
+                },
+            )
+            .await
+            .unwrap();
+        let attempts = Arc::new(Mutex::new(Vec::new()));
+        let backend: tend::SharedBackend = Arc::new(RefusingWakeBackend {
+            panes,
+            attempts: attempts.clone(),
+            frames: Mutex::new(frames.into()),
+            accepting: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        });
+        wake_idle_collaboration_peers_with_full_payload(&mailbox, &store, &[backend]).await;
+        let mut expected = Vec::new();
+        if pasted {
+            expected.push(("%2".into(), "Check Tend inbox.".into()));
+        }
+        if submitted {
+            expected.push(("%2".into(), "\r".into()));
+        }
+        assert_eq!(*attempts.lock().unwrap(), expected);
+        if submitted {
+            let offers = mailbox
+                .offer_turn_boundary(&recipient, TurnBoundaryEvent::PromptSubmit, None, None)
+                .await
+                .unwrap();
+            assert_eq!(offers[0]["request_id"], request.id.as_str());
+            let claimed = mailbox.claim_by_id(&recipient, &request.id).await.unwrap();
+            assert_eq!(claimed.body, "original review instructions");
+            assert_eq!(claimed.status, RequestStatus::Claimed);
+        }
+    }
 }
 
 #[tokio::test]
@@ -1586,6 +1666,7 @@ async fn a_refusing_pane_is_retried_on_the_next_idle_turn_not_in_a_loop() {
     let backend: tend::SharedBackend = Arc::new(RefusingWakeBackend {
         panes,
         attempts: attempts.clone(),
+        frames: Mutex::default(),
         accepting: accepting.clone(),
     });
     let mut cfg = Config::default();
@@ -2552,6 +2633,7 @@ async fn a_refused_wake_to_a_launching_pane_remembers_its_synthetic_row() {
     let backend: tend::SharedBackend = Arc::new(RefusingWakeBackend {
         panes,
         attempts: attempts.clone(),
+        frames: Mutex::default(),
         accepting: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     });
     wake_idle_collaboration_peers(&mailbox, &store, std::slice::from_ref(&backend)).await;

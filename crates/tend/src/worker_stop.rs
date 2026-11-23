@@ -123,7 +123,7 @@ fn read_composer(screen: &str, kind: AgentKind) -> Composer {
 /// no longer matches the full text. It is still the placeholder when the
 /// composer's text is drawn dim — as Codex draws placeholders, never typed
 /// input — *and* is the start of a known placeholder. Both must hold.
-fn codex_placeholder_shown(raw: &str, kind: AgentKind) -> bool {
+pub(crate) fn codex_placeholder_shown(raw: &str, kind: AgentKind) -> bool {
     const DIM: &str = "\u{1b}[2m";
     if kind != AgentKind::Codex {
         return false;

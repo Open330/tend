@@ -271,14 +271,27 @@ async fn wake_idle_collaboration_peers_with_inflight(
         {
             continue;
         }
-        // Never write into a human primary's terminal for agent work, even
-        // user-authorized: its provider hook hands the request over at the
-        // next turn boundary instead (`tend hook … --event stop`).
-        if request.awaits_turn_boundary(recipient) {
-            continue;
-        }
         let wake_key = collaboration_wake_key(recipient);
         if wake_inflight.contains(&wake_key) {
+            continue;
+        }
+        if request.awaits_turn_boundary(recipient) {
+            // Only a small nudge reaches a positively identified empty
+            // composer. The original instructions still arrive via the hook.
+            if recipient.agent_kind == tend::AgentKind::Codex
+                && !recipient.draining
+                && send_mailbox_wake(
+                    collaboration,
+                    recipient,
+                    &request,
+                    "Check Tend inbox.",
+                    backends,
+                    store,
+                )
+                .await
+            {
+                wake_inflight.insert(wake_key);
+            }
             continue;
         }
         let quiet = collaboration.quiet_notices_waiting(recipient).await;
@@ -846,6 +859,18 @@ async fn send_mailbox_wake(
     // no other Tend input to this pane can land between them and the paste.
     let guard = tend::prompt_delivery::lock_pane(collaboration, &recipient.pane).await;
     let agents = store.by_pane(&recipient.pane).await;
+    let guarded = request.awaits_turn_boundary(recipient);
+    if guarded {
+        let mut live = agents.iter().filter(|agent| {
+            agent.tmux_socket == recipient.socket && agent.state != tend::AgentState::Stopped
+        });
+        if !live.next().is_some_and(|agent| {
+            agent.session_id == recipient.agent_session_id && agent.state == tend::AgentState::Idle
+        }) || live.next().is_some()
+        {
+            return false;
+        }
+    }
     if !redelivery_still_due(collaboration, &agents, recipient, request).await {
         return false;
     }
@@ -866,6 +891,7 @@ async fn send_mailbox_wake(
         prompt,
         backends,
         store,
+        guarded,
     )
     .await;
     if !sent {
@@ -1089,6 +1115,7 @@ pub(super) async fn send_collaboration_wake(
         prompt,
         backends,
         store,
+        false,
     )
     .await
 }
@@ -1103,6 +1130,7 @@ async fn send_collaboration_wake_holding(
     prompt: &str,
     backends: &[tend::SharedBackend],
     store: &tend::Store,
+    guarded: bool,
 ) -> (bool, bool) {
     let Some(backend) = text_backend(backends, &participant.pane) else {
         return (false, false);
@@ -1110,21 +1138,34 @@ async fn send_collaboration_wake_holding(
     // A peer delivery: the shared path holds the pane guard from the drain
     // check through Enter, and registers the prompt before typing so the
     // hook reporting it is stamped as from a peer rather than a person.
-    let delivered = tend::prompt_delivery::deliver_prompt_holding(
-        guard,
-        collaboration,
-        store,
-        agents,
-        backend,
-        tend::prompt_delivery::PromptDelivery {
-            pane: &participant.pane,
-            socket: participant.socket.as_deref(),
-            text: prompt,
-            submit: true,
-            origin: Some(tend::PromptOrigin::Peer),
-        },
-    )
-    .await;
+    let delivery = tend::prompt_delivery::PromptDelivery {
+        pane: &participant.pane,
+        socket: participant.socket.as_deref(),
+        text: prompt,
+        submit: true,
+        origin: Some(tend::PromptOrigin::Peer),
+    };
+    let delivered = if guarded {
+        tend::prompt_delivery::nudge_codex_holding(
+            guard,
+            collaboration,
+            store,
+            agents,
+            backend,
+            delivery,
+        )
+        .await
+    } else {
+        tend::prompt_delivery::deliver_prompt_holding(
+            guard,
+            collaboration,
+            store,
+            agents,
+            backend,
+            delivery,
+        )
+        .await
+    };
     let Ok(delivered) = delivered else {
         return (false, false);
     };
