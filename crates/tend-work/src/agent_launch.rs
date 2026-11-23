@@ -1086,13 +1086,38 @@ fn release_capped_pane(capped: &Capped) -> Result<()> {
 const CLAUDE_ERROR_PLACEHOLDERS: &[&str] = &["Once fixed, resend your message"];
 
 /// Whether a capped Claude pane still shows only its refusal: the limit
-/// line, and a composer with nothing typed in it.
+/// line, no turn running, and Claude's composer frame recognised with
+/// nothing typed in it. Anything tend cannot positively read as that
+/// (a clipped frame, an unframed line) is not.
 fn capped_screen_untouched(screen: &str) -> bool {
-    matches!(
+    if !matches!(
         tend::agent_tui::launch_blocker(screen),
         Some(tend::agent_tui::LaunchBlocker::Limit(_))
-    ) && tend::agent_tui::composer_draft(screen, tend::event::AgentKind::ClaudeCode)
-        .is_none_or(|draft| draft.is_empty() || CLAUDE_ERROR_PLACEHOLDERS.contains(&draft.as_str()))
+    ) || tend::agent_tui::turn_running(screen)
+    {
+        return false;
+    }
+    let lines: Vec<&str> = screen.lines().collect();
+    let rule = |line: &&str| {
+        let line = line.trim();
+        line.chars().count() >= 5 && line.chars().all(|c| c == '─')
+    };
+    let rules: Vec<usize> = (0..lines.len()).filter(|at| rule(&lines[*at])).collect();
+    let [.., top, bottom] = rules[..] else {
+        return false;
+    };
+    let inside: Vec<&str> = lines[top + 1..bottom]
+        .iter()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .collect();
+    let [only] = inside[..] else {
+        return false;
+    };
+    only.strip_prefix('❯').is_some_and(|rest| {
+        let rest = rest.trim_matches(|c: char| c.is_whitespace() || c == '\u{a0}');
+        rest.is_empty() || CLAUDE_ERROR_PLACEHOLDERS.contains(&rest)
+    })
 }
 
 /// Whether the server says `pane` does not exist (or the server itself is
@@ -2616,6 +2641,18 @@ mod tests {
             "● Working on it\n─────\n❯ \n─────"
         ));
         assert!(!capped_screen_untouched(""));
+        // A draft with the frame clipped or missing is not an empty composer.
+        assert!(!capped_screen_untouched(
+            "  ⎿  You've hit your limit · resets 3pm\n❯ wait, use the other repo\n  ⏵⏵ bypass permissions on"
+        ));
+        assert!(!capped_screen_untouched(
+            "  ⎿  You've hit your limit · resets 3pm\n─────\n❯ wait, use the other repo"
+        ));
+        // The limit still on screen while a new turn runs.
+        assert!(!capped_screen_untouched(&format!(
+            "{}\n✻ Thinking… (2s · esc to interrupt)",
+            screen("")
+        )));
     }
 
     fn request(agent: AgentProgram, placement: Placement) -> StartRequest {
@@ -2821,7 +2858,7 @@ case "$CLAUDE_CONFIG_DIR" in
     printf "$limit" ;;
   *) printf '\342\227\217 Done.\n' ;;
 esac
-printf '\342\235\257 \n  ? for shortcuts\n'
+printf '\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\n\342\235\257 \n\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\n  ? for shortcuts\n'
 exec sleep 600
 "#,
                 launches = root.path().join("launches"),
