@@ -974,9 +974,9 @@ impl CollaborationRequest {
     }
 
     /// Agent work the user authorized for a human's own session. It is
-    /// offered at that session's turn boundary by its provider hook. An
-    /// idle Codex session can be nudged to start the turn without pasting
-    /// the original request body.
+    /// delivered at that session's turn boundary by its provider hook and
+    /// never typed into its terminal: the human may have an unsent draft
+    /// there, and pasting plus Enter would submit it with the request.
     pub fn awaits_turn_boundary(&self, recipient: &Participant) -> bool {
         self.user_authorized && !self.from.console && !recipient.accepts_peer_work()
     }

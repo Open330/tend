@@ -31,7 +31,7 @@ pub(crate) fn add_turn_boundary_deferral(value: &mut Value, request: &Collaborat
     if request.status == RequestStatus::Queued && request.awaits_turn_boundary(&request.to) {
         value["deferred"] = json!("awaiting_primary_turn");
         value["delivery_detail"] = json!(
-            "The recipient's hook offers this request at its next turn boundary. Tend can start the turn for an idle Codex session with an empty composer. Keep the original request ID."
+            "The recipient's hook offers this request at its next turn boundary. If the session is idle, send its next prompt there. Keep the original request ID."
         );
     }
 }

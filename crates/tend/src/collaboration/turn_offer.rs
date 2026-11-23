@@ -1,9 +1,9 @@
 //! Turn-boundary offers of user-authorized agent work to human primaries.
 //!
-//! tendd keeps request bodies out of the primary's input. On an idle Codex
-//! session with an empty composer, a short nudge starts a turn. At the turn
-//! boundary, the provider hook asks for an *offer* and shows it to the model,
-//! which claims each request by id
+//! tendd never types such a request into a primary's terminal: the human may
+//! have an unsent draft there, and paste plus Enter would submit it with the
+//! request. The session's own provider hook asks for an *offer* at a turn
+//! boundary instead and shows it to the model, which claims each request by id
 //! before acting. An offer changes no status: a lost IPC response, a restart
 //! before the hook prints, a provider that discards hook output, or another
 //! hook overriding continuation all leave the request queued for the next
@@ -442,11 +442,12 @@ impl CollaborationStore {
                                     || retry.attempts >= super::wake_retry::MAX_WAKE_ATTEMPTS
                             })))
                     && (event == TurnBoundaryEvent::PromptSubmit || request.should_notify())
-                    // A protected primary's typed wake is only a nudge:
-                    // its PromptSubmit hook must still carry the instructions.
-                    && (!hook_transport
-                        || (event == TurnBoundaryEvent::PromptSubmit && request.awaits_turn_boundary(caller))
-                        || !request.turn_offer.as_ref().is_some_and(|offer| offer.typed_wake_recent(now)))
+                    // Reserved for a typed wake: no candidate mode offers it.
+                    && !(hook_transport
+                        && request
+                            .turn_offer
+                            .as_ref()
+                            .is_some_and(|offer| offer.typed_wake_recent(now)))
                     && request
                         .turn_offer
                         .as_ref()

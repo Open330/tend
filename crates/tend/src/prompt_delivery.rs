@@ -200,94 +200,6 @@ pub async fn deliver_prompt_holding(
     backend: SharedBackend,
     delivery: PromptDelivery<'_>,
 ) -> Result<Delivered, DeliveryRefused> {
-    deliver_checked(
-        guard,
-        collaboration,
-        store,
-        agents,
-        backend,
-        delivery,
-        false,
-    )
-    .await
-}
-
-/// Wake a protected Codex conversation using a mailbox nudge. Prove the
-/// composer is empty before pasting, then prove it contains only the nudge
-/// before pressing Enter. A failed check never clears or submits a draft.
-pub async fn nudge_codex_holding(
-    guard: PaneInputGuard,
-    collaboration: &CollaborationStore,
-    store: &Store,
-    agents: &[Agent],
-    backend: SharedBackend,
-    delivery: PromptDelivery<'_>,
-) -> Result<Delivered, DeliveryRefused> {
-    deliver_checked(guard, collaboration, store, agents, backend, delivery, true).await
-}
-
-fn codex_composer_matches(frame: &str, expected: Option<&str>) -> bool {
-    let plain = crate::screen::strip_ansi(frame);
-    if crate::agent_tui::turn_running(&plain) || crate::agent_tui::open_question(&plain).is_some() {
-        return false;
-    }
-    let lines: Vec<_> = frame.lines().collect();
-    let Some(index) = lines
-        .iter()
-        .rposition(|line| line.starts_with("\x1b[1m›\x1b[0m"))
-    else {
-        return false;
-    };
-    let tail: Vec<_> = lines[index + 1..]
-        .iter()
-        .map(|line| crate::screen::strip_ansi(line))
-        .collect();
-    let footer: Vec<_> = tail.iter().filter(|line| !line.trim().is_empty()).collect();
-    let [status, shortcuts @ ..] = footer.as_slice() else {
-        return false;
-    };
-    // Codex separates the input from its status footer with a blank row.
-    // Reject wrapped drafts, attachments, menus and an old input line above
-    // a newer screen. Unrecognized layouts keep using the normal hook path.
-    if !index
-        .checked_sub(1)
-        .is_some_and(|before| crate::screen::strip_ansi(lines[before]).trim().is_empty())
-        || !tail.first().is_some_and(|line| line.trim().is_empty())
-        || !status.starts_with("  ")
-        || !status.contains(" · ")
-        || shortcuts.len() > 1
-        || shortcuts.iter().any(|line| {
-            !line.starts_with("  ")
-                || !(line.contains("for shortcuts") || line.ends_with("f2 to view"))
-        })
-    {
-        return false;
-    }
-    let input = lines[index]
-        .split_once('›')
-        .expect("composer marker matched")
-        .1;
-    if let Some(expected) = expected {
-        crate::screen::strip_ansi(input)
-            .trim_end()
-            .strip_prefix(' ')
-            == Some(expected)
-    } else {
-        // A real draft can match the placeholder text. Codex styles an
-        // actual placeholder as dim, while typed input is plain.
-        crate::worker_stop::codex_placeholder_shown(frame, crate::AgentKind::Codex)
-    }
-}
-
-async fn deliver_checked(
-    guard: PaneInputGuard,
-    collaboration: &CollaborationStore,
-    store: &Store,
-    agents: &[Agent],
-    backend: SharedBackend,
-    delivery: PromptDelivery<'_>,
-    check_codex_composer: bool,
-) -> Result<Delivered, DeliveryRefused> {
     let PromptDelivery {
         pane,
         socket,
@@ -310,33 +222,12 @@ async fn deliver_checked(
     let (sent, submitted) = tokio::task::spawn_blocking(move || {
         let _guard = guard;
         let socket = socket.as_deref();
-        if check_codex_composer
-            && !backend
-                .capture_pane_on(socket, &pane)
-                .is_some_and(|frame| codex_composer_matches(&frame, None))
-        {
-            return (crate::TextSend::Refused, false);
-        }
         let sent = backend.send_prompt_text_checked(socket, &pane, &text);
         let submitted = if sent == crate::TextSend::Sent && submit {
             if !text.is_empty() {
                 std::thread::sleep(crate::backend::prompt_submit_grace(&pane));
             }
-            (!check_codex_composer || {
-                let deadline = std::time::Instant::now() + Duration::from_millis(300);
-                loop {
-                    if backend
-                        .capture_pane_on(socket, &pane)
-                        .is_some_and(|frame| codex_composer_matches(&frame, Some(&text)))
-                    {
-                        break true;
-                    }
-                    if std::time::Instant::now() >= deadline {
-                        break false;
-                    }
-                    std::thread::sleep(Duration::from_millis(25));
-                }
-            }) && backend.send_text_on(socket, &pane, "\r")
+            backend.send_text_on(socket, &pane, "\r")
         } else {
             false
         };
