@@ -158,13 +158,47 @@ account = "auto"          # 또는 고정 계정: "work@claude"
 뜹니다. 그 계정이 한도에 걸려 있어도 마찬가지입니다. `account`를 설정하면 위의 모든
 실행 경로가 `aas e <account> …`로 시작합니다. `auto`는 `aas candidates`에서 순위가
 가장 높은 eligible 계정을 고르고(`aas active`는 바꾸지 않음), 이름을 쓰면 그 계정으로
-고정합니다(같은 provider 계정만, 한도와 무관하게 사용). `claude`, `codex`만 지원합니다.
+고정합니다(같은 provider 계정만). `claude`, `codex`만 지원합니다.
 
 `aas`는 선택 사항입니다. 링크하지 않고 실행만 하며, `account`가 있을 때만 호출합니다.
-`aas`가 없거나, 5초 안에 답하지 않거나, 한도가 남은 계정이 없으면 예전처럼 맨 CLI로
-시작합니다(한도에 걸린 active 계정일 수 있음). 이유는 stderr와 `tend agent start
---json`의 `account` 필드에 남습니다. 바이너리는 `[swap].aas`를 씁니다. 실행 중에 한도에
-걸린 에이전트는 [`tend swap`](ACCOUNT_SWAP.md)이 처리합니다.
+`aas`가 없거나 5초 안에 답하지 않으면 예전처럼 맨 CLI로 시작합니다. 이유는 stderr와
+`tend agent start --json`의 `account` 필드에 남습니다. 고정한 계정이 한도에 걸려
+있거나, `auto`인데 모든 계정이 한도에 걸려 있으면 에이전트를 띄우지 않습니다. 실행은
+그 자리에서 `did not start: …`로 실패하고, 어느 계정이 왜 안 되는지 알려 주며, 아무것도
+만들지 않습니다. 바이너리는 `[swap].aas`를 씁니다.
+
+### 새 에이전트가 뜰 때까지 기다리기
+
+`claude`나 `codex`를 tmux나 rmux pane에 띄우는 모든 경로(`tend agent start`,
+`tend_start_agent`, `tend work up`, peer 호출, 앱의 시작. native PTY 호스트는 제외)는
+정해진 시간 안에서 에이전트가 일할 수 있게 될 때까지 기다린 뒤 결과를 알려 줍니다.
+
+- `started …`: 입력창이 떴거나, 첫 프롬프트를 몇 초 동안 처리하고 있습니다.
+- `started … on <계정> because <다른 계정> was at its usage limit`: `auto`일 때 첫
+  프롬프트를 provider가 한도 때문에 거절한 Claude 에이전트는 다음 계정으로 다시 띄웁니다.
+  최대 두 번입니다. 근거는 화면이 아니라 그 대화의 transcript입니다(프롬프트 하나와 Claude의
+  한도 오류뿐). 다음 계정을 먼저 고르고, pane이 여전히 이 실행이고 transcript에도 다른 것이
+  없을 때만 pane을 닫고 닫혔는지 확인합니다. 그렇지 않으면(남은 계정이 없거나, 근거가 없거나,
+  Codex 에이전트) pane을 그대로 두고 시작하지 않은 것으로 알립니다. 건너뛴 계정은
+  `--json`의 `account.passed_over`에 남습니다. 한도 문구는 새 대화에서만 읽고, 기존
+  대화를 이어받는 실행에서는 읽지 않습니다.
+- `did not start: <이유>`: 실행이 실패하고, pane은 그대로 남겨 둡니다. 이유는 사용 한도
+  (고정 계정이거나 계정 설정이 없을 때), 로그인이나 첫 실행 화면, tend가 답하지 않는
+  대화상자, 에이전트 종료 중 하나입니다. 에이전트 행에도 같은 내용이 표시됩니다.
+
+tend는 방금 자신이 띄운 에이전트의 시작 대화상자 중 실행 그 자체 외에는 아무것도
+허락하지 않는 것만 답합니다. 요청한 폴더에 대한 Claude 폴더 신뢰, Codex 업데이트 메뉴
+(건너뛰기), 실행이 그 모드를 요청한 경우의 bypass-permissions 경고입니다. 폴더 설정
+신뢰, Codex hook 검토와 폴더 신뢰, 로그인, resume 메뉴에는 답하지 않습니다. 첫
+프롬프트는 명령줄로 넘기고 에이전트가 그 대화상자들이 끝날 때까지 들고 있으므로,
+대화상자에 무언가를 입력하는 일은 없습니다. 프롬프트 없이 띄운 worker는 예전처럼 pane이
+준비된 뒤에만 작업을 받습니다.
+
+시간 안에 알아볼 수 있는 화면이 나오지 않은 에이전트도 시작한 것으로 보고, 결과 줄과
+행에 `not seen ready yet: …`를 붙입니다. 시작 한 번은 기다림과 계정 변경을 합쳐 최대
+25초이므로, 앱과 Fleet의 30초짜리 `agent start`도 항상 결과를 받습니다.
+
+실행 중에 한도에 걸린 에이전트는 [`tend swap`](ACCOUNT_SWAP.md)이 처리합니다.
 
 ## Ask
 

@@ -101,6 +101,18 @@ pub fn abandoned() -> bool {
     current().is_some_and(|scope| scope.remaining().is_none())
 }
 
+/// `limit`, cut to what the thread's scope has left after `margin`: a wait
+/// inside a scoped operation must end before the operation's deadline.
+#[must_use]
+pub fn bounded(limit: Duration, margin: Duration) -> Duration {
+    current().map_or(limit, |scope| {
+        scope
+            .remaining()
+            .map_or(Duration::ZERO, |left| left.saturating_sub(margin))
+            .min(limit)
+    })
+}
+
 /// `Err` once the thread's scope has run out of time. For mux operations
 /// that do not start a process of their own here (`tend::tmux` and rmux
 /// helpers, which carry their own per-call timeouts), checked before each

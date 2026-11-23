@@ -795,6 +795,10 @@ pub struct AccountDecision {
     /// Why it started bare, when it did.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skipped: Option<String>,
+    /// Accounts this launch started on first and found at their usage
+    /// limit, before [`Self::account`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub passed_over: Vec<String>,
 }
 
 /// A decided launch: the words that start the provider CLI on `account`.
@@ -825,6 +829,18 @@ impl RoutedLaunch {
     }
 }
 
+/// Why a launch is not routed to an account.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NotRouted {
+    /// Routing could not be done (no backend, a slow query, the module
+    /// off): the agent starts bare, as it would without the setting.
+    Bare(String),
+    /// Every account routing may use is at its usage limit, or the pinned
+    /// one is: the agent would start into the limit screen, so it does
+    /// not start.
+    Capped(String),
+}
+
 /// `decide`, folded into what the launch result reports.
 #[must_use]
 pub fn report(outcome: &Result<RoutedLaunch, String>) -> AccountDecision {
@@ -832,10 +848,12 @@ pub fn report(outcome: &Result<RoutedLaunch, String>) -> AccountDecision {
         Ok(routed) => AccountDecision {
             account: Some(routed.account.clone()),
             skipped: None,
+            passed_over: Vec::new(),
         },
         Err(reason) => AccountDecision {
             account: None,
             skipped: Some(reason.clone()),
+            passed_over: Vec::new(),
         },
     }
 }

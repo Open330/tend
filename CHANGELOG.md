@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A new `claude` or `codex` agent in a tmux or rmux pane (`tend agent start`,
+  `tend_start_agent`, `tend work up`, a peer call, the app's start) no longer
+  sits silently on a startup screen. The launch waits, within a bound, until the agent can
+  work. It answers only the setup dialogs of an agent it just launched that
+  agree to nothing more (Claude's folder trust, Codex's update menu,
+  bypass-permissions when asked for), and it reports `started`, `started on
+  <account> because <other> was at its usage limit`, or `did not start:
+  <reason>` (usage limit, sign-in or first-run screen, a dialog left for
+  you, the agent exiting) on the result line and the agent's row.
+- `[agent.<program>].account`: a pinned account at its usage limit, or
+  `auto` with every account at its limit, no longer starts an agent into
+  the limit screen. The launch says so up front and creates nothing. With
+  `auto`, a Claude agent whose transcript shows its first prompt refused
+  for the limit is started again on the next account.
 - Windows Tend creates no longer keep the launch command as their name
   (`export`, `aas`, `zsh`; `tend init` turns `automatic-rename` off, so it
   stuck). A window for one agent is named after its task, alias, role or
