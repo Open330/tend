@@ -390,6 +390,140 @@ pub fn blocked_screen(screen: &str) -> Option<&'static str> {
     })
 }
 
+/// Why a freshly launched agent cannot work, as its screen says.
+///
+/// Read only on a new conversation, never on a resumed one: a resumed
+/// conversation's history can show any of these lines (a swap resumes
+/// agents *because* they hit their limit), so [`BLOCKERS`] leaves them out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LaunchBlocker {
+    /// The account is at its usage limit: the line as the agent drew it.
+    Limit(String),
+    /// The account must be signed in or set up first, and tend never does
+    /// that for the user.
+    SignIn(&'static str),
+}
+
+/// How many non-blank lines a launch blocker can sit above the bottom:
+/// Claude draws its composer, footer and an upgrade hint under the limit
+/// line.
+pub const LAUNCH_BLOCKER_TAIL_LINES: usize = 16;
+
+/// Line openings of a usage-limit message, lowercase.
+pub const LIMIT_OPENINGS: &[&str] = &[
+    // Claude: `You've hit your limit · resets 3pm (Asia/Seoul)`, and the
+    // weekly and session variants; Codex: `You've hit your usage limit.`
+    "you've hit your",
+    "you have hit your",
+    "claude usage limit reached",
+    "usage limit reached",
+    "you've reached your usage limit",
+    "you have reached your usage limit",
+    "weekly limit reached",
+    "5-hour limit reached",
+    "session limit reached",
+];
+
+/// Line openings of a sign-in or first-run screen, lowercase, with the
+/// reason given for it.
+pub const SIGN_IN_OPENINGS: &[(&str, &str)] = &[
+    (
+        "select login method",
+        "the account is not signed in (Claude asks for a login method)",
+    ),
+    (
+        "choose the text style",
+        "the account has not been through Claude's first-run setup (theme, then sign-in)",
+    ),
+    (
+        "sign in with chatgpt",
+        "the account is not signed in (Codex asks to sign in with ChatGPT)",
+    ),
+    (
+        "your access token could not be refreshed",
+        "the account's sign-in has expired (Codex could not refresh its access token)",
+    ),
+    (
+        "api error: 401",
+        "the account's sign-in was rejected (API Error: 401); sign it in again",
+    ),
+    (
+        "invalid api key",
+        "the account's API key was rejected (Invalid API key)",
+    ),
+];
+
+/// The launch blocker `screen` shows on its last lines, if any.
+#[must_use]
+pub fn launch_blocker(screen: &str) -> Option<LaunchBlocker> {
+    let tail = screen_tail(screen, LAUNCH_BLOCKER_TAIL_LINES);
+    let lines: Vec<&str> = tail.lines().collect();
+    lines.iter().enumerate().find_map(|(at, line)| {
+        let shown = without_decoration(line);
+        let text = shown.to_lowercase().replace('\u{2019}', "'");
+        if LIMIT_OPENINGS
+            .iter()
+            .any(|opening| text.starts_with(opening))
+        {
+            return Some(LaunchBlocker::Limit(limit_message(shown, &lines[at + 1..])));
+        }
+        SIGN_IN_OPENINGS
+            .iter()
+            .find(|(opening, _)| text.starts_with(opening))
+            .map(|(_, reason)| LaunchBlocker::SignIn(reason))
+    })
+}
+
+/// `line` without the bullets and frames agents draw before a message. Not
+/// `>` or `›`: those open the user's own prompt line, which can say
+/// anything.
+fn without_decoration(line: &str) -> &str {
+    line.trim_start_matches(|c: char| {
+        c.is_whitespace()
+            || matches!(
+                c,
+                '│' | '┃'
+                    | '║'
+                    | '╭'
+                    | '╰'
+                    | '■'
+                    | '▌'
+                    | '⚠'
+                    | '✗'
+                    | '×'
+                    | '•'
+                    | '●'
+                    | '⎿'
+                    | '!'
+                    | '-'
+                    | '*'
+            )
+    })
+}
+
+/// The limit line with the lines a narrow pane wrapped it onto (indented,
+/// up to the composer), as one line: `You've hit your weekly limit ·
+/// resets Nov 25 at 10pm (Asia/Seoul)`.
+fn limit_message(first: &str, rest: &[&str]) -> String {
+    let continued = rest
+        .iter()
+        .take_while(|line| {
+            line.starts_with(char::is_whitespace)
+                && !line
+                    .trim_start()
+                    .starts_with(['❯', '›', '>', '─', '⏵', '?'])
+        })
+        .take(6)
+        .map(|line| line.trim());
+    std::iter::once(first.trim())
+        .chain(continued)
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(160)
+        .collect()
+}
+
 /// A dialog a resumed or exiting agent can stop on, and the keys that answer
 /// it the way a swap needs.
 pub struct Dialog {
@@ -1456,5 +1590,51 @@ mod tests {
         let found = startup_blocker(goal).expect("the goal menu");
         assert_eq!(found.label, "resumed the paused goal");
         assert_eq!(found.keys, None, "starting old work needs evidence");
+    }
+
+    #[test]
+    fn a_launch_blocker_is_read_from_the_agent_not_the_users_prompt() {
+        let limit = |screen: &str| match launch_blocker(screen) {
+            Some(LaunchBlocker::Limit(line)) => line,
+            other => panic!("{screen:?}: {other:?}"),
+        };
+        assert_eq!(
+            limit(
+                "  ⎿  You've hit your limit · resets 2:40pm (Asia/Seoul)\n\n❯ \n  ? for shortcuts"
+            ),
+            "You've hit your limit · resets 2:40pm (Asia/Seoul)"
+        );
+        assert!(limit(
+            "■ You’ve hit your usage limit. Try again at 3:05 PM.\n› Ask Codex to do anything"
+        )
+        .starts_with("You’ve hit your usage limit."));
+        assert!(
+            limit("● Claude usage limit reached. Your limit will reset at 2pm\n❯ ")
+                .starts_with("Claude usage limit reached")
+        );
+        // The user's own prompt line can say anything.
+        assert_eq!(
+            launch_blocker("> You've hit your limit, says the test\n❯ "),
+            None
+        );
+        assert_eq!(
+            launch_blocker("› usage limit reached handling\n› Ask Codex"),
+            None
+        );
+        assert_eq!(launch_blocker("● The limit is fine.\n❯ "), None);
+        assert!(matches!(
+            launch_blocker(" Select login method:\n ❯ 1. Claude account with subscription"),
+            Some(LaunchBlocker::SignIn(reason)) if reason.contains("not signed in")
+        ));
+        // rtzr, 2026-10-22: Codex relaunched on a home without credentials.
+        let codex_login = "  Welcome to Codex, OpenAI's command-line coding agent\n  Sign in with ChatGPT to use Codex as part of your paid plan\n  or connect an API key for usage-based billing\n> 1. Sign in with ChatGPT\n     Usage included with Plus, Pro, Business, and Enterprise plans\n  2. Sign in with Device Code\n     Sign in from another device with a one-time code\n  3. Provide your own API key\n     Pay for what you use\n  Press enter to continue";
+        assert!(matches!(
+            launch_blocker(codex_login),
+            Some(LaunchBlocker::SignIn(reason)) if reason.contains("sign in with ChatGPT")
+        ));
+        assert!(matches!(
+            launch_blocker("■ Your access token could not be refreshed. Please log out and sign in again."),
+            Some(LaunchBlocker::SignIn(reason)) if reason.contains("expired")
+        ));
     }
 }

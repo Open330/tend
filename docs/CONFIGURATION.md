@@ -208,7 +208,7 @@ account = "auto"          # or a pinned account: "work"
 Without it, a bare `claude` starts on whichever account the CLI is logged
 into, even while that one is capped. `account` makes every launch path above
 start on a chosen account instead. `auto` lets the account provider choose;
-a name pins one of that provider's accounts, used even when capped. `claude` and `codex` only.
+a name pins one of that provider's accounts. `claude` and `codex` only.
 
 The accounts come from an account provider (see [Account
 swap](ACCOUNT_SWAP.md)):
@@ -228,12 +228,48 @@ turns the module on unless `[modules] accounts = false` says otherwise; see
 off, or not in the build, the agent starts bare and the reason is reported
 below.
 
-When there is no provider, `aas` takes longer than 5 seconds, or no account
-has quota left, the agent starts bare as before, which may still be the
-capped account. The reason goes to stderr and to the `account` field of
-`tend agent start --json`. An agent already capped mid-run is
-[`tend swap`](ACCOUNT_SWAP.md)'s job, and with no accounts at all the
-`resume-after-limit` rule, once enabled, resumes it after its reset.
+When there is no provider, or `aas` takes longer than 5 seconds, the agent
+starts bare as before. The reason goes to stderr and to the `account`
+field of `tend agent start --json`. When the pinned account is at its usage
+limit, or every account is with `auto`, the agent does not start: the
+launch fails up front with `did not start: …`, naming the account and why,
+and creates nothing.
+
+### Waiting for a new agent to start
+
+Every launch of `claude` or `codex` (`tend agent start`, `tend_start_agent`,
+`tend work up`, a peer call, the app's start) waits, within a bound, until
+the agent can work, and says how it went:
+
+- `started …`: the agent reached its composer, or its first prompt has been
+  running for a few seconds.
+- `started … on <account> because <other> was at its usage limit`: with
+  `auto`, an agent that answered its first prompt with the limit line is
+  closed (its pane held nothing else) and started again on the next account,
+  at most twice. `--json` lists them in `account.passed_over`.
+- `did not start: <reason>`: the launch fails and the pane is kept for you.
+  The reason is a usage limit (a pinned or unrouted account), a sign-in or
+  first-run screen, a dialog tend does not answer, or the agent exiting.
+  The agent's row says the same.
+
+Tend answers only the startup dialogs of an agent it has just launched
+that agree to nothing beyond the launch itself: Claude's folder trust for
+the requested directory, Codex's update menu (skipped), and the
+bypass-permissions warning when the launch asked for that mode. It never
+answers a folder's settings trust, Codex's hook review or folder trust, a
+sign-in, or a resume menu. The first prompt goes on the command line, and
+the agent holds it until those dialogs are answered, so nothing is ever
+typed into a dialog. A worker started without a prompt gets its task only
+once its pane is ready, as before.
+
+An agent that shows nothing tend recognises in time still counts as
+started, with `not seen ready yet: …` on its line and row. Under tendd
+(`work up`, the app) the wait ends early enough to report within the
+request's deadline.
+
+An agent already capped mid-run is [`tend swap`](ACCOUNT_SWAP.md)'s job,
+and with no accounts at all the `resume-after-limit` rule, once enabled,
+resumes it after its reset.
 
 ### Advanced launch options form
 

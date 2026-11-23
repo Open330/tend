@@ -36,13 +36,36 @@ fn observe(control: &Control, pane: &str) -> Option<Fence> {
 /// Only the exact new launch in its requested directory may be prepared.
 /// Capture joined logical lines: narrow panes wrap both labels and footers.
 pub fn prepare(pane: &str, cwd: &Path, launch_id: &str, bypass: bool) -> Result<Report> {
-    prepare_inner(pane, cwd, launch_id, bypass, false)
+    prepare_inner(pane, cwd, launch_id, bypass, Mode::Prepare)
 }
 
 /// After a person answers setup, recover readiness without pressing any key
 /// or accepting another folder, hook, settings or permission dialog.
 pub fn probe(pane: &str, cwd: &Path, launch_id: &str) -> Result<Report> {
-    prepare_inner(pane, cwd, launch_id, false, true)
+    prepare_inner(pane, cwd, launch_id, false, Mode::Probe)
+}
+
+/// Watch a launch that got its first prompt on the command line until it
+/// works on it, answering the same startup dialogs as [`prepare`].
+pub fn watch_prompted(pane: &str, cwd: &Path, launch_id: &str, bypass: bool) -> Result<Report> {
+    prepare_inner(pane, cwd, launch_id, bypass, Mode::Prompted)
+}
+
+/// How long a prompted launch may take to start working: its startup,
+/// any dialogs, then [`worker_startup::WORKING_PROOF`] of its first turn.
+const PROMPTED_TIMEOUT: Duration = Duration::from_secs(45);
+
+/// `limit`, ending early enough for the caller to record the outcome when
+/// tendd runs this under a deadline (`work up`, the app's start).
+fn within_deadline(limit: Duration) -> Duration {
+    crate::subprocess::bounded(limit, Duration::from_secs(3))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Prepare,
+    Probe,
+    Prompted,
 }
 
 fn prepare_inner(
@@ -50,8 +73,9 @@ fn prepare_inner(
     cwd: &Path,
     launch_id: &str,
     bypass: bool,
-    passive: bool,
+    mode: Mode,
 ) -> Result<Report> {
+    let passive = mode == Mode::Probe;
     let control = Control::Ambient;
     let fence = observe(&control, pane).context("cannot fence worker startup")?;
     anyhow::ensure!(
@@ -67,34 +91,46 @@ fn prepare_inner(
         "@tend_input_readiness",
         "pending",
     ])?;
-    let report = worker_startup::prepare(
-        fence.kind,
-        || {
-            if !matches() {
-                return None;
-            }
-            let raw = control
-                .output(&["capture-pane", "-p", "-J", "-t", pane])
-                .ok()?;
-            Some(tend::screen::prepare_capture(&raw, 120))
-        },
-        &matches,
-        |key| {
-            if passive || !matches() {
-                return false;
-            }
-            let key = match key {
-                "\x1b[B" => "Down",
-                "\x1b[A" => "Up",
-                "\r" => "Enter",
-                "\x1b" => "Escape",
-                _ => return false,
-            };
-            control.run(&["send-keys", "-t", pane, key]).is_ok()
-        },
-        bypass,
-        Duration::from_secs(if passive { 3 } else { 30 }),
-    );
+    let capture = || {
+        if !matches() {
+            return None;
+        }
+        let raw = control
+            .output(&["capture-pane", "-p", "-J", "-t", pane])
+            .ok()?;
+        Some(tend::screen::prepare_capture(&raw, 120))
+    };
+    let send_key = |key: &str| {
+        if passive || !matches() {
+            return false;
+        }
+        let key = match key {
+            "\x1b[B" => "Down",
+            "\x1b[A" => "Up",
+            "\r" => "Enter",
+            "\x1b" => "Escape",
+            _ => return false,
+        };
+        control.run(&["send-keys", "-t", pane, key]).is_ok()
+    };
+    let report = match mode {
+        Mode::Prompted => worker_startup::watch_prompted(
+            fence.kind,
+            capture,
+            &matches,
+            send_key,
+            bypass,
+            within_deadline(PROMPTED_TIMEOUT),
+        ),
+        Mode::Prepare | Mode::Probe => worker_startup::prepare(
+            fence.kind,
+            capture,
+            &matches,
+            send_key,
+            bypass,
+            within_deadline(Duration::from_secs(if passive { 3 } else { 30 })),
+        ),
+    };
     if !matches() {
         anyhow::bail!("worker changed before readiness could be recorded");
     }

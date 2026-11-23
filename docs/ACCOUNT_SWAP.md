@@ -96,7 +96,7 @@ an account tend saw capped (until its reset), or with a quota window at 100%,
 is skipped; among the rest, the one with the most quota left goes first, and
 an account with no current reading counts as unused. Ties, and an empty
 record, keep config order. A new agent starts on the best-ranked account
-(the first listed one when all are capped), and a swap moves an agent to
+(none when all are capped: the launch says so instead), and a swap moves an agent to
 the best-ranked eligible account other than its own, skipping the one it
 was capped on.
 

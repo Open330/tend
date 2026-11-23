@@ -2,8 +2,9 @@
 //! The caller must fence the new process, pane and authorized working directory.
 //! No conversation prompt, login choice or tool permission is answered here.
 use crate::agent_tui::{
-    self as io, composer_draft, option_rows, pending_dialog, turn_running, type_keys,
-    wait_for_resume_answering_with_probe, Clock, Consent, Resume, READY_QUIET, STARTUP_DIALOGS,
+    self as io, composer_draft, launch_blocker, option_rows, pending_dialog, turn_running,
+    type_keys, wait_for_resume_answering_with_probe, Clock, Consent, LaunchBlocker, Resume,
+    READY_QUIET, STARTUP_DIALOGS,
 };
 use crate::event::AgentKind;
 use serde::Serialize;
@@ -16,6 +17,8 @@ pub enum State {
     Blocked,
     Exited,
     Unsettled,
+    /// The account is at its usage limit: the agent runs but cannot work.
+    Limited,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -175,23 +178,7 @@ fn prepare_with(
         |keys| {
             // Only initial setup, never resume an old goal or answer a task's
             // approval. A quoted/ambiguous dialog is rejected by the parser.
-            let screen = last.borrow();
-            let dialog = pending_dialog(&screen, STARTUP_DIALOGS, &[]);
-            let allowed = dialog.is_some_and(|d| {
-                (d.label == "trusted the folder"
-                    // Codex trust can alter sandbox defaults; keep it blocked
-                    // until its cold trust flow is independently verified.
-                    && kind == AgentKind::ClaudeCode
-                    && d.pick == Some("Yes, I trust this folder")
-                    && option_rows(&screen).is_some_and(|(rows, _)| {
-                        rows.len() == 2
-                            && rows.iter().any(|row| {
-                                matches!(row.as_str(), "No, exit" | "No, exit Claude Code" | "Quit")
-                            })
-                    }))
-                    || (kind == AgentKind::Codex && d.label == "skipped the Codex update prompt")
-                    || (bypass_requested && d.consent == Consent::Bypass)
-            });
+            let allowed = may_answer(kind, &last.borrow(), bypass_requested);
             allowed && type_keys(clock, &mut send_key, keys)
         },
         &|consent| consent == Consent::None || (bypass_requested && consent == Consent::Bypass),
@@ -204,7 +191,12 @@ fn prepare_with(
                 || (kind == AgentKind::ClaudeCode && claude_composer_visible(screen))
         },
     );
+    // The account cannot work (limit) or is not signed in: whatever else
+    // the screen shows follows from that.
     let (state, reason) = match resume {
+        _ if launch_blocker(&last.borrow()).is_some() => {
+            blocked_launch(launch_blocker(&last.borrow()).expect("just matched"))
+        }
         // Codex asks before running hooks that are new or changed. Accepting
         // lets them run outside the sandbox, so it stays the user's call.
         _ if kind == AgentKind::Codex && codex_hook_review(&last.borrow()) => (
@@ -240,6 +232,254 @@ fn prepare_with(
         state,
         answered: answered.into_iter().map(str::to_owned).collect(),
         reason,
+    }
+}
+
+/// How long a launched agent's first turn must run before the launch
+/// counts as started: a capped account answers the prompt with its limit
+/// line within a second or two of the spinner.
+pub const WORKING_PROOF: Duration = Duration::from_secs(4);
+
+/// Watch an agent tend just launched with its first prompt on the command
+/// line, until it is working on it or cannot. The agent holds that prompt
+/// until its startup dialogs are answered, so nothing is ever typed into a
+/// dialog. The same dialogs as [`prepare`] are answered, under the same
+/// rules; the rest are left for the person.
+///
+/// Ready means the prompt's turn has run for [`WORKING_PROOF`], or ended
+/// at a composer without a limit or sign-in line above it.
+pub fn watch_prompted(
+    kind: AgentKind,
+    capture: impl FnMut() -> Option<String>,
+    alive: impl FnMut() -> bool,
+    send_key: impl FnMut(&str) -> bool,
+    bypass_requested: bool,
+    timeout: Duration,
+) -> Report {
+    if !matches!(kind, AgentKind::ClaudeCode | AgentKind::Codex) {
+        return Report {
+            state: State::Blocked,
+            answered: vec![],
+            reason: Some("provider has no verified startup/composer probe".into()),
+        };
+    }
+    watch_prompted_with(
+        &io::RealClock,
+        kind,
+        capture,
+        alive,
+        send_key,
+        bypass_requested,
+        Timing {
+            timeout,
+            quiet: READY_QUIET,
+            working: WORKING_PROOF,
+            tick: Duration::from_millis(250),
+        },
+    )
+}
+
+/// The waits of [`watch_prompted`], so tests can shorten them.
+#[derive(Debug, Clone, Copy)]
+struct Timing {
+    timeout: Duration,
+    quiet: Duration,
+    working: Duration,
+    tick: Duration,
+}
+
+const EXITED: &str = "the agent exited during startup";
+
+/// What a prompted launch's settled screen calls for.
+enum Step {
+    /// Nothing yet: keep watching.
+    Wait,
+    /// A startup dialog tend may answer.
+    Answer(&'static io::Dialog),
+    /// The watch is over.
+    Done(State, Option<String>),
+}
+
+/// The step for a screen that has held still: a dialog to answer or stop
+/// at, the agent's composer (its turn ran and ended), or nothing yet.
+fn settled_step(
+    kind: AgentKind,
+    screen: &str,
+    answered: &[&'static str],
+    bypass_requested: bool,
+    may_linger: bool,
+    alive: &mut dyn FnMut() -> bool,
+) -> Step {
+    let blocked = |reason: String| Step::Done(State::Blocked, Some(reason));
+    if kind == AgentKind::Codex && codex_hook_review(screen) {
+        return blocked(
+            "Codex asks to review new or changed hooks before it starts; answer it in the pane \
+             (tend does not trust hooks for you)"
+                .into(),
+        );
+    }
+    if let Some(dialog) = pending_dialog(screen, STARTUP_DIALOGS, answered) {
+        if !may_answer(kind, screen, bypass_requested) {
+            return blocked(format!(
+                "a startup dialog needs your answer ({}); nothing was typed",
+                dialog.label
+            ));
+        }
+        return if alive() {
+            Step::Answer(dialog)
+        } else {
+            Step::Done(State::Exited, Some(EXITED.into()))
+        };
+    }
+    if may_linger && io::answered_dialog_lingers(screen, answered) {
+        // Answered already; the agent has not redrawn yet.
+        return Step::Wait;
+    }
+    if let Some(line) = io::open_question(screen) {
+        return blocked(format!("a dialog is waiting for an answer ({line})"));
+    }
+    if !alive() {
+        return Step::Done(State::Exited, Some(EXITED.into()));
+    }
+    if io::agent_prompt_visible(screen)
+        || (kind == AgentKind::ClaudeCode && claude_composer_visible(screen))
+    {
+        // The turn ran and ended, with no limit line above.
+        return Step::Done(State::Ready, None);
+    }
+    Step::Wait
+}
+
+fn watch_prompted_with(
+    clock: &dyn Clock,
+    kind: AgentKind,
+    mut capture: impl FnMut() -> Option<String>,
+    mut alive: impl FnMut() -> bool,
+    mut send_key: impl FnMut(&str) -> bool,
+    bypass_requested: bool,
+    timing: Timing,
+) -> Report {
+    let started = clock.now();
+    let mut answered: Vec<&'static str> = Vec::new();
+    let mut last = String::new();
+    let mut quiet_since = started;
+    let mut working_since = None;
+    let (state, reason) = loop {
+        let now = clock.now();
+        let screen = capture().map_or_else(String::new, |raw| {
+            if kind == AgentKind::ClaudeCode {
+                normalize_capture(raw)
+            } else {
+                raw
+            }
+        });
+        if let Some(blocker) = launch_blocker(&screen) {
+            break blocked_launch(blocker);
+        }
+        if let Some(reason) = io::blocked_screen(&screen) {
+            break (State::Blocked, Some(reason.to_owned()));
+        }
+        let timed_out = now.saturating_duration_since(started) >= timing.timeout;
+        if turn_running(&screen) {
+            let since = *working_since.get_or_insert(now);
+            if now.saturating_duration_since(since) >= timing.working {
+                break (State::Ready, None);
+            }
+            last.clear();
+        } else {
+            working_since = None;
+            if screen != last {
+                last = screen;
+                quiet_since = now;
+            } else if !last.trim().is_empty()
+                && now.saturating_duration_since(quiet_since) >= timing.quiet
+            {
+                let step = settled_step(
+                    kind,
+                    &last,
+                    &answered,
+                    bypass_requested,
+                    !timed_out,
+                    &mut alive,
+                );
+                match step {
+                    Step::Done(state, reason) => break (state, reason),
+                    Step::Answer(dialog) => {
+                        let typed = dialog
+                            .keys_on(&last)
+                            .is_some_and(|keys| type_keys(clock, &mut send_key, &keys));
+                        if !typed {
+                            break (
+                                State::Blocked,
+                                Some(format!("a startup dialog is waiting ({})", dialog.label)),
+                            );
+                        }
+                        answered.push(dialog.label);
+                        last.clear();
+                        clock.sleep(dialog.pause.min(timing.timeout / 8));
+                        continue;
+                    }
+                    Step::Wait => {}
+                }
+            }
+        }
+        if timed_out {
+            break if let Some(line) = io::open_question(&last) {
+                (
+                    State::Blocked,
+                    Some(format!("a dialog is waiting for an answer ({line})")),
+                )
+            } else if alive() {
+                (
+                    State::Unsettled,
+                    Some(
+                        "the agent did not start working on its prompt before the deadline".into(),
+                    ),
+                )
+            } else {
+                (State::Exited, Some(EXITED.into()))
+            };
+        }
+        clock.sleep(timing.tick);
+    };
+    Report {
+        state,
+        answered: answered.into_iter().map(str::to_owned).collect(),
+        reason,
+    }
+}
+
+/// Whether a launch tend just made may answer the startup dialog `screen`
+/// ends in: only initial setup (Claude's folder trust, Codex's update
+/// menu), and bypass-permissions consent only when the launch asked for
+/// that mode itself. Never an old goal, a task's approval, a folder's
+/// settings or Codex's folder trust.
+fn may_answer(kind: AgentKind, screen: &str, bypass_requested: bool) -> bool {
+    pending_dialog(screen, STARTUP_DIALOGS, &[]).is_some_and(|d| {
+        (d.label == "trusted the folder"
+            // Codex trust can alter sandbox defaults; keep it blocked
+            // until its cold trust flow is independently verified.
+            && kind == AgentKind::ClaudeCode
+            && d.pick == Some("Yes, I trust this folder")
+            && option_rows(screen).is_some_and(|(rows, _)| {
+                rows.len() == 2
+                    && rows.iter().any(|row| {
+                        matches!(row.as_str(), "No, exit" | "No, exit Claude Code" | "Quit")
+                    })
+            }))
+            || (kind == AgentKind::Codex && d.label == "skipped the Codex update prompt")
+            || (bypass_requested && d.consent == Consent::Bypass)
+    })
+}
+
+/// The report for a launch its own screen says cannot work.
+fn blocked_launch(blocker: LaunchBlocker) -> (State, Option<String>) {
+    match blocker {
+        LaunchBlocker::Limit(line) => (
+            State::Limited,
+            Some(format!("the account is at its usage limit (\"{line}\")")),
+        ),
+        LaunchBlocker::SignIn(reason) => (State::Blocked, Some(reason.to_owned())),
     }
 }
 
@@ -324,7 +564,7 @@ fn cut_placeholder(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_tui::{DOWN, ENTER};
+    use crate::agent_tui::{DOWN, ENTER, ESC};
     use std::cell::Cell;
     use std::time::Instant;
     struct FakeClock {
@@ -615,5 +855,185 @@ mod tests {
         );
         assert_eq!(result.state, State::Ready);
         assert_eq!(count.get(), 2);
+    }
+
+    // A fake agent launched with its first prompt: what it draws depends
+    // on the time since launch and the keys typed so far.
+    const WORKING: &str = "> fix the build\n\n✻ Thinking… (3s · ↓ 120 tokens)\n\n─────\n❯ \n─────\n  ⏵⏵ bypass permissions on · esc to interrupt";
+    const ANSWERED: &str = "> fix the build\n\n● Done: the build is fixed.\n\n─────\n❯ \u{a0}\n─────\n  ⏵⏵ bypass permissions on (shift+tab to cycle)";
+    // jiun-mini, 2026-11-22: a narrow pane's weekly limit, as captured.
+    const WEEKLY_LIMIT: &str = "> review this\n  ⎿  You've hit your\n     weekly limit ·\n     resets Nov 25 at\n     10pm\n     (Asia/Seoul)\n     /upgrade or\n     /usage-credits\n     to finish what\n     you\u{2019}re working\n     on.\n❯ \n  ⏵⏵ auto mode on";
+    const CODEX_LIMIT: &str = "› fix the build\n\n■ You've hit your usage limit. Upgrade to Pro (https://openai.com/chatgpt/pricing) or try again at 3:05 PM.\n\n› Ask Codex to do anything\n  ⏎ send   ⌃J newline";
+    const LOGIN: &str = " Claude Code can be used with your Claude subscription or billed based on API usage.\n\n Select login method:\n\n ❯ 1. Claude account with subscription · Pro, Max, Team, or Enterprise\n   2. Anthropic Console account · API usage billing\n   3. 3rd-party platform · Amazon Bedrock, Microsoft Foundry, or Vertex AI";
+    const CODEX_UPDATE: &str = "  ✨ Update available! 0.170.0 -> 0.171.0\n\n› 1. Update now (runs `brew upgrade codex`)\n  2. Skip\n  3. Skip until next version\n\n  Press enter to continue";
+    const SETTINGS_TRUST: &str = " This folder's settings allow tools and hooks.\n ❯ 1. Yes, I trust these settings\n   2. No, exit\n Enter to confirm · Esc to cancel";
+    const BYPASS: &str = " WARNING: Claude Code running in Bypass Permissions mode\n ❯ 1. No, exit\n   2. Yes, I accept\n Enter to confirm · Esc to cancel";
+
+    fn watch(
+        kind: AgentKind,
+        bypass: bool,
+        mut screen: impl FnMut(Duration, &[String]) -> Option<String>,
+    ) -> (Report, Vec<String>) {
+        let clock = FakeClock {
+            base: Instant::now(),
+            elapsed: Cell::new(Duration::ZERO),
+        };
+        let keys = std::cell::RefCell::new(Vec::new());
+        let report = watch_prompted_with(
+            &clock,
+            kind,
+            || screen(clock.elapsed.get(), &keys.borrow()),
+            || true,
+            |key| {
+                keys.borrow_mut().push(key.to_owned());
+                true
+            },
+            bypass,
+            Timing {
+                timeout: Duration::from_secs(20),
+                quiet: Duration::from_millis(200),
+                working: Duration::from_secs(2),
+                tick: Duration::from_millis(50),
+            },
+        );
+        (report, keys.into_inner())
+    }
+
+    #[test]
+    fn a_prompted_launch_is_started_once_its_turn_has_run_a_while() {
+        let (report, keys) = watch(AgentKind::ClaudeCode, true, |_, _| Some(WORKING.into()));
+        assert_eq!(report.state, State::Ready, "{report:?}");
+        assert!(keys.is_empty());
+        // A turn that ends at once is started too.
+        let (report, _) = watch(AgentKind::ClaudeCode, true, |_, _| Some(ANSWERED.into()));
+        assert_eq!(report.state, State::Ready, "{report:?}");
+    }
+
+    #[test]
+    fn a_prompted_launch_answers_folder_trust_and_its_prompt_runs_after() {
+        let (report, keys) = watch(AgentKind::ClaudeCode, true, |_, keys| {
+            Some(if keys.len() < 2 { TRUST } else { WORKING }.into())
+        });
+        assert_eq!(report.state, State::Ready, "{report:?}");
+        assert_eq!(keys, [DOWN, ENTER]);
+        assert_eq!(report.answered, ["trusted the folder"]);
+    }
+
+    #[test]
+    fn a_limit_after_the_spinner_is_a_capped_launch_not_a_started_one() {
+        // The spinner shows for a second, then the limit answer.
+        let (report, keys) = watch(AgentKind::ClaudeCode, true, |at, _| {
+            Some(
+                if at < Duration::from_secs(1) {
+                    WORKING
+                } else {
+                    WEEKLY_LIMIT
+                }
+                .into(),
+            )
+        });
+        assert_eq!(report.state, State::Limited, "{report:?}");
+        let reason = report.reason.unwrap();
+        assert!(
+            reason.contains("You've hit your weekly limit · resets Nov 25 at 10pm (Asia/Seoul)"),
+            "{reason}"
+        );
+        assert!(keys.is_empty());
+        let (report, _) = watch(AgentKind::Codex, true, |_, _| Some(CODEX_LIMIT.into()));
+        assert_eq!(report.state, State::Limited, "{report:?}");
+        assert!(report
+            .reason
+            .unwrap()
+            .contains("usage limit. Upgrade to Pro"));
+    }
+
+    #[test]
+    fn sign_in_and_consent_screens_stop_the_launch_with_nothing_typed() {
+        let typed_nothing = |kind, bypass, screen: &'static str| {
+            let (report, keys) = watch(kind, bypass, |_, _| Some(screen.into()));
+            assert_eq!(report.state, State::Blocked, "{screen}: {report:?}");
+            assert!(keys.is_empty(), "{screen}: typed {keys:?}");
+            report.reason.unwrap()
+        };
+        assert!(typed_nothing(AgentKind::ClaudeCode, true, LOGIN).contains("not signed in"));
+        assert!(typed_nothing(AgentKind::ClaudeCode, true, SETTINGS_TRUST)
+            .contains("trust the folder's settings"));
+        // Bypass consent is given only for a launch that asked for the mode.
+        assert!(typed_nothing(AgentKind::ClaudeCode, false, BYPASS)
+            .contains("accepted bypass-permissions mode"));
+        let hooks = "  Hooks need review\n  6 hooks are new or changed.\n› 1. Review hooks\n  2. Trust all and continue\n  3. Continue without trusting\n  enter confirm · esc skip";
+        assert!(typed_nothing(AgentKind::Codex, true, hooks).contains("hooks"));
+        let codex_trust =
+            "Trust this folder\n› 1. Trust and continue\n  2. Quit\n  enter continue · esc quit";
+        typed_nothing(AgentKind::Codex, true, codex_trust);
+    }
+
+    #[test]
+    fn safe_startup_menus_are_answered_once_then_the_prompt_runs() {
+        let (report, keys) = watch(AgentKind::ClaudeCode, true, |_, keys| {
+            Some(if keys.len() < 2 { BYPASS } else { WORKING }.into())
+        });
+        assert_eq!(report.state, State::Ready, "{report:?}");
+        assert_eq!(keys, [DOWN, ENTER]);
+        assert_eq!(report.answered, ["accepted bypass-permissions mode"]);
+        let codex_working = "› fix the build\n\n• Working (3s • esc to interrupt)";
+        let (report, keys) = watch(AgentKind::Codex, false, |_, keys| {
+            Some(
+                if keys.is_empty() {
+                    CODEX_UPDATE
+                } else {
+                    codex_working
+                }
+                .into(),
+            )
+        });
+        assert_eq!(report.state, State::Ready, "{report:?}");
+        assert_eq!(keys, [ESC]);
+        assert_eq!(report.answered, ["skipped the Codex update prompt"]);
+    }
+
+    #[test]
+    fn a_launch_that_exits_or_never_draws_is_not_started() {
+        let clock = FakeClock {
+            base: Instant::now(),
+            elapsed: Cell::new(Duration::ZERO),
+        };
+        let timing = Timing {
+            timeout: Duration::from_secs(5),
+            quiet: Duration::from_millis(200),
+            working: Duration::from_secs(2),
+            tick: Duration::from_millis(50),
+        };
+        let gone = watch_prompted_with(
+            &clock,
+            AgentKind::ClaudeCode,
+            || Some("$ ".into()),
+            || false,
+            |_| panic!(),
+            true,
+            timing,
+        );
+        assert_eq!(gone.state, State::Exited, "{gone:?}");
+        let slow = watch_prompted_with(
+            &clock,
+            AgentKind::ClaudeCode,
+            || Some("Loading…".into()),
+            || true,
+            |_| panic!(),
+            true,
+            timing,
+        );
+        assert_eq!(slow.state, State::Unsettled, "{slow:?}");
+    }
+
+    #[test]
+    fn a_worker_launch_on_a_signed_out_account_names_the_sign_in() {
+        let report = run(
+            || Some(LOGIN.into()),
+            || true,
+            |_| panic!("typed into login"),
+        );
+        assert_eq!(report.state, State::Blocked);
+        assert!(report.reason.unwrap().contains("not signed in"));
     }
 }
