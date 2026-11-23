@@ -623,6 +623,11 @@ fn new_window_plan_is_prefix_c_on_the_selected_session() {
     assert_eq!(args[0], "new-window");
     assert!(args.windows(2).any(|pair| pair == ["-t", "$1"]), "{args:?}");
     assert!(!args.iter().any(|arg| arg == "-c"), "{args:?}");
+    // No directory still gets a name, not the shell's.
+    assert!(
+        args.windows(2).any(|pair| pair == ["-n", "shell"]),
+        "{args:?}"
+    );
 }
 
 #[test]

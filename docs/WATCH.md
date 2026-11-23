@@ -524,12 +524,14 @@ every window, session and pane Tend creates gets a name for what it holds:
 | a session for one agent (`--placement session`) | the git checkout's directory, else the working directory |
 | a Work window | the Work id |
 | a window for one agent (`--placement window`, a new session's first window) | its task (as a short slug), else its alias, else its role, else the program (`claude`) |
-| the `c` key's plain shell window | its directory |
+| the `c` key's plain shell window | its directory, else `shell` |
 | the `work up` runner window | `<WORK>-up` |
 | an agent's pane title | its alias, else its role |
 
 A derived window name gets `-2`, `-3`… when another window in the session
-already has it. Names are set only at creation: Tend never renames a window or
+already has it (best effort: two creates racing in one session can still pick
+the same name). A watch rule or topology spawn uses the Work id or the name
+you typed. Names are set only at creation: Tend never renames a window or
 session that already exists.
 
 ## Two Terminals on One Workspace

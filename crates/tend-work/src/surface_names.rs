@@ -81,12 +81,17 @@ pub fn agent_window_base(
 /// made-up one, and the agent may set its own.
 #[must_use]
 pub fn agent_pane_title(alias: Option<&str>, role: Option<&str>) -> Option<String> {
-    [alias, role]
-        .into_iter()
-        .flatten()
-        .map(str::trim)
-        .find(|text| !text.is_empty() && !text.chars().any(char::is_control))
-        .map(|text| text.chars().take(64).collect())
+    [alias, role].into_iter().flatten().find_map(|text| {
+        if text.chars().any(char::is_control) {
+            return None;
+        }
+        // `select-pane -T` expands tmux formats: a `#{…}` or `#(…)` in a
+        // role would be evaluated, not shown. A title is a label; dropping
+        // `#` keeps it literal on tmux and rmux alike.
+        let title: String = text.chars().filter(|ch| *ch != '#').take(64).collect();
+        let title = title.trim();
+        (!title.is_empty()).then(|| title.to_string())
+    })
 }
 
 /// Whether `list-windows -F '#{window_id}\t#{window_name}'` output already
@@ -120,24 +125,52 @@ pub fn unique_window_name(listing: &str, base: &str) -> String {
 /// The `list-windows` format [`window_name_taken`] reads.
 pub const WINDOW_NAMES_FORMAT: &str = "#{window_id}\t#{window_name}";
 
+/// The `list-windows -a` format [`session_windows`] filters.
+pub const ALL_WINDOW_NAMES_FORMAT: &str = "#{session_id}\t#{window_id}\t#{window_name}";
+
+/// One session's rows of `list-windows -a -F` [`ALL_WINDOW_NAMES_FORMAT`]
+/// output, in [`WINDOW_NAMES_FORMAT`].
+///
+/// Every window, filtered by session id, rather than `list-windows -t $N`:
+/// rmux 0.10 reads that `-t` as a literal session *name*, finds none, and the
+/// listing comes back empty — every name would look free. `session` may
+/// carry the trailing `:` a `new-window` target has.
+#[must_use]
+pub fn session_windows(all: &str, session: &str) -> String {
+    let session = session.trim().trim_end_matches(':');
+    let mut rows = String::new();
+    for (_, rest) in all
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .filter(|(id, _)| id.trim() == session)
+    {
+        rows.push_str(rest);
+        rows.push('\n');
+    }
+    rows
+}
+
 /// The windows of one session on the ambient server, in
 /// [`WINDOW_NAMES_FORMAT`]. Empty when tmux cannot say: a name that might
 /// repeat one is a smaller fault than a launch that fails over a listing.
+///
+/// Uniqueness is best effort. The listing and the create are two commands,
+/// so two creators racing in one session can both pick `claude-2`; tmux
+/// accepts duplicate names, and the windows still work and stay apart by id.
 #[must_use]
 pub fn session_window_listing(session: &str) -> String {
     let Ok(mut command) = crate::mux_control::ambient_command_with_args(&[
         "list-windows",
-        "-t",
-        session,
+        "-a",
         "-F",
-        WINDOW_NAMES_FORMAT,
+        ALL_WINDOW_NAMES_FORMAT,
     ]) else {
         return String::new();
     };
     crate::subprocess::output(&mut command)
         .ok()
         .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+        .map(|output| session_windows(&String::from_utf8_lossy(&output.stdout), session))
         .unwrap_or_default()
 }
 
@@ -165,10 +198,25 @@ pub fn project_dir(cwd: &Path) -> std::path::PathBuf {
         .arg("-C")
         .arg(cwd)
         .args(["rev-parse", "--show-toplevel"]);
+    // Discover from `cwd` alone: an inherited `GIT_DIR`/`GIT_WORK_TREE`
+    // would name the caller's checkout instead of the one the agent is in.
+    for selector in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_INDEX_FILE",
+    ] {
+        command.env_remove(selector);
+    }
     crate::subprocess::output(&mut command)
         .ok()
         .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .map(|output| {
+            // Only the line terminator: a checkout path may end in a space.
+            let top = String::from_utf8_lossy(&output.stdout);
+            let top = top.strip_suffix('\n').unwrap_or(&top);
+            top.strip_suffix('\r').unwrap_or(top).to_string()
+        })
         .filter(|top| !top.is_empty())
         .map(std::path::PathBuf::from)
         .filter(|top| top.is_dir())
@@ -226,6 +274,15 @@ mod tests {
             Some("reviewer")
         );
         assert_eq!(agent_pane_title(None, None), None);
+        assert_eq!(
+            agent_pane_title(Some("#{pane_pid}"), None).as_deref(),
+            Some("{pane_pid}"),
+            "a format in a role is shown, never evaluated"
+        );
+        assert_eq!(
+            agent_pane_title(Some("##"), Some("rev")).as_deref(),
+            Some("rev")
+        );
     }
 
     #[test]
@@ -234,6 +291,14 @@ mod tests {
         assert_eq!(unique_window_name(listing, "claude"), "claude-3");
         assert_eq!(unique_window_name(listing, "codex"), "codex");
         assert_eq!(unique_window_name("", "claude"), "claude");
+    }
+
+    #[test]
+    fn a_session_listing_is_filtered_by_id_not_asked_by_target() {
+        let all = "$1\t@1\tclaude\n$2\t@2\tclaude\n$1\t@3\treview\n";
+        assert_eq!(session_windows(all, "$1:"), "@1\tclaude\n@3\treview\n");
+        assert_eq!(session_windows(all, "$2"), "@2\tclaude\n");
+        assert_eq!(session_windows(all, "$9"), "");
     }
 
     #[test]
