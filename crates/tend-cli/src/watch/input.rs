@@ -1113,7 +1113,21 @@ pub(super) fn open_work_up_window(raw: &str, in_tmux: bool) -> std::result::Resu
         .map_err(|error| format!("locate the tend binary: {error}"))?
         .display()
         .to_string();
-    let args = work_up_window_args(&exe, &work);
+    let mut args = work_up_window_args(&exe, &work);
+    // A second runner for the same Work in this session gets `-2`, not a
+    // twin. No `-t`, so both the listing and the window are this session's.
+    let listing = crate::mux_control::ambient_command()
+        .args([
+            "list-windows",
+            "-F",
+            crate::surface_names::WINDOW_NAMES_FORMAT,
+        ])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+        .unwrap_or_default();
+    args[2] = crate::surface_names::unique_window_name(&listing, &args[2]);
     let output = crate::mux_control::ambient_command()
         .args(&args)
         .output()
@@ -1143,6 +1157,7 @@ pub(super) fn work_up_window_args_in(
     work: &str,
 ) -> Vec<String> {
     use tend::shell::Dialect;
+    let work_id = work;
     let (exe, work) = (dialect.quote(exe), dialect.quote(work));
     let command = match dialect {
         Dialect::Posix => {
@@ -1153,7 +1168,19 @@ pub(super) fn work_up_window_args_in(
              $null = Read-Host"
         ),
     };
-    vec!["new-window".into(), "-n".into(), "work-up".into(), command]
+    vec![
+        "new-window".into(),
+        "-n".into(),
+        work_up_window_name(work_id),
+        command,
+    ]
+}
+
+/// The runner window is named for the Work it brings up, beside the Work's
+/// own window (named the Work id) rather than on top of it.
+pub(super) fn work_up_window_name(work: &str) -> String {
+    crate::tmux_work::window_name_for_work(work)
+        .map_or_else(|_| "work-up".into(), |work| format!("{work}-up"))
 }
 
 /// POSIX single-quote quoting: wrap in `'`, and close/escape/reopen around any
@@ -1163,17 +1190,7 @@ pub(super) fn shell_quote(value: &str) -> String {
     tend::shell::Dialect::Posix.quote(value)
 }
 
-/// Whether `list-windows` output already gives `name` to a *different* window.
-///
-/// Equality on the id, not the name, is what lets a window keep the name it
-/// already has: re-submitting an unchanged prefill must be a no-op, not a
-/// collision with itself.
-pub(super) fn window_name_taken(listing: &str, window_id: &str, name: &str) -> bool {
-    listing.lines().any(|line| {
-        line.split_once('\t')
-            .is_some_and(|(id, current)| id.trim() != window_id && current.trim() == name)
-    })
-}
+pub(super) use crate::surface_names::window_name_taken;
 
 /// Session names and pane titles are labels, not Work window ids. Preserve
 /// their internal whitespace; applying the window policy here would turn a

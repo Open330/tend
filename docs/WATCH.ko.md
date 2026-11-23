@@ -435,6 +435,24 @@ bind-key D display-popup -E -w 95% -h 90% "tend dashboard"
 공백은 `-`로 정규화하며 같은 session 안의 중복 이름은 거부합니다. 특정 window만
 동적 이름으로 되돌리려면 `tend window rename --auto`를 실행합니다.
 
+`automatic-rename`이 꺼져 있으면 window는 만들어질 때의 이름을 계속 씁니다. 그래서
+Tend가 만드는 session, window, pane에는 담고 있는 것의 이름을 붙입니다.
+
+| Tend가 만드는 것 | 이름 |
+| --- | --- |
+| workspace의 session | workspace id |
+| agent 하나를 위한 session (`--placement session`) | git checkout 디렉터리, 없으면 작업 디렉터리 |
+| Work window | Work id |
+| agent 하나를 위한 window (`--placement window`, 새 session의 첫 window) | task(짧은 slug), 없으면 alias, role, 마지막으로 프로그램 이름(`claude`) |
+| `c` 키로 여는 셸 window | 그 디렉터리, 없으면 `shell` |
+| `work up` 실행 window | `<WORK>-up` |
+| agent pane 제목 | alias, 없으면 role |
+
+같은 session에 이미 있는 이름이면 `-2`, `-3`…을 붙입니다(동시에 두 개를 만들면
+같은 이름이 나올 수 있습니다). watch rule이나 topology spawn은 Work id나 입력한
+이름을 씁니다. 이름은 만들 때만
+붙이며, 이미 있는 window나 session의 이름은 바꾸지 않습니다.
+
 ## 한 workspace를 터미널 두 개로 보기
 
 tmux session은 current window를 하나만 가지며, attach된 모든 client가 그 window를

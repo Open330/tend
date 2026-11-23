@@ -67,7 +67,9 @@ mod worktrees_cmd;
 
 // The Work model and agent launch live in the `tend-work` library, shared
 // with the daemon; these keep the `crate::…` paths the CLI already uses.
-use tend_work::{account_module, agent_launch, mux_control, tmux_work, work_up, worker_startup};
+use tend_work::{
+    account_module, agent_launch, mux_control, surface_names, tmux_work, work_up, worker_startup,
+};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
