@@ -126,6 +126,7 @@ pub fn prepare(
     alive: impl FnMut() -> bool,
     send_key: impl FnMut(&str) -> bool,
     bypass_requested: bool,
+    fresh: bool,
     timeout: Duration,
 ) -> Report {
     if !matches!(kind, AgentKind::ClaudeCode | AgentKind::Codex) {
@@ -142,6 +143,7 @@ pub fn prepare(
         alive,
         send_key,
         bypass_requested,
+        fresh,
         timeout,
         READY_QUIET,
         Duration::from_millis(250),
@@ -156,6 +158,7 @@ fn prepare_with(
     mut alive: impl FnMut() -> bool,
     mut send_key: impl FnMut(&str) -> bool,
     bypass_requested: bool,
+    fresh: bool,
     timeout: Duration,
     quiet: Duration,
     tick: Duration,
@@ -191,10 +194,11 @@ fn prepare_with(
                 || (kind == AgentKind::ClaudeCode && claude_composer_visible(screen))
         },
     );
-    // The account cannot work (limit) or is not signed in: whatever else
-    // the screen shows follows from that.
+    // A fresh launch's account cannot work (limit) or is not signed in:
+    // whatever else the screen shows follows from that. A resumed one's
+    // history can show the same lines, so it is never read for them.
     let (state, reason) = match resume {
-        _ if launch_blocker(&last.borrow()).is_some() => {
+        _ if fresh && launch_blocker(&last.borrow()).is_some() => {
             blocked_launch(launch_blocker(&last.borrow()).expect("just matched"))
         }
         // Codex asks before running hooks that are new or changed. Accepting
@@ -254,6 +258,7 @@ pub fn watch_prompted(
     alive: impl FnMut() -> bool,
     send_key: impl FnMut(&str) -> bool,
     bypass_requested: bool,
+    fresh: bool,
     timeout: Duration,
 ) -> Report {
     if !matches!(kind, AgentKind::ClaudeCode | AgentKind::Codex) {
@@ -270,6 +275,7 @@ pub fn watch_prompted(
         alive,
         send_key,
         bypass_requested,
+        fresh,
         Timing {
             timeout,
             quiet: READY_QUIET,
@@ -350,6 +356,7 @@ fn settled_step(
     Step::Wait
 }
 
+#[allow(clippy::too_many_arguments)] // the probes and timings tests drive one by one
 fn watch_prompted_with(
     clock: &dyn Clock,
     kind: AgentKind,
@@ -357,6 +364,7 @@ fn watch_prompted_with(
     mut alive: impl FnMut() -> bool,
     mut send_key: impl FnMut(&str) -> bool,
     bypass_requested: bool,
+    fresh: bool,
     timing: Timing,
 ) -> Report {
     let started = clock.now();
@@ -373,7 +381,7 @@ fn watch_prompted_with(
                 raw
             }
         });
-        if let Some(blocker) = launch_blocker(&screen) {
+        if let Some(blocker) = launch_blocker(&screen).filter(|_| fresh) {
             break blocked_launch(blocker);
         }
         if let Some(reason) = io::blocked_screen(&screen) {
@@ -594,6 +602,7 @@ mod tests {
             || true,
             |_| panic!("must not accept Codex trust"),
             false,
+            true,
             Duration::from_secs(1),
             Duration::from_millis(100),
             Duration::from_millis(25),
@@ -619,6 +628,7 @@ mod tests {
             alive,
             send,
             false,
+            true,
             Duration::from_secs(3),
             Duration::from_millis(100),
             Duration::from_millis(25),
@@ -774,6 +784,7 @@ mod tests {
             || true,
             |_| panic!("must not answer a hook review"),
             true,
+            true,
             Duration::from_secs(1),
             Duration::from_millis(100),
             Duration::from_millis(25),
@@ -816,6 +827,7 @@ mod tests {
             || true,
             |_| true,
             false,
+            true,
             Duration::from_secs(1),
             Duration::from_millis(100),
             Duration::from_millis(25),
@@ -889,6 +901,7 @@ mod tests {
                 true
             },
             bypass,
+            true,
             Timing {
                 timeout: Duration::from_secs(20),
                 quiet: Duration::from_millis(200),
@@ -945,6 +958,31 @@ mod tests {
             .reason
             .unwrap()
             .contains("usage limit. Upgrade to Pro"));
+    }
+
+    #[test]
+    fn a_resumed_conversation_is_never_read_for_a_limit() {
+        let clock = FakeClock {
+            base: Instant::now(),
+            elapsed: Cell::new(Duration::ZERO),
+        };
+        // Its history ends in the limit it was capped on before the swap.
+        let report = watch_prompted_with(
+            &clock,
+            AgentKind::ClaudeCode,
+            || Some(WEEKLY_LIMIT.into()),
+            || true,
+            |_| panic!(),
+            true,
+            false,
+            Timing {
+                timeout: Duration::from_secs(5),
+                quiet: Duration::from_millis(200),
+                working: Duration::from_secs(2),
+                tick: Duration::from_millis(50),
+            },
+        );
+        assert_eq!(report.state, State::Ready, "{report:?}");
     }
 
     #[test]
@@ -1011,6 +1049,7 @@ mod tests {
             || false,
             |_| panic!(),
             true,
+            true,
             timing,
         );
         assert_eq!(gone.state, State::Exited, "{gone:?}");
@@ -1020,6 +1059,7 @@ mod tests {
             || Some("Loading…".into()),
             || true,
             |_| panic!(),
+            true,
             true,
             timing,
         );

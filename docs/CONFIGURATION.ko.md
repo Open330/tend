@@ -169,14 +169,17 @@ account = "auto"          # 또는 고정 계정: "work@claude"
 
 ### 새 에이전트가 뜰 때까지 기다리기
 
-`claude`나 `codex`를 띄우는 모든 경로(`tend agent start`, `tend_start_agent`,
-`tend work up`, peer 호출, 앱의 시작)는 정해진 시간 안에서 에이전트가 일할 수 있게 될
-때까지 기다린 뒤 결과를 알려 줍니다.
+`claude`나 `codex`를 tmux나 rmux pane에 띄우는 모든 경로(`tend agent start`,
+`tend_start_agent`, `tend work up`, peer 호출, 앱의 시작. native PTY 호스트는 제외)는
+정해진 시간 안에서 에이전트가 일할 수 있게 될 때까지 기다린 뒤 결과를 알려 줍니다.
 
 - `started …`: 입력창이 떴거나, 첫 프롬프트를 몇 초 동안 처리하고 있습니다.
 - `started … on <계정> because <다른 계정> was at its usage limit`: `auto`일 때 첫
-  프롬프트에 한도 문구로 답한 에이전트는 닫고(그 pane에는 다른 것이 없음) 다음 계정으로
-  다시 띄웁니다. 최대 두 번입니다. `--json`의 `account.passed_over`에 남습니다.
+  프롬프트에 provider의 한도 문구로 답한 에이전트는 다음 계정으로 다시 띄웁니다. 최대 두
+  번입니다. 다음 계정을 먼저 고른 뒤에야 한도에 걸린 pane(다른 것은 없음)을 닫고, 남은
+  계정이 없으면 pane을 그대로 두고 시작하지 않은 것으로 알립니다. 건너뛴 계정은
+  `--json`의 `account.passed_over`에 남습니다. 한도 문구는 새 대화에서만 읽고, 기존
+  대화를 이어받는 실행에서는 읽지 않습니다.
 - `did not start: <이유>`: 실행이 실패하고, pane은 그대로 남겨 둡니다. 이유는 사용 한도
   (고정 계정이거나 계정 설정이 없을 때), 로그인이나 첫 실행 화면, tend가 답하지 않는
   대화상자, 에이전트 종료 중 하나입니다. 에이전트 행에도 같은 내용이 표시됩니다.
@@ -190,8 +193,8 @@ tend는 방금 자신이 띄운 에이전트의 시작 대화상자 중 실행 �
 준비된 뒤에만 작업을 받습니다.
 
 시간 안에 알아볼 수 있는 화면이 나오지 않은 에이전트도 시작한 것으로 보고, 결과 줄과
-행에 `not seen ready yet: …`를 붙입니다. tendd 안에서 실행할 때(`work up`, 앱)는
-요청 기한 안에 결과를 알릴 수 있도록 일찍 기다림을 끝냅니다.
+행에 `not seen ready yet: …`를 붙입니다. 시작 한 번은 기다림과 계정 변경을 합쳐 최대
+25초이므로, 앱과 Fleet의 30초짜리 `agent start`도 항상 결과를 받습니다.
 
 실행 중에 한도에 걸린 에이전트는 [`tend swap`](ACCOUNT_SWAP.md)이 처리합니다.
 

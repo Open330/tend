@@ -9,9 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- A new `claude` or `codex` agent (`tend agent start`, `tend_start_agent`,
-  `tend work up`, a peer call, the app's start) no longer sits silently on a
-  startup screen. The launch waits, within a bound, until the agent can
+- A new `claude` or `codex` agent in a tmux or rmux pane (`tend agent start`,
+  `tend_start_agent`, `tend work up`, a peer call, the app's start) no longer
+  sits silently on a startup screen. The launch waits, within a bound, until the agent can
   work. It answers only the setup dialogs of an agent it just launched that
   agree to nothing more (Claude's folder trust, Codex's update menu,
   bypass-permissions when asked for), and it reports `started`, `started on

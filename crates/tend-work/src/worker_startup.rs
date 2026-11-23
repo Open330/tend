@@ -36,24 +36,52 @@ fn observe(control: &Control, pane: &str) -> Option<Fence> {
 /// Only the exact new launch in its requested directory may be prepared.
 /// Capture joined logical lines: narrow panes wrap both labels and footers.
 pub fn prepare(pane: &str, cwd: &Path, launch_id: &str, bypass: bool) -> Result<Report> {
-    prepare_inner(pane, cwd, launch_id, bypass, Mode::Prepare)
+    prepare_inner(
+        pane,
+        cwd,
+        launch_id,
+        bypass,
+        Mode::Prepare,
+        false,
+        Duration::from_secs(30),
+    )
 }
 
 /// After a person answers setup, recover readiness without pressing any key
 /// or accepting another folder, hook, settings or permission dialog.
 pub fn probe(pane: &str, cwd: &Path, launch_id: &str) -> Result<Report> {
-    prepare_inner(pane, cwd, launch_id, false, Mode::Probe)
+    prepare_inner(
+        pane,
+        cwd,
+        launch_id,
+        false,
+        Mode::Probe,
+        false,
+        Duration::from_secs(3),
+    )
 }
 
-/// Watch a launch that got its first prompt on the command line until it
-/// works on it, answering the same startup dialogs as [`prepare`].
-pub fn watch_prompted(pane: &str, cwd: &Path, launch_id: &str, bypass: bool) -> Result<Report> {
-    prepare_inner(pane, cwd, launch_id, bypass, Mode::Prompted)
+/// Watch an agent tend just launched in `pane` until it can work, for at
+/// most `timeout`: [`prepare`] for one with no prompt, or, for one given
+/// its first prompt on the command line, until it works on it (answering
+/// the same startup dialogs). Only a `fresh` launch (a new conversation)
+/// is read for the usage-limit and sign-in screens.
+pub fn watch_launch(
+    pane: &str,
+    cwd: &Path,
+    launch_id: &str,
+    bypass: bool,
+    prompted: bool,
+    fresh: bool,
+    timeout: Duration,
+) -> Result<Report> {
+    let mode = if prompted {
+        Mode::Prompted
+    } else {
+        Mode::Prepare
+    };
+    prepare_inner(pane, cwd, launch_id, bypass, mode, fresh, timeout)
 }
-
-/// How long a prompted launch may take to start working: its startup,
-/// any dialogs, then [`worker_startup::WORKING_PROOF`] of its first turn.
-const PROMPTED_TIMEOUT: Duration = Duration::from_secs(45);
 
 /// `limit`, ending early enough for the caller to record the outcome when
 /// tendd runs this under a deadline (`work up`, the app's start).
@@ -74,6 +102,8 @@ fn prepare_inner(
     launch_id: &str,
     bypass: bool,
     mode: Mode,
+    fresh: bool,
+    timeout: Duration,
 ) -> Result<Report> {
     let passive = mode == Mode::Probe;
     let control = Control::Ambient;
@@ -120,7 +150,8 @@ fn prepare_inner(
             &matches,
             send_key,
             bypass,
-            within_deadline(PROMPTED_TIMEOUT),
+            fresh,
+            within_deadline(timeout),
         ),
         Mode::Prepare | Mode::Probe => worker_startup::prepare(
             fence.kind,
@@ -128,11 +159,19 @@ fn prepare_inner(
             &matches,
             send_key,
             bypass,
-            within_deadline(Duration::from_secs(if passive { 3 } else { 30 })),
+            fresh,
+            within_deadline(timeout),
         ),
     };
     if !matches() {
-        anyhow::bail!("worker changed before readiness could be recorded");
+        // The process this launch started is gone (or its pane now holds
+        // another): a terminal observation, never stamped on what is
+        // there now.
+        return Ok(Report {
+            state: worker_startup::State::Exited,
+            answered: report.answered,
+            reason: Some("the agent exited (or its pane changed) during startup".into()),
+        });
     }
     let state = if report.state == worker_startup::State::Ready {
         "ready"

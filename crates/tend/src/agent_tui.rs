@@ -454,24 +454,47 @@ pub const SIGN_IN_OPENINGS: &[(&str, &str)] = &[
 ];
 
 /// The launch blocker `screen` shows on its last lines, if any.
+///
+/// A limit counts only as the provider draws it: under Claude's result
+/// marker `⎿` or Codex's error marker `■`, opening with a limit phrase and
+/// naming a reset, a retry or an upgrade. The model's own answer (Claude's
+/// `●`, a plain line) can say "you've hit your goal" or quote a limit, and
+/// must never read as one.
 #[must_use]
 pub fn launch_blocker(screen: &str) -> Option<LaunchBlocker> {
     let tail = screen_tail(screen, LAUNCH_BLOCKER_TAIL_LINES);
     let lines: Vec<&str> = tail.lines().collect();
     lines.iter().enumerate().find_map(|(at, line)| {
+        let marked = provider_marked(line);
         let shown = without_decoration(line);
         let text = shown.to_lowercase().replace('\u{2019}', "'");
-        if LIMIT_OPENINGS
-            .iter()
-            .any(|opening| text.starts_with(opening))
-        {
-            return Some(LaunchBlocker::Limit(limit_message(shown, &lines[at + 1..])));
+        if marked && LIMIT_OPENINGS.iter().any(|opening| text.starts_with(opening)) {
+            let message = limit_message(shown, &lines[at + 1..]);
+            let lower = message.to_lowercase();
+            let says_limit = lower.split_whitespace().take(6).any(|word| word.starts_with("limit"));
+            let says_when = ["reset", "try again", "upgrade", "/usage", "/extra-usage"]
+                .iter()
+                .any(|word| lower.contains(word));
+            if says_limit && says_when {
+                return Some(LaunchBlocker::Limit(message));
+            }
+            return None;
         }
         SIGN_IN_OPENINGS
             .iter()
-            .find(|(opening, _)| text.starts_with(opening))
+            .find(|(opening, _)| {
+                text.starts_with(opening)
+                    // An API error is only the provider's when it marks it.
+                    && (marked || !opening.starts_with("api error") && !opening.starts_with("invalid api"))
+            })
             .map(|(_, reason)| LaunchBlocker::SignIn(reason))
     })
+}
+
+/// Whether `line` opens with the marker the provider puts on its own
+/// result or error text: Claude's `⎿`, Codex's `■`.
+fn provider_marked(line: &str) -> bool {
+    line.trim_start().starts_with(['⎿', '■'])
 }
 
 /// `line` without the bullets and frames agents draw before a message. Not
@@ -1609,9 +1632,23 @@ mod tests {
         )
         .starts_with("You’ve hit your usage limit."));
         assert!(
-            limit("● Claude usage limit reached. Your limit will reset at 2pm\n❯ ")
+            limit("  ⎿  Claude usage limit reached. Your limit will reset at 2pm\n❯ ")
                 .starts_with("Claude usage limit reached")
         );
+        // The model's own words are never the provider's limit.
+        assert_eq!(
+            launch_blocker("● You've hit your goal: the build passes.\n❯ "),
+            None
+        );
+        assert_eq!(
+            launch_blocker("● You've hit your limit · resets 3pm, as the log says.\n❯ "),
+            None
+        );
+        assert_eq!(
+            launch_blocker("You've hit your usage limit. Try again at 3pm\n› Ask Codex"),
+            None
+        );
+        assert_eq!(launch_blocker("  ⎿  You've hit your stride\n❯ "), None);
         // The user's own prompt line can say anything.
         assert_eq!(
             launch_blocker("> You've hit your limit, says the test\n❯ "),

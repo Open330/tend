@@ -237,16 +237,20 @@ and creates nothing.
 
 ### Waiting for a new agent to start
 
-Every launch of `claude` or `codex` (`tend agent start`, `tend_start_agent`,
-`tend work up`, a peer call, the app's start) waits, within a bound, until
-the agent can work, and says how it went:
+Every launch of `claude` or `codex` into a tmux or rmux pane (`tend agent
+start`, `tend_start_agent`, `tend work up`, a peer call, the app's start;
+not the native PTY host) waits, within a bound, until the agent can work,
+and says how it went:
 
 - `started …`: the agent reached its composer, or its first prompt has been
   running for a few seconds.
 - `started … on <account> because <other> was at its usage limit`: with
-  `auto`, an agent that answered its first prompt with the limit line is
-  closed (its pane held nothing else) and started again on the next account,
-  at most twice. `--json` lists them in `account.passed_over`.
+  `auto`, an agent that answered its first prompt with the provider's limit
+  line is started again on the next account, at most twice. The next account
+  is chosen first; only then is the capped pane (which held nothing else)
+  closed. With no account left it stays, and the launch does not start.
+  `--json` lists the accounts passed over in `account.passed_over`. Only a
+  new conversation is read for the limit: a launch that resumes one is not.
 - `did not start: <reason>`: the launch fails and the pane is kept for you.
   The reason is a usage limit (a pinned or unrouted account), a sign-in or
   first-run screen, a dialog tend does not answer, or the agent exiting.
@@ -263,9 +267,9 @@ typed into a dialog. A worker started without a prompt gets its task only
 once its pane is ready, as before.
 
 An agent that shows nothing tend recognises in time still counts as
-started, with `not seen ready yet: …` on its line and row. Under tendd
-(`work up`, the app) the wait ends early enough to report within the
-request's deadline.
+started, with `not seen ready yet: …` on its line and row. A start takes
+at most 25 seconds, waits and an account change included, so the app's and
+Fleet's 30-second `agent start` always gets its result.
 
 An agent already capped mid-run is [`tend swap`](ACCOUNT_SWAP.md)'s job,
 and with no accounts at all the `resume-after-limit` rule, once enabled,
