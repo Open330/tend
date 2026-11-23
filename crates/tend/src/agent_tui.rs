@@ -444,6 +444,10 @@ pub const SIGN_IN_OPENINGS: &[(&str, &str)] = &[
         "the account's sign-in has expired (Codex could not refresh its access token)",
     ),
     (
+        "not logged in",
+        "the account is not signed in (Claude: \"Not logged in · Please run /login\")",
+    ),
+    (
         "api error: 401",
         "the account's sign-in was rejected (API Error: 401); sign it in again",
     ),
@@ -452,6 +456,10 @@ pub const SIGN_IN_OPENINGS: &[(&str, &str)] = &[
         "the account's API key was rejected (Invalid API key)",
     ),
 ];
+
+/// Sign-in lines Claude prints as its answer to a prompt, which count only
+/// under its `⎿` marker.
+const MARKED_SIGN_IN: &[&str] = &["not logged in", "api error: 401", "invalid api key"];
 
 /// The launch blocker `screen` shows on its last lines, if any.
 ///
@@ -468,10 +476,17 @@ pub fn launch_blocker(screen: &str) -> Option<LaunchBlocker> {
         let marked = provider_marked(line);
         let shown = without_decoration(line);
         let text = shown.to_lowercase().replace('\u{2019}', "'");
-        if marked && LIMIT_OPENINGS.iter().any(|opening| text.starts_with(opening)) {
+        if marked
+            && LIMIT_OPENINGS
+                .iter()
+                .any(|opening| text.starts_with(opening))
+        {
             let message = limit_message(shown, &lines[at + 1..]);
             let lower = message.to_lowercase();
-            let says_limit = lower.split_whitespace().take(6).any(|word| word.starts_with("limit"));
+            let says_limit = lower
+                .split_whitespace()
+                .take(6)
+                .any(|word| word.starts_with("limit"));
             let says_when = ["reset", "try again", "upgrade", "/usage", "/extra-usage"]
                 .iter()
                 .any(|word| lower.contains(word));
@@ -484,8 +499,9 @@ pub fn launch_blocker(screen: &str) -> Option<LaunchBlocker> {
             .iter()
             .find(|(opening, _)| {
                 text.starts_with(opening)
-                    // An API error is only the provider's when it marks it.
-                    && (marked || !opening.starts_with("api error") && !opening.starts_with("invalid api"))
+                    // An answer to a prompt is only the provider's when it
+                    // marks it.
+                    && (marked || !MARKED_SIGN_IN.contains(opening))
             })
             .map(|(_, reason)| LaunchBlocker::SignIn(reason))
     })
@@ -1663,6 +1679,16 @@ mod tests {
             launch_blocker(" Select login method:\n ❯ 1. Claude account with subscription"),
             Some(LaunchBlocker::SignIn(reason)) if reason.contains("not signed in")
         ));
+        // Scratch check, 2026-11-23: Claude on a profile without credentials.
+        let not_logged_in = "❯ Reply with the single word: ok\n  ⎿  Not logged in · Please run /login\n────\n❯ Once fixed, resend your message\n────\n  ⏵⏵ bypass permissions on (shift+tab to cycle)";
+        assert!(matches!(
+            launch_blocker(not_logged_in),
+            Some(LaunchBlocker::SignIn(reason)) if reason.contains("not signed in")
+        ));
+        assert_eq!(
+            launch_blocker("● Not logged in users see the banner.\n❯ "),
+            None
+        );
         // rtzr, 2026-10-22: Codex relaunched on a home without credentials.
         let codex_login = "  Welcome to Codex, OpenAI's command-line coding agent\n  Sign in with ChatGPT to use Codex as part of your paid plan\n  or connect an API key for usage-based billing\n> 1. Sign in with ChatGPT\n     Usage included with Plus, Pro, Business, and Enterprise plans\n  2. Sign in with Device Code\n     Sign in from another device with a one-time code\n  3. Provide your own API key\n     Pay for what you use\n  Press enter to continue";
         assert!(matches!(
