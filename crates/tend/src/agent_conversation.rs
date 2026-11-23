@@ -611,17 +611,33 @@ pub fn claude_first_turn(
     }
     let name = format!("{session_id}.jsonl");
     let mut found: Vec<PathBuf> = Vec::new();
+    // As in [`claude_transcript_in`]: only a path that is plainly missing
+    // counts as holding nothing; anything unreadable leaves it unknown.
     for root in roots {
-        let Ok(projects) = std::fs::read_dir(root.join("projects")) else {
-            continue;
+        let projects = match std::fs::read_dir(root.join("projects")) {
+            Ok(projects) => projects,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return FirstTurn::Unknown,
         };
-        for project in projects.flatten() {
+        for project in projects {
+            let Ok(project) = project else {
+                return FirstTurn::Unknown;
+            };
             let path = project.path().join(&name);
-            if path.is_file() {
-                let real = std::fs::canonicalize(&path).unwrap_or(path);
-                if !found.contains(&real) {
-                    found.push(real);
+            match std::fs::metadata(&path) {
+                Ok(meta) if meta.is_file() => {
+                    let Ok(real) = std::fs::canonicalize(&path) else {
+                        return FirstTurn::Unknown;
+                    };
+                    if !found.contains(&real) {
+                        found.push(real);
+                    }
                 }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                // A stray file in `projects` holds nothing.
+                Err(_) if project.file_type().is_ok_and(|kind| kind.is_file()) => {}
+                // Not a file, or unreadable: it may be the transcript.
+                _ => return FirstTurn::Unknown,
             }
         }
     }
@@ -1163,6 +1179,29 @@ mod tests {
             claude_first_turn(id, &roots, "task", past),
             FirstTurn::Unknown
         );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            // A project that cannot be read may hold another copy.
+            std::fs::remove_dir_all(two.join("projects/p")).unwrap();
+            std::fs::create_dir_all(two.join("projects/q")).unwrap();
+            std::fs::set_permissions(
+                two.join("projects/q"),
+                std::fs::Permissions::from_mode(0o000),
+            )
+            .unwrap();
+            let blocked = claude_first_turn(id, &roots, "task", past);
+            let readable = std::fs::read_dir(two.join("projects/q")).is_ok();
+            std::fs::set_permissions(
+                two.join("projects/q"),
+                std::fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+            // (Root reads it anyway; the check is for everyone else.)
+            if !readable {
+                assert_eq!(blocked, FirstTurn::Unknown);
+            }
+        }
         // One file reached through two roots is still one transcript.
         assert_eq!(
             claude_first_turn(id, &[one.clone(), one.join("..").join("one")], "task", past),

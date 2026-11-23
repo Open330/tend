@@ -1052,6 +1052,16 @@ fn release_capped_pane(capped: &Capped) -> Result<()> {
         first_turn(&capped.facts) == tend::agent_conversation::FirstTurn::RejectedForLimit,
         "the agent in pane {pane} has done more than meet the limit"
     );
+    // Nothing typed since: the pane still shows the refusal at an empty
+    // composer. A draft (or a screen tend cannot read) keeps the pane.
+    let screen = control
+        .output(&["capture-pane", "-p", "-J", "-t", pane])
+        .map(|raw| tend::screen::prepare_capture(&raw, 120))
+        .unwrap_or_default();
+    anyhow::ensure!(
+        capped_screen_untouched(&screen),
+        "pane {pane} no longer shows only the refusal (something was typed, or it could not be read)"
+    );
     anyhow::ensure!(
         capped
             .facts
@@ -1070,6 +1080,19 @@ fn release_capped_pane(capped: &Capped) -> Result<()> {
     );
     anyhow::ensure!(gone.is_some(), "pane {pane} is not confirmed closed");
     Ok(())
+}
+
+/// What Claude shows in an empty composer after an error, read as text.
+const CLAUDE_ERROR_PLACEHOLDERS: &[&str] = &["Once fixed, resend your message"];
+
+/// Whether a capped Claude pane still shows only its refusal: the limit
+/// line, and a composer with nothing typed in it.
+fn capped_screen_untouched(screen: &str) -> bool {
+    matches!(
+        tend::agent_tui::launch_blocker(screen),
+        Some(tend::agent_tui::LaunchBlocker::Limit(_))
+    ) && tend::agent_tui::composer_draft(screen, tend::event::AgentKind::ClaudeCode)
+        .is_none_or(|draft| draft.is_empty() || CLAUDE_ERROR_PLACEHOLDERS.contains(&draft.as_str()))
 }
 
 /// Whether the server says `pane` does not exist (or the server itself is
@@ -2571,6 +2594,28 @@ mod tests {
         ]);
         assert_eq!(joined.options, ["--model"]);
         assert_eq!(joined.prompt.as_deref(), Some("-x starts with a dash"));
+    }
+
+    #[test]
+    fn a_capped_pane_is_closed_only_while_nothing_is_typed_in_it() {
+        let screen = |composer: &str| {
+            format!(
+                "> task\n  ⎿  You've hit your limit · resets 3pm (Asia/Seoul)\n─────\n❯ {composer}\n─────\n  ⏵⏵ bypass permissions on"
+            )
+        };
+        assert!(capped_screen_untouched(&screen("")));
+        assert!(capped_screen_untouched(&screen(
+            "Once fixed, resend your message"
+        )));
+        // A draft typed while another account was being chosen.
+        assert!(!capped_screen_untouched(&screen(
+            "wait, use the other repo"
+        )));
+        // Not the refusal any more, or nothing readable.
+        assert!(!capped_screen_untouched(
+            "● Working on it\n─────\n❯ \n─────"
+        ));
+        assert!(!capped_screen_untouched(""));
     }
 
     fn request(agent: AgentProgram, placement: Placement) -> StartRequest {
