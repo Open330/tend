@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location(
     "cost_audit", Path(__file__).with_name("collaboration-cost-audit.py"))
@@ -13,6 +14,47 @@ SPEC.loader.exec_module(audit)
 
 
 class CostAuditTests(unittest.TestCase):
+    def test_default_path_matches_platform_and_absolute_xdg_override(self):
+        for platform, suffix in [("darwin", "Library/Application Support"),
+                                 ("linux", ".local/share"), ("win32", "AppData/Roaming")]:
+            with self.subTest(platform=platform), patch.object(audit.sys, "platform", platform), \
+                    patch.dict(audit.os.environ, {}, clear=True):
+                self.assertEqual(audit.default_audit_path(),
+                                 Path.home() / suffix / "tend/collaboration-audit.ndjson")
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.dict(audit.os.environ, {"XDG_DATA_HOME": directory}):
+            self.assertEqual(audit.default_audit_path(), Path(directory) / "tend/collaboration-audit.ndjson")
+        with patch.object(audit.sys, "platform", "darwin"), \
+                patch.dict(audit.os.environ, {"XDG_DATA_HOME": "relative"}):
+            self.assertEqual(audit.default_audit_path(),
+                             Path.home() / "Library/Application Support/tend/collaboration-audit.ndjson")
+
+    def test_rotation_retains_usage_and_separates_experiment_executables(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ledger = Path(directory) / "audit.ndjson"
+            rotated = ledger.with_name(ledger.name + ".1")
+            base = {"operation": "list", "read_view": "full", "ok": True,
+                    "response_bytes": 100, "elapsed_us": 1000}
+            installed = dict(base, at="2026-10-20T01:00:00Z",
+                             actor={"client_kind": "unknown", "executable": "/Applications/Tend.app/Tend"})
+            experiment = dict(base, at="2026-10-20T02:00:00Z",
+                              actor={"client_kind": "unknown", "executable": "/tmp/experiment/Tend"})
+            rotated.write_text(json.dumps(dict(installed, at="2026-10-19T01:00:00Z")) + "\n" +
+                               json.dumps(installed) + "\n")
+            ledger.write_text(json.dumps(experiment) + "\n")
+            since = dt.datetime(2026, 10, 20, tzinfo=dt.timezone.utc)
+            report = audit.summarize(ledger, [], since, 300)
+            self.assertEqual(report["ipc"][0]["calls"], 2)
+            self.assertEqual(report["ipc"][0]["response_bytes"], 200)
+            self.assertEqual(report["audit_files"], [str(rotated), str(ledger)])
+            self.assertEqual(report["observed_from"], "2026-10-20T01:00:00+00:00")
+            self.assertEqual(report["observed_to"], "2026-10-20T02:00:00+00:00")
+            self.assertEqual(len(report["ipc_shapes"]), 2)
+            ledger.unlink()  # Between rotation and the next append, .1 is still evidence.
+            report = audit.summarize(ledger, [], since, 300)
+            self.assertTrue(report["audit_available"])
+            self.assertEqual(report["ipc"][0]["calls"], 1)
+
     def test_pairs_provider_formats_and_keeps_ui_separate(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

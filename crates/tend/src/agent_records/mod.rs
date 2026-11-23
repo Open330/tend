@@ -450,7 +450,7 @@ impl RecordStore {
             .collect();
         Ok(SearchResult { plan, matches, has_more, candidates_limited, next_offset: has_more.then_some(request.offset + request.limit), coverage,
             guidance: vec![
-                "Use tend_agent_read on event_id to inspect surrounding requests, commands and paired results. Prose is not execution evidence.".into(),
+                "Use tend_agent_search with event_id (or CLI: tend agent read EVENT_ID) to inspect surrounding requests, commands and paired results. Prose is not execution evidence.".into(),
                 "Broaden with alternate terms or omit keywords and search the event-time window; filter session_id to follow a conversation. Exclude the investigating session to avoid self-matches.".into(),
                 "No matches does not prove absence. If coverage.complete=false, repeat to continue indexing and inspect warnings; unsupported/missing sources remain unknown.".into(),
             ] })

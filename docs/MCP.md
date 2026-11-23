@@ -650,6 +650,13 @@ to break existing daemon audit calls down by client and operation. `watch` calls
 are UI traffic; raw IPC counts are not model token counts. To measure recorded
 model-facing tool results, add `--session /path/to/session.jsonl` for each Codex
 or Claude session (repeat as needed). `--json` produces a comparable report.
+The default audit path follows Tend's platform data directory (including
+`~/Library/Application Support/tend` on macOS) and an absolute `XDG_DATA_HOME`
+override. `--audit PATH` selects another live ledger. The report includes its
+retained `.1` generation, lists the files and observed timestamp range, and
+separates IPC shapes by caller executable so test builds can be distinguished
+from the installed app. Rotation limits retained history; `--hours 24` does
+not guarantee 24 hours of evidence.
 
 The report counts UTF-8 output bytes, maximum response sizes, and identical
 results for the same arguments within five minutes. Repeats are investigation

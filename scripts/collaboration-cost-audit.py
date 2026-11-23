@@ -14,6 +14,31 @@ import math
 import os
 from pathlib import Path
 import re
+import sys
+
+
+def default_audit_path():
+    override = os.environ.get("XDG_DATA_HOME")
+    if override and Path(override).is_absolute():
+        data_home = Path(override)
+    elif sys.platform == "darwin":
+        data_home = Path.home() / "Library/Application Support"
+    elif sys.platform == "win32":
+        data_home = Path(os.environ.get("APPDATA") or Path.home() / "AppData/Roaming")
+    else:
+        data_home = Path.home() / ".local/share"
+    return data_home / "tend/collaboration-audit.ndjson"
+
+
+def audit_files(path):
+    # Tend keeps one rotated generation. Do not glob backups or unrelated logs.
+    return [candidate for candidate in (path.with_name(path.name + ".1"), path)
+            if candidate.is_file()]
+
+
+def audit_records(paths):
+    for path in paths:
+        yield from records(path)
 
 
 def records(path):
@@ -91,12 +116,18 @@ def summarize(audit, sessions, since, repeat_seconds):
     ipc_metrics = collections.defaultdict(collections.Counter)
     unknown_at = 0
     shapes = {}
-    if audit.exists():
-        for row in records(audit):
+    ledgers = audit_files(audit)
+    observed_from = observed_to = None
+    if ledgers:
+        for row in audit_records(ledgers):
             at = timestamp(row.get("at"))
             if at is None or at < since:
                 continue
+            observed_from = min(observed_from, at) if observed_from else at
+            observed_to = max(observed_to, at) if observed_to else at
             client = row.get("actor", {}).get("client_kind", "unknown")
+            executable = row.get("actor", {}).get("executable")
+            executable = executable if isinstance(executable, str) else None
             key = (client, row.get("operation", "unknown"))
             ipc[key] += 1
             # Split response shapes: a large preview must not hide small badge reads.
@@ -108,8 +139,9 @@ def summarize(audit, sessions, since, repeat_seconds):
             status, scope = row.get("status"), row.get("scope")
             status = status if isinstance(status, str) else None
             scope = scope if isinstance(scope, str) else None
-            shape_key = (client, key[1], view, limit, status, scope)
+            shape_key = (client, executable, key[1], view, limit, status, scope)
             shape = shapes.setdefault(shape_key, {"client": client, "operation": key[1],
+                "executable": executable,
                 "view": view, "query_limit": limit, "status": status, "scope": scope, "calls": 0, "response_bytes": 0,
                 "response_bytes_samples": 0, "elapsed_samples": []})
             shape["calls"] += 1
@@ -213,7 +245,10 @@ def summarize(audit, sessions, since, repeat_seconds):
                     "Identical short-window results are candidates for review, not proven waste.",
                     "Only supplied session files are measured; provider caching/tokenization is unknown.",
                     "IPC shapes use recorded view, limit, status and scope; human_only and cursor/page position are not recorded."],
-        "audit_available": audit.exists(),
+        "audit_available": bool(ledgers),
+        "audit_files": [str(path) for path in ledgers],
+        "observed_from": observed_from.isoformat() if observed_from else None,
+        "observed_to": observed_to.isoformat() if observed_to else None,
         "ipc": ipc_rows,
         "ipc_shapes": sorted(shape_rows, key=lambda row: row["response_bytes"], reverse=True),
         "sessions_scanned": len(seen_files),
@@ -224,8 +259,8 @@ def summarize(audit, sessions, since, repeat_seconds):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    data_home = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
-    parser.add_argument("--audit", type=Path, default=data_home / "tend/collaboration-audit.ndjson")
+    parser.add_argument("--audit", type=Path, default=default_audit_path(),
+                        help="Live audit path; also reads its retained .1 generation")
     parser.add_argument("--session", type=Path, action="append", default=[],
                         help="Codex or Claude JSONL; repeat for several sessions")
     parser.add_argument("--hours", type=float, default=24)
@@ -243,6 +278,8 @@ def main():
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return
     print(f"Since {report['since']}; recorded output bytes, NOT billed tokens")
+    print(f"Observed {report['observed_from']} .. {report['observed_to']}; "
+          f"{len(report['audit_files'])} retained audit files (not a guaranteed full time window)")
     print("IPC calls (watch/UI calls do not imply model token costs):")
     if not report["audit_available"]:
         print("  Audit file unavailable; IPC usage is unknown, not zero.")
@@ -260,6 +297,7 @@ def main():
         print(f"  {row['client']}/{row['operation']} view={row['view']} limit={row['query_limit']} status={row['status']} scope={row['scope']}: "
               f"{row['calls']} calls, {row['response_bytes']} bytes "
               f"({row['response_bytes_samples']} measured), p95 {latency}")
+        print(f"    executable: {row['executable'] or 'unrecorded'}")
     print(f"Tool results from {report['sessions_scanned']} supplied sessions:")
     for row in report["tool_results"]:
         print(f"  {row['tool']}: {row['calls']} calls, {row['output_bytes']} bytes, "
