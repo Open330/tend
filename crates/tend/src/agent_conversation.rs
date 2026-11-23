@@ -199,7 +199,12 @@ pub fn claude_roots(pid: u32) -> Vec<PathBuf> {
         roots.push(home.join(".claude"));
         // aas keeps its profiles in the platform's data directory
         // (`~/Library/Application Support` on macOS) or `~/.config`.
-        let mut bases = vec![home.join(".config/asx/profiles")];
+        // `asx` is the retired name of the same directory.
+        let mut bases = vec![
+            home.join(".config/aas/profiles"),
+            home.join(".config/asx/profiles"),
+        ];
+        bases.extend(dirs::data_dir().map(|data| data.join("aas/profiles")));
         bases.extend(dirs::data_dir().map(|data| data.join("asx/profiles")));
         for base in bases {
             if let Ok(profiles) = std::fs::read_dir(base) {
@@ -571,6 +576,84 @@ pub fn claude_transcript_in(session_id: &str, roots: &[PathBuf]) -> Saved {
         Saved::Unknown
     } else {
         Saved::No
+    }
+}
+
+/// What a new Claude conversation's own transcript says its first turn did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FirstTurn {
+    /// One prompt, answered only by Claude's synthetic usage-limit error:
+    /// the provider refused it before any model or tool work.
+    RejectedForLimit,
+    /// Anything else: work done, a second prompt, a real answer.
+    Other,
+    /// No transcript found, or it could not be read.
+    Unknown,
+}
+
+/// The largest transcript read for [`claude_first_turn`]: a refused first
+/// turn is a few kilobytes.
+const FIRST_TURN_LIMIT: u64 = 256 * 1024;
+
+/// Read `session_id`'s transcript under `roots` for [`FirstTurn`].
+#[must_use]
+pub fn claude_first_turn(session_id: &str, roots: &[PathBuf]) -> FirstTurn {
+    if uuid::Uuid::parse_str(session_id).is_err() {
+        return FirstTurn::Unknown;
+    }
+    let name = format!("{session_id}.jsonl");
+    let found = roots.iter().find_map(|root| {
+        std::fs::read_dir(root.join("projects"))
+            .ok()?
+            .flatten()
+            .map(|project| project.path().join(&name))
+            .find(|path| path.is_file())
+    });
+    match found.and_then(|path| read_bounded(&path, FIRST_TURN_LIMIT)) {
+        Some(bytes) => first_turn_of(&String::from_utf8_lossy(&bytes)),
+        None => FirstTurn::Unknown,
+    }
+}
+
+/// [`FirstTurn`] of transcript `text` (JSON lines).
+#[must_use]
+pub fn first_turn_of(text: &str) -> FirstTurn {
+    let mut prompts = 0;
+    let mut refused = false;
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) else {
+            return FirstTurn::Unknown;
+        };
+        match entry["type"].as_str() {
+            Some("user") => {
+                let content = &entry["message"]["content"];
+                let plain = content.is_string()
+                    || content
+                        .as_array()
+                        .is_some_and(|blocks| blocks.iter().all(|block| block["type"] == "text"));
+                if !plain {
+                    // A tool result: work was done.
+                    return FirstTurn::Other;
+                }
+                prompts += 1;
+            }
+            Some("assistant") => {
+                let synthetic_limit = entry["isApiErrorMessage"] == true
+                    && entry["error"] == "rate_limit"
+                    && entry["message"]["model"] == "<synthetic>";
+                if !synthetic_limit {
+                    return FirstTurn::Other;
+                }
+                refused = true;
+            }
+            // Bookkeeping lines (summaries, snapshots, system notes).
+            _ => {}
+        }
+    }
+    if refused && prompts == 1 {
+        FirstTurn::RejectedForLimit
+    } else {
+        FirstTurn::Other
     }
 }
 
@@ -961,5 +1044,30 @@ mod tests {
         std::fs::set_permissions(&project, std::fs::Permissions::from_mode(0o755)).unwrap();
         // Root can read anything; elsewhere the transcript cannot be seen.
         assert_ne!(saved, Saved::No);
+    }
+
+    #[test]
+    fn only_a_lone_prompt_refused_for_the_limit_is_a_rejected_first_turn() {
+        let prompt = r#"{"type":"user","message":{"role":"user","content":"fix the build"}}"#;
+        let refused = r#"{"type":"assistant","message":{"model":"<synthetic>","role":"assistant","content":[{"type":"text","text":"You've hit your limit · resets 3pm"}]},"error":"rate_limit","isApiErrorMessage":true}"#;
+        let snapshot = r#"{"type":"file-history-snapshot","snapshot":{}}"#;
+        assert_eq!(
+            first_turn_of(&format!("{snapshot}\n{prompt}\n{refused}\n")),
+            FirstTurn::RejectedForLimit
+        );
+        // A real answer, a tool's output, or a second prompt: work happened.
+        let answer = r#"{"type":"assistant","message":{"model":"claude-opus-5-5","role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{}}]}}"#;
+        let tool = r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"You've hit your limit · resets 3pm"}]}}"#;
+        assert_eq!(
+            first_turn_of(&format!("{prompt}\n{answer}\n{tool}\n{refused}")),
+            FirstTurn::Other
+        );
+        assert_eq!(
+            first_turn_of(&format!("{prompt}\n{refused}\n{prompt}")),
+            FirstTurn::Other
+        );
+        assert_eq!(first_turn_of(prompt), FirstTurn::Other);
+        assert_eq!(first_turn_of("not json"), FirstTurn::Unknown);
+        assert_eq!(claude_first_turn("not-a-uuid", &[]), FirstTurn::Unknown);
     }
 }

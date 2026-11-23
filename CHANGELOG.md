@@ -21,8 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `[agent.<program>].account`: a pinned account at its usage limit, or
   `auto` with every account at its limit, no longer starts an agent into
   the limit screen. The launch says so up front and creates nothing. With
-  `auto`, an agent that answers its first prompt with the limit is started
-  again on the next account.
+  `auto`, a Claude agent whose transcript shows its first prompt refused
+  for the limit is started again on the next account.
 
 ## [0.10.33] - 2026-11-22
 

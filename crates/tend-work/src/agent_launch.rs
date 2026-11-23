@@ -921,6 +921,13 @@ const RELAUNCH_FLOOR: std::time::Duration = std::time::Duration::from_secs(10);
 /// chosen and the capped pane is confirmed closed.
 pub fn start(request: StartRequest) -> Result<StartResult> {
     let deadline = std::time::Instant::now() + START_BUDGET;
+    // For the row note of whichever attempt starts: its row is newer.
+    let begun = LaunchFacts {
+        deadline,
+        launched_at: time::OffsetDateTime::now_utc(),
+        session: None,
+        roots: Vec::new(),
+    };
     let auto = request
         .account
         .as_ref()
@@ -942,6 +949,7 @@ pub fn start(request: StartRequest) -> Result<StartResult> {
                             &request,
                             &result.pane,
                             result.launch_receipt.as_deref(),
+                            &begun,
                             tend::event::NotificationLevel::Info,
                             &format!(
                                 "started on {account} because {} was at its usage limit",
@@ -953,12 +961,12 @@ pub fn start(request: StartRequest) -> Result<StartResult> {
                 return Ok(result);
             }
             Attempt::Capped(capped) => {
-                let kept = if may_relaunch
-                    && passed_over.len() < LIMIT_RELAUNCHES
-                    && deadline.saturating_duration_since(std::time::Instant::now())
-                        >= RELAUNCH_FLOOR
-                {
-                    match next_account(&request, &passed_over, &capped) {
+                let kept = if !may_relaunch || passed_over.len() >= LIMIT_RELAUNCHES {
+                    String::new()
+                } else if let Some(why) = &capped.unproven {
+                    format!("; not started on another account: {why}")
+                } else {
+                    match next_account(&request, &passed_over, &capped, deadline) {
                         Ok(next) => {
                             passed_over.push(capped.account.clone());
                             routed = Some(Ok(next));
@@ -966,14 +974,13 @@ pub fn start(request: StartRequest) -> Result<StartResult> {
                         }
                         Err(why) => why,
                     }
-                } else {
-                    String::new()
                 };
                 let message = format!("did not start: {} {}", capped.account, capped.reason);
                 note_on_row(
                     &request,
                     &capped.pane,
                     Some(&capped.receipt),
+                    &capped.facts,
                     tend::event::NotificationLevel::Error,
                     &message,
                 );
@@ -992,7 +999,12 @@ fn next_account(
     request: &StartRequest,
     passed_over: &[String],
     capped: &Capped,
+    deadline: std::time::Instant,
 ) -> std::result::Result<tend::swap_api::RoutedLaunch, String> {
+    let room = || deadline.saturating_duration_since(std::time::Instant::now()) >= RELAUNCH_FLOOR;
+    if !room() {
+        return Err("; not started on another account: no time left for one".into());
+    }
     let route = request.account.as_ref().ok_or_else(String::new)?;
     let mut skip = passed_over.to_vec();
     skip.push(capped.account.clone());
@@ -1003,20 +1015,37 @@ fn next_account(
             tend::swap_api::NotRouted::Capped(reason) | tend::swap_api::NotRouted::Bare(reason),
         ) => return Err(format!("; not started on another account: {reason}")),
     };
-    release_capped_pane(&capped.pane, &capped.receipt.launch_id)
+    // Choosing can take seconds (an `aas` query, Codex hook-trust prep).
+    if !room() {
+        return Err("; not started on another account: no time left for one".into());
+    }
+    release_capped_pane(capped)
         .map_err(|error| format!("; not started on another account: {error:#}"))?;
     Ok(next)
 }
 
-/// Close the pane of a launch that met the usage limit, which has held
-/// nothing but that answer: only while it still carries `launch_id`, and
-/// confirmed gone after.
-fn release_capped_pane(pane: &str, launch_id: &str) -> Result<()> {
+/// Close the pane of a launch that met the usage limit, re-proving at this
+/// moment what made it safe: the pane still carries this launch and runs
+/// the same process, and the conversation's own transcript still holds
+/// only the one prompt the provider refused. Then confirm it is gone.
+fn release_capped_pane(capped: &Capped) -> Result<()> {
+    let pane = capped.pane.as_str();
     let control = crate::mux_control::Control::Ambient;
-    let marked = control.output(&["show-options", "-p", "-v", "-t", pane, "@tend_launch_id"])?;
+    let shown = control.output(&[
+        "display-message",
+        "-p",
+        "-t",
+        pane,
+        "#{@tend_launch_id}\t#{pane_pid}",
+    ])?;
+    let (launch, pid) = shown.trim_end().split_once('\t').unwrap_or_default();
     anyhow::ensure!(
-        marked.trim() == launch_id,
-        "pane {pane} no longer holds this launch"
+        launch == capped.receipt.launch_id && pid.parse().ok() == Some(capped.pane_pid),
+        "pane {pane} no longer runs this launch"
+    );
+    anyhow::ensure!(
+        first_turn(&capped.facts) == tend::agent_conversation::FirstTurn::RejectedForLimit,
+        "the agent in pane {pane} has done more than meet the limit"
     );
     control
         .run(&["kill-pane", "-t", pane])
@@ -1026,16 +1055,69 @@ fn release_capped_pane(pane: &str, launch_id: &str) -> Result<()> {
         std::time::Duration::from_millis(100),
         || pane_gone(pane).then_some(()),
     );
-    anyhow::ensure!(gone.is_some(), "pane {pane} is still open");
+    anyhow::ensure!(gone.is_some(), "pane {pane} is not confirmed closed");
     Ok(())
 }
 
-/// Whether the server no longer has `pane`, asked for the pane itself
-/// rather than read from a listing.
+/// Whether the server says `pane` does not exist (or the server itself is
+/// gone). Any other failure to ask is not proof of absence.
 fn pane_gone(pane: &str) -> bool {
-    crate::mux_control::Control::Ambient
-        .output(&["display-message", "-p", "-t", pane, "#{pane_id}"])
-        .map_or(true, |shown| shown.trim() != pane)
+    match crate::mux_control::Control::Ambient.output(&[
+        "display-message",
+        "-p",
+        "-t",
+        pane,
+        "#{pane_id}",
+    ]) {
+        Ok(shown) => shown.trim() != pane,
+        Err(error) => {
+            let error = format!("{error:#}").to_lowercase();
+            ["can't find pane", "no such pane", "no server running"]
+                .iter()
+                .any(|absent| error.contains(absent))
+        }
+    }
+}
+
+/// What one launch knows about itself, for its later checks.
+#[derive(Debug, Clone)]
+struct LaunchFacts {
+    /// When the start's time is up.
+    deadline: std::time::Instant,
+    /// Just before the pane was created: a row older than this is not
+    /// this launch's.
+    launched_at: time::OffsetDateTime,
+    /// The Claude conversation id tend gave this launch, if any.
+    session: Option<String>,
+    /// Where that conversation's transcript may be.
+    roots: Vec<PathBuf>,
+}
+
+/// What the launch's own transcript says its first turn did.
+fn first_turn(facts: &LaunchFacts) -> tend::agent_conversation::FirstTurn {
+    facts
+        .session
+        .as_deref()
+        .map_or(tend::agent_conversation::FirstTurn::Unknown, |session| {
+            tend::agent_conversation::claude_first_turn(session, &facts.roots)
+        })
+}
+
+/// Where a Claude launch on `routed` keeps its transcripts: the account's
+/// own `CLAUDE_CONFIG_DIR` when the launch sets one, then the usual places.
+fn claude_roots_for(
+    routed: Option<&std::result::Result<tend::swap_api::RoutedLaunch, String>>,
+    pane_pid: u32,
+) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = routed
+        .and_then(|routed| routed.as_ref().ok())
+        .into_iter()
+        .flat_map(|routed| routed.launcher.iter())
+        .filter_map(|word| word.strip_prefix("CLAUDE_CONFIG_DIR="))
+        .map(PathBuf::from)
+        .collect();
+    roots.extend(tend::agent_conversation::claude_roots(pane_pid));
+    roots
 }
 
 /// One physical launch.
@@ -1049,8 +1131,14 @@ enum Attempt {
 struct Capped {
     account: String,
     pane: String,
+    pane_pid: u32,
     receipt: tend::launch_identity::LaunchReceipt,
+    facts: LaunchFacts,
     reason: String,
+    /// Why it may not be closed and started again elsewhere: the screen
+    /// alone is not proof that the provider refused the prompt before any
+    /// work. `None`: the transcript proves it.
+    unproven: Option<String>,
 }
 
 #[allow(clippy::too_many_lines)] // launch, metadata stamping, and rollback form one physical transaction
@@ -1105,7 +1193,7 @@ fn start_once(
             &tend::launch_identity::LaunchRecord {
                 launch_id: launch_id.clone(),
                 provider: tend::discovery::classify_command(request.agent.label()),
-                expected_session,
+                expected_session: expected_session.clone(),
                 wrapper_forks: routed.as_ref().is_some_and(std::result::Result::is_ok),
                 no_exec: cfg!(windows),
                 ..Default::default()
@@ -1155,6 +1243,7 @@ fn start_once(
         )
         .map_err(anyhow::Error::msg)?;
     let args = tmux_args(&request, &cwd, &command)?;
+    let launched_at = time::OffsetDateTime::now_utc();
     if let Some(ticket) = &request.worker_spawn {
         update_spawn(
             &request.socket,
@@ -1353,6 +1442,12 @@ fn start_once(
         }
     }
     crate::spawn_provenance::record(&request, &pane, &launch_id);
+    let facts = LaunchFacts {
+        deadline,
+        launched_at,
+        session: expected_session,
+        roots: Vec::new(),
+    };
     let input_readiness = match await_ready(
         &request,
         &pane,
@@ -1360,7 +1455,7 @@ fn start_once(
         prompt.is_some(),
         &receipt,
         routed.as_ref(),
-        deadline,
+        facts,
     )? {
         Ready::Checked(report) => report,
         Ready::Capped(capped) => return Ok(capped),
@@ -1408,8 +1503,10 @@ enum Ready {
 /// How long one readiness watch may take: what the start's budget has
 /// left, at most 30 seconds.
 fn watch_budget(deadline: std::time::Instant) -> std::time::Duration {
+    // Room after the watch for stamping the result and a row note.
     deadline
         .saturating_duration_since(std::time::Instant::now())
+        .saturating_sub(std::time::Duration::from_secs(4))
         .min(std::time::Duration::from_secs(30))
 }
 
@@ -1446,7 +1543,7 @@ fn await_ready(
     prompted: bool,
     receipt: &tend::launch_identity::LaunchReceipt,
     routed: Option<&std::result::Result<tend::swap_api::RoutedLaunch, String>>,
-    deadline: std::time::Instant,
+    facts: LaunchFacts,
 ) -> Result<Ready> {
     use tend::worker_startup::State;
     if !matches!(request.agent, AgentProgram::Claude | AgentProgram::Codex) {
@@ -1463,7 +1560,7 @@ fn await_ready(
         request.bypass_permissions,
         prompted,
         starts_fresh(request.agent, &request.options),
-        watch_budget(deadline),
+        watch_budget(facts.deadline),
     );
     let report = match watched {
         Ok(report) => report,
@@ -1486,7 +1583,9 @@ fn await_ready(
             }
         }
     };
-    let note = |level, message: &str| note_on_row(request, pane, Some(receipt), level, message);
+    let note = |facts: &LaunchFacts, level, message: &str| {
+        note_on_row(request, pane, Some(receipt), facts, level, message);
+    };
     let reason = report
         .reason
         .clone()
@@ -1495,15 +1594,12 @@ fn await_ready(
         State::Ready => {}
         State::Limited => {
             if let Some(Ok(routed)) = routed {
-                return Ok(Ready::Capped(Attempt::Capped(Box::new(Capped {
-                    account: routed.account.clone(),
-                    pane: pane.to_owned(),
-                    receipt: receipt.clone(),
-                    reason: reason.replacen("the account is", "is", 1),
-                }))));
+                return Ok(Ready::Capped(Attempt::Capped(Box::new(capped_launch(
+                    request, pane, receipt, routed, facts, &reason,
+                )))));
             }
             let message = format!("did not start: {reason}");
-            note(tend::event::NotificationLevel::Error, &message);
+            note(&facts, tend::event::NotificationLevel::Error, &message);
             bail!("{message}; pane {pane} is kept");
         }
         // Slow, not stuck: no dialog or blocker was seen. It counts as
@@ -1511,6 +1607,7 @@ fn await_ready(
         State::Unsettled if !worker => {
             eprintln!("tend: {pane} started but is not seen ready yet: {reason}");
             note(
+                &facts,
                 tend::event::NotificationLevel::Warning,
                 &format!("started, not seen ready yet: {reason}"),
             );
@@ -1518,6 +1615,7 @@ fn await_ready(
         state => {
             let blocked = state == State::Blocked;
             note(
+                &facts,
                 if blocked {
                     tend::event::NotificationLevel::NeedsInput
                 } else {
@@ -1540,6 +1638,59 @@ fn await_ready(
     Ok(Ready::Checked(Some(report)))
 }
 
+/// A launch that met the limit on an account routing chose, with whether
+/// its own transcript proves the provider refused the prompt before any
+/// work (the only case it may be closed and started again elsewhere).
+fn capped_launch(
+    request: &StartRequest,
+    pane: &str,
+    receipt: &tend::launch_identity::LaunchReceipt,
+    routed: &tend::swap_api::RoutedLaunch,
+    mut facts: LaunchFacts,
+    reason: &str,
+) -> Capped {
+    let pane_pid = pane_pid(pane);
+    facts.roots = claude_roots_for(Some(&Ok(routed.clone())), pane_pid.unwrap_or(0));
+    let unproven = match (request.agent, pane_pid) {
+        (AgentProgram::Claude, Some(_)) => {
+            // The transcript can trail the screen by a moment.
+            let proven = look_for(
+                std::time::Duration::from_secs(2),
+                std::time::Duration::from_millis(200),
+                || {
+                    (first_turn(&facts) == tend::agent_conversation::FirstTurn::RejectedForLimit)
+                        .then_some(())
+                },
+            );
+            proven.is_none().then(|| {
+                "the agent's own transcript does not show the prompt refused before any work"
+                    .to_owned()
+            })
+        }
+        (AgentProgram::Claude, None) => Some("its process could not be read".into()),
+        _ => Some("only a Claude launch's transcript can prove it did no work".into()),
+    };
+    Capped {
+        account: routed.account.clone(),
+        pane: pane.to_owned(),
+        pane_pid: pane_pid.unwrap_or(0),
+        receipt: receipt.clone(),
+        facts,
+        reason: reason.replacen("the account is", "is", 1),
+        unproven,
+    }
+}
+
+/// The process tmux started in `pane`.
+fn pane_pid(pane: &str) -> Option<u32> {
+    crate::mux_control::Control::Ambient
+        .output(&["display-message", "-p", "-t", pane, "#{pane_pid}"])
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
+
 /// Put `message` on the launched agent's row, so the person sees why it
 /// did not start (or where it did) without the launch's own output. Only
 /// on a row that is unmistakably this launch's: the receipt's pane on the
@@ -1550,16 +1701,24 @@ fn note_on_row(
     request: &StartRequest,
     pane: &str,
     receipt: Option<&tend::launch_identity::LaunchReceipt>,
+    facts: &LaunchFacts,
     level: tend::event::NotificationLevel,
     message: &str,
 ) {
+    // Best effort, never past the start's deadline.
+    let left = facts
+        .deadline
+        .saturating_duration_since(std::time::Instant::now())
+        .saturating_sub(std::time::Duration::from_millis(500));
+    if left < std::time::Duration::from_millis(500) {
+        return;
+    }
+    let wait = left.min(std::time::Duration::from_secs(2)) / 2;
     let Some(endpoint) = receipt.and_then(|receipt| receipt.endpoint.as_deref()) else {
         return;
     };
     let pane = receipt.map_or(pane, |receipt| receipt.pane.as_str());
-    let call = |body: serde_json::Value| {
-        tend::ipc::blocking_call(&request.socket, &body, std::time::Duration::from_secs(2))
-    };
+    let call = |body: serde_json::Value| tend::ipc::blocking_call(&request.socket, &body, wait);
     let Some(reply) = call(serde_json::json!({
         "protocol": tend::event::PROTOCOL_VERSION,
         "kind": "by_pane",
@@ -1574,8 +1733,11 @@ fn note_on_row(
         let path = tend::tmux::socket_path_or_default(socket);
         std::fs::canonicalize(&path).unwrap_or(path)
     };
+    // A row this launch could have made: same provider, started since the
+    // pane was created (an older one on a reused pane id is not it).
     let mut ours = rows.into_iter().filter(|row| {
         Some(row.kind) == wanted
+            && row.started_at >= facts.launched_at - time::Duration::seconds(1)
             && row
                 .tmux_socket
                 .as_deref()
@@ -2473,6 +2635,23 @@ mod tests {
                 message.contains("not started on another account: every claude account"),
                 "{message}"
             );
+            // A limit line the transcript does not prove (a tool printed it):
+            // never closed and replayed.
+            let message = format!(
+                "{:#}",
+                launch_on(
+                    "tool-limit",
+                    tend::swap_api::SpawnAccount::Auto,
+                    &["toolcap", "spare"]
+                )
+                .expect_err("an unproven limit is not replayed")
+            );
+            assert!(
+                message.starts_with("did not start: toolcap is at its usage limit"),
+                "{message}"
+            );
+            assert!(message.contains("transcript does not show"), "{message}");
+            assert!(message.contains("is kept"), "{message}");
             // An agent that exits at once did not start, and has no pane.
             let message = format!(
                 "{:#}",
@@ -2495,7 +2674,7 @@ mod tests {
                 .collect();
             assert_eq!(
                 homes,
-                ["capped", "spare", "capped", "capped", "broken"],
+                ["capped", "spare", "capped", "capped", "toolcap", "broken"],
                 "{launches}"
             );
             return;
@@ -2511,10 +2690,21 @@ mod tests {
             format!(
                 r#"#!/bin/sh
 echo "$CLAUDE_CONFIG_DIR" >> {launches:?}
+sid=; prev=
+for arg in "$@"; do [ "$prev" = --session-id ] && sid=$arg; prev=$arg; done
+log="$CLAUDE_CONFIG_DIR/projects/p/$sid.jsonl"; mkdir -p "${{log%/*}}"
+user='{{"type":"user","message":{{"role":"user","content":"task"}}}}'
+limit='  \342\216\277  You'"'"'ve hit your limit \302\267 resets 3pm (Asia/Seoul)\n'
 printf '> task\n'
 case "$CLAUDE_CONFIG_DIR" in
   *broken) sleep 3; exit 1 ;;
-  *capped) printf '  \342\216\277  You'"'"'ve hit your limit \302\267 resets 3pm (Asia/Seoul)\n' ;;
+  *toolcap)
+    # A tool printed the limit line: work was done, nothing proves a refusal.
+    printf '%s\n%s\n' "$user" '{{"type":"assistant","message":{{"model":"claude-x","role":"assistant","content":[{{"type":"tool_use","id":"t","name":"Bash","input":{{}}}}]}}}}' > "$log"
+    printf "$limit" ;;
+  *capped)
+    printf '%s\n%s\n' "$user" '{{"type":"assistant","message":{{"model":"<synthetic>","role":"assistant","content":[]}},"error":"rate_limit","isApiErrorMessage":true}}' > "$log"
+    printf "$limit" ;;
   *) printf '\342\227\217 Done.\n' ;;
 esac
 printf '\342\235\257 \n  ? for shortcuts\n'
@@ -2587,7 +2777,7 @@ exec sleep 600
         sessions.sort_unstable();
         assert_eq!(
             sessions,
-            ["auto-alone", "auto-launch", "pinned-launch"],
+            ["auto-alone", "auto-launch", "pinned-launch", "tool-limit"],
             "{panes}"
         );
     }

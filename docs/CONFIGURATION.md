@@ -245,10 +245,14 @@ and says how it went:
 - `started …`: the agent reached its composer, or its first prompt has been
   running for a few seconds.
 - `started … on <account> because <other> was at its usage limit`: with
-  `auto`, an agent that answered its first prompt with the provider's limit
-  line is started again on the next account, at most twice. The next account
-  is chosen first; only then is the capped pane (which held nothing else)
-  closed. With no account left it stays, and the launch does not start.
+  `auto`, a Claude agent whose first prompt the provider refused for the
+  limit is started again on the next account, at most twice. The proof is
+  the conversation's own transcript (the one prompt, answered only by
+  Claude's usage-limit error), not the screen. The next account is chosen
+  first; then, if the pane still runs this launch and the transcript still
+  shows nothing else, the pane is closed and confirmed gone. Otherwise (no
+  account left, no proof, a Codex agent) the pane stays and the launch does
+  not start.
   `--json` lists the accounts passed over in `account.passed_over`. Only a
   new conversation is read for the limit: a launch that resumes one is not.
 - `did not start: <reason>`: the launch fails and the pane is kept for you.
