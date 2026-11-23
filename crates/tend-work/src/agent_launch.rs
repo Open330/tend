@@ -780,10 +780,20 @@ async fn native_ready(
         let live = |shot: &tend::session::TerminalSnapshot| {
             !shot.session.exited && (pid.is_none() || shot.session.pid == pid)
         };
+        // `capture_session` hands back the raw output split at newlines,
+        // escapes and cursor moves included; the startup checks need the
+        // screen a terminal would show. Render it here from the session's
+        // own bytes, read on from where the last read stopped.
+        let size = snapshot().map_or((24, 80), |shot| (shot.rows, shot.cols));
+        let screen = std::cell::RefCell::new((vt100::Parser::new(size.0, size.1, 0), 0_u64));
         let capture = || {
-            snapshot()
-                .filter(|shot| live(shot))
-                .map(|shot| shot.lines.join("\n"))
+            snapshot().filter(|shot| live(shot))?;
+            let mut screen = screen.borrow_mut();
+            let (parser, offset) = &mut *screen;
+            let out = runtime.block_on(client.read_session(&id, *offset)).ok()?;
+            parser.process(&out.data_bytes().ok()?);
+            *offset = out.next_offset;
+            Some(parser.screen().contents())
         };
         let alive = || snapshot().is_some_and(|shot| live(&shot));
         let send = |key: &str| {

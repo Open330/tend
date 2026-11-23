@@ -1477,7 +1477,7 @@ fn a_native_launch_waits_for_its_agent_and_says_when_it_did_not_start() {
     let claude = bin_dir.join("claude");
     std::fs::write(
         &claude,
-        "#!/bin/sh\nfor last; do :; done\nprintf '> %s\\n' \"$last\"\ncase \"$last\" in\n  *login*) printf '  \\342\\216\\277  Not logged in \\302\\267 Please run /login\\n' ;;\n  *) printf '\\342\\227\\217 ok\\n' ;;\nesac\nprintf '\\342\\224\\200\\342\\224\\200\\342\\224\\200\\342\\224\\200\\342\\224\\200\\n\\342\\235\\257 \\n\\342\\224\\200\\342\\224\\200\\342\\224\\200\\342\\224\\200\\342\\224\\200\\n  ? for shortcuts\\n'\nexec sleep 30\n",
+        "#!/bin/sh\nfor last; do :; done\nprintf '> %s\\n' \"$last\"\ncase \"$last\" in\n  *login*) printf '  \\342\\216\\277  Not logged in \\302\\267 Please run /login\\n' ;;\n  *theme*) printf '\\033[2GChoose\\033[9Gthe\\033[13Gtext\\033[18Gstyle\\033[24Gthat\\033[29Glooks\\033[35Gbest\\n' ;;\n  *) printf '\\342\\227\\217 ok\\n' ;;\nesac\nprintf '\\342\\224\\200\\342\\224\\200\\342\\224\\200\\342\\224\\200\\342\\224\\200\\n\\342\\235\\257 \\n\\342\\224\\200\\342\\224\\200\\342\\224\\200\\342\\224\\200\\342\\224\\200\\n  ? for shortcuts\\n'\nexec sleep 30\n",
     )
     .unwrap();
     std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -1491,7 +1491,9 @@ fn a_native_launch_waits_for_its_agent_and_says_when_it_did_not_start() {
         let out = daemon
             .cli()
             .env("PATH", &path)
-            .args(["agent", "start", "--host", "native", "--agent", "claude", "--json"])
+            .args([
+                "agent", "start", "--host", "native", "--agent", "claude", "--json",
+            ])
             .args(["--cwd", bin_dir.to_str().unwrap(), "--prompt", prompt])
             .output()
             .expect("run tend agent start");
@@ -1518,6 +1520,22 @@ fn a_native_launch_waits_for_its_agent_and_says_when_it_did_not_start() {
             .starts_with("did not start: the account is not signed in"),
         "{json}"
     );
-    assert!(not_started["session"].as_str().is_some_and(|s| !s.is_empty()), "{json}");
+    assert!(
+        not_started["session"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty()),
+        "{json}"
+    );
     assert!(not_started.get("pane").is_none(), "{json}");
+    // Claude lays its first-run screen out with cursor moves, not spaces:
+    // the screen is read as a terminal renders it.
+    let (ok, json) = start("pick a theme");
+    assert!(!ok, "{json}");
+    assert!(
+        json["not_started"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("first-run setup"),
+        "{json}"
+    );
 }
