@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import Testing
 @testable import Tend
@@ -181,6 +182,13 @@ private func message(id: String) throws -> TendOperatorMessage {
         #expect(feed.remoteQueues.map(\.host.alias) == ["jiun-mini"])
         #expect(feed.reviewHosts.isEmpty)
         let dashboard = try #require(feed.dashboard)
+        // Home polls this every 15 s: the same read again publishes nothing,
+        // so it neither redraws Home nor rebuilds the merged decisions.
+        var publishes = 0
+        let watch = feed.objectWillChange.sink { publishes += 1 }
+        await feed.loadRemote(client, hosts: [mini])
+        #expect(publishes == 0)
+        watch.cancel()
 
         // Its mailbox copy, which listed it as live before, and a live one.
         let copy = TendOperatorMessage(host: mini.identity, routePane: .operatorRoute, request: try message(id: "rq_r").request)

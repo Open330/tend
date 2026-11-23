@@ -113,8 +113,19 @@ final class FleetDecisionFeed: ObservableObject {
         let queues = read.enumerated().compactMap { index, host in
             found[index].map { (host: host, queue: $0) }
         }
-        // Nothing before or after: no publish, no rebuilt queue.
-        if !(queues.isEmpty && remoteQueues.isEmpty) { remoteQueues = queues }
+        // Polled every `remoteEvery` while Home is open: an unchanged read
+        // publishes nothing, so it neither redraws Home nor rebuilds the
+        // merged decisions.
+        if !Self.sameQueues(queues, remoteQueues) { remoteQueues = queues }
+    }
+
+    /// Whether two reads of the other hosts' queues hold the same hosts and
+    /// queues in the same order. Tuples are not `Equatable`.
+    static func sameQueues(
+        _ lhs: [(host: TendFleetHostIdentity, queue: TendPendingQueue)],
+        _ rhs: [(host: TendFleetHostIdentity, queue: TendPendingQueue)]
+    ) -> Bool {
+        lhs.count == rhs.count && zip(lhs, rhs).allSatisfy { $0.host == $1.host && $0.queue == $1.queue }
     }
 
     func load(_ client: TendIPCClient, works: [FleetWork] = []) async {
