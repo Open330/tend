@@ -1168,6 +1168,11 @@ pub fn start(mut request: StartRequest) -> Result<StartResult> {
         crate::tmux_work::cleanup_pane(&pane);
         return Err(error).context("record tend tmux metadata");
     }
+    if let Some(title) =
+        crate::surface_names::agent_pane_title(request.alias.as_deref(), request.role.as_deref())
+    {
+        crate::surface_names::title_pane(&pane, &title);
+    }
     // Hooks may not fire until the first prompt. Register the observed CLI
     // now, using discovery's placeholder so a later real hook replaces it.
     // Missing/older daemons remain supported; periodic discovery retries.
@@ -1512,7 +1517,19 @@ fn resolve_placement_target(request: &mut StartRequest, cwd: &Path) -> Result<()
             .ok_or_else(|| {
                 anyhow::anyhow!("window placement needs --target or this pane's own TMUX_PANE")
             })?;
-        request.target = Some(resolve_window_session(&target)?);
+        let session = resolve_window_session(&target)?;
+        // Unnamed, tmux would call the window after the command that started
+        // it (`aas`, `zsh`), and with `automatic-rename` off that name sticks.
+        if request
+            .name
+            .as_deref()
+            .is_none_or(|name| name.trim().is_empty())
+        {
+            let base = agent_window_name(request);
+            let listing = crate::surface_names::session_window_listing(&session);
+            request.name = Some(crate::surface_names::unique_window_name(&listing, &base));
+        }
+        request.target = Some(session);
     }
     if request.placement == Placement::Session {
         if request.target.is_some() {
@@ -1523,7 +1540,13 @@ fn resolve_placement_target(request: &mut StartRequest, cwd: &Path) -> Result<()
             .as_deref()
             .filter(|name| !name.trim().is_empty())
             .map_or_else(
-                || session_base_name(cwd.to_string_lossy().as_ref()),
+                || {
+                    session_base_name(
+                        crate::surface_names::project_dir(cwd)
+                            .to_string_lossy()
+                            .as_ref(),
+                    )
+                },
                 sanitize_session_name,
             );
         let existing = existing_session_names();
@@ -1684,14 +1707,27 @@ fn tmux_args(request: &StartRequest, cwd: &Path, command: &str) -> Result<Vec<St
                 "-s".into(),
                 name,
             ];
-            if let Some(work) = request.work.as_deref() {
-                args.extend(["-n".into(), crate::tmux_work::window_name_for_work(work)?]);
-            }
+            let window = match request.work.as_deref() {
+                Some(work) => crate::tmux_work::window_name_for_work(work)?,
+                None => agent_window_name(request),
+            };
+            args.extend(["-n".into(), window]);
             args.extend(["-c".into(), cwd.into(), command.into()]);
             args
         }
     };
     Ok(args)
+}
+
+/// What a window holding only this agent is called: its task, alias or role,
+/// else the agent program. A Work window is named after the Work instead.
+fn agent_window_name(request: &StartRequest) -> String {
+    crate::surface_names::agent_window_base(
+        request.task.as_deref(),
+        request.alias.as_deref(),
+        request.role.as_deref(),
+        request.agent.label(),
+    )
 }
 
 fn session_base_name(cwd: &str) -> String {
@@ -2434,6 +2470,15 @@ os.execv({real:?}, [{real:?}] + args)
         assert!(args
             .windows(2)
             .any(|pair| pair == ["-s", "cal-7041-review"]));
+        // Its first window holds the agent, so it is named for it too —
+        // unnamed, tmux would call it after the launch command.
+        assert!(args.windows(2).any(|pair| pair == ["-n", "agy"]));
+
+        session.task = Some("Fix login redirect".into());
+        let args = tmux_args(&session, Path::new("/tmp"), "agy").unwrap();
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["-n", "fix-login-redirect"]));
     }
 
     #[test]

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Windows Tend creates no longer keep the launch command as their name
+  (`export`, `aas`, `zsh`; `tend init` turns `automatic-rename` off, so it
+  stuck). A window for one agent is named after its task, alias, role or
+  program, unique in its session; a new session's first window likewise; the
+  watch `c` window after its directory; the `work up` runner `<WORK>-up`
+  instead of `work-up`. A new session for an agent is named after the git
+  checkout rather than the subdirectory it started in, and an agent's pane
+  title is its alias or role. Existing windows are never renamed.
+
 ## [0.10.33] - 2026-11-22
 
 ## [0.10.32] - 2026-11-22

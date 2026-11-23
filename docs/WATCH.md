@@ -515,6 +515,23 @@ prompt through `tend window rename`. Window whitespace is normalized to `-`
 and duplicate names in one session are refused. Restore dynamic naming for one
 window with `tend window rename --auto`.
 
+With `automatic-rename` off, a window keeps the name it was created with, so
+every window, session and pane Tend creates gets a name for what it holds:
+
+| Tend creates | Named after |
+| --- | --- |
+| a workspace's session | the workspace id |
+| a session for one agent (`--placement session`) | the git checkout's directory, else the working directory |
+| a Work window | the Work id |
+| a window for one agent (`--placement window`, a new session's first window) | its task (as a short slug), else its alias, else its role, else the program (`claude`) |
+| the `c` key's plain shell window | its directory |
+| the `work up` runner window | `<WORK>-up` |
+| an agent's pane title | its alias, else its role |
+
+A derived window name gets `-2`, `-3`… when another window in the session
+already has it. Names are set only at creation: Tend never renames a window or
+session that already exists.
+
 ## Two Terminals on One Workspace
 
 One tmux session has one current window, and every client attached to it shows

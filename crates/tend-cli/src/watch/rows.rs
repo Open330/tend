@@ -454,6 +454,7 @@ mod work_up_key_tests {
     fn the_window_waits_before_closing() {
         let args = work_up_window_args_in(Dialect::Posix, "/usr/bin/tend", "ENG-1");
         assert_eq!(args[0], "new-window");
+        assert_eq!(args[1..3], ["-n", "ENG-1-up"], "named for its Work");
         assert!(args.last().expect("command").ends_with("read _"));
         let args = work_up_window_args_in(Dialect::PowerShell, "/usr/bin/tend", "ENG-1");
         assert_eq!(args[0], "new-window");
