@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.34] - 2026-11-23
+
 ### Fixed
 
 - A new `claude` or `codex` agent in a tmux or rmux pane (`tend agent start`,
