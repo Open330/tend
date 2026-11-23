@@ -1114,6 +1114,20 @@ fn capped_screen_untouched(screen: &str) -> bool {
     let [only] = inside[..] else {
         return false;
     };
+    // The frame must be the current composer: under it only Claude's few
+    // footer lines (mode, status line), never another prompt.
+    let footer: Vec<&str> = lines[bottom + 1..]
+        .iter()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .collect();
+    if footer.len() > 4
+        || footer
+            .iter()
+            .any(|line| line.starts_with(['❯', '›', '>', '$', '#', '%']) || rule(line))
+    {
+        return false;
+    }
     only.strip_prefix('❯').is_some_and(|rest| {
         let rest = rest.trim_matches(|c: char| c.is_whitespace() || c == '\u{a0}');
         rest.is_empty() || CLAUDE_ERROR_PLACEHOLDERS.contains(&rest)
@@ -2648,6 +2662,11 @@ mod tests {
         assert!(!capped_screen_untouched(
             "  ⎿  You've hit your limit · resets 3pm\n─────\n❯ wait, use the other repo"
         ));
+        // An empty frame further up, with a newer unframed draft below it.
+        assert!(!capped_screen_untouched(&format!(
+            "{}\n❯ wait, use the other repo",
+            screen("")
+        )));
         // The limit still on screen while a new turn runs.
         assert!(!capped_screen_untouched(&format!(
             "{}\n✻ Thinking… (2s · esc to interrupt)",
