@@ -846,9 +846,11 @@ async fn native_ready(
                 if over() || !screen.borrow().trusted {
                     return false;
                 }
-                let live_now = snapshot().is_some_and(|shot| live(&shot));
-                // Checked again right before the write is built and sent.
-                if !live_now || over() || !screen.borrow().trusted {
+                // The session as it is now, right before the write: alive,
+                // and still the size the rendered dialog was read at.
+                let fits = snapshot()
+                    .is_some_and(|shot| live(&shot) && screen.borrow_mut().still_fits(&shot));
+                if !fits || over() {
                     return false;
                 }
                 runtime
@@ -886,6 +888,16 @@ struct Rendered {
 }
 
 impl Rendered {
+    /// Whether keys may still go in on the strength of this rendering, by
+    /// the session as `shot` shows it now: trusted, and not resized since
+    /// (a resize also ends the trust).
+    fn still_fits(&mut self, shot: &tend::session::TerminalSnapshot) -> bool {
+        if (shot.rows, shot.cols) != self.size {
+            self.trusted = false;
+        }
+        self.trusted
+    }
+
     /// Render `out`, read from [`Self::offset`] while the session showed
     /// `shot`. A gap (the requested bytes were overwritten) or a new size
     /// restarts the rendering from what is there and stops trusting it.
@@ -3106,6 +3118,12 @@ mod tests {
         let mut cut = fresh();
         cut.take(&shot(24, 80), &out(0, "x", true)).unwrap();
         assert!(!cut.trusted);
+        // Resized after the dialog was rendered, before the key would go in.
+        let mut typing = fresh();
+        typing.take(&shot(24, 80), &out(0, "x", false)).unwrap();
+        assert!(typing.still_fits(&shot(24, 80)));
+        assert!(!typing.still_fits(&shot(30, 100)));
+        assert!(!typing.still_fits(&shot(24, 80)), "a resize ends the trust");
         // A resize.
         let mut resized = fresh();
         resized.take(&shot(40, 120), &out(0, "x", false)).unwrap();
