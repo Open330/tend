@@ -261,9 +261,12 @@ can work, and says how it went:
   answer, or the agent exiting. `--json` (and `tend work up --json`, and
   the MCP tools' error) carry it as `not_started`: `message`, the kept
   `pane` or `session`, and for `work up` the pipeline `alias`, which is
-  also recorded as the alias's pane. A tmux agent's row says the same: its
-  notice shows in `tend status` in place of the prompt, in `tend status
-  --json` and MCP `tend_status` as `last_notification`, and in the app.
+  also recorded as the alias's pane. The app's and a Fleet host's start
+  get the sentence, which names the pane or session, not the field. A tmux
+  agent's row says the same: `tend status` shows `⚠ did not start: …` in
+  place of the prompt while the row still waits on that launch, `tend
+  status --json` and MCP `tend_status` carry it as `last_notification`,
+  and the app shows it on the row.
   A native session is never started again on another account: tend has no
   conversation id of its own there to prove the limit refused only its
   prompt.

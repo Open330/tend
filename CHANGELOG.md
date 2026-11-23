@@ -9,12 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `tend status` shows a waiting or failed agent's notice (a question, or
-  `did not start: …` from a launch) in place of its last prompt.
+- `tend status` shows `⚠ did not start: …` in place of the last prompt
+  while an agent's row still waits on, or failed at, the launch that left
+  that note (column: `LAST PROMPT / NOTICE`).
 - `tend agent start --json`, `tend work up --json` and the MCP start tools
   report an agent that did not start as `not_started` (`message`, the kept
   `pane` or native `session`, the pipeline `alias`), not only in the
-  sentence. `work up` also records the kept pane on the alias.
+  sentence. `work up` also records the kept pane on the alias. The app's
+  and Fleet's start still get the sentence.
 - `tend agent start --host native` waits for a `claude` or `codex` agent
   like a tmux launch does and reports `did not start: …` with its session
   kept.

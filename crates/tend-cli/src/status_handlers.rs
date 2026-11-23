@@ -207,21 +207,31 @@ impl TreeRows {
     }
 }
 
-/// The text column of a status row: what a waiting or failed agent last
-/// said it needs (a question, `did not start: …`), else its last prompt.
+/// The text column of a status row: a launch's own notice (`did not
+/// start: …`, marked `⚠`) while the row still waits or failed since that
+/// launch, else the last prompt. Only a launch notice, and only while no
+/// prompt came after the state began: a wait or error detected some other
+/// way can sit beside an older, unrelated notice.
 pub(super) fn status_text(agent: &Agent) -> String {
     let notice = agent
         .last_notification
         .as_deref()
         .map(str::trim)
-        .filter(|note| !note.is_empty());
-    match (agent.state, notice) {
-        (AgentState::WaitingInput | AgentState::WaitingChoice | AgentState::Error, Some(note)) => {
-            note.to_owned()
-        }
+        .filter(|note| note.starts_with(LAUNCH_NOTICE));
+    let current = matches!(
+        agent.state,
+        AgentState::WaitingInput | AgentState::WaitingChoice | AgentState::Error
+    ) && agent
+        .last_prompt_at
+        .is_none_or(|prompted| prompted <= agent.state_entered_at);
+    match notice {
+        Some(note) if current => format!("⚠ {note}"),
         _ => tend::prompt_headline(agent.last_prompt.as_deref().unwrap_or("-")).into(),
     }
 }
+
+/// How a launch's note on the row of an agent that did not start opens.
+const LAUNCH_NOTICE: &str = "did not start:";
 
 pub(super) fn branch(at: usize, count: usize) -> &'static str {
     if at + 1 == count {
@@ -891,10 +901,11 @@ pub(super) fn status_table_header(
     // size — leading with identity + state + age + content keeps the
     // narrow-terminal path readable without losing parity with wide
     // terminals.
+    // The column also carries a launch's `⚠ did not start: …` notice.
     let prompt_label = if matches!(layout, StatusTableLayout::Full) {
-        "LAST PROMPT"
+        "LAST PROMPT / NOTICE"
     } else {
-        "PROMPT"
+        "PROMPT / NOTICE"
     };
     vec![
         theme.cell("NAME", TableTone::Header),

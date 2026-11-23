@@ -1538,4 +1538,33 @@ fn a_native_launch_waits_for_its_agent_and_says_when_it_did_not_start() {
             .contains("first-run setup"),
         "{json}"
     );
+    // The daemon's `agent_start` (the app's and Fleet's path) carries the
+    // sentence, which names the kept session; the field is the CLI's and
+    // the MCP tools'.
+    let request = serde_json::json!({
+        "protocol": 6,
+        "kind": "agent_start",
+        "request": {
+            "agent": "claude",
+            "placement": "native",
+            "cwd": bin_dir,
+            "prompt": "please login",
+        },
+    });
+    let mut stream = std::os::unix::net::UnixStream::connect(&daemon.socket).expect("connect");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(60)))
+        .unwrap();
+    writeln!(stream, "{request}").unwrap();
+    let mut reply = String::new();
+    std::io::BufReader::new(&stream)
+        .read_line(&mut reply)
+        .unwrap();
+    let reply: serde_json::Value = serde_json::from_str(&reply).unwrap();
+    let error = reply["error"].as_str().unwrap_or_default();
+    assert!(
+        error.contains("did not start: the account is not signed in")
+            && error.contains("native session pty:"),
+        "{reply}"
+    );
 }

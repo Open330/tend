@@ -187,9 +187,10 @@ account = "auto"          # 또는 고정 계정: "work@claude"
   답하지 않는 대화상자, 에이전트 종료 중 하나입니다. `--json`(`tend work up --json`과 MCP
   도구의 오류도 같음)에는 `not_started`로 들어갑니다. `message`, 남겨 둔 `pane`이나
   `session`, `work up`이면 파이프라인 `alias`가 있고, 그 pane은 alias의 pane으로도
-  기록됩니다. tmux 에이전트의 행에도 같은 내용이 남습니다. `tend status`에서는 프롬프트 대신
-  이 알림이 보이고, `tend status --json`과 MCP `tend_status`에서는 `last_notification`으로,
-  앱에서도 보입니다. native 세션은 다른 계정으로 다시 띄우지 않습니다. 거기서는 tend가 정한
+  기록됩니다. 앱과 Fleet 호스트에서 시작한 경우에는 이 필드 대신 pane이나 세션을 담은 문장이
+  전달됩니다. tmux 에이전트의 행에도 같은 내용이 남습니다. 행이 그 실행 때문에 계속 기다리는
+  동안 `tend status`에서는 프롬프트 대신 `⚠ did not start: …`가 보이고, `tend status --json`과
+  MCP `tend_status`에서는 `last_notification`으로, 앱에서는 행에 보입니다. native 세션은 다른 계정으로 다시 띄우지 않습니다. 거기서는 tend가 정한
   대화 id가 없어서, 한도가 tend의 프롬프트만 거절했다는 근거를 댈 수 없기 때문입니다.
 
 tend는 방금 자신이 띄운 에이전트의 시작 대화상자 중 실행 그 자체 외에는 아무것도

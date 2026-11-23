@@ -676,6 +676,7 @@ async fn launch_native(
     cfg: &tend::config::Config,
     env: Vec<(String, String)>,
 ) -> Result<AgentStartOutput> {
+    let started = std::time::Instant::now();
     if let Some(refusal) = native_refusal(&args) {
         bail!(refusal);
     }
@@ -723,6 +724,7 @@ async fn launch_native(
         &session,
         prompt.is_some(),
         starts_fresh(args.agent, &options),
+        started + START_BUDGET,
     )
     .await?;
     Ok(AgentStartOutput {
@@ -763,8 +765,8 @@ async fn native_ready(
     session: &tend::session::SessionRef,
     prompted: bool,
     fresh: bool,
+    deadline: std::time::Instant,
 ) -> Result<Option<tend::worker_startup::Report>> {
-    use tend::worker_startup::State;
     let kind = match agent {
         AgentProgram::Claude => tend::event::AgentKind::ClaudeCode,
         AgentProgram::Codex => tend::event::AgentKind::Codex,
@@ -774,43 +776,92 @@ async fn native_ready(
     let id = session.id.clone();
     let pid = session.pid;
     let runtime = tokio::runtime::Handle::current();
-    let timeout = START_BUDGET.saturating_sub(std::time::Duration::from_secs(4));
+    // The blocking thread keeps the caller's scope (tendd's deadline and
+    // cancellation) and this start's own deadline.
+    let scope = crate::subprocess::current_scope();
     let report = tokio::task::spawn_blocking(move || {
-        let snapshot = || runtime.block_on(client.capture_session(&id)).ok();
-        let live = |shot: &tend::session::TerminalSnapshot| {
-            !shot.session.exited && (pid.is_none() || shot.session.pid == pid)
-        };
-        // `capture_session` hands back the raw output split at newlines,
-        // escapes and cursor moves included; the startup checks need the
-        // screen a terminal would show. Render it here from the session's
-        // own bytes, read on from where the last read stopped.
-        let size = snapshot().map_or((24, 80), |shot| (shot.rows, shot.cols));
-        let screen = std::cell::RefCell::new((vt100::Parser::new(size.0, size.1, 0), 0_u64));
-        let capture = || {
-            snapshot().filter(|shot| live(shot))?;
-            let mut screen = screen.borrow_mut();
-            let (parser, offset) = &mut *screen;
-            let out = runtime.block_on(client.read_session(&id, *offset)).ok()?;
-            parser.process(&out.data_bytes().ok()?);
-            *offset = out.next_offset;
-            Some(parser.screen().contents())
-        };
-        let alive = || snapshot().is_some_and(|shot| live(&shot));
-        let send = |key: &str| {
-            alive()
-                && runtime
-                    .block_on(client.write_session_bytes(&id, key.as_bytes()))
-                    .is_ok()
-        };
-        if prompted {
-            tend::worker_startup::watch_prompted(kind, capture, alive, send, true, fresh, timeout)
-        } else {
-            tend::worker_startup::prepare(kind, capture, alive, send, true, fresh, timeout)
-        }
+        crate::subprocess::within(scope, || {
+            let left = || {
+                crate::subprocess::bounded(
+                    deadline.saturating_duration_since(std::time::Instant::now()),
+                    std::time::Duration::ZERO,
+                )
+            };
+            let over = || crate::subprocess::abandoned() || left().is_zero();
+            // One IPC call, bounded by what is left (at most 2 s).
+            let ipc = |call: std::pin::Pin<Box<dyn std::future::Future<Output = _> + '_>>| {
+                runtime
+                    .block_on(tokio::time::timeout(
+                        left().min(std::time::Duration::from_secs(2)),
+                        call,
+                    ))
+                    .ok()
+            };
+            let snapshot = || -> Option<tend::session::TerminalSnapshot> {
+                ipc(Box::pin(client.capture_session(&id)))?.ok()
+            };
+            let live = |shot: &tend::session::TerminalSnapshot| {
+                !shot.session.exited && (pid.is_none() || shot.session.pid == pid)
+            };
+            // `capture_session` hands back the raw output split at newlines,
+            // escapes and cursor moves included; the startup checks need the
+            // screen a terminal would show. Render it here from the
+            // session's own bytes, read on from where the last read stopped.
+            let size = snapshot().map_or((24, 80), |shot| (shot.rows, shot.cols));
+            let screen = std::cell::RefCell::new((vt100::Parser::new(size.0, size.1, 0), 0_u64));
+            let capture = || {
+                if over() {
+                    return None;
+                }
+                snapshot().filter(|shot| live(shot))?;
+                let mut screen = screen.borrow_mut();
+                let (parser, offset) = &mut *screen;
+                let out = runtime
+                    .block_on(tokio::time::timeout(
+                        left().min(std::time::Duration::from_secs(2)),
+                        client.read_session(&id, *offset),
+                    ))
+                    .ok()?
+                    .ok()?;
+                parser.process(&out.data_bytes().ok()?);
+                *offset = out.next_offset;
+                Some(parser.screen().contents())
+            };
+            // Gone only when the daemon says so: an unreadable capture is not
+            // an exit.
+            let alive = || snapshot().map_or(!over(), |shot| live(&shot));
+            let send = |key: &str| {
+                !over()
+                    && snapshot().is_some_and(|shot| live(&shot))
+                    && runtime
+                        .block_on(tokio::time::timeout(
+                            left().min(std::time::Duration::from_secs(2)),
+                            client.write_session_bytes(&id, key.as_bytes()),
+                        ))
+                        .is_ok_and(|written| written.is_ok())
+            };
+            let timeout = left().saturating_sub(std::time::Duration::from_secs(4));
+            if prompted {
+                tend::worker_startup::watch_prompted(
+                    kind, capture, alive, send, true, fresh, timeout,
+                )
+            } else {
+                tend::worker_startup::prepare(kind, capture, alive, send, true, fresh, timeout)
+            }
+        })
     })
     .await
     .context("watch the native session start")?;
-    let id = &session.id;
+    native_outcome(report, &session.id)
+}
+
+/// A native start's result from its readiness report: started (ready, or
+/// not yet seen ready), or [`NotStarted`] naming the kept session.
+fn native_outcome(
+    report: tend::worker_startup::Report,
+    id: &str,
+) -> Result<Option<tend::worker_startup::Report>> {
+    use tend::worker_startup::State;
     let reason = report
         .reason
         .clone()
@@ -820,7 +871,7 @@ async fn native_ready(
         State::Exited => Err(anyhow::Error::new(NotStarted {
             message: format!("did not start: {reason}"),
             pane: None,
-            session: Some(id.clone()),
+            session: Some(id.to_owned()),
             alias: None,
         })),
         state => Err(anyhow::Error::new(NotStarted {
@@ -833,7 +884,7 @@ async fn native_ready(
                 }
             ),
             pane: None,
-            session: Some(id.clone()),
+            session: Some(id.to_owned()),
             alias: None,
         })),
     }
@@ -1846,16 +1897,15 @@ fn await_ready(
     );
     let report = match watched {
         Ok(report) => report,
-        // A worker's input is only ever sent to a prepared pane.
-        Err(error) if worker => return Err(error),
+        // A worker's input is only ever sent to a prepared pane: no watch,
+        // no start. Its pane is named only while it still exists.
+        Err(error) if worker => return Err(worker_unwatched(pane, launch_id, &error)),
         // Gone before it could be watched: it exited.
-        Err(_) if crate::mux_control::resolve_pane(pane).is_none() => {
-            tend::worker_startup::Report {
-                state: State::Exited,
-                answered: Vec::new(),
-                reason: Some("the agent exited during startup (its pane is gone)".into()),
-            }
-        }
+        Err(_) if pane_gone(pane) => tend::worker_startup::Report {
+            state: State::Exited,
+            answered: Vec::new(),
+            reason: Some("the agent exited during startup (its pane is gone)".into()),
+        },
         Err(error) => {
             eprintln!("tend: could not watch {pane} start: {error:#}");
             tend::worker_startup::Report {
@@ -1908,14 +1958,20 @@ fn await_ready(
                 },
                 &format!("did not start: {reason}"),
             );
+            // An exited agent's pane may be gone, or hold something else:
+            // name it only while it is still there.
+            let kept = (state != State::Exited || !pane_gone(pane)).then_some(pane);
             if worker {
                 return Err(not_started(
-                    format!("worker pane {pane}, launch {launch_id}, was created but is not input-ready ({state:?}): {reason}; the pane is retained, no task was sent"),
-                    Some(pane),
+                    format!(
+                        "worker pane {pane}, launch {launch_id}, was created but is not input-ready ({state:?}): {reason}{}",
+                        if kept.is_some() { "; the pane is retained, no task was sent" } else { "" }
+                    ),
+                    kept,
                 ));
             }
             if state == State::Exited {
-                return Err(not_started(format!("did not start: {reason}"), None));
+                return Err(not_started(format!("did not start: {reason}"), kept));
             }
             return Err(not_started(
                 format!(
@@ -1991,6 +2047,23 @@ fn pane_pid(pane: &str) -> Option<u32> {
         .trim()
         .parse()
         .ok()
+}
+
+/// A worker that could not be watched: no watch, no start. Its pane is
+/// named only while it still exists.
+fn worker_unwatched(pane: &str, launch_id: &str, error: &anyhow::Error) -> anyhow::Error {
+    let kept = (!pane_gone(pane)).then_some(pane);
+    not_started(
+        format!(
+            "worker pane {pane}, launch {launch_id}, was created but could not be watched: {error:#}{}",
+            if kept.is_some() {
+                "; the pane is retained, no task was sent"
+            } else {
+                ""
+            }
+        ),
+        kept,
+    )
 }
 
 /// Put `message` on the launched agent's row, so the person sees why it
