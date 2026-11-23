@@ -615,7 +615,10 @@ pub(super) async fn deliver_full_collaboration_request(
         return false;
     }
     let reserved_at = if pending.status == tend::collaboration::RequestStatus::Queued {
-        match collaboration.reserve_typed_wake(&pending.id).await {
+        match collaboration
+            .reserve_typed_wake(recipient, &pending.id)
+            .await
+        {
             Ok(tend::collaboration::turn_offer::TypedWake::Allowed { reserved_at }) => reserved_at,
             Ok(tend::collaboration::turn_offer::TypedWake::Refused) | Err(_) => return false,
         }
@@ -876,7 +879,10 @@ async fn send_mailbox_wake(
     }
     // Final transport decision under the pane guard: the recipient's own
     // hook may have been offered this request since the scan.
-    let reserved_at = match collaboration.reserve_typed_wake(&request.id).await {
+    let reserved_at = match collaboration
+        .reserve_typed_wake(recipient, &request.id)
+        .await
+    {
         Ok(tend::collaboration::turn_offer::TypedWake::Allowed { reserved_at }) => reserved_at,
         Ok(tend::collaboration::turn_offer::TypedWake::Refused) | Err(_) => return false,
     };

@@ -217,6 +217,7 @@ impl CollaborationStore {
     /// queued request needs no persisted transport reservation.
     pub async fn reserve_typed_wake(
         &self,
+        recipient: &Participant,
         request_id: &str,
     ) -> Result<TypedWake, CollaborationError> {
         let _transaction = self.transaction_lock.lock().await;
@@ -226,7 +227,7 @@ impl CollaborationStore {
             let Some(request) = requests.get(request_id) else {
                 return Ok(TypedWake::Refused);
             };
-            if request.status != RequestStatus::Queued {
+            if request.status != RequestStatus::Queued || !addresses(&request.to, recipient) {
                 return Ok(TypedWake::Refused);
             }
             if !self.hook_transport_enabled() {
@@ -1138,6 +1139,47 @@ mod tests {
             .unwrap()
     }
 
+    #[tokio::test]
+    async fn typed_wake_refuses_the_old_recipient_after_readdressing() {
+        let store = store();
+        let old = worker();
+        let mut new = old.clone();
+        new.agent_session_id = "replacement-worker".into();
+        let request = store
+            .create(
+                sender(),
+                old.clone(),
+                NewRequest {
+                    body: "wake the current recipient".into(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        // Model a recipient change after the daemon took its wake snapshot.
+        store
+            .requests
+            .write()
+            .await
+            .get_mut(&request.id)
+            .unwrap()
+            .to = new.clone();
+
+        for hook_transport in [false, true] {
+            store.set_hook_transport(hook_transport);
+            assert_eq!(
+                store.reserve_typed_wake(&old, &request.id).await.unwrap(),
+                TypedWake::Refused
+            );
+        }
+        assert!(matches!(
+            store.reserve_typed_wake(&new, &request.id).await.unwrap(),
+            TypedWake::Allowed {
+                reserved_at: Some(_)
+            }
+        ));
+    }
+
     /// One request is never both offered and typed: whichever is chosen
     /// first under the transaction lock excludes the other for the backoff.
     #[tokio::test]
@@ -1165,14 +1207,14 @@ mod tests {
         let offered = create("offered").await;
         assert_eq!(ids(&stop(&store, &worker()).await), vec![offered.clone()]);
         assert_eq!(
-            store.reserve_typed_wake(&offered).await.unwrap(),
+            store.reserve_typed_wake(&worker(), &offered).await.unwrap(),
             TypedWake::Refused
         );
         // Reserved first: the hook does not offer it.
         let typed = create("typed").await;
         let TypedWake::Allowed {
             reserved_at: Some(reserved_at),
-        } = store.reserve_typed_wake(&typed).await.unwrap()
+        } = store.reserve_typed_wake(&worker(), &typed).await.unwrap()
         else {
             panic!("reserved");
         };
@@ -1207,7 +1249,7 @@ mod tests {
         // With the transport off nothing is reserved or written.
         store.set_hook_transport(false);
         assert_eq!(
-            store.reserve_typed_wake(&offered).await.unwrap(),
+            store.reserve_typed_wake(&worker(), &offered).await.unwrap(),
             TypedWake::Allowed { reserved_at: None }
         );
     }
