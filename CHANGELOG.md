@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of `work-up`. A new session for an agent is named after the git
   checkout rather than the subdirectory it started in, and an agent's pane
   title is its alias or role. Existing windows are never renamed.
+- docs/PUSH_SETUP.md: create the APNs key as Topic Specific for `dev.tend.ios`, as the push design requires, not Team Scoped. Also adds how to rotate the key.
 
 ## [0.10.33] - 2026-11-22
 
