@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   card moving every 6 s on optimized copies against the live fleet, the
   app used about 43% less CPU.
 
+### Security
+
+- `cookie` 0.18.3 (RUSTSEC-2026-0594: private cookie nonces could repeat
+  after a fork). It reaches Tend only through `wry` in the Windows app.
+
 ## [0.10.35] - 2026-11-23
 
 ## [0.10.34] - 2026-11-23
