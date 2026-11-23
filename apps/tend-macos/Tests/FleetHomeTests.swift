@@ -685,6 +685,14 @@ private func claimed(from session: String, label: String = "claude@%1") -> Strin
     #expect(FleetBoard.question(for: specific, now: .now) == "Where should the sandbox live?")
 }
 
+@Test func anAgentThatDidNotStartSaysWhyOnItsRow() throws {
+    // The note `tend agent start` puts on the row of a launch left at a
+    // sign-in or dialog (NeedsInput → waiting_input).
+    let note = "did not start: the account is not signed in (Claude: \"Not logged in · Please run /login\")"
+    let stuck = try agent(["state": "waiting_input", "last_notification": note], id: "a")
+    #expect(FleetBoard.question(for: stuck, now: .now) == note)
+}
+
 @Test func aChoiceWithAnOptionBelowARuleIsStillRead() throws {
     let screen = """
     ────────────────────────────────────────────────────────────────────────

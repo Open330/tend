@@ -33,6 +33,8 @@ time = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
+# Renders a native session's raw output into the screen startup checks read.
+vt100 = "0.15"
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 # `reload` reads each pane's argv with its argument boundaries (macOS `ps`

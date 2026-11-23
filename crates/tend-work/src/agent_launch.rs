@@ -157,7 +157,9 @@ fn route_account(
             eprintln!("tend: starting without an account: {reason}");
             Ok(Some(Err(reason)))
         }
-        Err(tend::swap_api::NotRouted::Capped(reason)) => bail!("did not start: {reason}"),
+        Err(tend::swap_api::NotRouted::Capped(reason)) => {
+            Err(not_started(format!("did not start: {reason}"), None))
+        }
     }
 }
 
@@ -528,7 +530,8 @@ impl AgentStartOutput {
         let cwd = self.cwd.display();
         match (self.host, self.session.as_deref(), self.pane.as_deref()) {
             (LaunchHost::Native, Some(session), _) => format!(
-                "started {agent}{account} in native session {session} (cwd {cwd})\nattach with: tend proc attach {session}"
+                "started {agent}{account} in native session {session} (cwd {cwd}){}\nattach with: tend proc attach {session}",
+                self.not_ready_note()
             ),
             (_, _, pane) => format!(
                 "started {agent}{account} in {} {} (cwd {cwd}){}",
@@ -538,15 +541,22 @@ impl AgentStartOutput {
                     Placement::Session => "session pane",
                 },
                 pane.unwrap_or_default(),
-                self.input_readiness
-                    .as_ref()
-                    .filter(|report| report.state != tend::worker_startup::State::Ready)
-                    .map_or_else(String::new, |report| format!(
-                        "; not seen ready yet: {}",
-                        report.reason.as_deref().unwrap_or("startup did not finish")
-                    )),
+                self.not_ready_note(),
             ),
         }
+    }
+
+    /// `; not seen ready yet: …` for a start whose agent was not seen ready.
+    fn not_ready_note(&self) -> String {
+        self.input_readiness
+            .as_ref()
+            .filter(|report| report.state != tend::worker_startup::State::Ready)
+            .map_or_else(String::new, |report| {
+                format!(
+                    "; not seen ready yet: {}",
+                    report.reason.as_deref().unwrap_or("startup did not finish")
+                )
+            })
     }
 
     fn tmux(result: &StartResult) -> Self {
@@ -604,7 +614,15 @@ pub async fn run(
 ) -> Result<()> {
     let json = args.json;
     let env = crate::caller::caller_env(socket_path);
-    let result = launch(args, client, socket_path, cfg, env).await?;
+    let result = match launch(args, client, socket_path, cfg, env).await {
+        Ok(result) => result,
+        Err(error) => {
+            if json {
+                println!("{}", serde_json::to_string_pretty(&failure_json(&error))?);
+            }
+            return Err(error);
+        }
+    };
     if json {
         println!("{}", serde_json::to_string_pretty(&result)?);
     } else {
@@ -658,6 +676,7 @@ async fn launch_native(
     cfg: &tend::config::Config,
     env: Vec<(String, String)>,
 ) -> Result<AgentStartOutput> {
+    let started = std::time::Instant::now();
     if let Some(refusal) = native_refusal(&args) {
         bail!(refusal);
     }
@@ -699,8 +718,17 @@ async fn launch_native(
         })
         .await
         .context("spawning native tend agent session")?;
+    let input_readiness = native_ready(
+        client,
+        args.agent,
+        &session,
+        prompt.is_some(),
+        starts_fresh(args.agent, &options),
+        started + START_BUDGET,
+    )
+    .await?;
     Ok(AgentStartOutput {
-        input_readiness: None,
+        input_readiness,
         launch_id: None,
         launch_receipt: None,
         schema_version: 1,
@@ -722,6 +750,208 @@ async fn launch_native(
         prompt_supplied: prompt.is_some(),
         account: routed.as_ref().map(tend::swap_api::report),
     })
+}
+
+/// Wait, within [`START_BUDGET`], for an agent just spawned in a native
+/// session to be able to work, the way a tmux launch does: the screen
+/// comes from `capture_session`, keys go in with `write_session_bytes`,
+/// and the session is alive while it has not exited and still runs the
+/// process it started with. `Err` ([`NotStarted`]) says why it did not
+/// start; the session is kept. Never relaunched on another account: a
+/// native session has no transcript id tend chose to prove the refusal.
+async fn native_ready(
+    client: &Client,
+    agent: AgentProgram,
+    session: &tend::session::SessionRef,
+    prompted: bool,
+    fresh: bool,
+    deadline: std::time::Instant,
+) -> Result<Option<tend::worker_startup::Report>> {
+    let kind = match agent {
+        AgentProgram::Claude => tend::event::AgentKind::ClaudeCode,
+        AgentProgram::Codex => tend::event::AgentKind::Codex,
+        AgentProgram::Antigravity | AgentProgram::Opencode => return Ok(None),
+    };
+    let client = client.clone();
+    let id = session.id.clone();
+    let pid = session.pid;
+    let runtime = tokio::runtime::Handle::current();
+    // The blocking thread keeps the caller's scope (tendd's deadline and
+    // cancellation) and this start's own deadline.
+    let scope = crate::subprocess::current_scope();
+    let report = tokio::task::spawn_blocking(move || {
+        crate::subprocess::within(scope, || {
+            let left = || {
+                crate::subprocess::bounded(
+                    deadline.saturating_duration_since(std::time::Instant::now()),
+                    std::time::Duration::ZERO,
+                )
+            };
+            let over = || crate::subprocess::abandoned() || left().is_zero();
+            // One IPC call, bounded by what is left (at most 2 s).
+            let ipc = |call: std::pin::Pin<Box<dyn std::future::Future<Output = _> + '_>>| {
+                runtime
+                    .block_on(tokio::time::timeout(
+                        left().min(std::time::Duration::from_secs(2)),
+                        call,
+                    ))
+                    .ok()
+            };
+            let snapshot = || -> Option<tend::session::TerminalSnapshot> {
+                ipc(Box::pin(client.capture_session(&id)))?.ok()
+            };
+            let live = |shot: &tend::session::TerminalSnapshot| {
+                !shot.session.exited && (pid.is_none() || shot.session.pid == pid)
+            };
+            // `capture_session` hands back the raw output split at newlines,
+            // escapes and cursor moves included; the startup checks need the
+            // screen a terminal would show. Render it here from the
+            // session's own bytes, read on from where the last read stopped.
+            let size = snapshot().map_or((24, 80), |shot| (shot.rows, shot.cols));
+            // The rendered screen, where its bytes end, the size it renders
+            // at, and whether it can still be trusted for typing: a gap in
+            // the retained output (overwritten history) or a resize means
+            // the rendering may no longer match the terminal, so from then
+            // on the watch reads but never types.
+            let screen = std::cell::RefCell::new(Rendered {
+                parser: vt100::Parser::new(size.0, size.1, 0),
+                offset: 0,
+                size,
+                trusted: true,
+            });
+            let capture = || {
+                if over() {
+                    return None;
+                }
+                let shot = snapshot().filter(|shot| live(shot))?;
+                if over() {
+                    return None;
+                }
+                let mut screen = screen.borrow_mut();
+                let out = runtime
+                    .block_on(tokio::time::timeout(
+                        left().min(std::time::Duration::from_secs(2)),
+                        client.read_session(&id, screen.offset),
+                    ))
+                    .ok()?
+                    .ok()?;
+                screen.take(&shot, &out)?;
+                Some(screen.parser.screen().contents())
+            };
+            // Gone only when the daemon says the session exited (or runs
+            // another process): an unreadable capture, cancelled or not, is
+            // unknown, never an exit.
+            let alive = || snapshot().is_none_or(|shot| live(&shot));
+            let send = |key: &str| {
+                if over() || !screen.borrow().trusted {
+                    return false;
+                }
+                // The session as it is now, right before the write: alive,
+                // and still the size the rendered dialog was read at.
+                let fits = snapshot()
+                    .is_some_and(|shot| live(&shot) && screen.borrow_mut().still_fits(&shot));
+                if !fits || over() {
+                    return false;
+                }
+                runtime
+                    .block_on(tokio::time::timeout(
+                        left().min(std::time::Duration::from_secs(2)),
+                        client.write_session_bytes(&id, key.as_bytes()),
+                    ))
+                    .is_ok_and(|written| written.is_ok())
+            };
+            let timeout = left().saturating_sub(std::time::Duration::from_secs(4));
+            if prompted {
+                tend::worker_startup::watch_prompted(
+                    kind, capture, alive, send, true, fresh, timeout,
+                )
+            } else {
+                tend::worker_startup::prepare(kind, capture, alive, send, true, fresh, timeout)
+            }
+        })
+    })
+    .await
+    .context("watch the native session start")?;
+    native_outcome(report, &session.id)
+}
+
+/// A native session's output rendered as a terminal shows it.
+struct Rendered {
+    parser: vt100::Parser,
+    /// Where the bytes rendered so far end.
+    offset: u64,
+    /// The rows and columns it renders at.
+    size: (u16, u16),
+    /// Whether the rendering is known to match the terminal: no gap in the
+    /// output and no resize since the start.
+    trusted: bool,
+}
+
+impl Rendered {
+    /// Whether keys may still go in on the strength of this rendering, by
+    /// the session as `shot` shows it now: trusted, and not resized since
+    /// (a resize also ends the trust).
+    fn still_fits(&mut self, shot: &tend::session::TerminalSnapshot) -> bool {
+        if (shot.rows, shot.cols) != self.size {
+            self.trusted = false;
+        }
+        self.trusted
+    }
+
+    /// Render `out`, read from [`Self::offset`] while the session showed
+    /// `shot`. A gap (the requested bytes were overwritten) or a new size
+    /// restarts the rendering from what is there and stops trusting it.
+    /// `None` when the bytes cannot be decoded.
+    fn take(
+        &mut self,
+        shot: &tend::session::TerminalSnapshot,
+        out: &tend::session::SessionOutput,
+    ) -> Option<()> {
+        let size = (shot.rows, shot.cols);
+        if out.truncated || out.offset > self.offset || size != self.size {
+            self.trusted = false;
+            self.parser = vt100::Parser::new(size.0, size.1, 0);
+            self.size = size;
+        }
+        self.parser.process(&out.data_bytes().ok()?);
+        self.offset = out.next_offset;
+        Some(())
+    }
+}
+
+/// A native start's result from its readiness report: started (ready, or
+/// not yet seen ready), or [`NotStarted`] naming the kept session.
+fn native_outcome(
+    report: tend::worker_startup::Report,
+    id: &str,
+) -> Result<Option<tend::worker_startup::Report>> {
+    use tend::worker_startup::State;
+    let reason = report
+        .reason
+        .clone()
+        .unwrap_or_else(|| "startup did not finish".into());
+    match report.state {
+        State::Ready | State::Unsettled => Ok(Some(report)),
+        State::Exited => Err(anyhow::Error::new(NotStarted {
+            message: format!("did not start: {reason}"),
+            pane: None,
+            session: Some(id.to_owned()),
+            alias: None,
+        })),
+        state => Err(anyhow::Error::new(NotStarted {
+            message: format!(
+                "did not start: {reason}; native session {id} is kept{}",
+                if state == State::Blocked {
+                    " for you to answer"
+                } else {
+                    ""
+                }
+            ),
+            pane: None,
+            session: Some(id.to_owned()),
+            alias: None,
+        })),
+    }
 }
 
 /// Why `args` cannot start on the native host, or `None` when they can.
@@ -896,6 +1126,60 @@ pub fn queue_work_released(
     Ok(())
 }
 
+/// An agent tend launched that did not start, as a typed error: callers
+/// that report it (`work up`, MCP, `--json`) carry the kept pane as a field
+/// rather than only in the sentence.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct NotStarted {
+    /// The whole sentence, as the error displays.
+    pub message: String,
+    /// The pane left for the person, when one was kept.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pane: Option<String>,
+    /// The native session left for the person, when one was kept.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
+    /// The pipeline alias it was launched for, when `work up` knows it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alias: Option<String>,
+}
+
+impl std::fmt::Display for NotStarted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for NotStarted {}
+
+fn not_started(message: String, pane: Option<&str>) -> anyhow::Error {
+    anyhow::Error::new(NotStarted {
+        message,
+        pane: pane.map(str::to_owned),
+        session: None,
+        alias: None,
+    })
+}
+
+/// The [`NotStarted`] behind `error`, if a launch failed that way.
+#[must_use]
+pub fn not_started_in(error: &anyhow::Error) -> Option<&NotStarted> {
+    error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<NotStarted>())
+}
+
+/// `error`'s JSON for a caller that reads fields: the message, and the
+/// launch that did not start (its kept pane, its alias) when that is why.
+#[must_use]
+pub fn failure_json(error: &anyhow::Error) -> serde_json::Value {
+    let mut value = serde_json::json!({ "ok": false, "error": format!("{error:#}") });
+    if let Some(not_started) = not_started_in(error) {
+        value["not_started"] = serde_json::json!(not_started);
+    }
+    value
+}
+
 /// How many accounts one launch tries when `auto` routing lands on one
 /// that turns out to be at its limit.
 const LIMIT_RELAUNCHES: usize = 2;
@@ -985,7 +1269,10 @@ pub fn start(request: StartRequest) -> Result<StartResult> {
                     tend::event::NotificationLevel::Error,
                     &message,
                 );
-                bail!("{message}{kept}; pane {} is kept", capped.pane);
+                return Err(not_started(
+                    format!("{message}{kept}; pane {} is kept", capped.pane),
+                    Some(&capped.pane),
+                ));
             }
         }
     }
@@ -1337,10 +1624,13 @@ fn start_once(
     let args = tmux_args(&request, &cwd, &command)?;
     // Routing (an `aas` query, Codex hook-trust prep) can take seconds:
     // never create what this start has no time left to watch.
-    anyhow::ensure!(
-        deadline.saturating_duration_since(std::time::Instant::now()) >= RELAUNCH_FLOOR / 2,
-        "did not start: no time was left to launch and watch it after choosing an account"
-    );
+    if deadline.saturating_duration_since(std::time::Instant::now()) < RELAUNCH_FLOOR / 2 {
+        return Err(not_started(
+            "did not start: no time was left to launch and watch it after choosing an account"
+                .into(),
+            None,
+        ));
+    }
     let launched_at = time::OffsetDateTime::now_utc();
     if let Some(ticket) = &request.worker_spawn {
         update_spawn(
@@ -1524,7 +1814,10 @@ fn start_once(
     })();
     if let Err(error) = mark {
         if pane_gone(&pane) {
-            bail!("did not start: the agent exited as it started (its pane closed before tend could record it): {error:#}");
+            return Err(not_started(
+                format!("did not start: the agent exited as it started (its pane closed before tend could record it): {error:#}"),
+                None,
+            ));
         }
         crate::tmux_work::cleanup_pane(&pane);
         return Err(error).context("record tend tmux metadata");
@@ -1668,16 +1961,15 @@ fn await_ready(
     );
     let report = match watched {
         Ok(report) => report,
-        // A worker's input is only ever sent to a prepared pane.
-        Err(error) if worker => return Err(error),
+        // A worker's input is only ever sent to a prepared pane: no watch,
+        // no start. Its pane is named only while it still exists.
+        Err(error) if worker => return Err(worker_unwatched(pane, launch_id, &error)),
         // Gone before it could be watched: it exited.
-        Err(_) if crate::mux_control::resolve_pane(pane).is_none() => {
-            tend::worker_startup::Report {
-                state: State::Exited,
-                answered: Vec::new(),
-                reason: Some("the agent exited during startup (its pane is gone)".into()),
-            }
-        }
+        Err(_) if pane_gone(pane) => tend::worker_startup::Report {
+            state: State::Exited,
+            answered: Vec::new(),
+            reason: Some("the agent exited during startup (its pane is gone)".into()),
+        },
         Err(error) => {
             eprintln!("tend: could not watch {pane} start: {error:#}");
             tend::worker_startup::Report {
@@ -1704,7 +1996,10 @@ fn await_ready(
             }
             let message = format!("did not start: {reason}");
             note(&facts, tend::event::NotificationLevel::Error, &message);
-            bail!("{message}; pane {pane} is kept");
+            return Err(not_started(
+                format!("{message}; pane {pane} is kept"),
+                Some(pane),
+            ));
         }
         // Slow, not stuck: no dialog or blocker was seen. It counts as
         // started, and says so.
@@ -1727,16 +2022,28 @@ fn await_ready(
                 },
                 &format!("did not start: {reason}"),
             );
+            // An exited agent's pane may be gone, or hold something else:
+            // name it only while it is still there.
+            let kept = (state != State::Exited || !pane_gone(pane)).then_some(pane);
             if worker {
-                bail!("worker pane {pane}, launch {launch_id}, was created but is not input-ready ({state:?}): {reason}; the pane is retained, no task was sent");
+                return Err(not_started(
+                    format!(
+                        "worker pane {pane}, launch {launch_id}, was created but is not input-ready ({state:?}): {reason}{}",
+                        if kept.is_some() { "; the pane is retained, no task was sent" } else { "" }
+                    ),
+                    kept,
+                ));
             }
             if state == State::Exited {
-                bail!("did not start: {reason}");
+                return Err(not_started(format!("did not start: {reason}"), kept));
             }
-            bail!(
-                "did not start: {reason}; pane {pane} is kept{}",
-                if blocked { " for you to answer" } else { "" }
-            );
+            return Err(not_started(
+                format!(
+                    "did not start: {reason}; pane {pane} is kept{}",
+                    if blocked { " for you to answer" } else { "" }
+                ),
+                Some(pane),
+            ));
         }
     }
     Ok(Ready::Checked(Some(report)))
@@ -1804,6 +2111,23 @@ fn pane_pid(pane: &str) -> Option<u32> {
         .trim()
         .parse()
         .ok()
+}
+
+/// A worker that could not be watched: no watch, no start. Its pane is
+/// named only while it still exists.
+fn worker_unwatched(pane: &str, launch_id: &str, error: &anyhow::Error) -> anyhow::Error {
+    let kept = (!pane_gone(pane)).then_some(pane);
+    not_started(
+        format!(
+            "worker pane {pane}, launch {launch_id}, was created but could not be watched: {error:#}{}",
+            if kept.is_some() {
+                "; the pane is retained, no task was sent"
+            } else {
+                ""
+            }
+        ),
+        kept,
+    )
 }
 
 /// Put `message` on the launched agent's row, so the person sees why it
@@ -2710,6 +3034,103 @@ mod tests {
         )));
     }
 
+    #[test]
+    fn a_launch_that_did_not_start_carries_its_kept_pane_as_a_field() {
+        let error = not_started(
+            "did not start: a dialog is waiting; pane %7 is kept for you to answer".into(),
+            Some("%7"),
+        )
+        .context("launch pipeline agent \"review\"");
+        let found = not_started_in(&error).expect("typed through the context");
+        assert_eq!(found.pane.as_deref(), Some("%7"));
+        let json = failure_json(&error);
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["not_started"]["pane"], "%7");
+        assert!(json["error"]
+            .as_str()
+            .unwrap()
+            .starts_with("launch pipeline agent \"review\": did not start"));
+        // Any other failure has no `not_started`.
+        assert!(failure_json(&anyhow::anyhow!("tmux failed"))
+            .get("not_started")
+            .is_none());
+    }
+
+    #[test]
+    fn a_native_screen_with_a_gap_or_a_resize_is_read_but_never_typed_into() {
+        let shot = |rows: u16, cols: u16| tend::session::TerminalSnapshot {
+            session: tend::session::SessionRef {
+                id: "pty:1".into(),
+                backend: tend::session::SessionBackendKind::Pty,
+                display_name: None,
+                cwd: None,
+                attached_clients: 0,
+                has_been_attached: false,
+                exited: false,
+                exit_status: None,
+                pid: Some(7),
+            },
+            cols,
+            rows,
+            lines: Vec::new(),
+            fetched_at: time::OffsetDateTime::UNIX_EPOCH,
+            truncated: false,
+        };
+        let out = |offset: u64, data: &str, truncated: bool| tend::session::SessionOutput {
+            session_id: "pty:1".into(),
+            offset,
+            next_offset: offset + data.len() as u64,
+            data: data.into(),
+            data_base64: None,
+            truncated,
+            exited: false,
+            exit_status: None,
+        };
+        let fresh = || Rendered {
+            parser: vt100::Parser::new(24, 80, 0),
+            offset: 0,
+            size: (24, 80),
+            trusted: true,
+        };
+        // Contiguous output at the same size: rendered and trusted.
+        let mut screen = fresh();
+        screen
+            .take(
+                &shot(24, 80),
+                &out(0, "\x1b[2GChoose\x1b[9Gthe\x1b[13Gtext", false),
+            )
+            .unwrap();
+        assert!(screen
+            .parser
+            .screen()
+            .contents()
+            .contains("Choose the text"));
+        assert!(screen.trusted);
+        let next = screen.offset;
+        screen
+            .take(&shot(24, 80), &out(next, " style", false))
+            .unwrap();
+        assert!(screen.trusted);
+        // Overwritten history (a gap past what was read, or truncation).
+        let mut gap = fresh();
+        gap.take(&shot(24, 80), &out(500, "later", false)).unwrap();
+        assert!(!gap.trusted);
+        let mut cut = fresh();
+        cut.take(&shot(24, 80), &out(0, "x", true)).unwrap();
+        assert!(!cut.trusted);
+        // Resized after the dialog was rendered, before the key would go in.
+        let mut typing = fresh();
+        typing.take(&shot(24, 80), &out(0, "x", false)).unwrap();
+        assert!(typing.still_fits(&shot(24, 80)));
+        assert!(!typing.still_fits(&shot(30, 100)));
+        assert!(!typing.still_fits(&shot(24, 80)), "a resize ends the trust");
+        // A resize.
+        let mut resized = fresh();
+        resized.take(&shot(40, 120), &out(0, "x", false)).unwrap();
+        assert!(!resized.trusted);
+        assert_eq!(resized.size, (40, 120));
+    }
+
     fn request(agent: AgentProgram, placement: Placement) -> StartRequest {
         StartRequest {
             creator: None,
@@ -2809,6 +3230,9 @@ mod tests {
             );
             assert!(message.contains("resets 3pm"), "{message}");
             assert!(message.contains("is kept"), "{message}");
+            assert!(not_started_in(&error)
+                .and_then(|n| n.pane.as_deref())
+                .is_some());
             // Auto with no other account: nothing is closed, the pane stays.
             let message = format!(
                 "{:#}",

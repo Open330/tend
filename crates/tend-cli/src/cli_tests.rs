@@ -2446,3 +2446,45 @@ fn doctor_counts_live_state_sources_and_names_inferred_rows_when_verbose() {
         "{verbose}"
     );
 }
+
+#[test]
+fn status_rows_show_what_a_waiting_or_failed_agent_needs() {
+    let at = datetime!(2026-11-23 12:00:00 UTC);
+    let mut failed = agent("a", Some("%1"), AgentState::WaitingInput, "Reply ok");
+    failed.last_prompt_at = Some(at - time::Duration::seconds(5));
+    failed.state_entered_at = at;
+    failed.last_notification = Some(
+        "did not start: the account is not signed in (Claude: \"Not logged in · Please run /login\")"
+            .into(),
+    );
+    let mut working = agent("b", Some("%2"), AgentState::Working, "fix the build");
+    working.last_notification = Some("did not start: an older launch".into());
+    // Waiting again after a newer prompt: the store dropped the launch
+    // notice when that prompt was accepted, so only the prompt is left.
+    let later = agent("c", Some("%3"), AgentState::WaitingInput, "run the tests");
+    // A question is not a launch notice: the prompt stays.
+    let mut asking = agent("d", Some("%4"), AgentState::WaitingInput, "plan it");
+    asking.last_notification = Some("Where should the sandbox live?".into());
+    let rendered = render_status_table(
+        &[failed, working, later, asking],
+        &[
+            pane("%1", "f1"),
+            pane("%2", "f2"),
+            pane("%3", "f3"),
+            pane("%4", "f4"),
+        ],
+        at,
+        CliTheme::plain(),
+        200,
+    );
+    assert!(
+        rendered.contains("⚠ did not start: the account is not signed in"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("Reply ok"), "{rendered}");
+    assert!(rendered.contains("fix the build"), "{rendered}");
+    assert!(rendered.contains("run the tests"), "{rendered}");
+    assert!(!rendered.contains("an older launch"), "{rendered}");
+    assert!(rendered.contains("plan it"), "{rendered}");
+    assert!(rendered.contains("PROMPT / NOTICE"), "{rendered}");
+}
