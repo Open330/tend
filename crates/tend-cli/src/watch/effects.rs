@@ -277,8 +277,8 @@ fn plan_spawn_work(
 /// Named after its directory, made unique against `listing` (the session's
 /// windows in [`crate::surface_names::WINDOW_NAMES_FORMAT`]). `prefix + c`
 /// would call it `zsh`, and with `automatic-rename` off — `tend init`'s
-/// setting — that is its name for good. Without a usable directory tmux
-/// a directory that names nothing (`/`), it is `shell`.
+/// setting — that is its name for good. Without a usable directory name, it
+/// is `shell`.
 ///
 /// Created detached (`-d`) so another terminal's current window never moves;
 /// the invoking client jumps to it after obtaining its private view.
