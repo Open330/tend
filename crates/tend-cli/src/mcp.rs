@@ -3152,6 +3152,7 @@ pub(crate) async fn call_peer(
     if !args.get("wait").and_then(Value::as_bool).unwrap_or(true) {
         let mut payload = common;
         payload["final_reply_received"] = json!(false);
+        crate::collaboration_output::add_turn_boundary_deferral(&mut payload, &sent);
         payload["reason"] = json!("sent_without_waiting");
         return json_result(&payload);
     }
@@ -3164,7 +3165,7 @@ pub(crate) async fn call_peer(
         .unwrap_or(300)
         .clamp(1, MAX_WAIT_SECS);
     match await_collaboration_reply(client, &origin, &sent.id, timeout_secs).await {
-        Ok(Some(request)) => {
+        Ok(request) if request.status.is_terminal() || request.peer_interrupted() => {
             let mut payload = common;
             payload
                 .as_object_mut()
@@ -3175,13 +3176,14 @@ pub(crate) async fn call_peer(
             }
             json_result(&payload)
         }
-        Ok(None) => {
+        Ok(request) => {
             let mut payload = common;
             payload["final_reply_received"] = json!(false);
             payload["reason"] = json!("timeout");
+            crate::collaboration_output::add_turn_boundary_deferral(&mut payload, &request);
             payload["timeout_secs"] = json!(timeout_secs);
             payload["delivery_state"] =
-                crate::collaboration_output::receipt(&sent)["delivery_state"].clone();
+                crate::collaboration_output::receipt(&request)["delivery_state"].clone();
             payload["next_step"] = json!(format!(
                 "the request remains durable for {}; call tend_wait with request_id {} to keep \
                  waiting, or tend_inbox(view=report) later. Do not poll the pane.",
@@ -3402,6 +3404,7 @@ async fn fleet_call_peer(
     if !args.get("wait").and_then(Value::as_bool).unwrap_or(true) {
         let mut payload = common;
         payload["final_reply_received"] = json!(false);
+        crate::collaboration_output::add_turn_boundary_deferral(&mut payload, &sent);
         payload["reason"] = json!("sent_without_waiting");
         return json_result(&payload);
     }
@@ -3433,10 +3436,10 @@ async fn fleet_call_peer(
             payload["final_reply_received"] = json!(false);
             payload["reason"] = json!("timeout");
             payload["timeout_secs"] = json!(timeout_secs);
+            let request = current.as_ref().unwrap_or(&sent);
+            crate::collaboration_output::add_turn_boundary_deferral(&mut payload, request);
             payload["delivery_state"] =
-                crate::collaboration_output::receipt(current.as_ref().unwrap_or(&sent))
-                    ["delivery_state"]
-                    .clone();
+                crate::collaboration_output::receipt(request)["delivery_state"].clone();
             payload["next_step"] = json!({
                 "tool": "tend_wait",
                 "arguments": {
@@ -4617,8 +4620,8 @@ async fn await_collaboration_reply(
     origin: &CollaborationOrigin,
     request_id: &str,
     timeout_secs: u64,
-) -> std::result::Result<Option<CollaborationRequest>, String> {
-    let request = client
+) -> std::result::Result<CollaborationRequest, String> {
+    client
         .collaboration_wait_view(
             origin,
             request_id,
@@ -4626,8 +4629,7 @@ async fn await_collaboration_reply(
             tend::collaboration::CollaborationReadView::Outcome,
         )
         .await
-        .map_err(|error| error.to_string())?;
-    Ok((request.status.is_terminal() || request.peer_interrupted()).then_some(request))
+        .map_err(|error| error.to_string())
 }
 
 tokio::task_local! {

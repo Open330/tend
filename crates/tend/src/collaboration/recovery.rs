@@ -143,6 +143,27 @@ fn reply_overdue<'a>(
     .then_some("reply_overdue")
 }
 
+/// An authorized request for a primary can only ride the recipient's hook.
+fn awaiting_primary_turn(
+    request: &CollaborationRequest,
+    agent: Option<&Agent>,
+    now: OffsetDateTime,
+) -> Option<&'static str> {
+    let agent = agent?;
+    (request.status == RequestStatus::Queued
+        && request.to.launch_purpose == super::LaunchPurpose::Primary
+        && request.awaits_turn_boundary(&request.to)
+        && request.should_notify()
+        && agent.state == AgentState::Idle
+        && now - request.created_at.max(agent.state_entered_at)
+            >= super::wake_retry::WAKE_UNDELIVERED_AFTER
+        && !request
+            .turn_offer
+            .as_ref()
+            .is_some_and(|offer| offer.offered_recently(now)))
+    .then_some("awaiting_primary_turn")
+}
+
 /// The claimant was seen working, or took a new prompt, after its recorded
 /// Stop: that idle episode is over and must not be judged overdue later.
 fn close_stale_stop(request: &mut CollaborationRequest, agent: Option<&Agent>) {
@@ -197,7 +218,7 @@ fn recovery_action(
     action.work_mode = WorkMode::ReadOnly;
     action.human_action = Some(HumanAction::Choice);
     action.body = recovery_body(
-        &parent.to.agent_session_id,
+        &parent.to,
         &parent.id,
         current_reason,
         parent
@@ -229,11 +250,12 @@ fn recovery_action(
 }
 
 pub(super) fn recovery_body(
-    session: &str,
+    recipient: &Participant,
     request_id: &str,
     current_reason: &str,
     reset: Option<&str>,
 ) -> String {
+    let session = &recipient.agent_session_id;
     if matches!(current_reason, "approval_required" | "input_required") {
         let needed = if current_reason == "approval_required" {
             "approval"
@@ -254,6 +276,13 @@ pub(super) fn recovery_body(
             "Tend woke recipient {session} for request {request_id} twice, but no prompt was submitted and the request was never claimed.\nThe recipient is idle; its input line may hold an unsent draft, or the terminal may have dropped Enter. Open this exact recipient's pane and look before pressing anything: submit or clear the draft, then the agent can claim {request_id}. Tend will not type the wake again. Choose: fix the pane and wait, hand the work off, or stop this attempt."
         );
     }
+    if current_reason == "awaiting_primary_turn" {
+        let pane = &recipient.pane;
+        let room = recipient.tmux_session_name.as_deref().unwrap_or(session);
+        return format!(
+            "Request {request_id} is queued for {room}, pane {pane}. Open that idle session and send its next prompt. Tend offers the original request through the session's hook."
+        );
+    }
     if current_reason == "wake_undelivered" {
         return format!(
             "Tend could not deliver request {request_id} to recipient {session}: the recipient is idle, but no wake reached it and it never claimed the request.\nThe request has not started. Tend refused to type into that pane (for example, an unresolved stop recorded for the pane) or the terminal write failed. Open this exact recipient's pane, or have it claim {request_id} with tend_inbox; Tend clears this item once the request is delivered or claimed. Choose: fix the pane and wait, hand the work off, or stop this attempt. Do not resend the request."
@@ -271,7 +300,7 @@ fn refresh_recovery_action(
     action: &CollaborationRequest,
     info: &PeerInterruption,
     now: OffsetDateTime,
-    recipient_session: &str,
+    recipient: &Participant,
 ) -> Option<CollaborationRequest> {
     if action.from.agent_session_id != "tend:peer-recovery" {
         return None;
@@ -293,7 +322,7 @@ fn refresh_recovery_action(
     }
     if info.active && !refreshed.status.is_terminal() {
         refreshed.body = recovery_body(
-            recipient_session,
+            recipient,
             &info.request_id,
             &info.reason,
             info.reset_at.as_deref(),
@@ -368,6 +397,7 @@ impl CollaborationStore {
                 })
                 .or(missing_reason)
                 .or_else(|| reply_overdue(original, agent, snapshot.values(), now))
+                .or_else(|| awaiting_primary_turn(original, agent.filter(|_| typed_wakes), now))
                 .or_else(|| {
                     super::wake_retry::wake_exhausted_unsubmitted(original, agent, now)
                         .then_some("wake_unsubmitted")
@@ -463,8 +493,10 @@ impl CollaborationStore {
                         .map(|r| r.id.clone());
                 }
                 if info.action_request_id.is_none()
-                    && (matches!(current_reason, "approval_required" | "input_required")
-                        || coordinator_unavailable
+                    && (matches!(
+                        current_reason,
+                        "approval_required" | "input_required" | "awaiting_primary_turn"
+                    ) || coordinator_unavailable
                         || overdue
                         || reask)
                 {
@@ -547,7 +579,7 @@ impl CollaborationStore {
                     let own = action.parent_request_id.as_deref() == Some(original.id.as_str());
                     if managed_open || (action.system_ask.is_some() && !own) {
                     } else if let Some(refreshed) =
-                        refresh_recovery_action(action, info, now, &original.to.agent_session_id)
+                        refresh_recovery_action(action, info, now, &original.to)
                     {
                         changed.push(refreshed);
                     }
@@ -1520,6 +1552,67 @@ mod tests {
         agent.pane = Some("%1".into());
         agent.tmux_socket = Some("other-server".into());
         assert!(exact_agent(&synthetic, &[agent]).is_none());
+    }
+
+    #[tokio::test]
+    async fn idle_primary_turn_escalates_once_and_preserves_the_original_request() {
+        use crate::collaboration::{turn_offer::TurnBoundaryEvent, LaunchPurpose};
+        let mailbox = CollaborationStore::in_memory(CollaborationOptions::default());
+        mailbox.set_turn_continuation(true);
+        let (sender, coordinator) = actor("%1", "sender").await;
+        let (mut recipient, mut peer) = actor("%2", "peer").await;
+        recipient.launch_purpose = LaunchPurpose::Primary;
+        recipient.state = AgentState::Idle;
+        peer.state = AgentState::Idle;
+        let request = mailbox
+            .create(
+                sender.clone(),
+                recipient.clone(),
+                NewRequest {
+                    body: "review".into(),
+                    user_authorized: true,
+                    ..NewRequest::default()
+                },
+            )
+            .await
+            .unwrap();
+        let mut agents = [coordinator, peer];
+        mailbox.reconcile_peer_interruptions(&agents).await.unwrap();
+        assert!(mailbox.pending_human_notifications().await.is_empty());
+
+        let aged = request.created_at - super::super::wake_retry::WAKE_UNDELIVERED_AFTER;
+        mailbox
+            .requests
+            .write()
+            .await
+            .get_mut(&request.id)
+            .unwrap()
+            .created_at = aged;
+        agents[1].state_entered_at = aged;
+        for _ in 0..2 {
+            mailbox.reconcile_peer_interruptions(&agents).await.unwrap();
+        }
+        let held = mailbox.get_for(&sender, &request.id).await.unwrap();
+        assert_eq!(held.status, RequestStatus::Queued);
+        assert_eq!(held.interruption.unwrap().reason, "awaiting_primary_turn");
+        let actions = mailbox.pending_human_notifications().await;
+        assert_eq!(actions.len(), 1);
+        assert_eq!(
+            actions[0].parent_request_id.as_deref(),
+            Some(request.id.as_str())
+        );
+
+        let offered = mailbox
+            .offer_turn_boundary(&recipient, TurnBoundaryEvent::PromptSubmit, None, None)
+            .await
+            .unwrap();
+        assert_eq!(offered.len(), 1);
+        mailbox.claim_by_id(&recipient, &request.id).await.unwrap();
+        mailbox.reconcile_peer_interruptions(&agents).await.unwrap();
+        let claimed = mailbox.get_for(&sender, &request.id).await.unwrap();
+        assert_eq!(claimed.status, RequestStatus::Claimed);
+        assert!(!claimed.peer_interrupted());
+        assert!(mailbox.pending_human_notifications().await.is_empty());
     }
 
     async fn age_reminders(mailbox: &CollaborationStore, by: time::Duration) {

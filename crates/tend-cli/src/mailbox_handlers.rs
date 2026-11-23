@@ -1039,7 +1039,7 @@ pub(super) fn render_reply_output(
         return Ok(serde_json::to_string(request)?);
     }
     let mut value = collaboration_output::outcome(request);
-    if !request.status.is_terminal() {
+    if !request.status.is_terminal() && !request.peer_interrupted() {
         value["reason"] = serde_json::json!("timeout");
     }
     Ok(serde_json::to_string(&value)?)
@@ -1062,6 +1062,13 @@ pub(super) fn print_collaboration_receipt(
     }
     match request.status {
         RequestStatus::Cancelled => println!("cancelled  {}", request.id),
+        RequestStatus::Queued if request.awaits_turn_boundary(&request.to) => {
+            println!(
+                "queued  {}  to {}  (awaiting the recipient's next turn)",
+                request.id,
+                request.to.label()
+            );
+        }
         RequestStatus::Queued
             if !request.bypasses_primary_protection() && !request.to.accepts_peer_work() =>
         {

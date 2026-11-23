@@ -626,7 +626,7 @@ fn refresh(view: &mut View<'_>, ask: &OpenAsk, mut waiting: Vec<String>) {
         if let Some(lead) = lead.as_deref().and_then(|id| view.get(id)) {
             if let Some(info) = lead.interruption.clone() {
                 row.body = super::recovery::recovery_body(
-                    &lead.to.agent_session_id,
+                    &lead.to,
                     &lead.id,
                     &info.reason,
                     info.reset_at.as_deref(),

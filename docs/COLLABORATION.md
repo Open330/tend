@@ -160,8 +160,12 @@ between is never executed from stale text. A request is offered through
 cannot loop its own turn; after that, and for quiet notices or
 `wake = "never"`, only a turn the user starts carries it. Offer attempts are
 recorded on the request (`turn_offer`); they are attempts, not proof of
-delivery. A primary that is idle with no turn coming keeps the request queued
-until then.
+delivery. A primary that is idle with no turn coming keeps the request queued.
+Receipts show `deferred: awaiting_primary_turn`. When wakes are enabled and a
+request expecting a reply has waited for an idle primary for five minutes
+without a recent hook offer, Tend opens a recovery item. A person can send
+their next prompt in the recipient session, and Tend offers the original
+request by ID.
 
 When a Claude Code or Codex session starts or resumes (and after Claude Code
 compacts its context), its `SessionStart` hook asks tendd what that session

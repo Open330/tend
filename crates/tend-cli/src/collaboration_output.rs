@@ -27,8 +27,18 @@ fn delivery_state(request: &CollaborationRequest) -> &'static str {
     }
 }
 
+pub(crate) fn add_turn_boundary_deferral(value: &mut Value, request: &CollaborationRequest) {
+    if request.status == RequestStatus::Queued && request.awaits_turn_boundary(&request.to) {
+        value["deferred"] = json!("awaiting_primary_turn");
+        value["delivery_detail"] = json!(
+            "The recipient's hook offers this request at its next turn boundary. If the session is idle, send its next prompt there. Keep the original request ID."
+        );
+    }
+}
+
 pub(crate) fn receipt(request: &CollaborationRequest) -> Value {
     let mut value = mutation_receipt(request);
+    add_turn_boundary_deferral(&mut value, request);
     value["from"] = endpoint(&request.from);
     value["to"] = endpoint(&request.to);
     for (key, field) in [
@@ -401,6 +411,24 @@ mod tests {
         let next = value["next_step"].as_str().unwrap();
         assert!(next.contains(&format!("tend msg cancel {}", request.id)));
         assert!(next.contains(&format!("tend peer {}", request.to.pane)));
+    }
+
+    #[test]
+    fn authorized_primary_turn_deferral_ends_on_claim() {
+        let mut request = fixture();
+        request.status = RequestStatus::Queued;
+        request.from.console = false;
+        request.to.launch_purpose = tend::collaboration::LaunchPurpose::Primary;
+        request.user_authorized = true;
+
+        let queued = outcome(&request);
+        assert_eq!(queued["delivery_state"], "queued");
+        assert_eq!(queued["deferred"], "awaiting_primary_turn");
+
+        request.status = RequestStatus::Claimed;
+        let claimed = outcome(&request);
+        assert_eq!(claimed["delivery_state"], "claimed");
+        assert!(claimed.get("deferred").is_none());
     }
 
     #[test]
