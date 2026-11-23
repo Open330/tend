@@ -13,6 +13,7 @@ pub mod mux_control;
 pub mod reload;
 pub mod spawn_provenance;
 pub mod subprocess;
+pub mod surface_names;
 pub mod tmux_work;
 #[cfg(windows)]
 pub mod windows_detach;

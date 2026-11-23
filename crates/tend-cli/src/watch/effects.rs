@@ -271,13 +271,18 @@ fn plan_spawn_work(
 }
 
 /// `tmux new-window` argv for the `c` binding: one plain shell window in
-/// `session_id`, named by tmux exactly as `prefix + c` would name it, and
-/// reported back as `@window %pane` so the caller can attach to it without
-/// re-listing the server.
+/// `session_id`, reported back as `@window %pane` so the caller can attach to
+/// it without re-listing the server.
 ///
-/// Deliberately no `-d`: `prefix + c` leaves the new window current, and this
-/// binding is that keystroke with the attach round trip removed.
-pub(super) fn plan_new_window(session_id: &str, cwd: Option<&str>) -> Vec<String> {
+/// Named after its directory, made unique against `listing` (the session's
+/// windows in [`crate::surface_names::WINDOW_NAMES_FORMAT`]). `prefix + c`
+/// would call it `zsh`, and with `automatic-rename` off — `tend init`'s
+/// setting — that is its name for good. Without a usable directory name, it
+/// is `shell`.
+///
+/// Created detached (`-d`) so another terminal's current window never moves;
+/// the invoking client jumps to it after obtaining its private view.
+pub(super) fn plan_new_window(session_id: &str, cwd: Option<&str>, listing: &str) -> Vec<String> {
     let mut args = vec![
         "new-window".to_string(),
         "-d".into(),
@@ -291,7 +296,17 @@ pub(super) fn plan_new_window(session_id: &str, cwd: Option<&str>) -> Vec<String
     // the window wherever the console happens to live. A recorded directory
     // that has since been removed would fail the whole command, so a stale
     // one is dropped rather than passed on.
-    if let Some(dir) = cwd.filter(|dir| Path::new(dir).is_dir()) {
+    let dir = cwd.filter(|dir| Path::new(dir).is_dir());
+    let base = dir
+        .and_then(|dir| Path::new(dir).file_name())
+        .and_then(|name| name.to_str())
+        .and_then(|name| {
+            crate::surface_names::slug(name, crate::surface_names::DERIVED_NAME_MAX_CHARS)
+        })
+        .unwrap_or_else(|| "shell".into());
+    args.push("-n".into());
+    args.push(crate::surface_names::unique_window_name(listing, &base));
+    if let Some(dir) = dir {
         args.push("-c".into());
         args.push(dir.to_string());
     }
@@ -337,7 +352,28 @@ pub(super) fn create_window(
             session.endpoint.host
         ));
     }
-    let args = plan_new_window(&session.session_id, cwd);
+    let listing = crate::mux_control::command(&session.endpoint)
+        .ok()
+        .and_then(|mut command| {
+            command
+                .args([
+                    "list-windows",
+                    "-a",
+                    "-F",
+                    crate::surface_names::ALL_WINDOW_NAMES_FORMAT,
+                ])
+                .output()
+                .ok()
+        })
+        .filter(|output| output.status.success())
+        .map(|output| {
+            crate::surface_names::session_windows(
+                &String::from_utf8_lossy(&output.stdout),
+                &session.session_id,
+            )
+        })
+        .unwrap_or_default();
+    let args = plan_new_window(&session.session_id, cwd, &listing);
     let output = crate::mux_control::command(&session.endpoint)?
         .args(&args)
         .output()

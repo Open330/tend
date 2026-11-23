@@ -25,10 +25,14 @@ archive fails to export.
 1. Name: anything, for example `Tend push`.
 2. Tick **Apple Push Notifications service (APNs)** ▸ Configure. For the
    environment, choose **Production**: TestFlight and App Store builds use
-   it. **Team Scoped** is fine. tendd holds one key, so a Debug build from
-   Xcode (`development`) needs a key that also covers Sandbox. Choose
-   **Sandbox & Production** only if the portal offers it for one key.
-3. Continue ▸ Register ▸ **Download**. The file is `AuthKey_<KEYID>.p8`.
+   it. tendd holds one key, so a Debug build from Xcode (`development`)
+   needs a key that also covers Sandbox. Choose **Sandbox & Production**
+   only if the portal offers it for one key.
+3. For the key restriction, choose **Topic Specific** and select
+   `dev.tend.ios`, the same value as `topic` in section 4 below. Do not use
+   **Team Scoped**: that key can push to every app on the team, so if the
+   host leaked it, it would expose more than Tend.
+4. Continue ▸ Register ▸ **Download**. The file is `AuthKey_<KEYID>.p8`.
    Apple lets you download it **once**, so put a copy in your password
    vault now.
 
@@ -105,4 +109,6 @@ else keeps working.
 ## Turning it off
 
 Set `enabled = false` (or remove the section) and restart tendd. To revoke
-the key, delete it under **Keys** on developer.apple.com.
+the key, delete it under **Keys** on developer.apple.com. To rotate it,
+create a new key, change `key_path` and `key_id`, restart tendd, and then
+revoke the old key.

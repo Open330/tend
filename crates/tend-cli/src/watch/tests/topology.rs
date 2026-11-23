@@ -618,24 +618,59 @@ fn typing_does_not_start_a_filter_until_slash_arms_it() {
 fn new_window_plan_is_prefix_c_on_the_selected_session() {
     // Create detached so another terminal's current window never moves;
     // the invoking client jumps after obtaining its private view.
-    let args = plan_new_window("$1", None);
+    let args = plan_new_window("$1", None, "");
     assert!(args.iter().any(|arg| arg == "-d"), "{args:?}");
     assert_eq!(args[0], "new-window");
     assert!(args.windows(2).any(|pair| pair == ["-t", "$1"]), "{args:?}");
     assert!(!args.iter().any(|arg| arg == "-c"), "{args:?}");
+    // No directory still gets a name, not the shell's.
+    assert!(
+        args.windows(2).any(|pair| pair == ["-n", "shell"]),
+        "{args:?}"
+    );
 }
 
 #[test]
 fn new_window_plan_only_passes_a_directory_that_still_exists() {
     let live = std::env::temp_dir();
     let live = live.to_str().expect("a utf-8 temp dir");
-    let args = plan_new_window("$1", Some(live));
+    let args = plan_new_window("$1", Some(live), "");
     assert!(args.windows(2).any(|pair| pair == ["-c", live]), "{args:?}");
 
     // A recorded cwd outlives the directory; `-c` on a deleted path fails
     // the whole command, and no window is worse than one in $HOME.
-    let args = plan_new_window("$1", Some("/definitely/not/here"));
+    let args = plan_new_window("$1", Some("/definitely/not/here"), "");
     assert!(!args.iter().any(|arg| arg == "-c"), "{args:?}");
+}
+
+#[test]
+fn new_window_plan_names_the_window_after_its_directory() {
+    // `prefix + c` would call it `zsh`, and with automatic-rename off that
+    // name never changes; the directory is what tells two shells apart.
+    let dir = tempfile::Builder::new()
+        .prefix("Billing Service.")
+        .tempdir()
+        .expect("temp dir");
+    let path = dir.path().to_str().expect("utf-8");
+    let base = crate::surface_names::slug(
+        dir.path().file_name().unwrap().to_str().unwrap(),
+        crate::surface_names::DERIVED_NAME_MAX_CHARS,
+    )
+    .unwrap();
+    assert!(base.starts_with("billing-service-"), "{base}");
+    let args = plan_new_window("$1", Some(path), "");
+    assert!(
+        args.windows(2).any(|pair| pair == ["-n", base.as_str()]),
+        "{args:?}"
+    );
+
+    let taken = format!("@1\t{base}\n");
+    let args = plan_new_window("$1", Some(path), &taken);
+    let second = format!("{base}-2");
+    assert!(
+        args.windows(2).any(|pair| pair == ["-n", second.as_str()]),
+        "{args:?}"
+    );
 }
 
 #[test]
