@@ -808,37 +808,55 @@ async fn native_ready(
             // screen a terminal would show. Render it here from the
             // session's own bytes, read on from where the last read stopped.
             let size = snapshot().map_or((24, 80), |shot| (shot.rows, shot.cols));
-            let screen = std::cell::RefCell::new((vt100::Parser::new(size.0, size.1, 0), 0_u64));
+            // The rendered screen, where its bytes end, the size it renders
+            // at, and whether it can still be trusted for typing: a gap in
+            // the retained output (overwritten history) or a resize means
+            // the rendering may no longer match the terminal, so from then
+            // on the watch reads but never types.
+            let screen = std::cell::RefCell::new(Rendered {
+                parser: vt100::Parser::new(size.0, size.1, 0),
+                offset: 0,
+                size,
+                trusted: true,
+            });
             let capture = || {
                 if over() {
                     return None;
                 }
-                snapshot().filter(|shot| live(shot))?;
+                let shot = snapshot().filter(|shot| live(shot))?;
+                if over() {
+                    return None;
+                }
                 let mut screen = screen.borrow_mut();
-                let (parser, offset) = &mut *screen;
                 let out = runtime
                     .block_on(tokio::time::timeout(
                         left().min(std::time::Duration::from_secs(2)),
-                        client.read_session(&id, *offset),
+                        client.read_session(&id, screen.offset),
                     ))
                     .ok()?
                     .ok()?;
-                parser.process(&out.data_bytes().ok()?);
-                *offset = out.next_offset;
-                Some(parser.screen().contents())
+                screen.take(&shot, &out)?;
+                Some(screen.parser.screen().contents())
             };
-            // Gone only when the daemon says so: an unreadable capture is not
-            // an exit.
-            let alive = || snapshot().map_or(!over(), |shot| live(&shot));
+            // Gone only when the daemon says the session exited (or runs
+            // another process): an unreadable capture, cancelled or not, is
+            // unknown, never an exit.
+            let alive = || snapshot().is_none_or(|shot| live(&shot));
             let send = |key: &str| {
-                !over()
-                    && snapshot().is_some_and(|shot| live(&shot))
-                    && runtime
-                        .block_on(tokio::time::timeout(
-                            left().min(std::time::Duration::from_secs(2)),
-                            client.write_session_bytes(&id, key.as_bytes()),
-                        ))
-                        .is_ok_and(|written| written.is_ok())
+                if over() || !screen.borrow().trusted {
+                    return false;
+                }
+                let live_now = snapshot().is_some_and(|shot| live(&shot));
+                // Checked again right before the write is built and sent.
+                if !live_now || over() || !screen.borrow().trusted {
+                    return false;
+                }
+                runtime
+                    .block_on(tokio::time::timeout(
+                        left().min(std::time::Duration::from_secs(2)),
+                        client.write_session_bytes(&id, key.as_bytes()),
+                    ))
+                    .is_ok_and(|written| written.is_ok())
             };
             let timeout = left().saturating_sub(std::time::Duration::from_secs(4));
             if prompted {
@@ -853,6 +871,40 @@ async fn native_ready(
     .await
     .context("watch the native session start")?;
     native_outcome(report, &session.id)
+}
+
+/// A native session's output rendered as a terminal shows it.
+struct Rendered {
+    parser: vt100::Parser,
+    /// Where the bytes rendered so far end.
+    offset: u64,
+    /// The rows and columns it renders at.
+    size: (u16, u16),
+    /// Whether the rendering is known to match the terminal: no gap in the
+    /// output and no resize since the start.
+    trusted: bool,
+}
+
+impl Rendered {
+    /// Render `out`, read from [`Self::offset`] while the session showed
+    /// `shot`. A gap (the requested bytes were overwritten) or a new size
+    /// restarts the rendering from what is there and stops trusting it.
+    /// `None` when the bytes cannot be decoded.
+    fn take(
+        &mut self,
+        shot: &tend::session::TerminalSnapshot,
+        out: &tend::session::SessionOutput,
+    ) -> Option<()> {
+        let size = (shot.rows, shot.cols);
+        if out.truncated || out.offset > self.offset || size != self.size {
+            self.trusted = false;
+            self.parser = vt100::Parser::new(size.0, size.1, 0);
+            self.size = size;
+        }
+        self.parser.process(&out.data_bytes().ok()?);
+        self.offset = out.next_offset;
+        Some(())
+    }
 }
 
 /// A native start's result from its readiness report: started (ready, or
@@ -2990,6 +3042,75 @@ mod tests {
         assert!(failure_json(&anyhow::anyhow!("tmux failed"))
             .get("not_started")
             .is_none());
+    }
+
+    #[test]
+    fn a_native_screen_with_a_gap_or_a_resize_is_read_but_never_typed_into() {
+        let shot = |rows: u16, cols: u16| tend::session::TerminalSnapshot {
+            session: tend::session::SessionRef {
+                id: "pty:1".into(),
+                backend: tend::session::SessionBackendKind::Pty,
+                display_name: None,
+                cwd: None,
+                attached_clients: 0,
+                has_been_attached: false,
+                exited: false,
+                exit_status: None,
+                pid: Some(7),
+            },
+            cols,
+            rows,
+            lines: Vec::new(),
+            fetched_at: time::OffsetDateTime::UNIX_EPOCH,
+            truncated: false,
+        };
+        let out = |offset: u64, data: &str, truncated: bool| tend::session::SessionOutput {
+            session_id: "pty:1".into(),
+            offset,
+            next_offset: offset + data.len() as u64,
+            data: data.into(),
+            data_base64: None,
+            truncated,
+            exited: false,
+            exit_status: None,
+        };
+        let fresh = || Rendered {
+            parser: vt100::Parser::new(24, 80, 0),
+            offset: 0,
+            size: (24, 80),
+            trusted: true,
+        };
+        // Contiguous output at the same size: rendered and trusted.
+        let mut screen = fresh();
+        screen
+            .take(
+                &shot(24, 80),
+                &out(0, "\x1b[2GChoose\x1b[9Gthe\x1b[13Gtext", false),
+            )
+            .unwrap();
+        assert!(screen
+            .parser
+            .screen()
+            .contents()
+            .contains("Choose the text"));
+        assert!(screen.trusted);
+        let next = screen.offset;
+        screen
+            .take(&shot(24, 80), &out(next, " style", false))
+            .unwrap();
+        assert!(screen.trusted);
+        // Overwritten history (a gap past what was read, or truncation).
+        let mut gap = fresh();
+        gap.take(&shot(24, 80), &out(500, "later", false)).unwrap();
+        assert!(!gap.trusted);
+        let mut cut = fresh();
+        cut.take(&shot(24, 80), &out(0, "x", true)).unwrap();
+        assert!(!cut.trusted);
+        // A resize.
+        let mut resized = fresh();
+        resized.take(&shot(40, 120), &out(0, "x", false)).unwrap();
+        assert!(!resized.trusted);
+        assert_eq!(resized.size, (40, 120));
     }
 
     fn request(agent: AgentProgram, placement: Placement) -> StartRequest {

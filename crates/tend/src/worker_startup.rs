@@ -239,6 +239,10 @@ fn prepare_with(
     }
 }
 
+/// How a launch's note on the row of an agent it could not start opens
+/// (`did not start: …`). The row keeps it until a newer prompt is accepted.
+pub const LAUNCH_NOTICE: &str = "did not start:";
+
 /// How long a launched agent's first turn must run before the launch
 /// counts as started: a capped account answers the prompt with its limit
 /// line within a second or two of the spinner.

@@ -208,30 +208,24 @@ impl TreeRows {
 }
 
 /// The text column of a status row: a launch's own notice (`did not
-/// start: …`, marked `⚠`) while the row still waits or failed since that
-/// launch, else the last prompt. Only a launch notice, and only while no
-/// prompt came after the state began: a wait or error detected some other
-/// way can sit beside an older, unrelated notice.
+/// start: …`, marked `⚠`) while the row waits or failed, else the last
+/// prompt. Only a launch notice (the row drops it once a newer prompt is
+/// accepted); a question or any other notice never replaces the prompt.
 pub(super) fn status_text(agent: &Agent) -> String {
     let notice = agent
         .last_notification
         .as_deref()
         .map(str::trim)
-        .filter(|note| note.starts_with(LAUNCH_NOTICE));
-    let current = matches!(
+        .filter(|note| note.starts_with(tend::worker_startup::LAUNCH_NOTICE));
+    let waiting = matches!(
         agent.state,
         AgentState::WaitingInput | AgentState::WaitingChoice | AgentState::Error
-    ) && agent
-        .last_prompt_at
-        .is_none_or(|prompted| prompted <= agent.state_entered_at);
+    );
     match notice {
-        Some(note) if current => format!("⚠ {note}"),
+        Some(note) if waiting => format!("⚠ {note}"),
         _ => tend::prompt_headline(agent.last_prompt.as_deref().unwrap_or("-")).into(),
     }
 }
-
-/// How a launch's note on the row of an agent that did not start opens.
-const LAUNCH_NOTICE: &str = "did not start:";
 
 pub(super) fn branch(at: usize, count: usize) -> &'static str {
     if at + 1 == count {

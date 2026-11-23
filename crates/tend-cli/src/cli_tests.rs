@@ -2459,11 +2459,9 @@ fn status_rows_show_what_a_waiting_or_failed_agent_needs() {
     );
     let mut working = agent("b", Some("%2"), AgentState::Working, "fix the build");
     working.last_notification = Some("did not start: an older launch".into());
-    // Waiting again for a newer prompt, beside an older launch notice.
-    let mut later = agent("c", Some("%3"), AgentState::WaitingInput, "run the tests");
-    later.state_entered_at = at - time::Duration::seconds(30);
-    later.last_prompt_at = Some(at);
-    later.last_notification = Some("did not start: an older launch".into());
+    // Waiting again after a newer prompt: the store dropped the launch
+    // notice when that prompt was accepted, so only the prompt is left.
+    let later = agent("c", Some("%3"), AgentState::WaitingInput, "run the tests");
     // A question is not a launch notice: the prompt stays.
     let mut asking = agent("d", Some("%4"), AgentState::WaitingInput, "plan it");
     asking.last_notification = Some("Where should the sandbox live?".into());

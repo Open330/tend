@@ -1132,6 +1132,15 @@ fn mutate_for_event(
             agent.last_prompt = Some(prompt.clone());
             agent.last_prompt_at = Some(at);
             agent.state = AgentState::Working;
+            // A launch's `did not start` note is about that start, which a
+            // newer accepted prompt has moved past.
+            if agent
+                .last_notification
+                .as_deref()
+                .is_some_and(|note| note.starts_with(crate::worker_startup::LAUNCH_NOTICE))
+            {
+                agent.last_notification = None;
+            }
             prompt_record = Some(PromptRecord {
                 id: id.clone(),
                 prompt: prompt.clone(),
@@ -5234,6 +5243,55 @@ mod tests {
         assert_eq!(
             store.by_session("permission").await.unwrap().state,
             AgentState::WaitingInput
+        );
+    }
+
+    #[tokio::test]
+    async fn a_newer_prompt_drops_a_launch_notice_but_not_other_notices() {
+        let store = Store::shared();
+        let now = datetime!(2026-11-23 12:00:00 UTC);
+        let note = |session: &str, message: &str| AgentEvent::NotificationFired {
+            id: id(session),
+            level: NotificationLevel::NeedsInput,
+            message: message.into(),
+            at: now,
+        };
+        let prompt = |session: &str| AgentEvent::PromptSubmitted {
+            id: id(session),
+            prompt: "try again".into(),
+            at: now + time::Duration::seconds(10),
+        };
+        for session in ["launch", "question"] {
+            store
+                .apply(&AgentEvent::Started {
+                    id: id(session),
+                    at: now,
+                })
+                .await;
+        }
+        store
+            .apply(&note(
+                "launch",
+                "did not start: the account is not signed in",
+            ))
+            .await;
+        store
+            .apply(&note("question", "Where should it live?"))
+            .await;
+        store.apply(&prompt("launch")).await;
+        store.apply(&prompt("question")).await;
+        assert_eq!(
+            store.by_session("launch").await.unwrap().last_notification,
+            None
+        );
+        assert_eq!(
+            store
+                .by_session("question")
+                .await
+                .unwrap()
+                .last_notification
+                .as_deref(),
+            Some("Where should it live?")
         );
     }
 
