@@ -595,29 +595,55 @@ pub enum FirstTurn {
 /// turn is a few kilobytes.
 const FIRST_TURN_LIMIT: u64 = 256 * 1024;
 
-/// Read `session_id`'s transcript under `roots` for [`FirstTurn`].
+/// Read `session_id`'s transcript under `roots` for [`FirstTurn`], as the
+/// refusal of exactly `prompt`. Fails closed: the transcript must be the
+/// only one with that id across `roots` (one file, however many roots
+/// reach it) and written no earlier than `not_before` (this launch).
 #[must_use]
-pub fn claude_first_turn(session_id: &str, roots: &[PathBuf]) -> FirstTurn {
+pub fn claude_first_turn(
+    session_id: &str,
+    roots: &[PathBuf],
+    prompt: &str,
+    not_before: std::time::SystemTime,
+) -> FirstTurn {
     if uuid::Uuid::parse_str(session_id).is_err() {
         return FirstTurn::Unknown;
     }
     let name = format!("{session_id}.jsonl");
-    let found = roots.iter().find_map(|root| {
-        std::fs::read_dir(root.join("projects"))
-            .ok()?
-            .flatten()
-            .map(|project| project.path().join(&name))
-            .find(|path| path.is_file())
-    });
-    match found.and_then(|path| read_bounded(&path, FIRST_TURN_LIMIT)) {
-        Some(bytes) => first_turn_of(&String::from_utf8_lossy(&bytes)),
+    let mut found: Vec<PathBuf> = Vec::new();
+    for root in roots {
+        let Ok(projects) = std::fs::read_dir(root.join("projects")) else {
+            continue;
+        };
+        for project in projects.flatten() {
+            let path = project.path().join(&name);
+            if path.is_file() {
+                let real = std::fs::canonicalize(&path).unwrap_or(path);
+                if !found.contains(&real) {
+                    found.push(real);
+                }
+            }
+        }
+    }
+    let [path] = found.as_slice() else {
+        return FirstTurn::Unknown;
+    };
+    let fresh = std::fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .is_ok_and(|modified| modified >= not_before);
+    if !fresh {
+        return FirstTurn::Unknown;
+    }
+    match read_bounded(path, FIRST_TURN_LIMIT) {
+        Some(bytes) => first_turn_of(&String::from_utf8_lossy(&bytes), prompt),
         None => FirstTurn::Unknown,
     }
 }
 
-/// [`FirstTurn`] of transcript `text` (JSON lines).
+/// [`FirstTurn`] of transcript `text` (JSON lines): its one user record is
+/// exactly `prompt`, and the refusal comes after it.
 #[must_use]
-pub fn first_turn_of(text: &str) -> FirstTurn {
+pub fn first_turn_of(text: &str, prompt: &str) -> FirstTurn {
     let mut prompts = 0;
     let mut refused = false;
     for line in text.lines().filter(|line| !line.trim().is_empty()) {
@@ -627,12 +653,24 @@ pub fn first_turn_of(text: &str) -> FirstTurn {
         match entry["type"].as_str() {
             Some("user") => {
                 let content = &entry["message"]["content"];
-                let plain = content.is_string()
-                    || content
-                        .as_array()
-                        .is_some_and(|blocks| blocks.iter().all(|block| block["type"] == "text"));
-                if !plain {
+                let said = match content {
+                    serde_json::Value::String(text) => Some(text.clone()),
+                    serde_json::Value::Array(blocks)
+                        if blocks.iter().all(|block| block["type"] == "text") =>
+                    {
+                        Some(
+                            blocks
+                                .iter()
+                                .filter_map(|block| block["text"].as_str())
+                                .collect::<Vec<_>>()
+                                .join("\n"),
+                        )
+                    }
                     // A tool result: work was done.
+                    _ => None,
+                };
+                // Not tend's prompt (the person typed one), or a second one.
+                if said.as_deref().map(str::trim) != Some(prompt.trim()) || refused {
                     return FirstTurn::Other;
                 }
                 prompts += 1;
@@ -641,7 +679,7 @@ pub fn first_turn_of(text: &str) -> FirstTurn {
                 let synthetic_limit = entry["isApiErrorMessage"] == true
                     && entry["error"] == "rate_limit"
                     && entry["message"]["model"] == "<synthetic>";
-                if !synthetic_limit {
+                if !synthetic_limit || prompts == 0 {
                     return FirstTurn::Other;
                 }
                 refused = true;
@@ -1049,25 +1087,86 @@ mod tests {
     #[test]
     fn only_a_lone_prompt_refused_for_the_limit_is_a_rejected_first_turn() {
         let prompt = r#"{"type":"user","message":{"role":"user","content":"fix the build"}}"#;
+        let typed = r#"{"type":"user","message":{"role":"user","content":"something else"}}"#;
         let refused = r#"{"type":"assistant","message":{"model":"<synthetic>","role":"assistant","content":[{"type":"text","text":"You've hit your limit · resets 3pm"}]},"error":"rate_limit","isApiErrorMessage":true}"#;
         let snapshot = r#"{"type":"file-history-snapshot","snapshot":{}}"#;
         assert_eq!(
-            first_turn_of(&format!("{snapshot}\n{prompt}\n{refused}\n")),
+            first_turn_of(
+                &format!("{snapshot}\n{prompt}\n{refused}\n"),
+                "fix the build"
+            ),
             FirstTurn::RejectedForLimit
         );
         // A real answer, a tool's output, or a second prompt: work happened.
         let answer = r#"{"type":"assistant","message":{"model":"claude-opus-5-5","role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{}}]}}"#;
         let tool = r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"You've hit your limit · resets 3pm"}]}}"#;
         assert_eq!(
-            first_turn_of(&format!("{prompt}\n{answer}\n{tool}\n{refused}")),
+            first_turn_of(
+                &format!("{prompt}\n{answer}\n{tool}\n{refused}"),
+                "fix the build"
+            ),
             FirstTurn::Other
         );
         assert_eq!(
-            first_turn_of(&format!("{prompt}\n{refused}\n{prompt}")),
+            first_turn_of(&format!("{prompt}\n{refused}\n{prompt}"), "fix the build"),
             FirstTurn::Other
         );
-        assert_eq!(first_turn_of(prompt), FirstTurn::Other);
-        assert_eq!(first_turn_of("not json"), FirstTurn::Unknown);
-        assert_eq!(claude_first_turn("not-a-uuid", &[]), FirstTurn::Unknown);
+        assert_eq!(first_turn_of(prompt, "fix the build"), FirstTurn::Other);
+        // The person's own first prompt, refused, is not tend's to replay;
+        // nor is a refusal before any prompt.
+        assert_eq!(
+            first_turn_of(&format!("{typed}\n{refused}"), "fix the build"),
+            FirstTurn::Other
+        );
+        assert_eq!(
+            first_turn_of(&format!("{refused}\n{prompt}"), "fix the build"),
+            FirstTurn::Other
+        );
+        assert_eq!(first_turn_of("not json", "x"), FirstTurn::Unknown);
+        assert_eq!(
+            claude_first_turn("not-a-uuid", &[], "x", std::time::SystemTime::UNIX_EPOCH),
+            FirstTurn::Unknown
+        );
+    }
+
+    #[test]
+    fn a_first_turn_needs_one_fresh_transcript_across_the_roots() {
+        let id = "6f1c2b8e-2d4a-4c55-9a77-0f3b1c2d3e4f";
+        let text = concat!(
+            r#"{"type":"user","message":{"role":"user","content":"task"}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"model":"<synthetic>","role":"assistant","content":[]},"error":"rate_limit","isApiErrorMessage":true}"#,
+            "\n"
+        );
+        let write = |root: &Path| {
+            std::fs::create_dir_all(root.join("projects/p")).unwrap();
+            std::fs::write(root.join(format!("projects/p/{id}.jsonl")), text).unwrap();
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let (one, two) = (dir.path().join("one"), dir.path().join("two"));
+        write(&one);
+        let past = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        let roots = [one.clone(), two.clone()];
+        assert_eq!(
+            claude_first_turn(id, &roots, "task", past),
+            FirstTurn::RejectedForLimit
+        );
+        // Written before this launch: an old conversation's, not this one's.
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+        assert_eq!(
+            claude_first_turn(id, &roots, "task", later),
+            FirstTurn::Unknown
+        );
+        // The same id in two account roots: ambiguous, so no proof.
+        write(&two);
+        assert_eq!(
+            claude_first_turn(id, &roots, "task", past),
+            FirstTurn::Unknown
+        );
+        // One file reached through two roots is still one transcript.
+        assert_eq!(
+            claude_first_turn(id, &[one.clone(), one.join("..").join("one")], "task", past),
+            FirstTurn::RejectedForLimit
+        );
     }
 }

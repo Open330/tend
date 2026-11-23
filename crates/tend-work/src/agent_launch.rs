@@ -926,6 +926,7 @@ pub fn start(request: StartRequest) -> Result<StartResult> {
         deadline,
         launched_at: time::OffsetDateTime::now_utc(),
         session: None,
+        prompt: None,
         roots: Vec::new(),
     };
     let auto = request
@@ -1039,13 +1040,25 @@ fn release_capped_pane(capped: &Capped) -> Result<()> {
         "#{@tend_launch_id}\t#{pane_pid}",
     ])?;
     let (launch, pid) = shown.trim_end().split_once('\t').unwrap_or_default();
+    let process = pid
+        .parse()
+        .ok()
+        .and_then(tend::collaboration::ProcessFence::capture);
     anyhow::ensure!(
-        launch == capped.receipt.launch_id && pid.parse().ok() == Some(capped.pane_pid),
+        launch == capped.receipt.launch_id && process.is_some() && process == capped.process,
         "pane {pane} no longer runs this launch"
     );
     anyhow::ensure!(
         first_turn(&capped.facts) == tend::agent_conversation::FirstTurn::RejectedForLimit,
         "the agent in pane {pane} has done more than meet the limit"
+    );
+    anyhow::ensure!(
+        capped
+            .facts
+            .deadline
+            .saturating_duration_since(std::time::Instant::now())
+            >= RELAUNCH_FLOOR,
+        "no time left to start it on another account"
     );
     control
         .run(&["kill-pane", "-t", pane])
@@ -1087,8 +1100,11 @@ struct LaunchFacts {
     /// Just before the pane was created: a row older than this is not
     /// this launch's.
     launched_at: time::OffsetDateTime,
-    /// The Claude conversation id tend gave this launch, if any.
+    /// The Claude conversation id tend itself generated for this launch
+    /// (never one the caller chose).
     session: Option<String>,
+    /// The first prompt tend passed on the command line.
+    prompt: Option<String>,
     /// Where that conversation's transcript may be.
     roots: Vec<PathBuf>,
 }
@@ -1098,9 +1114,18 @@ fn first_turn(facts: &LaunchFacts) -> tend::agent_conversation::FirstTurn {
     facts
         .session
         .as_deref()
-        .map_or(tend::agent_conversation::FirstTurn::Unknown, |session| {
-            tend::agent_conversation::claude_first_turn(session, &facts.roots)
-        })
+        .zip(facts.prompt.as_deref())
+        .map_or(
+            tend::agent_conversation::FirstTurn::Unknown,
+            |(session, prompt)| {
+                tend::agent_conversation::claude_first_turn(
+                    session,
+                    &facts.roots,
+                    prompt,
+                    std::time::SystemTime::from(facts.launched_at),
+                )
+            },
+        )
 }
 
 /// Where a Claude launch on `routed` keeps its transcripts: the account's
@@ -1131,7 +1156,8 @@ enum Attempt {
 struct Capped {
     account: String,
     pane: String,
-    pane_pid: u32,
+    /// The process tmux started for this launch, start time included.
+    process: Option<tend::collaboration::ProcessFence>,
     receipt: tend::launch_identity::LaunchReceipt,
     facts: LaunchFacts,
     reason: String,
@@ -1182,11 +1208,15 @@ fn start_once(
         request.creator = crate::spawn_provenance::resolve_creator(&request.socket);
     }
     let archive = tend::launch_identity::archive_directory();
+    let options_given = request.options.len();
     let expected_session = if request.agent == AgentProgram::Claude {
         claude_session_options(&mut request.options)
     } else {
         None
     };
+    // Tend generated the id (rather than taking the caller's) only when it
+    // appended `--session-id <id>` itself.
+    let session_generated = request.options.len() == options_given + 2;
     let archive = if let Some(directory) = archive {
         match tend::launch_identity::prepare(
             &directory,
@@ -1243,6 +1273,12 @@ fn start_once(
         )
         .map_err(anyhow::Error::msg)?;
     let args = tmux_args(&request, &cwd, &command)?;
+    // Routing (an `aas` query, Codex hook-trust prep) can take seconds:
+    // never create what this start has no time left to watch.
+    anyhow::ensure!(
+        deadline.saturating_duration_since(std::time::Instant::now()) >= RELAUNCH_FLOOR / 2,
+        "did not start: no time was left to launch and watch it after choosing an account"
+    );
     let launched_at = time::OffsetDateTime::now_utc();
     if let Some(ticket) = &request.worker_spawn {
         update_spawn(
@@ -1445,7 +1481,8 @@ fn start_once(
     let facts = LaunchFacts {
         deadline,
         launched_at,
-        session: expected_session,
+        session: expected_session.filter(|_| session_generated),
+        prompt: prompt.map(str::to_owned),
         roots: Vec::new(),
     };
     let input_readiness = match await_ready(
@@ -1651,11 +1688,22 @@ fn capped_launch(
 ) -> Capped {
     let pane_pid = pane_pid(pane);
     facts.roots = claude_roots_for(Some(&Ok(routed.clone())), pane_pid.unwrap_or(0));
-    let unproven = match (request.agent, pane_pid) {
+    let process = pane_pid.and_then(tend::collaboration::ProcessFence::capture);
+    let unproven = match (request.agent, &process) {
+        (AgentProgram::Claude, _) if facts.prompt.is_none() => {
+            Some("tend gave it no prompt, so a refused one is not tend's to replay".into())
+        }
+        (AgentProgram::Claude, _) if facts.session.is_none() => {
+            Some("its conversation id was not one tend generated".into())
+        }
         (AgentProgram::Claude, Some(_)) => {
             // The transcript can trail the screen by a moment.
             let proven = look_for(
-                std::time::Duration::from_secs(2),
+                facts
+                    .deadline
+                    .saturating_duration_since(std::time::Instant::now())
+                    .saturating_sub(std::time::Duration::from_secs(4))
+                    .min(std::time::Duration::from_secs(2)),
                 std::time::Duration::from_millis(200),
                 || {
                     (first_turn(&facts) == tend::agent_conversation::FirstTurn::RejectedForLimit)
@@ -1673,7 +1721,7 @@ fn capped_launch(
     Capped {
         account: routed.account.clone(),
         pane: pane.to_owned(),
-        pane_pid: pane_pid.unwrap_or(0),
+        process,
         receipt: receipt.clone(),
         facts,
         reason: reason.replacen("the account is", "is", 1),
@@ -2573,8 +2621,12 @@ mod tests {
                 .into(),
                 env_file: None,
             };
-            let launch_on = |name: &str, choice: tend::swap_api::SpawnAccount, homes: &[&str]| {
+            let launch_with = |name: &str,
+                               choice: tend::swap_api::SpawnAccount,
+                               homes: &[&str],
+                               prompt: Option<&str>| {
                 let mut request = request(AgentProgram::Claude, Placement::Session);
+                request.prompt = prompt.map(str::to_owned);
                 request.socket = root.join("no-daemon.sock");
                 request.target = None;
                 request.cwd = Some(root.clone());
@@ -2587,6 +2639,9 @@ mod tests {
                     module_off: false,
                 });
                 start(request)
+            };
+            let launch_on = |name: &str, choice: tend::swap_api::SpawnAccount, homes: &[&str]| {
+                launch_with(name, choice, homes, Some("task"))
             };
             let launch = |name: &str, choice: tend::swap_api::SpawnAccount| {
                 launch_on(name, choice, &["capped", "spare"])
@@ -2652,6 +2707,20 @@ mod tests {
             );
             assert!(message.contains("transcript does not show"), "{message}");
             assert!(message.contains("is kept"), "{message}");
+            // A refusal of a prompt tend did not give (none here: the
+            // person's own) is never replayed.
+            let message = format!(
+                "{:#}",
+                launch_with(
+                    "no-prompt",
+                    tend::swap_api::SpawnAccount::Auto,
+                    &["capped", "spare"],
+                    None
+                )
+                .expect_err("a launch without tend's prompt is not replayed")
+            );
+            assert!(message.contains("tend gave it no prompt"), "{message}");
+            assert!(message.contains("is kept"), "{message}");
             // An agent that exits at once did not start, and has no pane.
             let message = format!(
                 "{:#}",
@@ -2674,7 +2743,7 @@ mod tests {
                 .collect();
             assert_eq!(
                 homes,
-                ["capped", "spare", "capped", "capped", "toolcap", "broken"],
+                ["capped", "spare", "capped", "capped", "toolcap", "capped", "broken"],
                 "{launches}"
             );
             return;
@@ -2777,7 +2846,13 @@ exec sleep 600
         sessions.sort_unstable();
         assert_eq!(
             sessions,
-            ["auto-alone", "auto-launch", "pinned-launch", "tool-limit"],
+            [
+                "auto-alone",
+                "auto-launch",
+                "no-prompt",
+                "pinned-launch",
+                "tool-limit"
+            ],
             "{panes}"
         );
     }
