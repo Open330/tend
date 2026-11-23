@@ -576,6 +576,7 @@ pub async fn apply_durable(resolved: Resolved, client: &tend::ipc::Client) -> Re
                 return Err(error);
             }
             Err(error) => {
+                let error = with_alias(error, &claim.agent.alias);
                 let detail = format!("{error:#}");
                 let _ = client
                     .pipeline_report(
@@ -583,7 +584,7 @@ pub async fn apply_durable(resolved: Resolved, client: &tend::ipc::Client) -> Re
                         &claim.agent.alias,
                         claim.generation,
                         PipelineAliasStatus::Failed,
-                        claim.pane.as_deref(),
+                        kept_pane(&error).or(claim.pane.as_deref()),
                         Some(&detail),
                         run.window_id.as_deref(),
                     )
@@ -614,6 +615,24 @@ pub async fn apply_durable(resolved: Resolved, client: &tend::ipc::Client) -> Re
     Ok(finish(
         resolved, plan, launched, reprompted, session, window, false, done,
     ))
+}
+
+/// `error`, with the pipeline alias added to the launch that did not start
+/// behind it (if that is what failed), so callers read both as fields.
+fn with_alias(error: anyhow::Error, alias: &str) -> anyhow::Error {
+    match crate::agent_launch::not_started_in(&error).cloned() {
+        Some(mut not_started) => {
+            not_started.alias = Some(alias.to_owned());
+            not_started.message = format!("{error:#}");
+            anyhow::Error::new(not_started)
+        }
+        None => error,
+    }
+}
+
+/// The pane a launch that did not start left for the person.
+fn kept_pane(error: &anyhow::Error) -> Option<&str> {
+    crate::agent_launch::not_started_in(error).and_then(|not_started| not_started.pane.as_deref())
 }
 
 /// Reconcile one already-registered Run from its persisted desired agents.
@@ -726,6 +745,7 @@ pub async fn reconcile_run(
                 return Err(error);
             }
             Err(error) => {
+                let error = with_alias(error, &claim.agent.alias);
                 let detail = format!("{error:#}");
                 let _ = client
                     .pipeline_report(
@@ -733,7 +753,7 @@ pub async fn reconcile_run(
                         &claim.agent.alias,
                         claim.generation,
                         PipelineAliasStatus::Failed,
-                        claim.pane.as_deref(),
+                        kept_pane(&error).or(claim.pane.as_deref()),
                         Some(&detail),
                         claim.window_id.as_deref(),
                     )
@@ -2376,5 +2396,27 @@ mod tests {
     #[test]
     fn a_cache_ttl_of_zero_never_serves_a_hit() {
         assert!(cached_ticket("cal-does-not-exist", 0).is_none());
+    }
+
+    #[test]
+    fn a_pipeline_agent_that_did_not_start_names_its_alias_and_kept_pane() {
+        let error = anyhow::Error::new(crate::agent_launch::NotStarted {
+            message: "did not start: the agent exited during startup; pane %3 is kept".into(),
+            pane: Some("%3".into()),
+            session: None,
+            alias: None,
+        })
+        .context("launch pipeline agent \"impl\"");
+        let tagged = with_alias(error, "impl");
+        assert_eq!(kept_pane(&tagged), Some("%3"));
+        let found = crate::agent_launch::not_started_in(&tagged).unwrap();
+        assert_eq!(found.alias.as_deref(), Some("impl"));
+        assert!(found
+            .message
+            .starts_with("launch pipeline agent \"impl\": did not start"));
+        // Anything else passes through untouched.
+        let other = with_alias(anyhow::anyhow!("git failed"), "impl");
+        assert_eq!(kept_pane(&other), None);
+        assert_eq!(other.to_string(), "git failed");
     }
 }

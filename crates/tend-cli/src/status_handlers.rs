@@ -173,7 +173,7 @@ pub(super) struct TreeRows {
 impl TreeRows {
     pub(super) fn agent(&self, label: String, agent: &Agent) -> Vec<Cell> {
         let state = status_state_label(agent.state, self.layout).to_string();
-        let headline = tend::prompt_headline(agent.last_prompt.as_deref().unwrap_or("-"));
+        let headline = status_text(agent);
         let prompt = headline.lines().next().unwrap_or("");
         vec![
             Cell::new(truncate_cell(&label, self.name_width)),
@@ -204,6 +204,22 @@ impl TreeRows {
             Cell::new(""),
             Cell::new(""),
         ]
+    }
+}
+
+/// The text column of a status row: what a waiting or failed agent last
+/// said it needs (a question, `did not start: …`), else its last prompt.
+pub(super) fn status_text(agent: &Agent) -> String {
+    let notice = agent
+        .last_notification
+        .as_deref()
+        .map(str::trim)
+        .filter(|note| !note.is_empty());
+    match (agent.state, notice) {
+        (AgentState::WaitingInput | AgentState::WaitingChoice | AgentState::Error, Some(note)) => {
+            note.to_owned()
+        }
+        _ => tend::prompt_headline(agent.last_prompt.as_deref().unwrap_or("-")).into(),
     }
 }
 
@@ -802,7 +818,7 @@ pub(super) fn render_status_table(
         let pane = pane_display(a, panes);
         let state_txt = status_state_label(a.state, layout).to_string();
         let last_activity = relative_time(now, a.last_activity_at);
-        let prompt_raw = tend::prompt_headline(a.last_prompt.as_deref().unwrap_or("-"));
+        let prompt_raw = status_text(a);
         let prompt = prompt_raw.lines().next().unwrap_or("");
 
         let state_cell = status_state_cell(&state_txt, a.state, theme);

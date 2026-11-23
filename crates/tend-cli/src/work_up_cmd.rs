@@ -65,7 +65,18 @@ pub async fn run(
             &resolved.cwd,
         )
         .await?;
-        let result = apply_durable(resolved, client).await?;
+        let result = match apply_durable(resolved, client).await {
+            Ok(result) => result,
+            Err(error) => {
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&crate::agent_launch::failure_json(&error))?
+                    );
+                }
+                return Err(error);
+            }
+        };
         if let Some(record) = planned
             .as_ref()
             .filter(|record| record.metadata.stage == tend::work::WorkStage::Queued)

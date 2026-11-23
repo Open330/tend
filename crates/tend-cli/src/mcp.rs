@@ -1524,7 +1524,7 @@ async fn call_tool_inner(
                         result["defaults_applied"] = defaults_applied;
                         json_result(&result)
                     }
-                    Ok(Err(error)) => error_result(&format!("start_agent failed: {error}")),
+                    Ok(Err(error)) => launch_error_result("start_agent failed", &error),
                     Err(error) => error_result(&format!("start_agent worker failed: {error}")),
                 },
             )
@@ -3824,7 +3824,7 @@ async fn start_work(client: &Client, args: &Value, config: &tend::config::Config
         .await
         {
             Ok(Ok(result)) => result,
-            Ok(Err(error)) => return error_result(&format!("{error:#}")),
+            Ok(Err(error)) => return launch_error_result("tend_start_work", &error),
             Err(error) => return error_result(&format!("tend_start_work worker failed: {error}")),
         }
     };
@@ -5549,6 +5549,21 @@ fn json_result(value: &Value) -> Value {
     let text = serde_json::to_string(value)
         .unwrap_or_else(|_| "{\"error\":\"serialize failed\"}".to_string());
     text_result(&text)
+}
+
+/// A failed agent launch as an `isError` result. When an agent did not
+/// start, the text is JSON carrying `not_started` (`pane` kept for the
+/// person, `alias`, `message`) so a caller reads the pane as a field.
+fn launch_error_result(what: &str, error: &anyhow::Error) -> Value {
+    if crate::agent_launch::not_started_in(error).is_none() {
+        return error_result(&format!("{what}: {error:#}"));
+    }
+    let mut value = crate::agent_launch::failure_json(error);
+    value["error"] = json!(format!("{what}: {error:#}"));
+    json!({
+        "content": [ { "type": "text", "text": value.to_string() } ],
+        "isError": true,
+    })
 }
 
 /// A tools/call result flagged `isError` so the model sees the failure

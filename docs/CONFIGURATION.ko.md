@@ -169,8 +169,8 @@ account = "auto"          # 또는 고정 계정: "work@claude"
 
 ### 새 에이전트가 뜰 때까지 기다리기
 
-`claude`나 `codex`를 tmux나 rmux pane에 띄우는 모든 경로(`tend agent start`,
-`tend_start_agent`, `tend work up`, peer 호출, 앱의 시작. native PTY 호스트는 제외)는
+`claude`나 `codex`를 띄우는 모든 경로(`tend agent start`, `tend_start_agent`,
+`tend work up`, peer 호출, 앱의 시작)는 tmux나 rmux pane이든 native 세션(`--host native`)이든
 정해진 시간 안에서 에이전트가 일할 수 있게 될 때까지 기다린 뒤 결과를 알려 줍니다.
 
 - `started …`: 입력창이 떴거나, 첫 프롬프트를 몇 초 동안 처리하고 있습니다.
@@ -182,9 +182,15 @@ account = "auto"          # 또는 고정 계정: "work@claude"
   Codex 에이전트) pane을 그대로 두고 시작하지 않은 것으로 알립니다. 건너뛴 계정은
   `--json`의 `account.passed_over`에 남습니다. 한도 문구는 새 대화에서만 읽고, 기존
   대화를 이어받는 실행에서는 읽지 않습니다.
-- `did not start: <이유>`: 실행이 실패하고, pane은 그대로 남겨 둡니다. 이유는 사용 한도
-  (고정 계정이거나 계정 설정이 없을 때), 로그인이나 첫 실행 화면, tend가 답하지 않는
-  대화상자, 에이전트 종료 중 하나입니다. 에이전트 행에도 같은 내용이 표시됩니다.
+- `did not start: <이유>`: 실행이 실패하고, pane(또는 native 세션)은 그대로 남겨 둡니다.
+  이유는 사용 한도(고정 계정이거나 계정 설정이 없을 때), 로그인이나 첫 실행 화면, tend가
+  답하지 않는 대화상자, 에이전트 종료 중 하나입니다. `--json`(`tend work up --json`과 MCP
+  도구의 오류도 같음)에는 `not_started`로 들어갑니다. `message`, 남겨 둔 `pane`이나
+  `session`, `work up`이면 파이프라인 `alias`가 있고, 그 pane은 alias의 pane으로도
+  기록됩니다. tmux 에이전트의 행에도 같은 내용이 남습니다. `tend status`에서는 프롬프트 대신
+  이 알림이 보이고, `tend status --json`과 MCP `tend_status`에서는 `last_notification`으로,
+  앱에서도 보입니다. native 세션은 다른 계정으로 다시 띄우지 않습니다. 거기서는 tend가 정한
+  대화 id가 없어서, 한도가 tend의 프롬프트만 거절했다는 근거를 댈 수 없기 때문입니다.
 
 tend는 방금 자신이 띄운 에이전트의 시작 대화상자 중 실행 그 자체 외에는 아무것도
 허락하지 않는 것만 답합니다. 요청한 폴더에 대한 Claude 폴더 신뢰, Codex 업데이트 메뉴

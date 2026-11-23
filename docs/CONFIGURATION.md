@@ -237,10 +237,10 @@ and creates nothing.
 
 ### Waiting for a new agent to start
 
-Every launch of `claude` or `codex` into a tmux or rmux pane (`tend agent
-start`, `tend_start_agent`, `tend work up`, a peer call, the app's start;
-not the native PTY host) waits, within a bound, until the agent can work,
-and says how it went:
+Every launch of `claude` or `codex` (`tend agent start`, `tend_start_agent`,
+`tend work up`, a peer call, the app's start), in a tmux or rmux pane or in
+a native session (`--host native`), waits, within a bound, until the agent
+can work, and says how it went:
 
 - `started …`: the agent reached its composer, or its first prompt has been
   running for a few seconds.
@@ -255,10 +255,18 @@ and says how it went:
   not start.
   `--json` lists the accounts passed over in `account.passed_over`. Only a
   new conversation is read for the limit: a launch that resumes one is not.
-- `did not start: <reason>`: the launch fails and the pane is kept for you.
-  The reason is a usage limit (a pinned or unrouted account), a sign-in or
-  first-run screen, a dialog tend does not answer, or the agent exiting.
-  The agent's row says the same.
+- `did not start: <reason>`: the launch fails and the pane (or native
+  session) is kept for you. The reason is a usage limit (a pinned or
+  unrouted account), a sign-in or first-run screen, a dialog tend does not
+  answer, or the agent exiting. `--json` (and `tend work up --json`, and
+  the MCP tools' error) carry it as `not_started`: `message`, the kept
+  `pane` or `session`, and for `work up` the pipeline `alias`, which is
+  also recorded as the alias's pane. A tmux agent's row says the same: its
+  notice shows in `tend status` in place of the prompt, in `tend status
+  --json` and MCP `tend_status` as `last_notification`, and in the app.
+  A native session is never started again on another account: tend has no
+  conversation id of its own there to prove the limit refused only its
+  prompt.
 
 Tend answers only the startup dialogs of an agent it has just launched
 that agree to nothing beyond the launch itself: Claude's folder trust for

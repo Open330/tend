@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `tend status` shows a waiting or failed agent's notice (a question, or
+  `did not start: …` from a launch) in place of its last prompt.
+- `tend agent start --json`, `tend work up --json` and the MCP start tools
+  report an agent that did not start as `not_started` (`message`, the kept
+  `pane` or native `session`, the pipeline `alias`), not only in the
+  sentence. `work up` also records the kept pane on the alias.
+- `tend agent start --host native` waits for a `claude` or `codex` agent
+  like a tmux launch does and reports `did not start: …` with its session
+  kept.
 - A new `claude` or `codex` agent in a tmux or rmux pane (`tend agent start`,
   `tend_start_agent`, `tend work up`, a peer call, the app's start) no longer
   sits silently on a startup screen. The launch waits, within a bound, until the agent can

@@ -1465,3 +1465,59 @@ fn a_daemon_on_its_own_socket_and_config_leaves_the_default_data_dir_alone() {
         "the default data dir's hook spool was drained"
     );
 }
+
+/// A native (`--host native`) launch waits for the agent like a tmux one:
+/// ready once it answered its prompt, and a sign-in answer is
+/// `did not start` with the kept session as a JSON field.
+#[cfg(unix)]
+#[test]
+fn a_native_launch_waits_for_its_agent_and_says_when_it_did_not_start() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let bin_dir = tempfile::tempdir().unwrap().keep();
+    let claude = bin_dir.join("claude");
+    std::fs::write(
+        &claude,
+        "#!/bin/sh\nfor last; do :; done\nprintf '> %s\\n' \"$last\"\ncase \"$last\" in\n  *login*) printf '  \\342\\216\\277  Not logged in \\302\\267 Please run /login\\n' ;;\n  *) printf '\\342\\227\\217 ok\\n' ;;\nesac\nprintf '\\342\\224\\200\\342\\224\\200\\342\\224\\200\\342\\224\\200\\342\\224\\200\\n\\342\\235\\257 \\n\\342\\224\\200\\342\\224\\200\\342\\224\\200\\342\\224\\200\\342\\224\\200\\n  ? for shortcuts\\n'\nexec sleep 30\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let daemon = Daemon::spawn_with_env(None, &[("PATH", path.clone())]);
+    let start = |prompt: &str| {
+        let out = daemon
+            .cli()
+            .env("PATH", &path)
+            .args(["agent", "start", "--host", "native", "--agent", "claude", "--json"])
+            .args(["--cwd", bin_dir.to_str().unwrap(), "--prompt", prompt])
+            .output()
+            .expect("run tend agent start");
+        let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_else(|_| {
+            panic!(
+                "no JSON: {}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            )
+        });
+        (out.status.success(), json)
+    };
+    let (ok, json) = start("say ok");
+    assert!(ok, "{json}");
+    assert_eq!(json["host"], "native");
+    assert_eq!(json["input_readiness"]["state"], "ready", "{json}");
+    let (ok, json) = start("please login");
+    assert!(!ok, "{json}");
+    let not_started = &json["not_started"];
+    assert!(
+        not_started["message"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("did not start: the account is not signed in"),
+        "{json}"
+    );
+    assert!(not_started["session"].as_str().is_some_and(|s| !s.is_empty()), "{json}");
+    assert!(not_started.get("pane").is_none(), "{json}");
+}
