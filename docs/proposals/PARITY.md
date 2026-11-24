@@ -12,14 +12,16 @@ also reads only part of the shared design tokens. So the same fleet shows
 different counts, words, buttons and card order. The fix is not a visual pass.
 It is a short list of written-down meanings that all three keep: one word for
 each concept, one rule for each count, and one set of things each item lets you
-do. Each client then lays those out in its own way. The cheapest first step is
-to fix one workflow end to end (a question in Your turn) on all three surfaces,
-not to build new machinery.
+do. Each client then lays those out in its own way. The screenshots narrow it further. Home's work cards
+already look alike, so the drift is in the badges, the decision cards and the
+words. The cheapest first step is to fix one workflow end to end (a question
+in Your turn) on all three surfaces, not to build new machinery.
 
 - Code inventory with file:line evidence for every claim below:
   [`parity/INVENTORY.md`](parity/INVENTORY.md).
 - Screenshots: [`parity/shots/`](parity/shots/). They show the demo fixture
-  (`docs/demo-setup.sh`) on one CI runner, rendered by all three surfaces. See §1.5.
+  (`docs/demo-setup.sh`) on one CI runner, rendered by all three surfaces
+  (§1.5; the workflow is #707).
 
 ---
 
@@ -141,9 +143,48 @@ All three surfaces render the demo fixture (`docs/demo-setup.sh`, one
 runner. The workflow is `.github/workflows/parity-shots.yml`, run on demand with the
 `parity-shots` label. Files are named `<surface>-<job>-<variant>.png`.
 
-*Pending:* the capture workflow is in a separate draft PR (`ci/parity-shots`).
-Its first green run's images go in `parity/shots/`. Until then, §1.2–1.4 rest on
-the code inventory.
+Run [45349486538](https://github.com/Open330/tend/actions/runs/45349486538)
+(PR #707) produced 316 images. The full set is in the run's `parity-shots`
+artifact. A curated set of 22, light and EN unless noted, is in [`parity/shots/`](parity/shots/):
+
+| Job | Mac | Web | iPhone / iPad |
+|---|---|---|---|
+| Home | ![](parity/shots/mac-home-light-en.png) | ![](parity/shots/web-home-desktop-light.png) | ![](parity/shots/ios-home-yourTurn-2-iphone.png) ![](parity/shots/ios-home-ipad.png) |
+| Home, KO | ![](parity/shots/mac-home-light-ko.png) | ![](parity/shots/web-home-desktop-light-ko.png) | |
+| Review decision | (on the Review sheet) | ![](parity/shots/web-review-card-desktop-light.png) | ![](parity/shots/ios-review-card-card-iphone.png) |
+| Question | | ![](parity/shots/web-question-desktop-light.png) | ![](parity/shots/ios-question-card-iphone.png) |
+| Start work | ![](parity/shots/mac-home-start-work-light-en.png) | ![](parity/shots/web-start-work-desktop-light.png) | ![](parity/shots/ios-start-work-iphone.png) |
+| Explore / Hosts | ![](parity/shots/mac-explore-light-en.png) | ![](parity/shots/web-explore-desktop-light.png) | ![](parity/shots/ios-hosts-iphone.png) |
+| Agent detail | ![](parity/shots/mac-detail-agent-light-en.png) | ![](parity/shots/web-agent-detail-desktop-light.png) | ![](parity/shots/ios-agent-detail-iphone.png) |
+| Not connected | ![](parity/shots/mac-home-unconnected-light-en.png) | | ![](parity/shots/ios-error-unreachable-iphone.png) |
+
+**What the screenshots add to the code audit**
+
+- **Home's unit cards already match.** All three show the same lane names,
+  project groups, card order inside a card (title, stage bar, agent, inset
+  headline, then status, logo, host, project and time) and status words. The
+  differences are the Your-turn mark and fill (a stripe on Mac, a stripe and
+  tinted fill on the web, an orange border on iOS) and the type scale. Home is
+  not where the three products feel different.
+- **The badges disagree for one fleet.** Your turn is 9 on the web and iOS
+  (8 on the Mac, which was captured before tendd added a recovery question).
+  But the Mac rail badge says **6**, the web's says **9** and the iPhone tab
+  says **3**. This is §1.1's count problem, seen on screen.
+- **Decision cards are where they part.** The same review decision appears
+  twice below. The web puts the kind on top, wraps the content in an inset box,
+  puts the actions inside that box, and puts the host and time at the bottom.
+  iOS puts the kind, project and time on top, has no inset box, puts the
+  actions in tinted capsules and puts ⋯ at the right. The question card on iOS
+  offers only "Answer…"; Decline is inside the composer.
+- **Chrome:** the web shows the four-room mark (top left) and iOS shows none.
+  The Mac's off-screen capture shows "Connecting to tendd… 0 hosts" in its
+  status bar while Home is full. That is probably an artifact of off-screen
+  rendering, but it is worth checking in P2.
+- **Not captured:** there is no Backlog lane anywhere, because the fixture has
+  none. The empty Home is not shown, because emptying it would mean deciding
+  things. There is no iOS review detail, because iOS has none. iPad landscape
+  images come out rotated 90° (`simctl` behaviour). The portrait iPad
+  shot above is correct.
 
 ---
 
