@@ -261,6 +261,36 @@ impl CollaborationStore {
         Ok(())
     }
 
+    /// Store matching provider hook evidence without changing work or wake state.
+    pub async fn record_wake_prompt_observed(
+        &self,
+        request_id: &str,
+        recipient: &super::Participant,
+        at: OffsetDateTime,
+    ) -> Result<(), CollaborationError> {
+        let _transaction = self.transaction_lock.lock().await;
+        let row = {
+            let mut requests = self.requests.write().await;
+            requests.get_mut(request_id).and_then(|request| {
+                if !super::addresses(&request.to, recipient)
+                    || at < request.created_at
+                    || request
+                        .wake_prompt_observed_at
+                        .is_some_and(|first| first <= at)
+                {
+                    return None;
+                }
+                request.wake_prompt_observed_at = Some(at);
+                Some(request.clone())
+            })
+        };
+        if let Some(row) = row {
+            self.persist_requests(std::slice::from_ref(&row))?;
+            // Diagnostic evidence does not require a waker rescan.
+        }
+        Ok(())
+    }
+
     /// Re-check a scheduled re-delivery against the recipient's row read just
     /// before typing. Anything recorded since the original attempt began, or
     /// a claim, cancels it (persisted), and the caller types nothing.
@@ -377,6 +407,42 @@ mod tests {
         }))
         .unwrap();
         (participant, agent)
+    }
+
+    #[tokio::test]
+    async fn wake_prompt_evidence_is_scoped_to_the_recipient_and_preserves_the_earliest_match() {
+        let store = CollaborationStore::in_memory(CollaborationOptions::default());
+        let (sender, _) = actor("%1", "sender").await;
+        let (recipient, _) = actor("%2", "recipient").await;
+        let (other, _) = actor("%2", "replacement").await;
+        let request = store
+            .create(
+                sender,
+                recipient.clone(),
+                NewRequest {
+                    body: "check delivery".into(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let first = request.created_at + time::Duration::seconds(1);
+        let later = first + time::Duration::seconds(1);
+        store
+            .record_wake_prompt_observed(&request.id, &other, first)
+            .await
+            .unwrap();
+        assert_eq!(row(&store, &request.id).await.wake_prompt_observed_at, None);
+        for timestamp in [later, first, later] {
+            store
+                .record_wake_prompt_observed(&request.id, &recipient, timestamp)
+                .await
+                .unwrap();
+        }
+        let stored = row(&store, &request.id).await;
+        assert_eq!(stored.wake_prompt_observed_at, Some(first));
+        assert_eq!(stored.status, RequestStatus::Queued);
+        assert_eq!(stored.claimed_at, None);
     }
 
     /// Move the latest attempt `by` into the past.

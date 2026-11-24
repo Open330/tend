@@ -894,6 +894,13 @@ pub struct CollaborationRequest {
         with = "time::serde::rfc3339::option"
     )]
     pub notified_at: Option<OffsetDateTime>,
+    /// First matching application prompt hook observed for a mailbox wake.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "time::serde::rfc3339::option"
+    )]
+    pub wake_prompt_observed_at: Option<OffsetDateTime>,
     /// Set when tendd successfully injects a short reply notification. A
     /// sender that reads the result first also sets this to suppress a later
     /// redundant wake. The reply body itself remains in the mailbox.
@@ -3428,6 +3435,7 @@ impl CollaborationStore {
             claimed_at: None,
             wake_delivery: None,
             notified_at: None,
+            wake_prompt_observed_at: None,
             reply_notified_at: None,
             reply_read_at: None,
             reply_wake: None,
