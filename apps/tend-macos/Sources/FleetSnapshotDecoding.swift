@@ -14,8 +14,17 @@ struct TendFleetHostDecodeCache {
     /// The hosts of a `fleet_snapshot` response, or nil when `response` is
     /// not a successful one in the expected shape.
     mutating func hosts(fromResponse response: Data) throws -> [TendFleetHost]? {
-        guard let slices = TendFleetSnapshotScanner.hostSlices(in: response) else { return nil }
+        guard let scan = TendFleetSnapshotScanner.scan(response) else { return nil }
         let decoder = JSONDecoder()
+        // Everything but the hosts' contents is checked by the decoder the
+        // full path uses: the response with an empty host list must decode
+        // and say ok, or the full decode runs and reports what it reports.
+        var envelope = Data(response[response.startIndex..<scan.array.lowerBound])
+        envelope.append(contentsOf: "[]".utf8)
+        envelope.append(response[scan.array.upperBound...])
+        guard let checked = try? decoder.decode(TendIPCResponse.self, from: envelope),
+              checked.ok, checked.fleet != nil else { return nil }
+        let slices = scan.hosts
         var hosts: [TendFleetHost] = []
         var cached: [(bytes: Data, host: TendFleetHost)] = []
         hosts.reserveCapacity(slices.count)
@@ -55,13 +64,25 @@ struct TendFleetHostDecodeCache {
 /// nesting is tracked by brackets. Only `{"ok":true, …, "fleet":{…,
 /// "hosts":[…]}}` is accepted; anything else returns nil.
 enum TendFleetSnapshotScanner {
-    static func hostSlices(in data: Data) -> [Range<Data.Index>]? {
-        data.withUnsafeBytes { raw -> [Range<Int>]? in
+    struct Scan {
+        /// The `hosts` array, brackets included.
+        let array: Range<Data.Index>
+        /// Each element of it.
+        let hosts: [Range<Data.Index>]
+    }
+
+    static func scan(_ data: Data) -> Scan? {
+        let found = data.withUnsafeBytes { raw -> (array: Range<Int>, hosts: [Range<Int>])? in
             guard let base = raw.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return nil }
             return Scanner(bytes: UnsafeBufferPointer(start: base, count: raw.count)).response()
-        }.map { ranges in
-            ranges.map { (data.startIndex + $0.lowerBound)..<(data.startIndex + $0.upperBound) }
         }
+        guard let found else { return nil }
+        let shift = { (range: Range<Int>) in (data.startIndex + range.lowerBound)..<(data.startIndex + range.upperBound) }
+        return Scan(array: shift(found.array), hosts: found.hosts.map(shift))
+    }
+
+    static func hostSlices(in data: Data) -> [Range<Data.Index>]? {
+        scan(data)?.hosts
     }
 
     private final class Scanner {
@@ -72,20 +93,22 @@ enum TendFleetSnapshotScanner {
             self.bytes = bytes
         }
 
-        func response() -> [Range<Int>]? {
+        func response() -> (array: Range<Int>, hosts: [Range<Int>])? {
             var ok = false
-            var hosts: [Range<Int>]?
+            var hosts: (array: Range<Int>, hosts: [Range<Int>])?
             let parsed = object { key in
                 switch key {
                 case "ok":
                     ok = literal("true")
                     return ok || skipValue()
                 case "fleet":
-                    var found: [Range<Int>]?
+                    var found: (array: Range<Int>, hosts: [Range<Int>])?
                     let parsed = object { key in
                         guard key == "hosts" else { return skipValue() }
-                        found = array()
-                        return found != nil
+                        let start = at
+                        guard let elements = array() else { return false }
+                        found = (start..<at, elements)
+                        return true
                     }
                     hosts = found
                     return parsed
@@ -105,9 +128,12 @@ enum TendFleetSnapshotScanner {
             guard consume(UInt8(ascii: "{")) else { return false }
             skipWhitespace()
             if consume(UInt8(ascii: "}")) { return true }
+            // A repeated key is left to the full decoder, whose choice of
+            // which one counts is the one that matters.
+            var seen = Set<String>()
             while true {
                 skipWhitespace()
-                guard let key = string() else { return false }
+                guard let key = string(), seen.insert(key).inserted else { return false }
                 skipWhitespace()
                 guard consume(UInt8(ascii: ":")) else { return false }
                 skipWhitespace()

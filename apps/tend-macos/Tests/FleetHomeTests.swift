@@ -480,6 +480,19 @@ private func claimed(from session: String, label: String = "claude@%1") -> Strin
     }
 }
 
+@Test func aProbableHelperIsJudgedPerRowEvenWhenTwoRowsShareAnID() throws {
+    // Two rows with the same id: only the one with a typed hand-over is a
+    // probable helper.
+    let prompt = "Main Claude %1 요청 req_18e64986abbf3ea0_4dc 를 claim(tend msg accept req_18e64986abbf3ea0_4dc --json)하고 회신하세요."
+    let typed = TendHostedAgent(host: host, agent: try agent(["state": "working", "last_prompt": prompt], id: "same"), pane: try pane("%2", alias: "t"))
+    let plain = TendHostedAgent(host: host, agent: try agent(["state": "working", "last_prompt": "fix the build"], id: "same"), pane: try pane("%3", alias: "p"))
+    #expect(typed.id == plain.id)
+    let works = FleetBoard.works(groups: [], agents: [typed, plain])
+    #expect(works.count == 2)
+    #expect(works.filter(\.isProbableHelper).count == 1)
+    #expect(works.first { $0.isProbableHelper }?.focus?.agent.lastPrompt == prompt)
+}
+
 @Test func tendNoticesReadAsTitles() {
     #expect(FleetBoard.promptTitle("[tend:req_18e647c24d7eb778_4c6] Completed reply from codex@%13 (requested 34m ago) is ready. Read it with tend_wait_reply") == "Reply from codex@%13 is ready")
     #expect(FleetBoard.promptTitle("[tend:req_1_2] Review from codex@%39. Read one: tend_inbox(…)") == "Review from codex@%39")

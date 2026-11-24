@@ -94,6 +94,53 @@ private func fullDecode(_ data: Data) throws -> [TendFleetHost] {
     #expect(try cache.hosts(fromResponse: fleetResponse([])) == [])
 }
 
+@Test func fleetHostCacheDeclinesWhatTheFullDecoderWouldRejectOrReadDifferently() throws {
+    var cache = TendFleetHostDecodeCache()
+    let host = String(decoding: try JSONSerialization.data(withJSONObject: decodingHost("local"), options: [.sortedKeys]), as: UTF8.self)
+    let cases = [
+        // Malformed members the scan only skips.
+        #"{"ok":true,"z":tru,"fleet":{"hosts":[HOST]}}"#,
+        #"{"ok":true,"z":{"a" 1},"fleet":{"hosts":[HOST]}}"#,
+        // Valid JSON, but a known field of the wrong type.
+        #"{"ok":true,"capabilities":false,"fleet":{"hosts":[HOST]}}"#,
+        // Repeated keys: the full decoder's choice is the one that counts.
+        #"{"ok":false,"ok":true,"fleet":{"hosts":[HOST]}}"#,
+        #"{"ok":true,"fleet":{"hosts":[]},"fleet":{"hosts":[HOST]}}"#,
+        #"{"ok":true,"fleet":{"hosts":[],"hosts":[HOST]}}"#,
+    ]
+    for json in cases {
+        #expect(try cache.hosts(fromResponse: Data(json.replacingOccurrences(of: "HOST", with: host).utf8)) == nil, "\(json)")
+    }
+    // A host the decoder rejects is an error, as in the full decode.
+    let badHost = Data(#"{"ok":true,"fleet":{"hosts":[{"alias":1}]}}"#.utf8)
+    #expect(throws: (any Error).self) { try cache.hosts(fromResponse: badHost) }
+}
+
+@Test func fleetSnapshotRequestKeepsDecodingErrorsAndRejections() async throws {
+    let responses = LockedResponses([
+        Data(#"{"ok":true,"capabilities":false,"fleet":{"hosts":[]}}"#.utf8),
+        Data(#"{"ok":false,"error":"no fleet here","fleet":{"hosts":[]}}"#.utf8),
+    ])
+    let client = TendIPCClient(socketPath: "/tmp/unused-fleet-cache.sock") { _, payload in
+        let request = try JSONSerialization.jsonObject(with: payload) as? [String: Any]
+        if request?["kind"] as? String == "hello" {
+            return try JSONSerialization.data(withJSONObject: [
+                "ok": true, "protocol": 6, "min_protocol": 1, "max_protocol": 6,
+                "capabilities": ["session_bytes_v1", "session_attachment_identity_v1", "work_control_v1", "fleet_v1"],
+            ])
+        }
+        return responses.next()
+    }
+    try await client.hello()
+    await #expect(throws: DecodingError.self) { _ = try await client.executionSnapshot() }
+    do {
+        _ = try await client.executionSnapshot()
+        Issue.record("a rejected reply must stay rejected")
+    } catch TendIPCError.server(let message) {
+        #expect(message == "no fleet here")
+    }
+}
+
 @Test func fleetSnapshotRequestDecodesThroughTheHostCache() async throws {
     let local = decodingHost("local")
     let remote = decodingHost("rtzr")
