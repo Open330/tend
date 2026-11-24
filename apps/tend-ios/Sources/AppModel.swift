@@ -326,6 +326,8 @@ final class AppModel {
     /// Bumped at every push write: a device read that started before one
     /// does not say what the host holds now.
     private var pushWrites = 0
+    /// Push writes sent and not yet answered.
+    private var pushWritesInFlight = 0
     /// When the last write was answered.
     private var pushWrittenAt = Date.distantPast
     /// How long a tend that does not report registrations is taken to
@@ -360,6 +362,7 @@ final class AppModel {
         let mine = session
         let generation = capability
         let writes = pushWrites
+        let quiet = pushWritesInFlight == 0
         do {
             let info = try await client.device()
             guard session == mine, capability == generation else { return }
@@ -368,7 +371,7 @@ final class AppModel {
             // older tend does not say at all: then the last write's answer
             // stands for a few minutes (one launch's burst), and a later
             // foregrounding sends again, so a row it dropped comes back.
-            if pushWrites == writes, !pushSyncing {
+            if quiet, pushWritesInFlight == 0, pushWrites == writes, !pushSyncing {
                 if let held = info.pushRegistration {
                     hostPushRegistration = held
                 } else if Date().timeIntervalSince(pushWrittenAt) > Self.legacyPushConfirmation {
@@ -667,8 +670,8 @@ final class AppModel {
         let mine = session
         // Best effort: the host also drops it with the device.
         if pairing?.push != nil {
-            hostPushRegistration = nil
-            pushWrites += 1
+            _ = beginPushWrite()
+            defer { pushWritesInFlight -= 1 }
             try? await client.removePush()
         }
         do {
@@ -1136,18 +1139,21 @@ extension AppModel {
                held.registration == Self.registrationFingerprint(token: token, environment: Self.pushEnvironment, channel: binding.channel) {
                 return
             }
-            hostPushRegistration = nil
-            pushWrites += 1
+            var write = beginPushWrite()
+            defer { pushWritesInFlight -= 1 }
             do {
                 let answer = try await client.registerPush(token: token, environment: Self.pushEnvironment, content: content)
                 guard session == mine, self.pairing?.token == pairing.token else { return }
                 switch answer {
                 case .on(let binding):
-                    pushWrittenAt = Date()
-                    hostPushRegistration = .some(DeviceInfo.HostPushRegistration(
-                        registration: Self.registrationFingerprint(token: token, environment: Self.pushEnvironment, channel: binding.channel),
-                        content: content
-                    ))
+                    // Only the latest write's answer says what the host holds.
+                    if pushWrites == write {
+                        pushWrittenAt = Date()
+                        hostPushRegistration = .some(DeviceInfo.HostPushRegistration(
+                            registration: Self.registrationFingerprint(token: token, environment: Self.pushEnvironment, channel: binding.channel),
+                            content: content
+                        ))
+                    }
                     // Turned off while the host answered: undo it now.
                     guard notificationsWanted else {
                         pushSyncAgain = true
@@ -1158,13 +1164,13 @@ extension AppModel {
                     } else {
                         // A registration this phone cannot act on: take it back.
                         pushProblem = String(localized: "Could not keep the notification key in this device's Keychain. Notifications stay off; try again.")
-                        hostPushRegistration = nil
-                        pushWrites += 1
+                        write = beginPushWrite()
                         let removed = (try? await client.removePush()) != nil
-                        if removed, session == mine { hostPushRegistration = .some(nil) }
+                        pushWritesInFlight -= 1
+                        if removed, session == mine, pushWrites == write { hostPushRegistration = .some(nil) }
                     }
                 case .off(let reason):
-                    hostPushRegistration = .some(nil)
+                    if pushWrites == write { hostPushRegistration = .some(nil) }
                     _ = keep(nil)
                     pushProblem = reason == "environment"
                         ? String(localized: "This dashboard's notification key does not serve this build of the app.")
@@ -1176,12 +1182,12 @@ extension AppModel {
             }
         } else if !notificationsWanted, pairing.push != nil || pushRemovalOwed {
             // Off: remove on the host whether or not a binding was kept here.
-            hostPushRegistration = nil
-            pushWrites += 1
+            let write = beginPushWrite()
+            defer { pushWritesInFlight -= 1 }
             do {
                 try await client.removePush()
                 guard session == mine, self.pairing?.token == pairing.token else { return }
-                hostPushRegistration = .some(nil)
+                if pushWrites == write { hostPushRegistration = .some(nil) }
                 pushRemovalOwed = false
                 _ = keep(nil)
             } catch {
@@ -1189,6 +1195,16 @@ extension AppModel {
                 pushProblem = error.localizedDescription
             }
         }
+    }
+
+    /// A push write starts: what the host holds is unknown until it is
+    /// answered, and any answer or read from before it no longer counts.
+    /// The caller ends it (`pushWritesInFlight -= 1`).
+    private func beginPushWrite() -> Int {
+        hostPushRegistration = nil
+        pushWrites += 1
+        pushWritesInFlight += 1
+        return pushWrites
     }
 
     /// Set when the person turns notifications off, until the host says it

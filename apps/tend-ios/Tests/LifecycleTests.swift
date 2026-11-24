@@ -555,6 +555,36 @@ extension LifecycleTests {
         }
     }
 
+    func testADeviceReadAcrossAWriteIsNotTakenAsRegistered() async {
+        await withPreferences(wanted: true, content: false) {
+            let token = Data(repeating: 1, count: 32)
+            let hex = token.map { String(format: "%02x", $0) }.joined()
+            let held = AppModel.registrationFingerprint(token: hex, environment: AppModel.pushEnvironment, channel: "ch_new")
+            StubProtocol.on("/api/device",
+                            .init(status: 200, body: Self.pushDevice(holding: nil)),
+                            // Read while content is being turned on: still off.
+                            .init(status: 200, body: Self.pushDevice(holding: held, content: false), delay: 0.8))
+            StubProtocol.on("/api/device/push",
+                            .init(status: 200, body: Self.pushAnswer.replacingOccurrences(of: #""content":true"#, with: #""content":false"#)),
+                            // Content on: stored on the host, the answer lost.
+                            .init(status: 500, body: #"{"error":"lost"}"#, delay: 0.3),
+                            .init(status: 200, body: Self.pushAnswer.replacingOccurrences(of: #""content":true"#, with: #""content":false"#)))
+            let model = pairedModel()
+            await model.refreshDevice()
+            await model.receivedAPNsToken(token)
+            XCTAssertEqual(registrations(), 1)
+            model.notificationContentWanted = true
+            let write = Task { await model.registerPush() }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            let read = Task { await model.refreshDevice() }
+            await write.value
+            // Back off before the read lands; its sync runs after it.
+            model.notificationContentWanted = false
+            await read.value
+            XCTAssertEqual(registrations(), 3, "a read from before the lost write was taken as what the host holds")
+        }
+    }
+
     func testALostAnswerIsNotTakenAsRegistered() async {
         await withPreferences(wanted: true, content: false) {
             StubProtocol.on("/api/device", .init(status: 200, body: Self.pushDevice))
