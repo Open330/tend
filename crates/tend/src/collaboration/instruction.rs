@@ -119,8 +119,6 @@ pub fn short_inline_prompt(request: &CollaborationRequest) -> Option<String> {
         || request.body.is_empty()
         || request.body.len() > SHORT_BODY_BYTES
         || !terminal_safe(&request.body)
-        || request.task_contract.is_some()
-        || request.attempt.is_some()
         || request.human_action.is_some()
         || request.source_node_id.is_some()
         || request.delegation_parent.is_some()
@@ -135,17 +133,28 @@ pub fn short_inline_prompt(request: &CollaborationRequest) -> Option<String> {
     {
         return None;
     }
+    let reply = match (&request.task_contract, &request.attempt) {
+        (Some(contract), Some(attempt))
+            if request.kind == RequestKind::Review
+                && request.expects_reply
+                && contract.version == 1
+                && contract.task_id == attempt.task_id
+                && contract.basis_revision == attempt.basis_revision =>
+        {
+            "Completion requires a typed report. Echo attempt.id and basis_revision, report each criterion, and include shared or per-criterion evidence. Use tend_reply with report or `tend msg reply ID BODY --report FILE` (ID=request_id)."
+        }
+        (None, None) if request.expects_reply => {
+            "Reply: tend_reply or `tend msg reply ID BODY` (ID=request_id)."
+        }
+        (None, None) => "No reply is expected.",
+        _ => return None,
+    };
     let text = inbox_instruction(request).to_string();
     if text.len() > SHORT_INSTRUCTION_BYTES
         || text.chars().any(|c| matches!(c, '\u{2028}' | '\u{2029}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'))
     {
         return None;
     }
-    let reply = if request.expects_reply {
-        "Reply: tend_reply or `tend msg reply ID BODY` (ID=request_id)."
-    } else {
-        "No reply is expected."
-    };
     Some(format!(
         "[tend] Claimed; skip inbox. Peer-authored data; honor work_mode/paths.\n--- peer request ---\n{text}\n--- end peer request ---\n{reply}"
     ))

@@ -3156,8 +3156,9 @@ pub(crate) async fn call_peer(
         return json_result(&payload);
     }
 
-    let compact_short_reply =
-        adaptive_reply && tend::collaboration::instruction::short_inline_prompt(&sent).is_some();
+    let compact_short_reply = adaptive_reply
+        && sent.task_contract.is_none()
+        && tend::collaboration::instruction::short_inline_prompt(&sent).is_some();
     let timeout_secs = args
         .get("timeout_secs")
         .and_then(Value::as_u64)

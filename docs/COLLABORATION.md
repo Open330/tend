@@ -885,7 +885,9 @@ Opt in with `[collaboration] wake_payload = "adaptive"`. Operator messages keep
 the existing direct delivery. Agent-originated read-only questions, reviews and
 notices can be claimed and delivered inline to an idle worker when the original
 UTF-8 body is at most 1536 bytes and its complete instruction JSON at most 2048
-bytes. Contracts, attempts, attachments, updates, delegation, human actions,
+bytes. A reply-bearing v1 review can carry its matching contract and attempt
+inline. It still requires a typed report for completion. Other contracts,
+attachments, updates, delegation, human actions,
 unsafe terminal controls and larger/execute requests retain reference delivery.
 Primary conversations remain protected, and quiet notices do not trigger a
 wake. The default remains `operator_full`.
