@@ -188,6 +188,48 @@ final class CantAnswerTests: XCTestCase {
         XCTAssertNil(model.closeAllResult)
     }
 
+    func testARefreshAskedForDuringAnotherReturnsAfterAFreshRead() async {
+        // The first read is slow and still shows nothing folded; the one
+        // asked for meanwhile must not return before its own round.
+        StubProtocol.on("/api/decisions",
+                        .init(status: 200, body: Self.emptyQueue, delay: 0.5),
+                        .init(status: 200, body: Self.foldedQueue))
+        StubProtocol.on("/api/decisions/history", .init(status: 200, body: #"{"hosts":[]}"#))
+        let model = decideModel()
+        let first = Task { await model.refresh() }
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        await model.refresh()
+        XCTAssertEqual(model.cantAnswerCount, 2, "returned before the read it asked for")
+        await first.value
+    }
+
+    func testARefreshThatStopsHandsItsRoundToACallerStillWaiting() async {
+        // The old pairing's read is slow; meanwhile the device is paired
+        // again and asks for a read. The old one stops on the new session,
+        // and the new pairing's caller must read for itself, not return
+        // with nothing read.
+        StubProtocol.on("/api/decisions",
+                        .init(status: 200, body: Self.foldedQueue, delay: 3.0),
+                        .init(status: 200, body: Self.foldedQueue))
+        StubProtocol.on("/api/decisions/history", .init(status: 200, body: #"{"hosts":[]}"#))
+        StubProtocol.on("/auth/devices/request",
+                        .init(status: 201, body: #"{"device_code":"d2","user_code":"PAIR-AGIN","expires_in":600,"interval":1}"#))
+        StubProtocol.on("/auth/devices/token",
+                        .init(status: 201, body: #"{"device":{"id":"dev_2","name":"phone"},"token":"tdv_2"}"#))
+        let model = decideModel()
+        let old = Task { await model.refresh() }
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        model.forgetLocally()
+        model.startPairing(address: "https://tend.test", name: "phone")
+        await eventually { model.pairing != nil }
+        XCTAssertNotNil(model.pairing)
+        let started = Date()
+        await model.refresh()
+        XCTAssertEqual(model.cantAnswerCount, 2, "the new pairing's caller returned with nothing read")
+        XCTAssertGreaterThan(Date().timeIntervalSince(started), 0.5, "it did not wait for the old read to stop")
+        await old.value
+    }
+
     func testDismissClearsTheReport() async {
         StubProtocol.on("/api/decisions", .init(status: 200, body: Self.foldedQueue))
         StubProtocol.on("/api/decisions/history", .init(status: 200, body: #"{"hosts":[]}"#))

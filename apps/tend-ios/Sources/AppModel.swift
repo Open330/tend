@@ -734,42 +734,81 @@ final class AppModel {
     /// A refresh asked for while one was running: run once more after it,
     /// so a decision never leaves a stale card behind.
     private var refreshAgain = false
+    /// Callers whose refresh was folded into the running one, each with the
+    /// round that serves it: the next one to start after it asked.
+    private var refreshWaiters: [(round: Int, waiter: CheckedContinuation<Bool, Never>)] = []
+    /// Rounds of reading started so far.
+    private var refreshRounds = 0
 
+    /// Read the board. When a refresh is already running, this one is
+    /// served by its next round and returns once that round is done. If
+    /// the running refresh stops before then (signed out and paired again,
+    /// its task cancelled), a waiting caller takes over and reads itself.
     func refresh() async {
-        guard !refreshing else {
+        if refreshing {
             refreshAgain = true
-            return
+            let served = await withCheckedContinuation { refreshWaiters.append((refreshRounds + 1, $0)) }
+            if served { return }
+            // Handed over: `refreshing` stays set for the others waiting.
+        } else {
+            refreshing = true
         }
-        refreshing = true
-        defer { refreshing = false }
+        defer { endRefresh() }
         repeat {
             refreshAgain = false
             guard let client else { return }
-            let mine = session
-            async let fleetRead: Void = refreshFleet(client, session: mine)
-            if readsBoard {
-                await refreshBoard(client, session: mine)
-                // Still on the board (not narrowed while reading): done.
-                if readsBoard {
-                    await fleetRead
-                    continue
-                }
-            }
-            do {
-                let read = try await client.queue()
-                guard session == mine else { await fleetRead; return }
-                hosts = read
-                loaded = true
-                problem = nil
-            } catch is CancellationError {
-                await fleetRead
-                return
-            } catch {
-                guard session == mine else { await fleetRead; return }
-                problem = handle(error, session: mine)
-            }
-            await fleetRead
+            refreshRounds += 1
+            let round = refreshRounds
+            guard await refreshRound(client) else { return }
+            serveRefreshWaiters(through: round)
         } while refreshAgain
+    }
+
+    /// Return the callers that `round` served.
+    private func serveRefreshWaiters(through round: Int) {
+        let served = refreshWaiters.filter { $0.round <= round }
+        refreshWaiters.removeAll { $0.round <= round }
+        served.forEach { $0.waiter.resume(returning: true) }
+    }
+
+    /// The running refresh stopped: hand the rest to a caller still
+    /// waiting, or stop.
+    private func endRefresh() {
+        guard !refreshWaiters.isEmpty else {
+            refreshing = false
+            return
+        }
+        refreshWaiters.removeFirst().waiter.resume(returning: false)
+    }
+
+    /// One read of what Home shows; false when it stopped before an answer
+    /// for this pairing (signed out or paired again, or cancelled).
+    private func refreshRound(_ client: DashboardClient) async -> Bool {
+        let mine = session
+        async let fleetRead: Void = refreshFleet(client, session: mine)
+        if readsBoard {
+            await refreshBoard(client, session: mine)
+            // Still on the board (not narrowed while reading): done.
+            if readsBoard {
+                await fleetRead
+                return session == mine && !Task.isCancelled
+            }
+        }
+        do {
+            let read = try await client.queue()
+            guard session == mine else { await fleetRead; return false }
+            hosts = read
+            loaded = true
+            problem = nil
+        } catch is CancellationError {
+            await fleetRead
+            return false
+        } catch {
+            guard session == mine else { await fleetRead; return false }
+            problem = handle(error, session: mine)
+        }
+        await fleetRead
+        return session == mine && !Task.isCancelled
     }
 
     /// Read the hosts when this device may. A 403 means the dashboard
