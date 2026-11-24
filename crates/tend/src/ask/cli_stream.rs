@@ -36,6 +36,9 @@ pub(super) async fn run(
         let _ = events.send(HeadlessReviewEvent::ProcessStarted {
             at: time::OffsetDateTime::now_utc(),
             pid,
+            // Capture in the spawning task before publishing the PID. The
+            // receiver must never recapture a PID that may have been reused.
+            identity: crate::collaboration::ProcessFence::capture(pid),
         });
     }
     let stdin = child.stdin.take();

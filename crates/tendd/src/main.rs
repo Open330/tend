@@ -63,6 +63,7 @@ mod work_up_in_process;
 mod automation_engine;
 use automation_engine::spawn_automation_task;
 mod collaboration_waker;
+mod headless_result_journal;
 mod headless_reviews;
 use collaboration_waker::spawn_collaboration_waker_task;
 

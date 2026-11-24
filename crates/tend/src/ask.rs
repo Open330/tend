@@ -1402,7 +1402,13 @@ fn next_id() -> u64 {
 
 /// Evidence from the explicitly selected read-only collaboration executor.
 pub enum HeadlessReviewEvent {
-    ProcessStarted { at: time::OffsetDateTime, pid: u32 },
+    /// The fenced launcher started. The provider may still refuse to start;
+    /// its own thread/turn events are recorded separately.
+    ProcessStarted {
+        at: time::OffsetDateTime,
+        pid: u32,
+        identity: Option<crate::collaboration::ProcessFence>,
+    },
     ThreadRegistered(String),
     ProviderTurnStarted(time::OffsetDateTime),
 }
@@ -1412,6 +1418,8 @@ pub enum HeadlessReviewEvent {
 pub async fn run_headless_review(
     prompt: &str,
     cwd: &Path,
+    process_lock: &Path,
+    launch_gate: &Path,
     events: tokio::sync::mpsc::UnboundedSender<HeadlessReviewEvent>,
 ) -> Result<AskAnswer, String> {
     let engine = AskEngine::Codex;
@@ -1442,7 +1450,7 @@ pub async fn run_headless_review(
             "shell_environment_policy.inherit=\"none\"".into(),
         ],
     );
-    let mut cmd = tokio::process::Command::from(crate::shell::program_command(bin));
+    let mut cmd = headless_review_command(process_lock, launch_gate, bin)?;
     cmd.args(args)
         .current_dir(cwd)
         .env_clear()
@@ -1476,6 +1484,46 @@ pub async fn run_headless_review(
         Some((&events, prompt)),
     )
     .await
+}
+
+/// Linux flock uses the same lock as `File::try_lock`. With --no-fork the
+/// launcher, gate check, and provider share one PID and the provider inherits
+/// the exclusive lock. The daemon never owns this lock on the child's behalf:
+/// a SIGKILL of the daemon does not release a running provider's slot.
+#[cfg(target_os = "linux")]
+fn headless_review_command(
+    process_lock: &Path,
+    launch_gate: &Path,
+    bin: &str,
+) -> Result<tokio::process::Command, String> {
+    let flock = Path::new("/usr/bin/flock");
+    if !flock.is_file() {
+        return Err("headless reviews require /usr/bin/flock".into());
+    }
+    let mut command = tokio::process::Command::new(flock);
+    command
+        .args(["--exclusive", "--no-fork", "--"])
+        .arg(process_lock)
+        // Check the generation only after acquiring the process lock. The
+        // daemon revokes obsolete gates while holding the same lock.
+        .args([
+            "/bin/sh",
+            "-c",
+            "test -f \"$1\" || exit 75; shift; exec \"$@\"",
+            "tend-headless",
+        ])
+        .arg(launch_gate)
+        .arg(bin);
+    Ok(command)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn headless_review_command(
+    _process_lock: &Path,
+    _launch_gate: &Path,
+    _bin: &str,
+) -> Result<tokio::process::Command, String> {
+    Err("headless reviews require Linux process lifetime fencing".into())
 }
 
 /// One finished headless turn: the agent's final text, the conversation id
@@ -3132,6 +3180,75 @@ mod tests {
             builtin: true,
             configured: false,
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn fenced_headless_launch_holds_the_native_process_slot_across_exec() {
+        use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
+
+        let state = tempfile::tempdir().unwrap();
+        let process_lock = state.path().join("process.lock");
+        let launch_gate = state.path().join("attempt ' permitted");
+        std::fs::File::create(&launch_gate).unwrap();
+        let process = std::fs::File::create(&process_lock).unwrap();
+
+        let mut child = headless_review_command(&process_lock, &launch_gate, "/bin/sh")
+            .unwrap()
+            .args(["-c", "printf '%s\n' \"$$\"; read -r done"])
+            .kill_on_drop(true)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let mut stdout = BufReader::new(child.stdout.take().unwrap());
+            let mut pid_line = String::new();
+            stdout.read_line(&mut pid_line).await.unwrap();
+            assert_eq!(pid_line.trim().parse::<u32>().ok(), child.id());
+            assert!(matches!(
+                process.try_lock(),
+                Err(std::fs::TryLockError::WouldBlock)
+            ));
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(b"done\n")
+                .await
+                .unwrap();
+            assert!(child.wait().await.unwrap().success());
+            process.try_lock().unwrap();
+        })
+        .await
+        .unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn fenced_headless_launch_cannot_run_after_its_gate_was_revoked() {
+        let state = tempfile::tempdir().unwrap();
+        let process_lock = state.path().join("process.lock");
+        let launch_gate = state.path().join("old-attempt");
+        std::fs::File::create(&launch_gate).unwrap();
+        let process = std::fs::File::create(&process_lock).unwrap();
+        process.try_lock().unwrap();
+        let delayed = headless_review_command(&process_lock, &launch_gate, "/bin/sh")
+            .unwrap()
+            .args(["-c", "echo old-provider-must-not-run"])
+            .kill_on_drop(true)
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        std::fs::remove_file(&launch_gate).unwrap();
+        drop(process);
+        let delayed = tokio::time::timeout(Duration::from_secs(5), delayed.wait_with_output())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(delayed.status.code(), Some(75));
+        assert!(delayed.stdout.is_empty());
     }
 
     #[test]

@@ -62,6 +62,8 @@ pub struct CollaborationHealth {
     pub pending_recovery_decisions: usize,
     pub example_request_ids: Vec<String>,
     pub stale_queued: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub headless_pause: Option<super::headless::HeadlessPause>,
     pub stale_quiet_notices: usize,
     pub example_quiet_notice_ids: Vec<String>,
     /// How agent requests that expected a reply ended, per 7-day bucket
@@ -238,7 +240,10 @@ impl CollaborationStore {
         self.ensure_enabled()?;
         let requests = self.requests.read().await;
         let cutoff = OffsetDateTime::now_utc() - time::Duration::days(1);
-        let mut health = CollaborationHealth::default();
+        let mut health = CollaborationHealth {
+            headless_pause: self.headless_pause(),
+            ..Default::default()
+        };
         let mut interrupted_examples = Vec::new();
         let mut quiet_examples = Vec::new();
         for request in requests.values() {

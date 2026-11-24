@@ -2714,6 +2714,7 @@ pub struct CollaborationStore {
     opts: CollaborationOptions,
     initialization_error: Option<String>,
     headless_reviews_enabled: std::sync::atomic::AtomicBool,
+    headless_pause: std::sync::Mutex<Option<headless::HeadlessPause>>,
     /// Indexed `SQLite` sidecar. The configured JSON path remains the migration
     /// source and is deliberately retained as a recoverable backup.
     database: Option<DurableDatabase>,
@@ -2782,6 +2783,7 @@ impl CollaborationStore {
             },
             initialization_error: None,
             headless_reviews_enabled: std::sync::atomic::AtomicBool::new(false),
+            headless_pause: std::sync::Mutex::new(None),
             database: None,
             requests: RwLock::new(HashMap::new()),
             identities: RwLock::new(Vec::new()),
@@ -2887,6 +2889,7 @@ impl CollaborationStore {
             opts: options,
             initialization_error: None,
             headless_reviews_enabled: std::sync::atomic::AtomicBool::new(false),
+            headless_pause: std::sync::Mutex::new(None),
             database,
             requests: RwLock::new(requests),
             identities: RwLock::new(identities),

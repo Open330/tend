@@ -25,9 +25,33 @@ pub enum HeadlessPhase {
     Uncertain,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HeadlessPause {
+    PreviousProcess,
+    ResultJournal,
+    ResultStorage,
+    ReservationStorage,
+}
+
+impl HeadlessPause {
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::PreviousProcess => "waiting for the previous provider process to exit",
+            Self::ResultJournal => "cannot read or save a sealed result",
+            Self::ResultStorage => {
+                "retrying the SQLite result write without restarting the provider"
+            }
+            Self::ReservationStorage => "cannot save a reservation",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HeadlessAttempt {
     pub dispatch_generation: Uuid,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub launch_fenced: bool,
     pub phase: HeadlessPhase,
     #[serde(with = "time::serde::rfc3339")]
     pub accepted_at: OffsetDateTime,
@@ -86,6 +110,20 @@ impl CollaborationStore {
 
     pub fn headless_reviews_enabled(&self) -> bool {
         self.headless_reviews_enabled.load(Ordering::SeqCst)
+    }
+
+    pub fn set_headless_pause(&self, reason: Option<HeadlessPause>) {
+        *self
+            .headless_pause
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = reason;
+    }
+
+    pub fn headless_pause(&self) -> Option<HeadlessPause> {
+        *self
+            .headless_pause
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     pub(crate) fn validate_headless_review(
@@ -171,6 +209,7 @@ impl CollaborationStore {
         request.claimed_at = Some(now);
         request.headless_attempt = Some(HeadlessAttempt {
             dispatch_generation: Uuid::new_v4(),
+            launch_fenced: true,
             phase: HeadlessPhase::RunnerAccepted,
             accepted_at: now,
             process_started_at: None,
@@ -192,10 +231,10 @@ impl CollaborationStore {
         evidence: crate::ask::HeadlessReviewEvent,
     ) -> Result<bool, CollaborationError> {
         self.update_headless_attempt(request_id, generation, |attempt, _| match evidence {
-            crate::ask::HeadlessReviewEvent::ProcessStarted { at, pid } => {
+            crate::ask::HeadlessReviewEvent::ProcessStarted { at, pid, identity } => {
                 attempt.process_started_at = Some(at);
                 attempt.process_id = Some(pid);
-                attempt.process_identity = super::ProcessFence::capture(pid);
+                attempt.process_identity = identity;
                 attempt.phase = HeadlessPhase::ProcessStarted;
             }
             crate::ask::HeadlessReviewEvent::ThreadRegistered(id) => {
@@ -253,30 +292,19 @@ impl CollaborationStore {
         Ok(true)
     }
 
-    /// Restart recovery is deliberately conservative across the spawn gap.
-    pub async fn recover_headless_reviews(&self) -> Result<(), CollaborationError> {
-        let _transaction = self.transaction_lock.lock().await;
-        let mut rows = Vec::new();
-        for mut request in self
-            .requests
+    /// The runner reconciles these exact generations under the process lock.
+    pub async fn claimed_headless_attempts(&self) -> Vec<(String, HeadlessAttempt)> {
+        self.requests
             .read()
             .await
             .values()
             .filter(|r| r.to.is_headless_review_runner() && r.status == RequestStatus::Claimed)
-            .cloned()
-        {
-            let Some(mut attempt) = request.headless_attempt.take() else {
-                continue;
-            };
-            finish(&mut attempt, &mut request, None);
-            request.headless_attempt = Some(attempt);
-            rows.push(request);
-        }
-        if !rows.is_empty() {
-            self.commit_request_rows(&rows).await?;
-            self.publish_change();
-        }
-        Ok(())
+            .filter_map(|r| {
+                r.headless_attempt
+                    .clone()
+                    .map(|attempt| (r.id.clone(), attempt))
+            })
+            .collect()
     }
 }
 
@@ -336,6 +364,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn failed_result_commit_keeps_single_slot_until_same_attempt_commits() {
+        let root = tempfile::tempdir().unwrap();
+        let store = CollaborationStore::load(CollaborationOptions {
+            path: Some(root.path().join("reviews.sqlite3")),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        store.set_headless_reviews_enabled(true);
+        let from = sender(root.path());
+        let to = from.headless_review_recipient();
+        let first = store
+            .create(from.clone(), to.clone(), review())
+            .await
+            .unwrap();
+        let reserved = store.reserve_headless_review().await.unwrap().unwrap();
+        assert_eq!(reserved.id, first.id);
+        let generation = reserved.headless_attempt.unwrap().dispatch_generation;
+        let second = store.create(from.clone(), to, review()).await.unwrap();
+        let sql = |statement| {
+            store
+                .database
+                .as_ref()
+                .unwrap()
+                .with_connection(|connection| {
+                    connection.execute_batch(statement).unwrap();
+                    Ok(())
+                })
+                .unwrap();
+        };
+        sql(
+            "CREATE TRIGGER fail_headless_finish BEFORE UPDATE OF status ON collaboration_requests
+             WHEN NEW.status = 'completed' BEGIN SELECT RAISE(ABORT, 'fixture'); END",
+        );
+        assert!(store
+            .finish_headless_review(&first.id, generation, Some("result".into()))
+            .await
+            .is_err());
+        assert_eq!(
+            store.peek_for(&from, &first.id).await.unwrap().status,
+            RequestStatus::Claimed
+        );
+        assert!(store.reserve_headless_review().await.unwrap().is_none());
+
+        sql("DROP TRIGGER fail_headless_finish");
+        assert!(store
+            .finish_headless_review(&first.id, generation, Some("result".into()))
+            .await
+            .unwrap());
+        assert_eq!(
+            store
+                .peek_for(&from, &first.id)
+                .await
+                .unwrap()
+                .reply
+                .unwrap()
+                .body,
+            "result"
+        );
+        assert_eq!(
+            store.reserve_headless_review().await.unwrap().unwrap().id,
+            second.id
+        );
+    }
+
+    #[tokio::test]
     async fn durable_restart_matrix_never_replays_a_reserved_attempt() {
         for _ in 0..5 {
             for phase in [
@@ -382,6 +476,7 @@ mod tests {
                                 generation,
                                 crate::ask::HeadlessReviewEvent::ProcessStarted {
                                     pid: 42,
+                                    identity: None,
                                     at: OffsetDateTime::now_utc(),
                                 },
                             )
@@ -419,7 +514,12 @@ mod tests {
                 }
                 drop(store);
                 let store = CollaborationStore::load(options).await.unwrap();
-                store.recover_headless_reviews().await.unwrap();
+                for (id, attempt) in store.claimed_headless_attempts().await {
+                    store
+                        .finish_headless_review(&id, attempt.dispatch_generation, None)
+                        .await
+                        .unwrap();
+                }
                 store.set_headless_reviews_enabled(true);
                 let recovered = store.peek_for(&from, &request.id).await.unwrap();
                 match phase {

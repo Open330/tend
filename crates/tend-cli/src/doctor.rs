@@ -826,6 +826,12 @@ async fn check_collaboration(socket: &Path) -> Vec<CheckResult> {
 
 fn health_verdicts(health: &tend::collaboration::CollaborationHealth) -> Vec<CheckResult> {
     let mut results = synthetic_verdicts(&health.synthetic_agents);
+    if let Some(reason) = health.headless_pause {
+        results.push(CheckResult::Warn(format!(
+            "headless review queue paused: {}",
+            reason.description()
+        )));
+    }
     results.push(if health.interrupted_requests == 0 && health.pending_recovery_decisions == 0 {
         CheckResult::Ok("no interrupted original collaboration requests".into())
     } else {

@@ -925,7 +925,7 @@ additional context or JSON escaping can still hit the 2048-byte document cap.
 
 ### Headless review pilot
 
-On a daemon that owns its default local SQLite mailbox, set
+On Linux with `/usr/bin/flock` and a daemon that owns its default local SQLite mailbox, set
 `[collaboration] headless_reviews = true` to enable the explicit
 `headless:codex` target. This does not change ordinary peer routing.
 From a tracked agent, use:
@@ -944,12 +944,19 @@ network search and agent tools disabled. It does not inspect the sender's
 checkout or resume an interactive session.
 
 The daemon saves its reservation before launching. Process start,
-provider thread/turn evidence, and committed result can be inspected by
-request ID. If the daemon stops after reservation and before committing a
-result, the request becomes uncertain and is never automatically replayed.
-A completed result is committed in the same SQLite row as the attempt and
-is not executed again. An answer that existed only in the interrupted
-process's output cannot be recovered by this pilot.
+provider thread/turn evidence, and the committed result can be inspected by
+request ID. The provider holds a process lock across daemon restarts, and
+the daemon revokes the previous generation's launch permit during recovery.
+The next request waits until that lock is released. Custom Codex launchers
+must preserve inherited file descriptors through to the provider. A provider
+child that stays alive after a launcher timeout can keep the queue paused.
+
+The daemon saves the result to a local journal before committing it to SQLite.
+After a restart it can finish the commit for the matching request and generation
+from the journal. While storage is unavailable, the daemon retries the write
+and reports the pause in `tend doctor`. If the daemon stops before saving the
+result to the journal, the request becomes uncertain after the provider has
+exited. In either case the daemon never reruns the original model call.
 
 For reproducible renderer measurements, run the `adaptive_delivery_cost_matrix`
 test in `tendd` on both revisions with `TEND_DELIVERY_MATRIX_REPORT` pointing to

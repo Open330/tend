@@ -58,6 +58,11 @@ impl ProcessFence {
         process_birth(self.pid).as_deref() == Some(self.birth.as_str())
     }
 
+    /// True only when the recorded process identity is no longer present.
+    pub fn exit_confirmed(&self) -> bool {
+        self.exited_status() == Some(true)
+    }
+
     pub(crate) fn exited_status(&self) -> Option<bool> {
         if let Some(birth) = process_birth(self.pid) {
             Some(birth != self.birth)
