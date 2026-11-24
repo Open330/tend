@@ -1,0 +1,142 @@
+name: Parity shots
+
+# The cross-platform parity audit's screens: Tend for Mac (off-screen),
+# the web dashboard (headless Chromium) and the iOS app (an iPhone and an
+# iPad simulator made for the run), all against ONE demo fixture on this
+# runner (scripts/parity-shots/run.sh). Read only: nothing is answered or
+# decided, so every surface shows the same open state. PNGs, a text file
+# of each screen's visible words and manifest.txt come back as the
+# `parity-shots` artifact. Runs on a pull request labelled `parity-shots`.
+# Nothing here runs on a developer's machine.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled]
+
+# The PR's own code runs here; it gets a read-only token and keeps none.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shots:
+    name: capture
+    if: contains(github.event.pull_request.labels.*.name, 'parity-shots')
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+
+      # AppIcon.icon (Icon Composer) needs Xcode 26 or newer on macOS 26 or
+      # newer: an older Xcode copies it as a plain folder and the app ships
+      # without an icon (v0.10.12), and Xcode 26 on a macOS 15 runner crashes
+      # in actool. Hence macos-26, and the newest Xcode 26+ on it.
+      - name: Select Xcode 26 or newer
+        run: |
+          set -euo pipefail
+          best=""; bestv=""
+          for app in /Applications/Xcode*.app; do
+            [ -d "$app" ] || continue
+            v=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist" 2>/dev/null || echo 0)
+            [ "${v%%.*}" -ge 26 ] 2>/dev/null || continue
+            if [ -z "$bestv" ] || [ "$(printf '%s\n%s\n' "$bestv" "$v" | sort -V | tail -1)" = "$v" ]; then
+              best="$app"; bestv="$v"
+            fi
+          done
+          if [ -z "$best" ]; then
+            ls -d /Applications/Xcode*.app || true
+            echo "::error::no Xcode 26 or newer on this runner; AppIcon.icon needs it"
+            exit 1
+          fi
+          sudo xcode-select -s "$best/Contents/Developer"
+          xcodebuild -version
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          # The same key as the release's macOS app job, which restores this
+          # cache: by default the key carries the job id, and the two jobs'
+          # ids differ, so the release always built Rust cold.
+          shared-key: tend-macos-app
+          # Only main's cache is visible to other refs; a PR or tag copy is
+          # half a gigabyte that crowds out the shared ones.
+          save-if: false
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      # Restore and save are separate so a build that fails later still
+      # leaves its libghostty behind, and only main writes the shared copy
+      # (a cache saved from a PR or tag is invisible to every other ref).
+      - name: Restore libghostty
+        id: libghostty
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            apps/tend-macos/.build/dependencies
+            apps/tend-macos/.build/toolchains
+            apps/tend-macos/.build/libghostty.stamp
+          key: libghostty-${{ runner.os }}-${{ hashFiles('apps/tend-macos/Dependencies.lock', 'apps/tend-macos/Patches/libghostty-spm/*.patch') }}
+
+      - name: Build libghostty and generate the project
+        working-directory: apps/tend-macos
+        run: |
+          Scripts/build-libghostty.sh
+          xcodegen generate
+
+      - name: Install tmux
+        run: brew install tmux
+
+      - name: Build tend and tendd
+        run: cargo build -p tend-cli -p tendd --bins
+
+      - name: Build Tend for Mac's tests
+        working-directory: apps/tend-macos
+        run: |
+          set -o pipefail
+          xcodebuild -project Tend.xcodeproj -scheme Tend -configuration Debug \
+            -derivedDataPath .build/DerivedData -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO build-for-testing > "$RUNNER_TEMP/mac-build.log" 2>&1 \
+            || { grep -E ': error: ' "$RUNNER_TEMP/mac-build.log" | head -40; tail -40 "$RUNNER_TEMP/mac-build.log"; exit 1; }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Playwright with its own headless Chromium, outside the repository.
+      - name: Install Playwright
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/pw"
+          npm install --prefix "$RUNNER_TEMP/pw" --no-audit --no-fund playwright@1.49.1
+          "$RUNNER_TEMP/pw/node_modules/.bin/playwright" install chromium
+          echo "TEND_PLAYWRIGHT_PACKAGE=$RUNNER_TEMP/pw/node_modules/playwright" >> "$GITHUB_ENV"
+
+      - name: Capture Mac, web and iOS
+        run: scripts/parity-shots/run.sh "$RUNNER_TEMP/parity-shots"
+
+      - name: Upload the screens
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-shots
+          path: ${{ runner.temp }}/parity-shots
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Upload the capture logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-shots-logs
+          path: ${{ runner.temp }}/parity-logs
+          retention-days: 3
+          if-no-files-found: ignore
