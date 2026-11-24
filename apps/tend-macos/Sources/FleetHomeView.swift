@@ -1397,6 +1397,11 @@ struct FleetHostBadges: View {
 
 /// Lets a card glide from its old lane to its new one: the same id in one
 /// namespace across the lanes. Off when the setting is.
+///
+/// The card glides as one piece (`FleetCardGeometryGroup`). Without it,
+/// every text and shape inside every card the move shifts got its own
+/// interpolated frame for each frame of the spring, and was laid out and
+/// drawn again each time: most of the CPU a move cost.
 struct FleetCardMotion: ViewModifier {
     let id: String
     let space: Namespace.ID?
@@ -1404,8 +1409,22 @@ struct FleetCardMotion: ViewModifier {
     func body(content: Content) -> some View {
         if let space {
             content
+                .modifier(FleetCardGeometryGroup())
                 .matchedGeometryEffect(id: id, in: space)
                 .transition(.opacity.combined(with: .scale(scale: 0.96)))
+        } else {
+            content
+        }
+    }
+}
+
+/// `geometryGroup()` where the system has it (macOS 14): the card's
+/// position and size animate as one value, and what is inside is placed
+/// in that animated frame rather than animating on its own.
+struct FleetCardGeometryGroup: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 14.0, *) {
+            content.geometryGroup()
         } else {
             content
         }
