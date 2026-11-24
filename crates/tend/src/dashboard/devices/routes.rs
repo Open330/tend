@@ -441,6 +441,14 @@ async fn whoami(
         "scope": device.scope.names(),
         "features": features,
         "push": state.push.device_view(),
+        // What this device registered, so the app sends a registration
+        // only when the host lacks it or holds another one: the
+        // fingerprint of token, environment and channel (never the
+        // token), and the content it asked for. `null` when none.
+        "push_registration": state.devices.push_of(&device.id).map(|row| json!({
+            "registration": row.registration(),
+            "content": row.content,
+        })),
     }))
     .into_response()
 }

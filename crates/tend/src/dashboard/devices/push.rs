@@ -218,6 +218,15 @@ impl Devices {
         Ok(PushRegistered::Stored(row))
     }
 
+    /// `device`'s registration, if it has one.
+    pub(in crate::dashboard) fn push_of(&self, device: &str) -> Option<PushRow> {
+        self.push_list()
+            .rows
+            .iter()
+            .find(|row| row.device == device)
+            .cloned()
+    }
+
     /// Drop `device`'s registration; `false` when it had none.
     pub(in crate::dashboard) fn remove_push(&self, device: &str) -> io::Result<bool> {
         let _transition = self.transition();

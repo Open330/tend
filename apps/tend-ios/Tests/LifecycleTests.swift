@@ -440,6 +440,195 @@ extension LifecycleTests {
         }
     }
 
+    func testTheRegistrationFingerprintMatchesTheHosts() {
+        // crates/tend/src/dashboard/push/tests.rs has the same vector.
+        XCTAssertEqual(
+            AppModel.registrationFingerprint(token: "AABBCCDDEEFF00112233445566778899aabbccddeeff00112233445566778899", environment: "production", channel: "ch_0123"),
+            "344b519bd7247b4fe517b9edaf77801e"
+        )
+    }
+
+    private func registrations() -> Int {
+        StubProtocol.authorized.filter { $0.path == "/api/device/push" }.count
+    }
+
+    private static func pushDevice(holding registration: String?, content: Bool = false) -> String {
+        let held = registration.map { #"{"registration":"\#($0)","content":\#(content)}"# } ?? "null"
+        return String(Self.pushDevice.dropLast()) + #","push_registration":\#(held)}"#
+    }
+
+    func testAnOlderHostIsRegisteredOncePerLaunch() async {
+        await withPreferences(wanted: true, content: false) {
+            StubProtocol.on("/api/device", .init(status: 200, body: Self.pushDevice))
+            // The host answers the content it will send: what was asked.
+            StubProtocol.on("/api/device/push",
+                            .init(status: 200, body: Self.pushAnswer.replacingOccurrences(of: #""content":true"#, with: #""content":false"#)),
+                            .init(status: 200, body: Self.pushAnswer))
+            let model = pairedModel()
+            let token = Data(repeating: 1, count: 32)
+            // A launch: the device read, the token, foregrounding twice, and
+            // iOS handing the same token again (2026-11-24: four POSTs).
+            await model.refreshDevice()
+            await model.receivedAPNsToken(token)
+            await model.refreshDevice()
+            await model.refreshDevice()
+            await model.receivedAPNsToken(token)
+            XCTAssertEqual(registrations(), 1, "the same token was registered more than once")
+            // A new wish or a new token is sent.
+            model.notificationContentWanted = true
+            await model.registerPush()
+            XCTAssertEqual(registrations(), 2)
+            await model.receivedAPNsToken(Data(repeating: 2, count: 32))
+            XCTAssertEqual(registrations(), 3)
+        }
+    }
+
+    func testAHostHoldingThisRegistrationIsNotSentItAgain() async {
+        await withPreferences(wanted: true, content: false) {
+            let token = Data(repeating: 1, count: 32)
+            let hex = token.map { String(format: "%02x", $0) }.joined()
+            let held = AppModel.registrationFingerprint(token: hex, environment: AppModel.pushEnvironment, channel: "ch_new")
+            StubProtocol.on("/api/device",
+                            .init(status: 200, body: Self.pushDevice(holding: nil)),
+                            .init(status: 200, body: Self.pushDevice(holding: held)),
+                            .init(status: 200, body: Self.pushDevice(holding: held)),
+                            .init(status: 200, body: Self.pushDevice(holding: nil)),
+                            .init(status: 200, body: Self.pushDevice(holding: held, content: true)))
+            StubProtocol.on("/api/device/push", .init(status: 200, body: Self.pushAnswer.replacingOccurrences(of: #""content":true"#, with: #""content":false"#)))
+            let model = pairedModel()
+            await model.refreshDevice()
+            await model.receivedAPNsToken(token)
+            XCTAssertEqual(registrations(), 1)
+            XCTAssertNotNil(model.pairing?.push)
+            // A relaunch: the binding from the Keychain, the host holds it.
+            let relaunched = AppModel()
+            await relaunched.refreshDevice()
+            await relaunched.receivedAPNsToken(token)
+            await relaunched.refreshDevice()
+            XCTAssertEqual(registrations(), 1, "a registration the host holds was sent again")
+            // The host dropped it (Apple's 410, say): sent again.
+            await relaunched.refreshDevice()
+            XCTAssertEqual(registrations(), 2, "a registration the host lost was not sent again")
+            // The host holds other content than wished: sent again.
+            await relaunched.refreshDevice()
+            XCTAssertEqual(registrations(), 3)
+        }
+    }
+
+    func testAHostThatNowAllowsContentIsRegisteredAgain() async {
+        await withPreferences(wanted: true, content: true) {
+            let token = Data(repeating: 1, count: 32)
+            let hex = token.map { String(format: "%02x", $0) }.joined()
+            let held = AppModel.registrationFingerprint(token: hex, environment: AppModel.pushEnvironment, channel: "ch_new")
+            let withheld = Self.pushDevice(holding: nil).replacingOccurrences(of: #""content_allowed":true"#, with: #""content_allowed":false"#)
+            StubProtocol.on("/api/device",
+                            .init(status: 200, body: withheld),
+                            .init(status: 200, body: Self.pushDevice(holding: held, content: true)))
+            StubProtocol.on("/api/device/push",
+                            .init(status: 200, body: Self.pushAnswer.replacingOccurrences(of: #""content":true"#, with: #""content":false"#)),
+                            .init(status: 200, body: Self.pushAnswer))
+            let model = pairedModel()
+            await model.refreshDevice()
+            await model.receivedAPNsToken(token)
+            XCTAssertEqual(model.pairing?.push?.content, false)
+            // The host turns content on: the same row, but the binding is stale.
+            await model.refreshDevice()
+            XCTAssertEqual(registrations(), 2, "the binding still says no content")
+            XCTAssertEqual(model.pairing?.push?.content, true)
+        }
+    }
+
+    func testARemovalAtSignOutIsNotTakenAsRegistered() async {
+        await withPreferences(wanted: true, content: false) {
+            StubProtocol.on("/api/device", .init(status: 200, body: Self.pushDevice))
+            StubProtocol.on("/api/device/push", .init(status: 200, body: Self.pushAnswer.replacingOccurrences(of: #""content":true"#, with: #""content":false"#)))
+            StubProtocol.on("/api/device/push/remove", .init(status: 200, body: #"{"removed":true}"#))
+            StubProtocol.on("/api/device/forget", .init(status: 500, body: #"{"error":"down"}"#))
+            let model = pairedModel()
+            let token = Data(repeating: 1, count: 32)
+            await model.refreshDevice()
+            await model.receivedAPNsToken(token)
+            await model.signOut()
+            XCTAssertNotNil(model.pairing, "sign out failed, so the pairing stays")
+            await model.receivedAPNsToken(token)
+            XCTAssertEqual(registrations(), 2, "the removed registration was taken as still held")
+        }
+    }
+
+    func testADeviceReadAcrossAWriteIsNotTakenAsRegistered() async {
+        await withPreferences(wanted: true, content: false) {
+            let token = Data(repeating: 1, count: 32)
+            let hex = token.map { String(format: "%02x", $0) }.joined()
+            let held = AppModel.registrationFingerprint(token: hex, environment: AppModel.pushEnvironment, channel: "ch_new")
+            StubProtocol.on("/api/device",
+                            .init(status: 200, body: Self.pushDevice(holding: nil)),
+                            // Read while content is being turned on: still off.
+                            .init(status: 200, body: Self.pushDevice(holding: held, content: false), delay: 0.8))
+            StubProtocol.on("/api/device/push",
+                            .init(status: 200, body: Self.pushAnswer.replacingOccurrences(of: #""content":true"#, with: #""content":false"#)),
+                            // Content on: stored on the host, the answer lost.
+                            .init(status: 500, body: #"{"error":"lost"}"#, delay: 0.3),
+                            .init(status: 200, body: Self.pushAnswer.replacingOccurrences(of: #""content":true"#, with: #""content":false"#)))
+            let model = pairedModel()
+            await model.refreshDevice()
+            await model.receivedAPNsToken(token)
+            XCTAssertEqual(registrations(), 1)
+            model.notificationContentWanted = true
+            let write = Task { await model.registerPush() }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            let read = Task { await model.refreshDevice() }
+            await write.value
+            // Back off before the read lands; its sync runs after it.
+            model.notificationContentWanted = false
+            await read.value
+            XCTAssertEqual(registrations(), 3, "a read from before the lost write was taken as what the host holds")
+        }
+    }
+
+    func testARegistrationOverlappingTheSignOutRemovalIsNotTakenAsHeld() async {
+        await withPreferences(wanted: true, content: false) {
+            StubProtocol.on("/api/device", .init(status: 200, body: Self.pushDevice))
+            StubProtocol.on("/api/device/push", .init(status: 200, body: Self.pushAnswer.replacingOccurrences(of: #""content":true"#, with: #""content":false"#)))
+            // The removal reaches the host after the registration below.
+            StubProtocol.on("/api/device/push/remove", .init(status: 200, body: #"{"removed":true}"#, delay: 0.5))
+            StubProtocol.on("/api/device/forget", .init(status: 500, body: #"{"error":"down"}"#))
+            let model = pairedModel()
+            let token = Data(repeating: 1, count: 32)
+            await model.refreshDevice()
+            await model.receivedAPNsToken(token)
+            let signOut = Task { await model.signOut() }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            await model.receivedAPNsToken(token)
+            await signOut.value
+            XCTAssertNotNil(model.pairing)
+            let before = registrations()
+            await model.receivedAPNsToken(token)
+            XCTAssertEqual(registrations(), before + 1, "a registration the removal may have deleted was taken as held")
+        }
+    }
+
+    func testALostAnswerIsNotTakenAsRegistered() async {
+        await withPreferences(wanted: true, content: false) {
+            StubProtocol.on("/api/device", .init(status: 200, body: Self.pushDevice))
+            StubProtocol.on("/api/device/push",
+                            .init(status: 200, body: Self.pushAnswer.replacingOccurrences(of: #""content":true"#, with: #""content":false"#)),
+                            .init(status: 500, body: #"{"error":"lost"}"#),
+                            .init(status: 200, body: Self.pushAnswer.replacingOccurrences(of: #""content":true"#, with: #""content":false"#)))
+            let model = pairedModel()
+            let token = Data(repeating: 1, count: 32)
+            await model.refreshDevice()
+            await model.receivedAPNsToken(token)
+            // Content on; the host may have stored it, the answer is lost.
+            model.notificationContentWanted = true
+            await model.registerPush()
+            XCTAssertEqual(registrations(), 2)
+            // Back off: the host may hold content, so it is told.
+            model.notificationContentWanted = false
+            await model.registerPush()
+            XCTAssertEqual(registrations(), 3, "content may still be on at the host")
+        }
+    }
+
     func testAnUpgradedPairingRegistersAgain() async {
         await withPreferences(wanted: true, content: false) {
             StubProtocol.on("/api/device", .init(status: 200, body: Self.pushDevice))
