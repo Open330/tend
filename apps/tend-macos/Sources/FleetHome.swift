@@ -179,12 +179,13 @@ enum FleetBoard {
         let managed = groups.map { group in
             attach(helpers: group.participants.flatMap { helpersByRoot[$0.id] ?? [] }, to: work(for: group, now: now), now: now)
         }
-        let solo = live
-            .filter { !managedIDs.contains($0.id) && !foldedIDs.contains($0.id) }
-            .map { hosted in
+        let solo = live.indices
+            .filter { !managedIDs.contains(live[$0].id) && !foldedIDs.contains(live[$0].id) }
+            .map { position in
+                let hosted = live[position]
                 var unit = attach(helpers: helpersByRoot[hosted.id] ?? [], to: work(for: hosted, now: now), now: now)
                 unit.isOrphanHelper = index.isHelper(hosted.id)
-                unit.isProbableHelper = helperRequest(hosted.agent)?.confirmed == false
+                unit.isProbableHelper = index.request(at: position)?.confirmed == false
                 unit.isEmptySession = unit.helpers.isEmpty && isEmpty(hosted.agent)
                 return unit
             }
@@ -265,6 +266,9 @@ enum FleetBoard {
         private var parent: [String: String] = [:]
         private var helpers: Set<String> = []
         private var roots: [String: String] = [:]
+        /// Each agent's peer request, parsed once per build, by position
+        /// in `agents` (two rows can share an id).
+        private var requests: [HelperRequest?] = []
 
         init(agents: [TendHostedAgent]) {
             var bySession: [String: [TendHostedAgent]] = [:]
@@ -275,8 +279,9 @@ enum FleetBoard {
                     byPane[Self.paneKey(hosted.host.alias, pane.endpointSocket, pane.paneID), default: []].append(hosted)
                 }
             }
-            for hosted in agents {
-                guard let request = FleetBoard.helperRequest(hosted.agent), request.confirmed else { continue }
+            requests = agents.map { FleetBoard.helperRequest($0.agent) }
+            for (hosted, request) in zip(agents, requests) {
+                guard let request, request.confirmed else { continue }
                 helpers.insert(hosted.id)
                 let candidates: [TendHostedAgent]
                 if let session = request.sessionID {
@@ -320,6 +325,12 @@ enum FleetBoard {
 
         /// Whether the agent is working on someone's peer request.
         func isHelper(_ id: String) -> Bool { helpers.contains(id) }
+
+        /// The peer request of the agent at `position` in the agents the
+        /// index was built from, as `FleetBoard.helperRequest` reads it.
+        func request(at position: Int) -> HelperRequest? {
+            requests.indices.contains(position) ? requests[position] : nil
+        }
 
         /// Where a helper folds: the first agent up its chain that asked
         /// nobody. Nil for an agent that is not helping, one whose
