@@ -16,6 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same. With a card moving every 6 s on optimized copies against the live
   fleet, the app used about 43% less CPU.
 
+## [0.10.36] - 2026-11-23
+
+### Changed
+
+- Home no longer redraws every 15 s for an unchanged read of the other
+  Fleet hosts' decision queues. The read replaced the queues even when
+  nothing in them changed, which redrew the whole board and rebuilt the
+  merged decisions each time.
+
 ### Security
 
 - `cookie` 0.18.3 (RUSTSEC-2026-0594: private cookie nonces could repeat
