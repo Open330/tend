@@ -36,7 +36,14 @@ final class ParityShotsUITests: XCTestCase {
 
     private var isPad: Bool { UIDevice.current.userInterfaceIdiom == .pad }
     private var device: String { isPad ? "ipad" : "iphone" }
-    private var missing: [String] = []
+    /// What could not be captured, written as it grows so a test that
+    /// stops early still says why.
+    private var missing: [String] = [] {
+        didSet {
+            try? Data((missing.map { "ios-\(device) \($0)" }.joined(separator: "\n") + "\n").utf8)
+                .write(to: dir.appendingPathComponent("ios-missing-\(device).txt"))
+        }
+    }
 
     func testParityShots() throws {
         let deviceName = "Parity \(isPad ? "iPad" : "iPhone") \(Int.random(in: 1000...9999))"
@@ -98,6 +105,21 @@ final class ParityShotsUITests: XCTestCase {
         card(app, button: "acceptButton", name: "review-card")
         scrollShots(app, "home-yourTurn")
 
+        // An agent asking a choice is a unit here: its card opens the
+        // agent, where the question is.
+        let choice = app.scrolledText("rotate the JWT signing keys across environments", timeout: 20)
+        if choice.exists {
+            if !choice.isHittable { app.swipeUp(velocity: .slow); pause(0.5) }
+            choice.tap()
+            pause(3)
+            shot(app, "choice-detail")
+            scrollShots(app, "choice-detail")
+            back(app)
+        } else {
+            missing.append("choice-detail: the JWT agent is not in Your turn")
+        }
+        for _ in 0..<6 { app.swipeDown(velocity: .fast) }
+
         // Start Work, opened and cancelled.
         let start = app.buttons["startWork"].firstMatch
         if start.waitForExistence(timeout: 10) {
@@ -147,8 +169,8 @@ final class ParityShotsUITests: XCTestCase {
         // Hosts, and a host.
         if isPad {
             let host = app.descendants(matching: .any)["sidebarHost"].firstMatch
-            if !host.waitForExistence(timeout: 2) { app.buttons["Show Sidebar"].firstMatch.tap(); pause(1) }
-            if host.waitForExistence(timeout: 5) {
+            showSidebar(app, host)
+            if host.exists, host.isHittable {
                 shot(app, "sidebar")
                 host.tap()
                 pause(1)
@@ -177,8 +199,8 @@ final class ParityShotsUITests: XCTestCase {
         // Settings.
         if isPad {
             let settings = app.descendants(matching: .any)["sidebarSettings"].firstMatch
-            if !settings.waitForExistence(timeout: 2) { app.buttons["Show Sidebar"].firstMatch.tap(); pause(1) }
-            if settings.waitForExistence(timeout: 5) {
+            showSidebar(app, settings)
+            if settings.exists, settings.isHittable {
                 settings.tap()
                 pause(1)
                 if settings.isHittable { app.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap() }
@@ -225,11 +247,6 @@ final class ParityShotsUITests: XCTestCase {
             }
         }
         unreachable.terminate()
-
-        if !missing.isEmpty {
-            try? Data((missing.map { "ios-\(device) \($0)" }.joined(separator: "\n") + "\n").utf8)
-                .write(to: dir.appendingPathComponent("ios-missing-\(device).txt"))
-        }
     }
 
     // MARK: - Screens
@@ -238,12 +255,16 @@ final class ParityShotsUITests: XCTestCase {
     /// screen around it, and the card alone.
     private func card(_ app: XCUIApplication, button: String, name: String) {
         let action = app.buttons[button].firstMatch
-        guard action.waitForExistence(timeout: 5) else {
+        // A lane is a lazy stack: a card below the fold may not exist
+        // until it is scrolled to.
+        var tries = 0
+        _ = action.waitForExistence(timeout: 3)
+        while !(action.exists && action.isHittable), tries < 10 { app.swipeUp(velocity: .slow); tries += 1 }
+        guard action.exists else {
             missing.append("\(name): no card with \(button) in Your turn")
+            for _ in 0..<tries { app.swipeDown(velocity: .slow) }
             return
         }
-        var tries = 0
-        while !action.isHittable, tries < 8 { app.swipeUp(velocity: .slow); tries += 1 }
         pause(1)
         shot(app, name)
         let card = app.descendants(matching: .any).matching(identifier: "card").containing(.button, identifier: button).firstMatch
@@ -252,6 +273,21 @@ final class ParityShotsUITests: XCTestCase {
         }
         // Back to the top for what follows.
         for _ in 0..<tries { app.swipeDown(velocity: .slow) }
+    }
+
+    /// The iPad's sidebar, brought out until `item` can be tapped (in
+    /// landscape it is an overlay the detail hides).
+    private func showSidebar(_ app: XCUIApplication, _ item: XCUIElement) {
+        for _ in 0..<3 {
+            if item.waitForExistence(timeout: 2), item.isHittable { return }
+            let toggle = app.buttons["Show Sidebar"].firstMatch
+            if toggle.exists, toggle.isHittable {
+                toggle.tap()
+            } else {
+                app.swipeRight(velocity: .fast)
+            }
+            pause(1)
+        }
     }
 
     /// The rest of a long screen, a page at a time (at most three).

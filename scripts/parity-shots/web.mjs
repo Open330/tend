@@ -66,12 +66,26 @@ async function save(page, name, { target, text } = {}) {
 
 /// One attempt at a screen: a failure to find what it needs is a miss,
 /// not the run's failure.
+/// Tried twice: the board redraws on every poll, and a card can be
+/// replaced between finding and photographing it.
 async function attempt(name, body) {
   try {
     await body();
-  } catch (error) {
-    miss(name, error.message.split("\n")[0]);
+  } catch (first) {
+    if (/no such lane|no Start Work|no Review button/.test(first.message)) return miss(name, first.message.split("\n")[0]);
+    try {
+      await body();
+    } catch (error) {
+      miss(name, error.message.split("\n")[0]);
+    }
   }
+}
+
+/// The phone's lane tabs. Clicked by event: Playwright's pointer click
+/// times out on them (the strip sits outside what it can scroll to).
+async function segment(page, lane) {
+  await page.locator(`#segments [data-lane="${lane}"]`).dispatchEvent("click");
+  await page.waitForTimeout(800);
 }
 
 async function open(context, path) {
@@ -116,12 +130,12 @@ async function run(viewport, scheme, lang) {
         await attempt(`web-lane-${slug}-${suffix}`, async () => {
           const tab = page.locator(`#segments [data-lane="${lane}"]`);
           if (!(await tab.isVisible())) throw new Error("no such lane tab (empty)");
-          await tab.click();
+          await tab.dispatchEvent("click");
           await settle(page);
           await save(page, `web-lane-${slug}-${suffix}`);
         });
       }
-      await page.locator('#segments [data-lane="needsYou"]').click();
+      await segment(page, "needsYou");
       await settle(page);
     } else {
       for (const [lane, slug] of [["backlog", "backlog"], ["needsYou", "yourturn"], ["running", "inprogress"], ["finished", "finished"]]) {
@@ -173,8 +187,22 @@ async function run(viewport, scheme, lang) {
     });
 
     // An agent's details: the first unit at work, in the inspector.
+    // The agent asking a choice (a unit in Your turn), in the inspector.
+    await attempt(`web-choice-detail-${suffix}`, async () => {
+      if (phone) await segment(page, "needsYou");
+      const unit = page.locator(".lane.needsYou .card.work, .lane.needsYou .row-c", { hasText: "rotate the JWT" }).first();
+      await unit.waitFor({ timeout: 10000 });
+      await unit.click();
+      const inspector = page.locator("#inspector");
+      await inspector.waitFor({ state: "visible", timeout: 10000 });
+      await settle(page, 2000);
+      await save(page, `web-choice-detail-${suffix}`, { text: inspector });
+      await page.keyboard.press("Escape");
+      await inspector.waitFor({ state: "hidden", timeout: 5000 }).catch(() => {});
+    });
+
     await attempt(`web-agent-detail-${suffix}`, async () => {
-      if (phone) await page.locator('#segments [data-lane="running"]').click();
+      if (phone) await segment(page, "running");
       const unit = page.locator(".lane.running .card.work, .lane.running .row-c").first();
       await unit.waitFor({ timeout: 10000 });
       await unit.click();
@@ -184,7 +212,7 @@ async function run(viewport, scheme, lang) {
       await save(page, `web-agent-detail-${suffix}`, { text: inspector });
       await page.keyboard.press("Escape");
       await inspector.waitFor({ state: "hidden", timeout: 5000 }).catch(() => {});
-      if (phone) await page.locator('#segments [data-lane="needsYou"]').click();
+      if (phone) await segment(page, "needsYou");
     });
 
     // The compact list, where a decision opens beside the board.
