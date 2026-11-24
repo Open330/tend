@@ -105,7 +105,8 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
     // MARK: UNUserNotificationCenterDelegate
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
-        await model.refresh()
+        // Show it now; the board catches up on its own.
+        Task { await model.refresh() }
         return [.banner, .list, .badge, .sound]
     }
 
