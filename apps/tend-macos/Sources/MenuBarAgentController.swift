@@ -72,6 +72,8 @@ final class TendMenuBarAgentController: NSObject, NSPopoverDelegate {
     private var pollingInterval: TimeInterval = 0
     private var pointerEvents = TendMenuBarPointerEvents()
     private var pointerMonitors: [Any] = []
+    /// An install returned no monitor: poll as before for this run.
+    private var monitorsUnavailable = false
     private var lastRendered: TendMenuBarRenderState?
     private var lastAccessibility: TendMenuBarAccessibilityState?
     private var usageRefreshAt = Date()
@@ -314,7 +316,7 @@ final class TendMenuBarAgentController: NSObject, NSPopoverDelegate {
         let now = Date()
         let point = NSEvent.mouseLocation
         if point != lastPoint {
-            if fromTimer, lastPoint != nil { pointerEvents.timerSawMove(at: now) }
+            if fromTimer, lastPoint != nil { pointerEvents.timerSawMove(at: ProcessInfo.processInfo.systemUptime) }
             lastPoint = point
             let wasInside = pointerInside
             let wasOnChip = pointerOnChip
@@ -408,37 +410,47 @@ final class TendMenuBarAgentController: NSObject, NSPopoverDelegate {
     /// Mouse-moved monitors exist only near a menu bar: far from one, an
     /// event for every move would cost more than the slow timer.
     private func setPointerMonitors(_ on: Bool) {
-        guard on != pointerEvents.installed else { return }
+        guard on != pointerEvents.installed, !(on && monitorsUnavailable) else { return }
         if on {
             let mask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]
             // Global monitors see moves over other apps (and the menu bar);
             // the local one, moves over Tend's own windows.
-            if let global = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { [weak self] _ in
+            let global = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] _ in
                 MainActor.assumeIsolated { self?.pointerMoved() }
-            }) { pointerMonitors.append(global) }
-            if let local = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { [weak self] event in
+            }
+            let local = NSEvent.addLocalMonitorForEvents(matching: mask) { [weak self] event in
                 MainActor.assumeIsolated { self?.pointerMoved() }
                 return event
-            }) { pointerMonitors.append(local) }
-            pointerEvents.installed = !pointerMonitors.isEmpty
+            }
+            pointerMonitors = [global, local].compactMap { $0 }
+            // Each half covers moves the other cannot see; without both,
+            // keep polling.
+            if pointerMonitors.count == 2 {
+                pointerEvents.install()
+            } else {
+                pointerMonitors.forEach(NSEvent.removeMonitor)
+                pointerMonitors.removeAll()
+                pointerEvents.uninstall()
+                monitorsUnavailable = true
+            }
         } else {
             pointerMonitors.forEach(NSEvent.removeMonitor)
             pointerMonitors.removeAll()
-            pointerEvents.uninstalled()
+            pointerEvents.uninstall()
         }
     }
 
     private func pointerMoved() {
         guard !stopped, !screenSleeping, pointerEvents.installed else { return }
         let restored = !pointerEvents.drivesHover
-        let now = Date()
+        let now = ProcessInfo.processInfo.systemUptime
         switch pointerEvents.received(at: now, timerTracking: pollingInterval <= 1.0 / 60) {
         case .now:
             tick()
-        case .after(let wait):
+        case .after(let wait, let generation):
             DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
-                guard let self, self.pointerEvents.installed else { return }
-                self.pointerEvents.trailingCheck(at: Date())
+                guard let self, !self.stopped,
+                      self.pointerEvents.trailingCheck(at: ProcessInfo.processInfo.systemUptime, generation: generation) else { return }
                 self.tick()
             }
         case .none:
@@ -618,6 +630,9 @@ final class TendMenuBarAgentController: NSObject, NSPopoverDelegate {
         cardDestination = nil
         if !pointerInside { scheduleFold(grace: TendMenuBarHoverPolicy.exitGrace) }
         if animationStarted == nil { refresh() } else { render() }
+        // Closing can start the fold grace or hover tracking: rearm at once
+        // rather than on the next slow check.
+        updatePollingRate()
     }
 
     private func installKeyMonitor() {
@@ -673,6 +688,7 @@ final class TendMenuBarAgentController: NSObject, NSPopoverDelegate {
         pointerInside = false
         lastPoint = nil
         refresh()
+        updatePollingRate()
     }
 
     /// Stack origin inside the real button, including its system-added

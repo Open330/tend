@@ -756,47 +756,73 @@ private struct MenuReplyError: LocalizedError {
 }
 
 @Test func menuBarPointerEventsCheckNoMoreOftenThanThePollAndNeverDropTheLastMove() {
-    let start = Date(timeIntervalSince1970: 1_800_000_000)
+    let start: TimeInterval = 1000
     var events = TendMenuBarPointerEvents()
-    events.installed = true
+    let check1 = events.received(at: start, timerTracking: false)
+    #expect(check1 == .none, "no monitors, no event checks")
+    events.install()
     #expect(events.drivesHover)
     // The first event after a pause is checked at once.
-    #expect(events.received(at: start, timerTracking: false) == .now)
+    let check2 = events.received(at: start, timerTracking: false)
+    #expect(check2 == .now)
     // A burst inside the spacing gets one trailing check, not one per event.
-    let soon = start.addingTimeInterval(0.01)
-    guard case .after(let wait) = events.received(at: soon, timerTracking: false) else {
+    let soon = start + 0.01
+    guard case .after(let wait, let generation) = events.received(at: soon, timerTracking: false) else {
         Issue.record("expected a trailing check"); return
     }
     #expect(abs(wait - (TendMenuBarPolling.eventSpacing - 0.01)) < 0.0001)
-    #expect(events.received(at: soon.addingTimeInterval(0.01), timerTracking: false) == .none)
+    let check3 = events.received(at: soon + 0.01, timerTracking: false)
+    #expect(check3 == .none)
     // A timer check while the trailing one is pending is not a missed move.
-    events.timerSawMove(at: soon.addingTimeInterval(0.03))
+    events.timerSawMove(at: soon + 0.03)
     #expect(events.drivesHover)
-    events.trailingCheck(at: start.addingTimeInterval(TendMenuBarPolling.eventSpacing))
+    let check4 = events.trailingCheck(at: start + TendMenuBarPolling.eventSpacing, generation: generation)
+    #expect(check4)
     // While the fast timer tracks a hover, events need no extra check.
-    #expect(events.received(at: start.addingTimeInterval(1), timerTracking: true) == .none)
+    let check5 = events.received(at: start + 1, timerTracking: true)
+    #expect(check5 == .none)
+}
+
+@Test func menuBarPointerEventsDropATrailingCheckFromAnEarlierInstallation() {
+    var events = TendMenuBarPointerEvents()
+    events.install()
+    _ = events.received(at: 10, timerTracking: false)
+    guard case .after(_, let stale) = events.received(at: 10.01, timerTracking: false) else {
+        Issue.record("expected a trailing check"); return
+    }
+    // Removed and installed again before the check ran.
+    events.uninstall()
+    events.install()
+    let check8 = events.trailingCheck(at: 10.1, generation: stale)
+    #expect(!check8)
+    let check6 = events.received(at: 10.2, timerTracking: false)
+    #expect(check6 == .now, "the new installation starts fresh")
+    events.uninstall()
+    let check9 = events.trailingCheck(at: 10.3, generation: events.generation)
+    #expect(!check9)
 }
 
 @Test func menuBarPollsAgainWhenAMoveArrivesWithoutAnEvent() {
-    let start = Date(timeIntervalSince1970: 1_800_000_000)
+    let start: TimeInterval = 1000
     var events = TendMenuBarPointerEvents()
-    events.installed = true
+    events.install()
     _ = events.received(at: start, timerTracking: false)
     // An event still queued behind the timer is allowed for.
-    events.timerSawMove(at: start.addingTimeInterval(0.05))
+    events.timerSawMove(at: start + 0.05)
     #expect(events.drivesHover)
     // A warp, or an app swallowing the events: back to the full-rate poll.
-    events.timerSawMove(at: start.addingTimeInterval(1))
+    events.timerSawMove(at: start + 1)
     #expect(!events.drivesHover)
     #expect(TendMenuBarPolling.interval(pointerInside: false, animating: false, popoverShown: false,
                                         distanceToMenuBar: 0, pointerEvents: events.drivesHover) == 1.0 / 15)
     // The next event hands the hover back to events.
-    #expect(events.received(at: start.addingTimeInterval(2), timerTracking: false) == .now)
+    let check7 = events.received(at: start + 2, timerTracking: false)
+    #expect(check7 == .now)
     #expect(events.drivesHover)
     // Without monitors, nothing is event-driven.
-    events.uninstalled()
+    events.uninstall()
     #expect(!events.drivesHover)
-    events.timerSawMove(at: start.addingTimeInterval(3))
+    events.timerSawMove(at: start + 3)
     #expect(!events.drivesHover && !events.installed)
 }
 

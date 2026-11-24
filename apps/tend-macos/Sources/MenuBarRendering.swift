@@ -56,11 +56,15 @@ enum TendMenuBarPolling {
 /// often than the poll did and its final position is never skipped. The
 /// events are not guaranteed (a warped pointer sends none, and some apps'
 /// tracking swallows them): a move the timer finds without an event turns
-/// polling back on until events arrive again.
+/// polling back on until events arrive again. Times are monotonic
+/// (`ProcessInfo.systemUptime`), so a wall-clock change cannot stall a check.
 struct TendMenuBarPointerEvents {
-    var installed = false
-    private(set) var lastEventAt: Date?
-    private(set) var lastCheckAt = Date.distantPast
+    private(set) var installed = false
+    /// Bumped on every install and removal; a trailing check queued for an
+    /// earlier installation is dropped.
+    private(set) var generation: UInt64 = 0
+    private(set) var lastEventAt: TimeInterval?
+    private(set) var lastCheckAt = -TimeInterval.infinity
     private(set) var trailingPending = false
     /// The timer saw the pointer move without an event.
     private(set) var missed = false
@@ -70,44 +74,61 @@ struct TendMenuBarPointerEvents {
 
     enum Check: Equatable {
         case now
-        case after(TimeInterval)
+        /// Check after this delay, if `generation` is still current then.
+        case after(TimeInterval, generation: UInt64)
         /// A trailing check is already scheduled, or the timer is tracking.
         case none
     }
 
+    mutating func install() {
+        installed = true
+        reset()
+    }
+
+    mutating func uninstall() {
+        installed = false
+        reset()
+    }
+
+    private mutating func reset() {
+        generation &+= 1
+        trailingPending = false
+        missed = false
+        lastEventAt = nil
+        lastCheckAt = -.infinity
+    }
+
     /// An event arrived. `timerTracking`: the fast timer follows the
     /// pointer anyway (a hover, an animation), so no extra check is needed.
-    mutating func received(at now: Date, timerTracking: Bool) -> Check {
+    mutating func received(at now: TimeInterval, timerTracking: Bool) -> Check {
+        guard installed else { return .none }
         lastEventAt = now
         missed = false
         guard !timerTracking, !trailingPending else { return .none }
-        let wait = TendMenuBarPolling.eventSpacing - now.timeIntervalSince(lastCheckAt)
+        let wait = TendMenuBarPolling.eventSpacing - (now - lastCheckAt)
         guard wait > 0 else {
             lastCheckAt = now
             return .now
         }
         trailingPending = true
-        return .after(wait)
+        return .after(wait, generation: generation)
     }
 
-    mutating func trailingCheck(at now: Date) {
+    /// The trailing check is due; false when it belongs to an earlier
+    /// installation and must not run.
+    mutating func trailingCheck(at now: TimeInterval, generation queued: UInt64) -> Bool {
+        guard installed, queued == generation else { return false }
         trailingPending = false
         lastCheckAt = now
+        return true
     }
 
     /// The timer found the pointer somewhere it was not at the last check.
     /// Allow for an event that is queued behind the timer.
-    mutating func timerSawMove(at now: Date) {
+    mutating func timerSawMove(at now: TimeInterval) {
         guard installed, !trailingPending else { return }
-        if let lastEventAt, now.timeIntervalSince(lastEventAt) < 0.1 { return }
+        if let lastEventAt, now - lastEventAt < 0.1 { return }
         missed = true
-    }
-
-    mutating func uninstalled() {
-        installed = false
-        trailingPending = false
-        missed = false
-        lastEventAt = nil
     }
 }
 
