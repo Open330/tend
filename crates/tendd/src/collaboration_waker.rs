@@ -761,7 +761,7 @@ fn mailbox_collaboration_request_prompt(request: &CollaborationRequest) -> Strin
     } else {
         "No reply is expected.".into()
     };
-    format!("[tend:{}] {:?} {source}{mismatch}. Read one: tend_inbox(request_id=\"{}\") or `tend msg accept {} --json`. Honor kind/work_mode/paths. {reply}",
+    format!("[tend:{}] {:?} {source}{mismatch}. Claim once for instructions: tend_inbox(request_id=\"{}\") or `tend msg accept {} --json`. Honor kind/work_mode/paths. {reply}",
         request.id,request.kind,request.id,request.id)
 }
 

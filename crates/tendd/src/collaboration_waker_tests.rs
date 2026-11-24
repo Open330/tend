@@ -2382,7 +2382,7 @@ fn reference_wake_overhead_is_bounded_independently_of_body_size() {
     assert_eq!(short, long);
     assert!(short.len() <= 320, "{} bytes: {short}", short.len());
     assert!(short.contains("tend msg accept"));
-    assert!(short.contains("tend_inbox(request_id="));
+    assert!(short.contains("Claim once for instructions: tend_inbox(request_id="));
     assert!(!short.contains("장문"));
     if let Ok(path) = std::env::var("TEND_WAKE_OVERHEAD_REPORT") {
         std::fs::write(path,serde_json::json!({"reference_wake_bytes":short.len(),"wake":short,"body_repetitions":0}).to_string()).unwrap();
@@ -2393,6 +2393,9 @@ fn reference_wake_overhead_is_bounded_independently_of_body_size() {
 async fn adaptive_wake_claims_once_with_shared_instructions_and_no_initial_read() {
     assert_adaptive_wake_claims_once("verify this small change").await;
     assert_adaptive_wake_claims_once(&"한".repeat(200)).await;
+    // Sizes of two recent read-only retries that otherwise need a model round trip.
+    assert_adaptive_wake_claims_once(&"x".repeat(833)).await;
+    assert_adaptive_wake_claims_once(&"x".repeat(1418)).await;
 }
 
 async fn assert_adaptive_wake_claims_once(body: &str) {
@@ -2481,7 +2484,9 @@ fn adaptive_delivery_cost_matrix() {
     let mut rows = Vec::new();
     let mut baseline_rows = Vec::new();
     for (language, unit) in [("ascii", "a"), ("korean", "한"), ("escaped", "\"\n")] {
-        for target in [16, 40, 160, 480, 512, 513, 640, 768, 769, 1024] {
+        for target in [
+            16, 40, 160, 480, 512, 513, 640, 768, 769, 833, 1024, 1418, 1536, 1537, 2048,
+        ] {
             let body = unit.repeat(target / unit.len()) + &"a".repeat(target % unit.len());
             assert_eq!(body.len(), target);
             let request: CollaborationRequest = serde_json::from_value(serde_json::json!({
