@@ -188,6 +188,21 @@ final class CantAnswerTests: XCTestCase {
         XCTAssertNil(model.closeAllResult)
     }
 
+    func testARefreshAskedForDuringAnotherReturnsAfterAFreshRead() async {
+        // The first read is slow and still shows nothing folded; the one
+        // asked for meanwhile must not return before its own round.
+        StubProtocol.on("/api/decisions",
+                        .init(status: 200, body: Self.emptyQueue, delay: 0.5),
+                        .init(status: 200, body: Self.foldedQueue))
+        StubProtocol.on("/api/decisions/history", .init(status: 200, body: #"{"hosts":[]}"#))
+        let model = decideModel()
+        let first = Task { await model.refresh() }
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        await model.refresh()
+        XCTAssertEqual(model.cantAnswerCount, 2, "returned before the read it asked for")
+        await first.value
+    }
+
     func testDismissClearsTheReport() async {
         StubProtocol.on("/api/decisions", .init(status: 200, body: Self.foldedQueue))
         StubProtocol.on("/api/decisions/history", .init(status: 200, body: #"{"hosts":[]}"#))

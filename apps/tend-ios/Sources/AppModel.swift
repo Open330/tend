@@ -734,14 +734,26 @@ final class AppModel {
     /// A refresh asked for while one was running: run once more after it,
     /// so a decision never leaves a stale card behind.
     private var refreshAgain = false
+    /// Callers whose refresh was folded into the running one: they return
+    /// when it ends, so what they read next comes from a read that started
+    /// after they asked.
+    private var refreshWaiters: [CheckedContinuation<Void, Never>] = []
 
+    /// Read the board. When a refresh is already running, this one runs
+    /// as its next round, and returns only once that round is done.
     func refresh() async {
         guard !refreshing else {
             refreshAgain = true
+            await withCheckedContinuation { refreshWaiters.append($0) }
             return
         }
         refreshing = true
-        defer { refreshing = false }
+        defer {
+            refreshing = false
+            let waiters = refreshWaiters
+            refreshWaiters = []
+            waiters.forEach { $0.resume() }
+        }
         repeat {
             refreshAgain = false
             guard let client else { return }
