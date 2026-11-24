@@ -808,7 +808,7 @@ final class AppModel {
             problem = handle(error, session: mine)
         }
         await fleetRead
-        return true
+        return session == mine && !Task.isCancelled
     }
 
     /// Read the hosts when this device may. A 403 means the dashboard
