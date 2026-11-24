@@ -198,6 +198,8 @@ private func board(_ layout: FleetCardLayout, works: [FleetWork], decisions: [Fl
             ForEach(works) { work in
                 FleetWorkCard(work: work, isSelected: work.id == "agent:w2", select: {})
             }
+            // Right after a move: the "From …" mark on the meta line.
+            FleetWorkCard(work: works[works.count - 1], isSelected: false, select: {}, movedFrom: .running)
         }
         .environment(\.fleetCardEmphasis, true)
         _ = try render(cards, name: "home-emphasis-cards", scheme: scheme)
@@ -277,5 +279,33 @@ private extension FleetDecision {
     for scheme in [ColorScheme.light, .dark] {
         _ = try render(FleetCantAnswerGroup(decisions: [], count: 0, result: (false, text)),
                        name: "home-cant-answer-report", scheme: scheme)
+    }
+}
+
+/// The "From …" mark comes and goes a few seconds after a move. It must not
+/// change the card's height: when it sat beside the title, a long title
+/// wrapped to another line while it showed, and the card (and every card
+/// below it) jumped when it went.
+@MainActor
+@Test func theMoveMarkDoesNotChangeACardsHeight() throws {
+    let titles = [
+        "Sandbox location for the bench",
+        "Make the release workflow wait for every build job before it publishes the notes",
+        "Fix the tour exit race when the window closes before the last step finishes animating",
+    ]
+    for title in titles {
+        let work = try sampleWork("m1", title, lane: .finished, headline: "Merged; CI green on every platform",
+                                  minutesAgo: 2, stages: [.done, .done])
+        func height(_ movedFrom: FleetLane?, _ card: Bool) -> CGFloat {
+            let view: AnyView = card
+                ? AnyView(FleetWorkCard(work: work, isSelected: false, select: {}, movedFrom: movedFrom)
+                    .environment(\.fleetCardEmphasis, true))
+                : AnyView(FleetCompactRow(work: work, isSelected: false, movedFrom: movedFrom) {})
+            let host = NSHostingView(rootView: view.frame(width: 300))
+            host.layoutSubtreeIfNeeded()
+            return host.fittingSize.height
+        }
+        #expect(height(nil, true) == height(.running, true), "card: \(title)")
+        #expect(height(nil, false) == height(.running, false), "row: \(title)")
     }
 }

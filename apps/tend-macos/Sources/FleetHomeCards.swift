@@ -159,25 +159,7 @@ struct FleetWorkCard: View {
                     .foregroundStyle(TendInk.label(colorScheme))
                     .lineLimit(3)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                if let movedFrom {
-                    // Label ink on the tinted capsule; the arrow keeps the
-                    // lane's colour.
-                    Label {
-                        Text(String(localized: "From \(movedFrom.title)"))
-                            .foregroundStyle(TendInk.label(colorScheme))
-                    } icon: {
-                        Image(systemName: "arrow.turn.down.right")
-                            .foregroundStyle(work.lane.tint)
-                    }
-                        .font(TendType.label)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(TendInk.control(colorScheme), in: Capsule())
-                        .fixedSize()
-                        .transition(.opacity)
-                }
             }
-            .animation(FleetBoard.moveMarkAnimation(movedFrom), value: movedFrom)
             if work.lane != .finished || work.stages.count > 1 {
                 FleetStageBar(work: work)
             }
@@ -225,11 +207,38 @@ struct FleetWorkCard: View {
                 .foregroundStyle(TendInk.state(work.lane.stateHue, colorScheme))
                 .lineLimit(1)
                 .fixedSize()
+            // On the meta line, not beside the title: there it narrowed the
+            // title, so the title wrapped to another line and the card
+            // shrank with a jump when the mark went. The meta line is one
+            // line either way, and the capsule's padding is taken back so
+            // it adds no height.
+            if let movedFrom {
+                // Label ink on the tinted capsule; the arrow keeps the
+                // lane's colour.
+                Label {
+                    Text(String(localized: "From \(movedFrom.title)"))
+                        .foregroundStyle(TendInk.label(colorScheme))
+                } icon: {
+                    Image(systemName: "arrow.turn.down.right")
+                        .foregroundStyle(work.lane.tint)
+                }
+                    .font(TendType.label)
+                    .lineLimit(1)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(TendInk.control(colorScheme), in: Capsule())
+                    .padding(.vertical, -2)
+                    .fixedSize()
+                    .transition(.opacity)
+            }
             if !work.agentKinds.isEmpty {
                 TendAgentLogoStack(kinds: work.agentKinds, size: 12)
             }
+            // The repo gives way to the "From …" mark for the few seconds
+            // it shows, and the host keeps its name before the repo does.
             FleetHostBadges(hosts: work.hosts)
-            if let repo = work.repo {
+                .layoutPriority(1)
+            if let repo = work.repo, movedFrom == nil {
                 Text(verbatim: "· \(repo)")
                     .lineLimit(1)
             }
@@ -248,6 +257,7 @@ struct FleetWorkCard: View {
         }
         .font(TendType.meta)
         .foregroundStyle(TendInk.secondary(colorScheme))
+        .animation(FleetBoard.moveMarkAnimation(movedFrom), value: movedFrom)
     }
 }
 
