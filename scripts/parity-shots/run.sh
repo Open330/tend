@@ -146,6 +146,25 @@ for file in "$MAC_RAW"/*; do
   [ -e "$file" ] || continue
   mv "$file" "$OUT/mac-$(basename "$file")"
 done
+# Where the off-screen accessibility tree came back empty, the screen's
+# words as Vision reads them (scripts/demo-video/ocr.swift), marked as such.
+OCR_DIR="$RUNNER_TEMP/mac-ocr"
+rm -rf "$OCR_DIR"; mkdir -p "$OCR_DIR"
+for png in "$OUT"/mac-*.png; do
+  [ -e "$png" ] || continue
+  txt="${png%.png}.txt"
+  if [ ! -s "$txt" ] || [ "$(grep -c '[^[:space:]]' "$txt")" -eq 0 ]; then ln -s "$png" "$OCR_DIR/"; fi
+done
+if [ -n "$(ls -A "$OCR_DIR")" ] && swiftc -O "$REPO/scripts/demo-video/ocr.swift" -o "$RUNNER_TEMP/ocr" 2>> "$LOGS/ocr.log"; then
+  "$RUNNER_TEMP/ocr" "$OCR_DIR" > "$RUNNER_TEMP/mac-ocr.tsv" 2>> "$LOGS/ocr.log" || log "mac: OCR failed"
+  for link in "$OCR_DIR"/*.png; do
+    name=$(basename "$link")
+    { echo "# OCR (Vision): the accessibility tree was empty off-screen"
+      awk -F '\t' -v f="$name" '$1 == f { sub(/^[^\t]*\t/, ""); print }' "$RUNNER_TEMP/mac-ocr.tsv"
+    } > "$OUT/${name%.png}.txt"
+  done
+  log "mac: OCR text for $(ls "$OCR_DIR" | wc -l | tr -d ' ') screens"
+fi
 mac_count=$(find "$OUT" -name 'mac-*.png' | wc -l | tr -d ' ')
 log "mac: $mac_count screens"
 [ "$mac_count" -gt 0 ] || fail "no Mac screens"

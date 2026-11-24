@@ -387,23 +387,39 @@ private final class OffscreenWindow {
     func sheetText() -> String? { window.attachedSheet?.contentView.map { Self.text($0) } }
 
     private static func text(_ root: NSView) -> String {
-        func get(_ object: NSObject, _ key: String) -> Any? {
-            object.responds(to: Selector(key)) ? object.value(forKey: key) : nil
+        func string(_ value: Any?) -> String? {
+            if let value = value as? String { return value }
+            if let value = value as? NSAttributedString { return value.string }
+            return nil
         }
         var lines: [String] = []
         func walk(_ element: Any, depth: Int) {
-            guard let element = element as? NSObject, depth < 64, lines.count < 5_000 else { return }
-            let role = ((get(element, "accessibilityRole") as? String) ?? "").replacingOccurrences(of: "AX", with: "")
-            var parts: [String] = []
-            for key in ["accessibilityLabel", "accessibilityTitle", "accessibilityValue"] {
-                if let value = get(element, key) as? String, !value.isEmpty, !parts.contains(value) { parts.append(value) }
+            guard depth < 64, lines.count < 5_000 else { return }
+            var role = "", parts: [String] = [], children: [Any] = []
+            if let element = element as? NSAccessibilityProtocol {
+                role = element.accessibilityRole()?.rawValue ?? ""
+                for value in [element.accessibilityLabel(), element.accessibilityTitle(), string(element.accessibilityValue())] {
+                    if let value, !value.isEmpty, !parts.contains(value) { parts.append(value) }
+                }
+                children = element.accessibilityChildren() ?? []
+            }
+            if children.isEmpty, let element = element as? NSObject,
+               element.responds(to: #selector(NSObject.accessibilityAttributeValue(_:))) {
+                children = (element.accessibilityAttributeValue(.children) as? [Any]) ?? []
+                if parts.isEmpty {
+                    for attribute in [NSAccessibility.Attribute.description, .title, .value] {
+                        if let value = string(element.accessibilityAttributeValue(attribute)), !value.isEmpty, !parts.contains(value) { parts.append(value) }
+                    }
+                }
             }
             if !parts.isEmpty {
                 let line = parts.joined(separator: " | ").replacingOccurrences(of: "\n", with: " ")
-                lines.append(String(repeating: "  ", count: depth) + "\(role): \(line)")
+                lines.append(String(repeating: "  ", count: depth) + "\(role.replacingOccurrences(of: "AX", with: "")): \(line)")
             }
-            for child in (get(element, "accessibilityChildren") as? [Any]) ?? [] {
-                walk(child, depth: parts.isEmpty ? depth : depth + 1)
+            for child in children { walk(child, depth: parts.isEmpty ? depth : depth + 1) }
+            // An AppKit view's own subviews, where its tree is empty.
+            if children.isEmpty, let view = element as? NSView {
+                for sub in view.subviews { walk(sub, depth: depth) }
             }
         }
         walk(root, depth: 0)
