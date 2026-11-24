@@ -70,10 +70,10 @@ final class ParityShotsUITests: XCTestCase {
 
         // Home with the fixture's agents and decisions.
         let decision = app.buttons["acceptButton"].firstMatch
-        let anyCard = app.descendants(matching: .any).matching(identifier: "cardTitle").firstMatch
+        let anyCard = app.descendants(matching: .any).matching(identifier: "workCard").firstMatch
         let up = Date().addingTimeInterval(180)
         while !decision.exists, !anyCard.exists, Date() < up { pause(1) }
-        XCTAssertTrue(decision.exists || anyCard.exists, "Home never showed the fixture's decisions")
+        XCTAssertTrue(decision.exists || anyCard.exists, "Home never showed the fixture's agents")
         // Let In progress, Finished and the hosts arrive too.
         pause(8)
         shot(app, "home")
@@ -170,9 +170,9 @@ final class ParityShotsUITests: XCTestCase {
         if isPad {
             let host = app.descendants(matching: .any)["sidebarHost"].firstMatch
             showSidebar(app, host)
-            if host.exists, host.isHittable {
+            if onScreen(app, host) {
                 shot(app, "sidebar")
-                host.tap()
+                host.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
                 pause(1)
                 if host.isHittable { app.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap() }
                 pause(3)
@@ -200,8 +200,8 @@ final class ParityShotsUITests: XCTestCase {
         if isPad {
             let settings = app.descendants(matching: .any)["sidebarSettings"].firstMatch
             showSidebar(app, settings)
-            if settings.exists, settings.isHittable {
-                settings.tap()
+            if onScreen(app, settings) {
+                settings.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
                 pause(1)
                 if settings.isHittable { app.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap() }
                 pause(2)
@@ -279,7 +279,7 @@ final class ParityShotsUITests: XCTestCase {
     /// landscape it is an overlay the detail hides).
     private func showSidebar(_ app: XCUIApplication, _ item: XCUIElement) {
         for _ in 0..<3 {
-            if item.waitForExistence(timeout: 2), item.isHittable { return }
+            if item.waitForExistence(timeout: 2), onScreen(app, item) { return }
             let toggle = app.buttons["Show Sidebar"].firstMatch
             if toggle.exists, toggle.isHittable {
                 toggle.tap()
@@ -288,6 +288,15 @@ final class ParityShotsUITests: XCTestCase {
             }
             pause(1)
         }
+    }
+
+    /// Drawn inside the window (a list row is not always "hittable" to
+    /// XCUITest even when it is plainly on screen).
+    private func onScreen(_ app: XCUIApplication, _ item: XCUIElement) -> Bool {
+        guard item.exists else { return false }
+        let frame = item.frame
+        guard !frame.isEmpty else { return false }
+        return app.windows.firstMatch.frame.contains(CGPoint(x: frame.midX, y: frame.midY))
     }
 
     /// The rest of a long screen, a page at a time (at most three).

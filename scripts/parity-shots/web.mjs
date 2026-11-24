@@ -116,6 +116,15 @@ async function run(viewport, scheme, lang) {
     locale: lang === "ko" ? "ko-KR" : "en-US",
   });
   console.log(`web ${suffix}`);
+  // On the phone viewport Playwright's pointer click times out on every
+  // control (the board is its own scroller under a fixed shell), so the
+  // phone gets the click event itself.
+  const press = async (locator) => {
+    if (!phone) return locator.click();
+    await locator.waitFor({ state: "attached", timeout: 10000 });
+    await locator.scrollIntoViewIfNeeded().catch(() => {});
+    await locator.dispatchEvent("click");
+  };
   try {
     const page = await open(context, "/home");
     const yourTurn = page.locator(".lane.needsYou");
@@ -164,12 +173,12 @@ async function run(viewport, scheme, lang) {
     await attempt(`web-review-sheet-${suffix}`, async () => {
       const button = page.locator("#review-button");
       if (!(await button.isVisible())) throw new Error("no Review button on Home");
-      await button.click();
+      await press(button);
       const dialog = page.locator("#review-dialog");
       await dialog.waitFor({ state: "visible", timeout: 10000 });
       await settle(page, 1500);
       await save(page, `web-review-sheet-${suffix}`, { text: dialog });
-      await page.locator("#review-done").click();
+      await press(page.locator("#review-done"));
       await dialog.waitFor({ state: "hidden", timeout: 5000 });
     });
 
@@ -177,12 +186,12 @@ async function run(viewport, scheme, lang) {
     await attempt(`web-start-work-${suffix}`, async () => {
       const start = page.locator("#start-work");
       if (!(await start.isVisible())) throw new Error("no Start Work button (work start off for this token?)");
-      await start.click();
+      await press(start);
       const dialog = page.locator("#start-dialog");
       await dialog.waitFor({ state: "visible", timeout: 10000 });
       await settle(page, 1500);
       await save(page, `web-start-work-${suffix}`, { text: dialog });
-      await page.locator("#start-cancel").click();
+      await press(page.locator("#start-cancel"));
       await dialog.waitFor({ state: "hidden", timeout: 5000 });
     });
 
@@ -192,7 +201,7 @@ async function run(viewport, scheme, lang) {
       if (phone) await segment(page, "needsYou");
       const unit = page.locator(".lane.needsYou .card.work, .lane.needsYou .row-c", { hasText: "rotate the JWT" }).first();
       await unit.waitFor({ timeout: 10000 });
-      await unit.click();
+      await press(unit);
       const inspector = page.locator("#inspector");
       await inspector.waitFor({ state: "visible", timeout: 10000 });
       await settle(page, 2000);
@@ -205,7 +214,7 @@ async function run(viewport, scheme, lang) {
       if (phone) await segment(page, "running");
       const unit = page.locator(".lane.running .card.work, .lane.running .row-c").first();
       await unit.waitFor({ timeout: 10000 });
-      await unit.click();
+      await press(unit);
       const inspector = page.locator("#inspector");
       await inspector.waitFor({ state: "visible", timeout: 10000 });
       await settle(page, 2000);
@@ -217,18 +226,18 @@ async function run(viewport, scheme, lang) {
 
     // The compact list, where a decision opens beside the board.
     await attempt(`web-home-compact-${suffix}`, async () => {
-      await page.locator('#layout-toggle [data-layout="compact"]').click();
+      await press(page.locator('#layout-toggle [data-layout="compact"]'));
       await settle(page, 1500);
       await save(page, `web-home-compact-${suffix}`);
       const row = page.locator(".lane.needsYou .row-c").first();
       await row.waitFor({ timeout: 10000 });
-      await row.click();
+      await press(row);
       const inspector = page.locator("#inspector");
       await inspector.waitFor({ state: "visible", timeout: 10000 });
       await settle(page, 1200);
       await save(page, `web-decision-detail-${suffix}`, { text: inspector });
       await page.keyboard.press("Escape");
-      await page.locator('#layout-toggle [data-layout="emphasis"]').click();
+      await press(page.locator('#layout-toggle [data-layout="emphasis"]'));
       await settle(page, 800);
     });
 
@@ -240,7 +249,7 @@ async function run(viewport, scheme, lang) {
       await save(page, `web-explore-${suffix}`);
       const row = page.locator("#view-explore .ex-row", { hasText: "rotate the JWT" }).first();
       const pick = (await row.count()) ? row : page.locator("#view-explore .ex-row").nth(1);
-      await pick.click();
+      await press(pick);
       await settle(page, 3000);
       await save(page, `web-explore-pane-${suffix}`);
     });
@@ -252,7 +261,7 @@ async function run(viewport, scheme, lang) {
       await first.waitFor({ timeout: 20000 });
       await settle(page, 1500);
       await save(page, `web-messages-${suffix}`);
-      await first.click();
+      await press(first);
       await page.locator(".mx-detail").first().waitFor({ timeout: 10000 });
       await settle(page, 1200);
       await save(page, `web-messages-open-${suffix}`);
