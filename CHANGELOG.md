@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which stays one line, so the card keeps its height; the repo name gives
   way to it for those few seconds.
 
+## [0.10.38] - 2026-11-24
+
 ## [0.10.37] - 2026-11-24
 
 ### Changed

@@ -164,7 +164,23 @@ struct DeviceInfo: Decodable, Sendable {
         }
     }
 
-    enum CodingKeys: String, CodingKey { case device, scope, features, push }
+    /// What the host holds for this device, when it says: `.some(nil)` is
+    /// "no registration", `nil` a tend too old to say.
+    let pushRegistration: HostPushRegistration??
+
+    /// This device's registration as the host stores it.
+    struct HostPushRegistration: Decodable, Sendable, Equatable {
+        /// Hex of the first 16 bytes of SHA-256(token NUL environment NUL
+        /// channel NUL): see `AppModel.registrationFingerprint`.
+        let registration: String
+        /// The content this device asked for.
+        let content: Bool
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case device, scope, features, push
+        case pushRegistration = "push_registration"
+    }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -172,6 +188,14 @@ struct DeviceInfo: Decodable, Sendable {
         scope = DeviceScope(names: try? values.decodeIfPresent([String].self, forKey: .scope))
         features = Set(((try? values.decodeIfPresent([String].self, forKey: .features)) ?? nil) ?? [])
         push = (try? values.decodeIfPresent(PushSupport.self, forKey: .push)) ?? nil
+        if values.contains(.pushRegistration) {
+            // Unreadable reads as unknown, never as "registered".
+            pushRegistration = (try? values.decodeNil(forKey: .pushRegistration)) == true
+                ? .some(nil)
+                : (try? values.decode(HostPushRegistration.self, forKey: .pushRegistration)).map { .some($0) }
+        } else {
+            pushRegistration = nil
+        }
     }
 }
 

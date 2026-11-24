@@ -416,6 +416,59 @@ fn audit_lines(h: &Harness) -> Vec<Value> {
 
 // ---- registration ----------------------------------------------------------
 
+/// The app compares this with its own SHA-256 of token NUL environment
+/// NUL channel NUL (`LifecycleTests` in apps/tend-ios has the same vector).
+#[test]
+fn the_registration_fingerprint_is_a_fixed_function_of_token_environment_and_channel() {
+    let row = crate::dashboard::devices::PushRow {
+        device: "dev_1".into(),
+        token: PHONE_A.to_ascii_lowercase(),
+        environment: "production".into(),
+        content: false,
+        channel: "ch_0123".into(),
+        ref_key: vec![0; 32],
+        generation: 1,
+        updated_at: 0,
+    };
+    assert_eq!(row.registration(), "344b519bd7247b4fe517b9edaf77801e");
+}
+
+#[tokio::test]
+async fn the_device_read_says_what_this_device_registered() {
+    let fake = Fake::start().await;
+    let h = harness(push_on(&fake, &[Environment::Production], true)).await;
+    let (device, _) = pair(&h.app, "phone").await;
+    let (other, _) = pair(&h.app, "tablet").await;
+    let (_, me) = call(&h.app, "GET", "/api/device", Some(&device), None).await;
+    assert_eq!(me["push_registration"], Value::Null);
+    let (status, body) = register(&h.app, &device, PHONE_A, "production", true).await;
+    assert_eq!(status, StatusCode::OK);
+    let row = h
+        .state
+        .devices
+        .push_of(me["device"]["id"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(row.channel, body["channel"].as_str().unwrap());
+    let (_, me) = call(&h.app, "GET", "/api/device", Some(&device), None).await;
+    assert_eq!(
+        me["push_registration"],
+        json!({"registration": row.registration(), "content": true})
+    );
+    // Another device sees only its own.
+    let (_, them) = call(&h.app, "GET", "/api/device", Some(&other), None).await;
+    assert_eq!(them["push_registration"], Value::Null);
+    call(
+        &h.app,
+        "POST",
+        "/api/device/push/remove",
+        Some(&device),
+        None,
+    )
+    .await;
+    let (_, me) = call(&h.app, "GET", "/api/device", Some(&device), None).await;
+    assert_eq!(me["push_registration"], Value::Null);
+}
+
 #[tokio::test]
 async fn push_off_stores_nothing_and_says_so() {
     let h = harness(Push::off(None)).await;
