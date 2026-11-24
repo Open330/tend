@@ -2,12 +2,26 @@ import Foundation
 
 enum TendMenuBarPolling {
     static func interval(pointerInside: Bool, animating: Bool, popoverShown: Bool, waitingToFold: Bool = false,
-                         distanceToMenuBar: CGFloat = 0) -> TimeInterval {
+                         distanceToMenuBar: CGFloat = 0, pointerEvents: Bool = false) -> TimeInterval {
         // Keep animation/tracking smooth; idle hover detection needs at most
         // 67ms, rather than waking the run loop sixty times every second.
         if animating || waitingToFold || (pointerInside && !popoverShown) { return 1.0 / 60 }
+        // Near a menu bar, mouse-moved events drive the checks; the timer
+        // only notices a move the events missed (and runs the periodic
+        // refresh), after which polling resumes at the full rate.
+        if pointerEvents, distanceToMenuBar < eventDrivenDistance { return eventCheck }
         return idle(distanceToMenuBar: distanceToMenuBar)
     }
+
+    /// Within this distance of a menu bar the pointer is followed by its
+    /// mouse-moved events; farther out the slow idle timer is cheaper than
+    /// an event for every move.
+    static let eventDrivenDistance: CGFloat = 450
+    /// How often the timer still checks while events drive the hover.
+    static let eventCheck: TimeInterval = 0.25
+    /// The fastest the pointer is checked while events drive it: the idle
+    /// rate near a menu bar, as when polling.
+    static let eventSpacing: TimeInterval = 1.0 / 15
 
     /// A pointer far from every menu bar is checked less often; near one,
     /// at 15 Hz as before. Each interval is what a fast flick (about 3000
@@ -33,6 +47,67 @@ enum TendMenuBarPolling {
 
     static func refreshUsage(chipShown: Bool, lastAttempt: Date, lastSuccess: Date?, now: Date) -> Bool {
         chipShown && now.timeIntervalSince(max(lastAttempt, lastSuccess ?? .distantPast)) >= 120
+    }
+}
+
+/// Mouse-moved events in place of the 15 Hz poll near a menu bar. An event
+/// is checked at once unless the last check was under `eventSpacing` ago;
+/// then one trailing check follows, so the pointer is never checked more
+/// often than the poll did and its final position is never skipped. The
+/// events are not guaranteed (a warped pointer sends none, and some apps'
+/// tracking swallows them): a move the timer finds without an event turns
+/// polling back on until events arrive again.
+struct TendMenuBarPointerEvents {
+    var installed = false
+    private(set) var lastEventAt: Date?
+    private(set) var lastCheckAt = Date.distantPast
+    private(set) var trailingPending = false
+    /// The timer saw the pointer move without an event.
+    private(set) var missed = false
+
+    /// Events can be relied on to report the next move.
+    var drivesHover: Bool { installed && !missed }
+
+    enum Check: Equatable {
+        case now
+        case after(TimeInterval)
+        /// A trailing check is already scheduled, or the timer is tracking.
+        case none
+    }
+
+    /// An event arrived. `timerTracking`: the fast timer follows the
+    /// pointer anyway (a hover, an animation), so no extra check is needed.
+    mutating func received(at now: Date, timerTracking: Bool) -> Check {
+        lastEventAt = now
+        missed = false
+        guard !timerTracking, !trailingPending else { return .none }
+        let wait = TendMenuBarPolling.eventSpacing - now.timeIntervalSince(lastCheckAt)
+        guard wait > 0 else {
+            lastCheckAt = now
+            return .now
+        }
+        trailingPending = true
+        return .after(wait)
+    }
+
+    mutating func trailingCheck(at now: Date) {
+        trailingPending = false
+        lastCheckAt = now
+    }
+
+    /// The timer found the pointer somewhere it was not at the last check.
+    /// Allow for an event that is queued behind the timer.
+    mutating func timerSawMove(at now: Date) {
+        guard installed, !trailingPending else { return }
+        if let lastEventAt, now.timeIntervalSince(lastEventAt) < 0.1 { return }
+        missed = true
+    }
+
+    mutating func uninstalled() {
+        installed = false
+        trailingPending = false
+        missed = false
+        lastEventAt = nil
     }
 }
 

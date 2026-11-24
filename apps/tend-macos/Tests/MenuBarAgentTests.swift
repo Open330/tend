@@ -741,6 +741,65 @@ private struct MenuReplyError: LocalizedError {
     }
 }
 
+@Test func menuBarFollowsMouseEventsNearAMenuBarInsteadOfPolling() {
+    // With events, the timer near a menu bar only checks for missed moves.
+    #expect(TendMenuBarPolling.interval(pointerInside: false, animating: false, popoverShown: false,
+                                        distanceToMenuBar: 0, pointerEvents: true) == TendMenuBarPolling.eventCheck)
+    #expect(TendMenuBarPolling.eventCheck >= 0.25)
+    // Far away the slow idle timer stays; tracking a hover is never slowed.
+    #expect(TendMenuBarPolling.interval(pointerInside: false, animating: false, popoverShown: false,
+                                        distanceToMenuBar: 1000, pointerEvents: true) == 0.3)
+    #expect(TendMenuBarPolling.interval(pointerInside: true, animating: false, popoverShown: false,
+                                        distanceToMenuBar: 0, pointerEvents: true) == 1.0 / 60)
+    #expect(TendMenuBarPolling.interval(pointerInside: false, animating: false, popoverShown: false,
+                                        waitingToFold: true, distanceToMenuBar: 0, pointerEvents: true) == 1.0 / 60)
+}
+
+@Test func menuBarPointerEventsCheckNoMoreOftenThanThePollAndNeverDropTheLastMove() {
+    let start = Date(timeIntervalSince1970: 1_800_000_000)
+    var events = TendMenuBarPointerEvents()
+    events.installed = true
+    #expect(events.drivesHover)
+    // The first event after a pause is checked at once.
+    #expect(events.received(at: start, timerTracking: false) == .now)
+    // A burst inside the spacing gets one trailing check, not one per event.
+    let soon = start.addingTimeInterval(0.01)
+    guard case .after(let wait) = events.received(at: soon, timerTracking: false) else {
+        Issue.record("expected a trailing check"); return
+    }
+    #expect(abs(wait - (TendMenuBarPolling.eventSpacing - 0.01)) < 0.0001)
+    #expect(events.received(at: soon.addingTimeInterval(0.01), timerTracking: false) == .none)
+    // A timer check while the trailing one is pending is not a missed move.
+    events.timerSawMove(at: soon.addingTimeInterval(0.03))
+    #expect(events.drivesHover)
+    events.trailingCheck(at: start.addingTimeInterval(TendMenuBarPolling.eventSpacing))
+    // While the fast timer tracks a hover, events need no extra check.
+    #expect(events.received(at: start.addingTimeInterval(1), timerTracking: true) == .none)
+}
+
+@Test func menuBarPollsAgainWhenAMoveArrivesWithoutAnEvent() {
+    let start = Date(timeIntervalSince1970: 1_800_000_000)
+    var events = TendMenuBarPointerEvents()
+    events.installed = true
+    _ = events.received(at: start, timerTracking: false)
+    // An event still queued behind the timer is allowed for.
+    events.timerSawMove(at: start.addingTimeInterval(0.05))
+    #expect(events.drivesHover)
+    // A warp, or an app swallowing the events: back to the full-rate poll.
+    events.timerSawMove(at: start.addingTimeInterval(1))
+    #expect(!events.drivesHover)
+    #expect(TendMenuBarPolling.interval(pointerInside: false, animating: false, popoverShown: false,
+                                        distanceToMenuBar: 0, pointerEvents: events.drivesHover) == 1.0 / 15)
+    // The next event hands the hover back to events.
+    #expect(events.received(at: start.addingTimeInterval(2), timerTracking: false) == .now)
+    #expect(events.drivesHover)
+    // Without monitors, nothing is event-driven.
+    events.uninstalled()
+    #expect(!events.drivesHover)
+    events.timerSawMove(at: start.addingTimeInterval(3))
+    #expect(!events.drivesHover && !events.installed)
+}
+
 /// The demo bug: four Your-turn agents already seen showed "No agents need
 /// attention" above "4 agents need you". The popover list and the line
 /// under it now count the same agents.
