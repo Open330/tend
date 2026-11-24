@@ -838,7 +838,17 @@ fn health_verdicts(health: &tend::collaboration::CollaborationHealth) -> Vec<Che
     } else {
         CheckResult::Warn(format!("{} ordinary queued request(s) older than 24h; {} quiet undelivered notice(s) eligible for selective cleanup ({}). Preview with `tend msg expire --older-than 24h --quiet-only --request-id REQUEST --dry-run`; remove `--dry-run` only after reviewing. Other requests require individual review.",health.stale_queued,health.stale_quiet_notices,health.example_quiet_notice_ids.join(", ")))
     });
-    results.extend(health.weekly_outcomes.iter().map(outcome_line));
+    for week in &health.weekly_outcomes {
+        results.push(outcome_line(week));
+        if let Some(worker) = &week.worker_delivery {
+            results.push(CheckResult::Ok(format!(
+                "worker requests {}..{}: {} sent, {} still queued over 5m; claims after 5m (earliest retained wake or hook marker): {} by 5m, {} after 5m, {} no marker before claim",
+                week.since, week.until, worker.requests, worker.still_queued_over_5m,
+                worker.slow_claim_early_evidence, worker.slow_claim_late_evidence,
+                worker.slow_claim_no_evidence,
+            )));
+        }
+    }
     results
 }
 
@@ -2138,6 +2148,7 @@ mod tests {
                 reply_overdue: 2,
                 wake_unsubmitted: 1,
                 other_interruptions: 0,
+                worker_delivery: None,
             }],
             ..Default::default()
         };
