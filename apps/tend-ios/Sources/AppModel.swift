@@ -671,8 +671,10 @@ final class AppModel {
         // Best effort: the host also drops it with the device.
         if pairing?.push != nil {
             _ = beginPushWrite()
-            defer { pushWritesInFlight -= 1 }
             try? await client.removePush()
+            // Whatever overlapped it, the host may hold nothing now.
+            hostPushRegistration = nil
+            pushWritesInFlight -= 1
         }
         do {
             try await client.forget()
@@ -1146,13 +1148,16 @@ extension AppModel {
                 guard session == mine, self.pairing?.token == pairing.token else { return }
                 switch answer {
                 case .on(let binding):
-                    // Only the latest write's answer says what the host holds.
-                    if pushWrites == write {
+                    // Only a write no other overlapped says what the host
+                    // holds: the order they reach the host is not known.
+                    if soleWrite(write) {
                         pushWrittenAt = Date()
                         hostPushRegistration = .some(DeviceInfo.HostPushRegistration(
                             registration: Self.registrationFingerprint(token: token, environment: Self.pushEnvironment, channel: binding.channel),
                             content: content
                         ))
+                    } else {
+                        hostPushRegistration = nil
                     }
                     // Turned off while the host answered: undo it now.
                     guard notificationsWanted else {
@@ -1166,11 +1171,11 @@ extension AppModel {
                         pushProblem = String(localized: "Could not keep the notification key in this device's Keychain. Notifications stay off; try again.")
                         write = beginPushWrite()
                         let removed = (try? await client.removePush()) != nil
+                        settle(write, as: removed && session == mine ? .some(nil) : nil)
                         pushWritesInFlight -= 1
-                        if removed, session == mine, pushWrites == write { hostPushRegistration = .some(nil) }
                     }
                 case .off(let reason):
-                    if pushWrites == write { hostPushRegistration = .some(nil) }
+                    settle(write, as: .some(nil))
                     _ = keep(nil)
                     pushProblem = reason == "environment"
                         ? String(localized: "This dashboard's notification key does not serve this build of the app.")
@@ -1187,7 +1192,7 @@ extension AppModel {
             do {
                 try await client.removePush()
                 guard session == mine, self.pairing?.token == pairing.token else { return }
-                if pushWrites == write { hostPushRegistration = .some(nil) }
+                settle(write, as: .some(nil))
                 pushRemovalOwed = false
                 _ = keep(nil)
             } catch {
@@ -1205,6 +1210,17 @@ extension AppModel {
         pushWrites += 1
         pushWritesInFlight += 1
         return pushWrites
+    }
+
+    /// Whether `write`, still counted in flight, overlapped no other write.
+    private func soleWrite(_ write: Int) -> Bool {
+        pushWrites == write && pushWritesInFlight == 1
+    }
+
+    /// A write was answered: what the host holds, if no other write
+    /// overlapped it, else unknown.
+    private func settle(_ write: Int, as held: DeviceInfo.HostPushRegistration??) {
+        hostPushRegistration = soleWrite(write) ? held : nil
     }
 
     /// Set when the person turns notifications off, until the host says it

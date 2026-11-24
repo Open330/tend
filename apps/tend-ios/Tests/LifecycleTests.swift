@@ -585,6 +585,28 @@ extension LifecycleTests {
         }
     }
 
+    func testARegistrationOverlappingTheSignOutRemovalIsNotTakenAsHeld() async {
+        await withPreferences(wanted: true, content: false) {
+            StubProtocol.on("/api/device", .init(status: 200, body: Self.pushDevice))
+            StubProtocol.on("/api/device/push", .init(status: 200, body: Self.pushAnswer.replacingOccurrences(of: #""content":true"#, with: #""content":false"#)))
+            // The removal reaches the host after the registration below.
+            StubProtocol.on("/api/device/push/remove", .init(status: 200, body: #"{"removed":true}"#, delay: 0.5))
+            StubProtocol.on("/api/device/forget", .init(status: 500, body: #"{"error":"down"}"#))
+            let model = pairedModel()
+            let token = Data(repeating: 1, count: 32)
+            await model.refreshDevice()
+            await model.receivedAPNsToken(token)
+            let signOut = Task { await model.signOut() }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            await model.receivedAPNsToken(token)
+            await signOut.value
+            XCTAssertNotNil(model.pairing)
+            let before = registrations()
+            await model.receivedAPNsToken(token)
+            XCTAssertEqual(registrations(), before + 1, "a registration the removal may have deleted was taken as held")
+        }
+    }
+
     func testALostAnswerIsNotTakenAsRegistered() async {
         await withPreferences(wanted: true, content: false) {
             StubProtocol.on("/api/device", .init(status: 200, body: Self.pushDevice))
