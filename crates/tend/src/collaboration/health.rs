@@ -97,7 +97,7 @@ pub struct WeeklyOutcome {
     pub reply_overdue: usize,
     pub wake_unsubmitted: usize,
     pub other_interruptions: usize,
-    /// Absent on older daemons.
+    /// Omitted when the bucket has no Worker requests or on older daemons.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worker_delivery: Option<WorkerDeliveryOutcome>,
 }
@@ -157,7 +157,6 @@ fn weekly_outcomes<'a>(
                 .date()
                 .to_string(),
             until: (now - time::Duration::days(7 * week)).date().to_string(),
-            worker_delivery: Some(WorkerDeliveryOutcome::default()),
             ..WeeklyOutcome::default()
         })
         .collect();
