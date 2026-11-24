@@ -80,7 +80,7 @@ nix = { version = "0.29", features = ["signal", "user"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 # The account's own uid and passwd home, safely, to tell the user's daemon
 # from one started with its own HOME or XDG directories (`paths`).
-nix = { version = "0.29", features = ["user"] }
+nix = { version = "0.29", features = ["signal", "user"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "test-util"] }

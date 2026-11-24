@@ -1436,6 +1436,9 @@ pub async fn run_headless_review(
             "--skip-git-repo-check".into(),
             "--disable=shell_tool".into(),
             "--disable=unified_exec".into(),
+            // Shell snapshots can start a separate process group and keep
+            // the inherited provider lock after this review is cancelled.
+            "--disable=shell_snapshot".into(),
             "-c".into(),
             "web_search=\"disabled\"".into(),
             "--ignore-user-config".into(),

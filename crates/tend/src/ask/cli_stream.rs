@@ -15,6 +15,66 @@ const OUTPUT_LIMIT: usize = 32 * 1024 * 1024;
 const PROGRESS_LIMIT: usize = 32 * 1024;
 const STDERR_LIMIT: usize = 64 * 1024;
 
+#[cfg(target_os = "linux")]
+struct HeadlessGroup(Option<nix::unistd::Pid>);
+
+#[cfg(target_os = "linux")]
+impl HeadlessGroup {
+    async fn reap(
+        &mut self,
+        child: &mut tokio::process::Child,
+    ) -> Result<std::process::ExitStatus, String> {
+        use nix::errno::Errno;
+        use nix::sys::wait::{waitid, Id, WaitPidFlag, WaitStatus};
+
+        let pid = self.0.expect("unreaped headless launcher");
+        let flags = WaitPidFlag::WEXITED | WaitPidFlag::WNOWAIT | WaitPidFlag::WNOHANG;
+        // Keep the leader's PID reserved until the group has been signalled.
+        // Even if the launcher already exited, its descendants can still hold the queue lock.
+        loop {
+            match waitid(Id::Pid(pid), flags) {
+                Ok(WaitStatus::StillAlive) => tokio::time::sleep(Duration::from_millis(25)).await,
+                Ok(_) => break,
+                Err(Errno::EINTR) => continue,
+                Err(error) => {
+                    if error == Errno::ECHILD {
+                        self.0 = None;
+                    }
+                    return Err(format!("checking headless launcher exit: {error}"));
+                }
+            }
+        }
+        self.stop();
+        wait_for_child(child).await
+    }
+
+    fn stop(&mut self) {
+        use nix::sys::signal::{killpg, Signal};
+
+        if let Some(pid) = self.0.take() {
+            match killpg(pid, Signal::SIGKILL) {
+                Ok(()) | Err(nix::errno::Errno::ESRCH) => {}
+                Err(error) => {
+                    tracing::warn!(%pid, %error, "could not stop headless provider group")
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for HeadlessGroup {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+async fn wait_for_child(
+    child: &mut tokio::process::Child,
+) -> Result<std::process::ExitStatus, String> {
+    child.wait().await.map_err(|error| error.to_string())
+}
+
 pub(super) async fn run(
     mut command: tokio::process::Command,
     engine: AskEngine,
@@ -28,9 +88,19 @@ pub(super) async fn run(
     )>,
 ) -> Result<AskAnswer, String> {
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(target_os = "linux")]
+    if headless.is_some() {
+        command.process_group(0);
+    }
     let mut child = command
         .spawn()
         .map_err(|error| format!("spawning {program}: {error}"))?;
+    #[cfg(target_os = "linux")]
+    let mut group = headless.and_then(|_| child.id()).map(|pid| {
+        HeadlessGroup(Some(nix::unistd::Pid::from_raw(
+            pid.try_into().expect("Linux process id fits pid_t"),
+        )))
+    });
     if let Some((events, _)) = headless {
         let pid = child.id().ok_or("missing headless CLI process ID")?;
         let _ = events.send(HeadlessReviewEvent::ProcessStarted {
@@ -160,9 +230,17 @@ pub(super) async fn run(
             }
             Ok::<_, String>(String::from_utf8_lossy(&kept).into_owned())
         };
-        let wait = async { child.wait().await.map_err(|error| error.to_string()) };
-        let ((raw, result), stderr, status, ()) =
-            tokio::try_join!(read_stdout, read_stderr, wait, write_stdin)?;
+        let output = async { tokio::try_join!(read_stdout, read_stderr, write_stdin) };
+        #[cfg(target_os = "linux")]
+        let (((raw, result), stderr, ()), status) = if let Some(group) = &mut group {
+            let output = output.await?;
+            (output, group.reap(&mut child).await?)
+        } else {
+            tokio::try_join!(output, wait_for_child(&mut child))?
+        };
+        #[cfg(not(target_os = "linux"))]
+        let (((raw, result), stderr, ()), status) =
+            tokio::try_join!(output, wait_for_child(&mut child))?;
         if !status.success() {
             return Err(format!(
                 "{program} exited non-zero: {}",
@@ -381,6 +459,59 @@ printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"D
                 HeadlessReviewEvent::ProviderTurnStarted(_)
             ));
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn headless_review_timeout_releases_lock_held_by_provider_descendant() {
+        let state = tempfile::tempdir().unwrap();
+        let lock_path = state.path().join("provider.lock");
+        let gate = state.path().join("launch.permit");
+        let started = state.path().join("provider.started");
+        std::fs::File::create(&gate).unwrap();
+        let lock = std::fs::File::create(&lock_path).unwrap();
+        let mut command =
+            super::super::headless_review_command(&lock_path, &gate, "/bin/sh").unwrap();
+        // The launcher exits while a descendant still owns the lock and pipes.
+        command
+            .kill_on_drop(true)
+            .stdin(Stdio::piped())
+            .args([
+                "-c",
+                "read -r prompt; sleep 3 & printf '%s\\n' \"$!\" > \"$1\"",
+                "headless-fixture",
+            ])
+            .arg(&started);
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let result = run(
+            command,
+            AskEngine::Codex,
+            "fixture-codex",
+            Duration::from_millis(500),
+            None,
+            None,
+            Some((&tx, "review\n")),
+        )
+        .await;
+        assert_eq!(
+            result.unwrap_err(),
+            timeout_message("fixture-codex", Duration::from_millis(500))
+        );
+        assert!(started.is_file(), "provider descendant must actually start");
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                match lock.try_lock() {
+                    Ok(()) => break,
+                    Err(std::fs::TryLockError::WouldBlock) => {
+                        tokio::time::sleep(Duration::from_millis(10)).await
+                    }
+                    Err(error) => panic!("check provider lock: {error}"),
+                }
+            }
+        })
+        .await
+        .expect("timed out provider must release the queue slot");
     }
 
     #[cfg(unix)]

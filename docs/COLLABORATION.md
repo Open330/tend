@@ -939,17 +939,19 @@ MCP also accepts `tend_call_peer(target="headless:codex", intent="review", dispa
 Reuse the same dispatch UUID and payload after an ambiguous submission.
 Retrieve the result with the original request ID; this route does not wake a terminal.
 Include the evidence in the body. The pilot runs one independent,
-text-only Codex process in an empty directory, with shell, plugin, hook,
-network search and agent tools disabled. It does not inspect the sender's
+text-only Codex process in an empty directory, with shell tools and snapshots,
+plugins, hooks, network search and agent tools disabled. It does not inspect the sender's
 checkout or resume an interactive session.
 
 The daemon saves its reservation before launching. Process start,
 provider thread/turn evidence, and the committed result can be inspected by
 request ID. The provider holds a process lock across daemon restarts, and
 the daemon revokes the previous generation's launch permit during recovery.
-The next request waits until that lock is released. Custom Codex launchers
-must preserve inherited file descriptors through to the provider. A provider
-child that stays alive after a launcher timeout can keep the queue paused.
+The next request waits until that lock is released. On timeout or orderly
+daemon shutdown, Tend stops the review's process group before releasing the
+slot. After a forced daemon kill, the replacement still waits for the old
+provider to exit. Custom Codex launchers must preserve inherited file
+descriptors and keep their provider in the launch process group.
 
 The daemon saves the result to a local journal before committing it to SQLite.
 After a restart it can finish the commit for the matching request and generation
