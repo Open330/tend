@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A Home card no longer shrinks with a jump a few seconds after it changes
+  lane. Its "From …" mark sat beside the title, so a long title wrapped to
+  another line while the mark showed, and when the mark went the card and
+  every card below it jumped up. The mark is now on the card's bottom line,
+  which stays one line, so the card keeps its height; the repo name gives
+  way to it for those few seconds.
+
 ## [0.10.38] - 2026-11-24
 
 ## [0.10.37] - 2026-11-24
