@@ -152,7 +152,7 @@ artifact. A curated set of 22, light and EN unless noted, is in [`parity/shots/`
 | Home | ![](parity/shots/mac-home-light-en.png) | ![](parity/shots/web-home-desktop-light.png) | ![](parity/shots/ios-home-yourTurn-2-iphone.png) ![](parity/shots/ios-home-ipad.png) |
 | Home, KO | ![](parity/shots/mac-home-light-ko.png) | ![](parity/shots/web-home-desktop-light-ko.png) | |
 | Review decision | (on the Review sheet) | ![](parity/shots/web-review-card-desktop-light.png) | ![](parity/shots/ios-review-card-card-iphone.png) |
-| Question | | ![](parity/shots/web-question-desktop-light.png) | ![](parity/shots/ios-question-card-iphone.png) |
+| Question | | (the run's web capture shows the wrong card; #707 fixes it) | ![](parity/shots/ios-question-card-iphone.png) |
 | Start work | ![](parity/shots/mac-home-start-work-light-en.png) | ![](parity/shots/web-start-work-desktop-light.png) | ![](parity/shots/ios-start-work-iphone.png) |
 | Explore / Hosts | ![](parity/shots/mac-explore-light-en.png) | ![](parity/shots/web-explore-desktop-light.png) | ![](parity/shots/ios-hosts-iphone.png) |
 | Agent detail | ![](parity/shots/mac-detail-agent-light-en.png) | ![](parity/shots/web-agent-detail-desktop-light.png) | ![](parity/shots/ios-agent-detail-iphone.png) |
@@ -160,21 +160,34 @@ artifact. A curated set of 22, light and EN unless noted, is in [`parity/shots/`
 
 **What the screenshots add to the code audit**
 
-- **Home's unit cards already match.** All three show the same lane names,
-  project groups, card order inside a card (title, stage bar, agent, inset
-  headline, then status, logo, host, project and time) and status words. The
-  differences are the Your-turn mark and fill (a stripe on Mac, a stripe and
-  tinted fill on the web, an orange border on iOS) and the type scale. Home is
-  not where the three products feel different.
-- **The badges disagree for one fleet.** Your turn is 9 on the web and iOS
-  (8 on the Mac, which was captured before tendd added a recovery question).
-  But the Mac rail badge says **6**, the web's says **9** and the iPhone tab
-  says **3**. This is §1.1's count problem, seen on screen.
+- **Home's work cards are close.** All three have the same lane names and
+  project groups, and much of the same card hierarchy: title, agent, headline,
+  then status, logo, host, project and time. The remaining differences are
+  smaller:
+  - the Your-turn mark (a stripe on the Mac, a stripe with a tinted fill on the
+    web, an orange border on iOS);
+  - the stage bar, which the Mac and iOS draw on a single-stage card and the
+    web leaves out;
+  - the headline, shown inline on the Mac and boxed on the web and iOS;
+  - the type scale.
+
+  Home is not where the three feel most different.
+- **The badges mean different things.** The Your turn headers read 8, 9 and 9.
+  The Mac was captured before tendd added a recovery question, and the
+  fixture's own snapshots go from 8 to 9. In progress (8) and Finished (5)
+  match. The badges read **6** (Mac rail), **9** (web) and **3** (iPhone tab),
+  because each counts something different:
+  - the Mac rail counts Your-turn work units and leaves out tendd's decisions;
+  - the web counts Your turn;
+  - the iPhone counts what this device can decide.
+
+  This is not one count gone wrong. Three meanings share one red dot, which is
+  §1.1's problem on screen.
 - **Decision cards are where they part.** The same review decision appears
   twice below. The web puts the kind on top, wraps the content in an inset box,
   puts the actions inside that box, and puts the host and time at the bottom.
-  iOS puts the kind, project and time on top, has no inset box, puts the
-  actions in tinted capsules and puts ⋯ at the right. The question card on iOS
+  iOS puts the kind, asker and time on top and has no inset box. Its actions
+  are outlined buttons with blue labels, with ⋯ at the right. The question card on iOS
   offers only "Answer…"; Decline is inside the composer.
 - **Chrome:** the web shows the four-room mark (top left) and iOS shows none.
   The Mac's off-screen capture shows "Connecting to tendd… 0 hosts" in its
