@@ -23,6 +23,13 @@ final class ParityShotsUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = true
         let env = ProcessInfo.processInfo.environment
+        // Only from scripts/parity-shots/run.sh on a GitHub-hosted runner,
+        // which passes these (TEST_RUNNER_-prefixed) after its own CI
+        // check; nothing below (reset, pair, remove) runs without them.
+        guard env["TEND_PARITY_CI"] == "1", env["GITHUB_ACTIONS"] == "true",
+              env["RUNNER_ENVIRONMENT"] == "github-hosted" else {
+            throw XCTSkip("runs only from scripts/parity-shots/run.sh on a GitHub-hosted runner")
+        }
         guard env["TEND_PARITY"] == "1", let server = env["TEND_SERVER"], let token = env["TEND_TOKEN"],
               let dir = env["TEND_PARITY_DIR"],
               let url = URLComponents(string: server), url.scheme == "http", url.host == "127.0.0.1",

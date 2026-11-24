@@ -20,48 +20,95 @@ import { createRequire } from "node:module";
 import { mkdirSync, writeFileSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 
-const base = process.env.TEND_PARITY_URL;
-const token = process.env.TEND_PARITY_TOKEN;
-const out = process.env.TEND_PARITY_OUT;
+// Only inside scripts/parity-shots/run.sh on a GitHub-hosted runner:
+// run.sh exports TEND_PARITY_CI=1 after its own CI check. Checked before
+// anything else happens (no browser, no request).
+const env = process.env;
+if (env.TEND_PARITY_CI !== "1" || env.CI !== "true" || env.GITHUB_ACTIONS !== "true" || env.RUNNER_ENVIRONMENT !== "github-hosted") {
+  console.error("web.mjs: runs only from scripts/parity-shots/run.sh on a GitHub-hosted runner (TEND_PARITY_CI=1)");
+  process.exit(2);
+}
+const base = env.TEND_PARITY_URL;
+const token = env.TEND_PARITY_TOKEN;
+const out = env.TEND_PARITY_OUT;
 if (!base || !token || !out) {
   console.error("TEND_PARITY_URL, TEND_PARITY_TOKEN and TEND_PARITY_OUT are required");
   process.exit(2);
 }
 const url = new URL(base);
-if (url.hostname !== "127.0.0.1") {
+if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || !url.port || url.username || url.password) {
   console.error("web.mjs: only the fixture's loopback dashboard");
   process.exit(2);
 }
+
+/// Every message that leaves this script, token-free: a failed navigation
+/// carries the URL it went to, and the first one has the token in it.
+function scrub(text) {
+  return String(text ?? "").split(token).join("<token>").split(encodeURIComponent(token)).join("<token>");
+}
+function firstLine(error) {
+  return scrub(error?.message ?? error).split("\n")[0];
+}
+
 mkdirSync(out, { recursive: true });
 const require = createRequire(import.meta.url);
-const { chromium } = require(process.env.TEND_PLAYWRIGHT_PACKAGE || "playwright");
+const { chromium } = require(env.TEND_PLAYWRIGHT_PACKAGE || "playwright");
 const browser = await chromium.launch({
   headless: true,
-  ...(process.env.TEND_TEST_CHROMIUM ? { executablePath: process.env.TEND_TEST_CHROMIUM } : {}),
+  ...(env.TEND_TEST_CHROMIUM ? { executablePath: env.TEND_TEST_CHROMIUM } : {}),
 });
 
 const missing = [];
 const problems = [];
+const blocked = [];
 let shots = 0;
 
 function miss(name, why) {
-  missing.push(`${name}: ${why}`);
-  console.log(`  missing ${name}: ${why}`);
+  missing.push(`${name}: ${scrub(why)}`);
+  console.log(`  missing ${name}: ${scrub(why)}`);
 }
 
-async function save(page, name, { target, text } = {}) {
-  const png = join(out, `${name}.png`);
-  if (target) await target.screenshot({ path: png });
-  else await page.screenshot({ path: png });
+function write(name, png, words) {
+  writeFileSync(join(out, `${name}.png`), png);
+  writeFileSync(join(out, `${name}.txt`), `${scrub(words).trim()}\n`);
   shots += 1;
+  console.log(`  ${name}`);
+}
+
+/// A whole-viewport screen, with the visible view's text (or `text`'s).
+async function save(page, name, { text } = {}) {
+  const png = await page.screenshot();
+  let words;
   try {
     const region = text || page.locator("#view-home:visible, #view-explore:visible, #view-settings:visible").first();
-    const words = await region.innerText({ timeout: 5000 });
-    writeFileSync(join(out, `${name}.txt`), `${words.trim()}\n`);
+    words = await region.innerText({ timeout: 5000 });
   } catch (error) {
-    writeFileSync(join(out, `${name}.txt`), `(no text: ${error.message.split("\n")[0]})\n`);
+    words = `(no text: ${firstLine(error)})`;
   }
-  console.log(`  ${name}`);
+  write(name, png, words);
+}
+
+/// One element, photographed and read from the same handle once it has
+/// stopped moving. The board redraws on every poll, so a picture whose
+/// element changed in between (text or data-id) is thrown away, and so is
+/// one whose text does not say what it should (`expect`).
+async function saveElement(name, locator, { expect } = {}) {
+  const handle = await locator.elementHandle({ timeout: 10000 });
+  try {
+    await handle.scrollIntoViewIfNeeded().catch(() => {});
+    await handle.waitForElementState("stable", { timeout: 5000 });
+    const id = await handle.getAttribute("data-id");
+    const before = await handle.innerText();
+    const png = await handle.screenshot();
+    const after = await handle.innerText();
+    if (before !== after || id !== (await handle.getAttribute("data-id"))) {
+      throw new Error(`${name}: the element changed while it was photographed`);
+    }
+    if (expect && !expect.test(before)) throw new Error(`${name}: its text does not match ${expect}`);
+    write(name, png, before);
+  } finally {
+    await handle.dispose().catch(() => {});
+  }
 }
 
 /// One attempt at a screen: a failure to find what it needs is a miss,
@@ -72,11 +119,11 @@ async function attempt(name, body) {
   try {
     await body();
   } catch (first) {
-    if (/no such lane|no Start Work|no Review button/.test(first.message)) return miss(name, first.message.split("\n")[0]);
+    if (/no such lane|no Start Work|no Review button/.test(first.message)) return miss(name, firstLine(first));
     try {
       await body();
     } catch (error) {
-      miss(name, error.message.split("\n")[0]);
+      miss(name, firstLine(error));
     }
   }
 }
@@ -90,7 +137,7 @@ async function segment(page, lane) {
 
 async function open(context, path) {
   const page = await context.newPage();
-  page.on("pageerror", (error) => problems.push(`${path}: pageerror: ${error.message}`));
+  page.on("pageerror", (error) => problems.push(`${path}: pageerror: ${scrub(error.message)}`));
   // The token arrives in the fragment, the way a link from `tend` brings
   // it; Home keeps it and the other pages read it from there.
   await page.goto(`${base}/home#token=${token}`);
@@ -115,6 +162,14 @@ async function run(viewport, scheme, lang) {
     colorScheme: scheme,
     locale: lang === "ko" ? "ko-KR" : "en-US",
   });
+  // Read only, enforced: anything but a read to the dashboard's API is
+  // refused before it leaves the browser, and listed.
+  await context.route("**/api/**", (route) => {
+    const method = route.request().method();
+    if (method === "GET" || method === "HEAD") return route.continue();
+    blocked.push(`${suffix} ${method} ${scrub(new URL(route.request().url()).pathname)}`);
+    return route.abort("blockedbyclient");
+  });
   console.log(`web ${suffix}`);
   // On the phone viewport Playwright's pointer click times out on every
   // control (the board is its own scroller under a fixed shell), so the
@@ -133,7 +188,7 @@ async function run(viewport, scheme, lang) {
 
     // Home and each lane (the phone shows one lane at a time).
     await save(page, `web-home-${suffix}`);
-    await save(page, `web-home-full-${suffix}`, { target: page.locator("#board") });
+    await saveElement(`web-home-full-${suffix}`, page.locator("#board"));
     if (phone) {
       for (const [lane, slug] of [["backlog", "backlog"], ["needsYou", "yourturn"], ["running", "inprogress"], ["finished", "finished"]]) {
         await attempt(`web-lane-${slug}-${suffix}`, async () => {
@@ -151,7 +206,7 @@ async function run(viewport, scheme, lang) {
         await attempt(`web-lane-${slug}-${suffix}`, async () => {
           const section = page.locator(`.lane.${lane}`).first();
           if (!(await section.count())) throw new Error("no such lane (empty)");
-          await save(page, `web-lane-${slug}-${suffix}`, { target: section, text: section });
+          await saveElement(`web-lane-${slug}-${suffix}`, section);
         });
       }
     }
@@ -160,12 +215,16 @@ async function run(viewport, scheme, lang) {
     for (const [kind, slug] of [["question", "question"], ["review", "review-card"]]) {
       await attempt(`web-${slug}-${suffix}`, async () => {
         const word = lang === "ko" ? (kind === "question" ? "질문" : "리뷰") : kind === "question" ? "Question" : "Review";
-        const card = yourTurn.locator(".card.decision, .row-c", { has: page.locator(".kind", { hasText: word }) }).first();
-        await card.waitFor({ timeout: 10000 });
+        const found = yourTurn.locator(".card.decision, .row-c", { has: page.locator(".kind", { hasText: word }) }).first();
+        await found.waitFor({ timeout: 10000 });
+        // Pinned by its own id from here on, not by "the first such card".
+        const id = await found.getAttribute("data-id");
+        if (!id) throw new Error(`the ${kind} card has no data-id`);
+        const card = yourTurn.locator(`[data-id=${JSON.stringify(id)}]`);
         await card.scrollIntoViewIfNeeded();
         await settle(page, 500);
-        await save(page, `web-${slug}-${suffix}`, { target: card, text: card });
-        await save(page, `web-${slug}-context-${suffix}`);
+        await saveElement(`web-${slug}-${suffix}`, card, { expect: new RegExp(word) });
+        await save(page, `web-${slug}-context-${suffix}`, { text: card });
       });
     }
 
@@ -275,7 +334,7 @@ async function run(viewport, scheme, lang) {
       await save(page, `web-settings-${suffix}`);
     });
   } catch (error) {
-    miss(`web-*-${suffix}`, error.message.split("\n")[0]);
+    miss(`web-*-${suffix}`, firstLine(error));
   } finally {
     await context.close();
   }
@@ -290,6 +349,10 @@ try {
   await browser.close();
 }
 if (missing.length) appendFileSync(join(out, "web-missing.txt"), `${missing.join("\n")}\n`);
+if (blocked.length) {
+  writeFileSync(join(out, "web-blocked-requests.txt"), `${blocked.join("\n")}\n`);
+  console.log(`web: refused ${blocked.length} non-read API requests (web-blocked-requests.txt)`);
+}
 console.log(`web: ${shots} screens, ${missing.length} missing`);
 if (problems.length) {
   console.error(problems.join("\n"));

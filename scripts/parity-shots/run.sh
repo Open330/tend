@@ -13,7 +13,7 @@
 #   3. iOS  ParityShotsUITests on an iPhone and an iPad simulator created
 #           for the run and deleted at the end
 # Nothing answers, decides or starts anything: every surface shows the
-# fixture's open state. Writes OUT_DIR/<surface>-<screen>-<variant>.png, a
+# fixture's open state. Writes (staged, token-checked, on every exit) OUT_DIR/<surface>-<screen>-<variant>.png, a
 # .txt of each screen's visible text beside it, the fixture's /api/home
 # before and after, and manifest.txt. Needs target/debug/{tend,tendd},
 # tmux, xcodegen, the generated Tend.xcodeproj (libghostty built), node and
@@ -32,17 +32,54 @@ REPO="$(cd "$HERE/../.." && pwd)"
 BIN_DIR="${TEND_DEMO_BIN_DIR:-$REPO/target/debug}"
 PORT="${TEND_DEMO_PORT:-7979}"
 TMUX_BIN="$(command -v tmux)"
-mkdir -p "$OUT_ARG"
-OUT="$(cd "$OUT_ARG" && pwd)"
-LOGS="$RUNNER_TEMP/parity-logs"
-mkdir -p "$LOGS"
+# Everything is written to RAW and LOGS; only what stage() lets through
+# (on every exit, failures included) reaches OUT_ARG and STAGED_LOGS, which
+# the workflow uploads.
+RAW="$RUNNER_TEMP/parity-raw"
+OUT="$RAW"
+rm -rf "$RAW"; mkdir -p "$RAW" "$OUT_ARG"
+STAGE="$(cd "$OUT_ARG" && pwd)"
+LOGS="$RUNNER_TEMP/parity-logs-raw"
+STAGED_LOGS="$RUNNER_TEMP/parity-logs"
+rm -rf "$LOGS" "$STAGED_LOGS"; mkdir -p "$LOGS" "$STAGED_LOGS"
 log() { printf '[%s] %s\n' "$(date +%T)" "$*" | tee -a "$LOGS/driver.log" >&2; }
 status=0
 fail() { log "FAILED: $*"; status=1; }
 
 TOKEN=$(openssl rand -hex 24)
+# Masked in the job log from the moment it exists.
+echo "::add-mask::$TOKEN"
+# The opt-in web.mjs and ParityShotsUITests require besides the CI
+# variables: set only here, after the GitHub-hosted check above.
+export TEND_PARITY_CI=1
 created=()
 helper=
+
+# Copies RAW and LOGS to what is uploaded: a file carrying the token is
+# withheld (named in withheld.txt), logs are redacted on the way.
+stage() {
+  local file name withheld=()
+  find "$STAGE" -mindepth 1 -delete 2>/dev/null || true
+  for file in "$RAW"/*; do
+    [ -f "$file" ] || continue
+    name=$(basename "$file")
+    case "$name" in request-*|done-*) continue ;; esac
+    if grep -aqF "$TOKEN" "$file"; then withheld+=("$name"); continue; fi
+    cp "$file" "$STAGE/$name"
+  done
+  find "$STAGED_LOGS" -mindepth 1 -delete 2>/dev/null || true
+  for file in "$LOGS"/*; do
+    [ -f "$file" ] || continue
+    sed "s/$TOKEN/<token>/g" "$file" > "$STAGED_LOGS/$(basename "$file")"
+  done
+  if [ "${#withheld[@]}" -gt 0 ]; then
+    printf '%s\n' "${withheld[@]}" > "$STAGE/withheld.txt"
+    echo "run.sh: withheld ${#withheld[@]} files that carried the dashboard token" >&2
+    return 1
+  fi
+  return 0
+}
+
 cleanup() {
   local code=$?
   trap - EXIT INT TERM
@@ -53,6 +90,7 @@ cleanup() {
   done
   env -u TMUX -u TMUX_PANE TEND_DEMO_TMUX="$TMUX_BIN" bash "$REPO/docs/demo-teardown.sh" >/dev/null 2>&1 \
     || log "teardown failed"
+  stage || { [ "$code" -eq 0 ] && code=1; }
   exit "$code"
 }
 trap cleanup EXIT
@@ -219,6 +257,9 @@ ios_run() { # <slug> <device type prefix>
   helper=$!
   rm -rf "$bundle"
   TEST_RUNNER_TEND_PARITY=1 \
+  TEST_RUNNER_TEND_PARITY_CI="$TEND_PARITY_CI" \
+  TEST_RUNNER_GITHUB_ACTIONS="$GITHUB_ACTIONS" \
+  TEST_RUNNER_RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" \
   TEST_RUNNER_TEND_SERVER="http://127.0.0.1:$PORT" \
   TEST_RUNNER_TEND_TOKEN="$TOKEN" \
   TEST_RUNNER_TEND_PARITY_DIR="$OUT" \
@@ -266,14 +307,7 @@ fi
 snapshot after
 
 # --- What came back ---------------------------------------------------------
-# The dashboard's token never leaves the runner.
-leaks=$(grep -rlF "$TOKEN" "$OUT" 2>/dev/null || true)
-if [ -n "$leaks" ]; then
-  log "the dashboard token appeared in: $leaks (removed)"
-  printf '%s\n' "$leaks" | while read -r file; do rm -f "$file"; done
-  fail "token in the output"
-fi
-grep -rlF "$TOKEN" "$LOGS" 2>/dev/null | while read -r file; do sed -i '' "s/$TOKEN/<token>/g" "$file"; done
+# (The token check is stage(), on exit.)
 {
   echo "# Tend parity shots: one demo fixture (docs/demo-setup.sh, tend-demo sandbox), three surfaces"
   echo "# commit ${GITHUB_SHA:-unknown}  run ${GITHUB_RUN_ID:-unknown}  $(date -u +%FT%TZ)"
@@ -293,6 +327,6 @@ grep -rlF "$TOKEN" "$LOGS" 2>/dev/null | while read -r file; do sed -i '' "s/$TO
   echo "## not captured"
   cat "$OUT"/web-missing.txt "$OUT"/ios-missing-*.txt 2>/dev/null || true
 } > "$OUT/manifest.txt"
-cp "$LOGS"/driver.log "$OUT/driver.log" 2>/dev/null || true
+cp "$LOGS"/driver.log "$OUT/driver.log" 2>/dev/null || true  # staged (and checked) on exit
 log "done: $(find "$OUT" -name '*.png' | wc -l | tr -d ' ') screens (status $status)"
 exit "$status"
