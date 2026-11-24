@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Home's lane moves cost much less to draw. A card that changes lane, and
+  each card the move shifts, now glides as one piece: before, every text
+  and shape inside it got its own animated frame on each frame of the
+  glide and was laid out and drawn again. The glide is meant to look the
+  same. With a card moving every 6 s on optimized copies against the live
+  fleet, the app used about 43% less CPU.
+
 ## [0.10.36] - 2026-11-23
 
 ### Changed
