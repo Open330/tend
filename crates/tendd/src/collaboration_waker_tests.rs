@@ -2391,14 +2391,36 @@ fn reference_wake_overhead_is_bounded_independently_of_body_size() {
 
 #[tokio::test]
 async fn adaptive_wake_claims_once_with_shared_instructions_and_no_initial_read() {
-    assert_adaptive_wake_claims_once("verify this small change").await;
-    assert_adaptive_wake_claims_once(&"한".repeat(200)).await;
-    // Sizes of two recent read-only retries that otherwise need a model round trip.
-    assert_adaptive_wake_claims_once(&"x".repeat(833)).await;
-    assert_adaptive_wake_claims_once(&"x".repeat(1418)).await;
+    for body in [
+        "verify this small change".to_owned(),
+        "한".repeat(200),
+        // Sizes of two recent read-only retries.
+        "x".repeat(833),
+        "x".repeat(1418),
+    ] {
+        Box::pin(assert_adaptive_wake_claims_once(&body, None)).await;
+    }
 }
 
-async fn assert_adaptive_wake_claims_once(body: &str) {
+#[tokio::test]
+async fn adaptive_contracted_review_claims_once_and_requires_matching_report() {
+    let contract = serde_json::from_value(serde_json::json!({
+        "version": 1, "task_id": "fixture-review", "objective": "Review the synthetic change",
+        "basis_revision": "0123456789012345678901234567890123456789",
+        "acceptance_criteria": ["Verify the synthetic change"]
+    }))
+    .unwrap();
+    Box::pin(assert_adaptive_wake_claims_once(
+        "review the fixture",
+        Some(contract),
+    ))
+    .await;
+}
+
+async fn assert_adaptive_wake_claims_once(
+    body: &str,
+    task_contract: Option<tend::collaboration::TaskContract>,
+) {
     let store = tend::Store::shared();
     add_agent(&store, "%1", "sender", AgentKind::Codex).await;
     add_agent(&store, "%2", "recipient", AgentKind::ClaudeCode).await;
@@ -2413,6 +2435,7 @@ async fn assert_adaptive_wake_claims_once(body: &str) {
             NewRequest {
                 kind: RequestKind::Review,
                 body: body.into(),
+                task_contract,
                 ..NewRequest::default()
             },
         )
@@ -2469,9 +2492,69 @@ async fn assert_adaptive_wake_claims_once(body: &str) {
         .len();
     let reference = mailbox_collaboration_request_prompt(&saved).len() + pull;
     assert!(inline.len() < reference);
+    if let Some(attempt) = &request.attempt {
+        assert_eq!(saved.attempt.as_ref(), Some(attempt));
+        assert!(inline.contains("--report FILE"));
+        assert!(inline.contains("shared or per-criterion evidence"));
+        let report = serde_json::from_value(serde_json::json!({
+            "attempt_id": attempt.id,
+            "basis_revision": attempt.basis_revision,
+            "criteria": [{"criterion": 0, "outcome": "pass"}],
+            "evidence": [{"kind": "test_run", "locator": "fixture-test"}]
+        }))
+        .unwrap();
+        assert_contract_report(&mailbox, &participants[1], &request.id, report).await;
+    }
     if let Ok(path) = std::env::var("TEND_SHORT_DELIVERY_REPORT") {
         std::fs::write(path,serde_json::json!({"body_bytes":saved.body.len(),"inline_received_bytes":inline.len(),"inline_extra_bytes":inline.len()-saved.body.len(),"reference_wake_and_read_bytes":reference,"reference_extra_bytes":reference-saved.body.len(),"inline_initial_reads":0,"reference_initial_reads":1}).to_string()).unwrap();
     }
+}
+
+async fn assert_contract_report(
+    mailbox: &CollaborationStore,
+    recipient: &tend::collaboration::Participant,
+    request_id: &str,
+    report: tend::collaboration::TaskReport,
+) {
+    let mut wrong_attempt = report.clone();
+    wrong_attempt.attempt_id = uuid::Uuid::new_v4().to_string();
+    let mut wrong_revision = report.clone();
+    wrong_revision.basis_revision = Some("f".repeat(40));
+    for invalid in [None, Some(wrong_attempt), Some(wrong_revision)] {
+        assert!(matches!(
+            mailbox
+                .reply_with_report(
+                    recipient,
+                    request_id,
+                    RequestStatus::Completed,
+                    "reviewed".into(),
+                    Vec::new(),
+                    invalid
+                )
+                .await,
+            Err(tend::collaboration::CollaborationError::InvalidTaskContract(_))
+        ));
+        assert_eq!(
+            mailbox
+                .peek_for(recipient, request_id)
+                .await
+                .unwrap()
+                .status,
+            RequestStatus::Claimed
+        );
+    }
+    let completed = mailbox
+        .reply_with_report(
+            recipient,
+            request_id,
+            RequestStatus::Completed,
+            "reviewed".into(),
+            Vec::new(),
+            Some(report.clone()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(completed.reply.unwrap().report, Some(report));
 }
 
 #[test]
