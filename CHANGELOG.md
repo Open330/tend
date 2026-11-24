@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- A Fleet event decodes only the hosts whose data changed. Each event
+  fetches the whole Fleet snapshot (about 560 KB for 4 hosts and 165
+  agents), and every host was decoded again although an event usually
+  changes one or two; unchanged hosts now reuse what the last snapshot
+  decoded. Home's projection also reads each agent's peer request once
+  instead of twice. On optimized copies against the live fleet, 52% of
+  host decodes were skipped and the app used about 7% less CPU.
+
 ## [0.10.39] - 2026-11-24
 
 ### Fixed

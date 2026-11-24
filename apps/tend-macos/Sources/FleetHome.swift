@@ -184,7 +184,7 @@ enum FleetBoard {
             .map { hosted in
                 var unit = attach(helpers: helpersByRoot[hosted.id] ?? [], to: work(for: hosted, now: now), now: now)
                 unit.isOrphanHelper = index.isHelper(hosted.id)
-                unit.isProbableHelper = helperRequest(hosted.agent)?.confirmed == false
+                unit.isProbableHelper = index.request(hosted.id)?.confirmed == false
                 unit.isEmptySession = unit.helpers.isEmpty && isEmpty(hosted.agent)
                 return unit
             }
@@ -265,6 +265,8 @@ enum FleetBoard {
         private var parent: [String: String] = [:]
         private var helpers: Set<String> = []
         private var roots: [String: String] = [:]
+        /// Each agent's peer request, parsed once per build.
+        private var requests: [String: HelperRequest] = [:]
 
         init(agents: [TendHostedAgent]) {
             var bySession: [String: [TendHostedAgent]] = [:]
@@ -276,7 +278,9 @@ enum FleetBoard {
                 }
             }
             for hosted in agents {
-                guard let request = FleetBoard.helperRequest(hosted.agent), request.confirmed else { continue }
+                guard let request = FleetBoard.helperRequest(hosted.agent) else { continue }
+                requests[hosted.id] = request
+                guard request.confirmed else { continue }
                 helpers.insert(hosted.id)
                 let candidates: [TendHostedAgent]
                 if let session = request.sessionID {
@@ -320,6 +324,9 @@ enum FleetBoard {
 
         /// Whether the agent is working on someone's peer request.
         func isHelper(_ id: String) -> Bool { helpers.contains(id) }
+
+        /// The agent's peer request, as `FleetBoard.helperRequest` reads it.
+        func request(_ id: String) -> HelperRequest? { requests[id] }
 
         /// Where a helper folds: the first agent up its chain that asked
         /// nobody. Nil for an agent that is not helping, one whose

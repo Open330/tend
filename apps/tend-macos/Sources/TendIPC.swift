@@ -1245,6 +1245,7 @@ actor TendIPCClient {
     private let timedRequestHandler: TendIPCTimedRequestHandler
     private var terminalReadTransports: [String: SerializedIPCTransport] = [:]
     private let fleetReadTransports: [SerializedIPCTransport]
+    private var fleetHostCache = TendFleetHostDecodeCache()
     private let attachmentClientID: String
     // Feature clients, built once on first use. `socketPath` is immutable, so
     // the cache never goes stale: pointing the app at another socket builds a
@@ -1433,10 +1434,17 @@ actor TendIPCClient {
 
     func executionSnapshot() async throws -> TendExecutionSnapshot {
         if capabilities.contains("fleet_v1") {
-            let response = try await call([
+            let request: [String: Any] = [
                 "protocol": Self.protocolVersion,
                 "kind": "fleet_snapshot",
-            ])
+            ]
+            let data = try await rawCall(request)
+            // Only the hosts whose JSON changed are decoded again.
+            if let hosts = try fleetHostCache.hosts(fromResponse: data) {
+                return TendExecutionSnapshot(hosts: hosts)
+            }
+            fleetHostCache.reset()
+            let response = try Self.decodeResponse(data)
             if let fleet = response.fleet {
                 return TendExecutionSnapshot(hosts: fleet.hosts)
             }
@@ -2447,12 +2455,24 @@ actor TendIPCClient {
         using requestTransport: SerializedIPCTransport? = nil,
         timeout: TimeInterval = 3
     ) async throws -> TendIPCResponse {
+        try Self.decodeResponse(await rawCall(object, using: requestTransport, timeout: timeout))
+    }
+
+    /// The response line, undecoded.
+    private func rawCall(
+        _ object: [String: Any],
+        using requestTransport: SerializedIPCTransport? = nil,
+        timeout: TimeInterval = 3
+    ) async throws -> Data {
         let request = try JSONSerialization.data(withJSONObject: object)
-        let data = try await (requestTransport ?? defaultTransport(for: object)).request(
+        return try await (requestTransport ?? defaultTransport(for: object)).request(
             path: socketPath,
             payload: request,
             timeout: timeout
         )
+    }
+
+    private static func decodeResponse(_ data: Data) throws -> TendIPCResponse {
         let response = try JSONDecoder().decode(TendIPCResponse.self, from: data)
         if !response.ok {
             throw TendIPCError.server(response.error ?? "tendd rejected the request")
