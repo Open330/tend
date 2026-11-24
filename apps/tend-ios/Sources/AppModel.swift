@@ -2,6 +2,7 @@
 // history, and the two ways to decide. Every decision goes to the
 // dashboard's own routes (`/api/decisions/*`), the ones `/needs` uses, so
 // it is checked and audited there exactly like a decision from the web.
+import CryptoKit
 import Foundation
 import Observation
 import SwiftUI
@@ -318,6 +319,13 @@ final class AppModel {
     /// makes it go round again with the latest wishes.
     private var pushSyncing = false
     private var pushSyncAgain = false
+    /// What the host holds for this device, as far as the app knows: from
+    /// `GET /api/device`, or from the last write's answer. Unknown (nil)
+    /// while a write is out or after one failed, so the next sync sends.
+    private var hostPushRegistration: DeviceInfo.HostPushRegistration??
+    /// Bumped at every push write: a device read that started before one
+    /// does not say what the host holds now.
+    private var pushWrites = 0
 
     init() {
         if ProcessInfo.processInfo.arguments.contains("-TendResetState") {
@@ -346,10 +354,15 @@ final class AppModel {
         guard let client else { return }
         let mine = session
         let generation = capability
+        let writes = pushWrites
         do {
             let info = try await client.device()
             guard session == mine, capability == generation else { return }
             pushSupport = info.push
+            // An older tend does not say; then the last write's answer stands.
+            if let held = info.pushRegistration, pushWrites == writes, !pushSyncing {
+                hostPushRegistration = held
+            }
             if info.scope == .decide, scope == .operate {
                 narrow()
                 await syncPush()
@@ -536,6 +549,7 @@ final class AppModel {
         guard CredentialStore.save(pairing) else { return false }
         attempt = UUID()
         session = UUID()
+        hostPushRegistration = nil
         signOutProblem = nil
         upgrade = nil
         upgradeProblem = nil
@@ -663,6 +677,7 @@ final class AppModel {
         scopeNote = nil
         pushSupport = nil
         pushProblem = nil
+        hostPushRegistration = nil
         pushFocus = nil
         focusedDecision = nil
         session = UUID()
@@ -1042,6 +1057,18 @@ extension AppModel {
         #endif
     }
 
+    /// The host's fingerprint of a registration (`PushRow::registration`):
+    /// hex of the first 16 bytes of SHA-256(token NUL environment NUL
+    /// channel NUL), the token as lower-case hex. Never the token itself.
+    nonisolated static func registrationFingerprint(token: String, environment: String, channel: String) -> String {
+        var message = Data()
+        for part in [token.lowercased(), environment, channel] {
+            message.append(Data(part.utf8))
+            message.append(0)
+        }
+        return SHA256.hash(data: message).prefix(16).map { String(format: "%02x", $0) }.joined()
+    }
+
     /// iOS gave this phone a token (at every launch, and when it changes).
     func receivedAPNsToken(_ token: Data) async {
         apnsToken = token.map { String(format: "%02x", $0) }.joined()
@@ -1080,11 +1107,25 @@ extension AppModel {
         let mine = session
         let wanted = notificationsWanted && pushSupport?.enabled == true
         if wanted, let token = apnsToken {
+            let content = notificationContentWanted
+            // The host already holds exactly this: iOS hands the same token
+            // at every launch, and every foregrounding re-reads the device.
+            if let binding = pairing.push, case .some(.some(let held)) = hostPushRegistration,
+               held.content == content,
+               held.registration == Self.registrationFingerprint(token: token, environment: Self.pushEnvironment, channel: binding.channel) {
+                return
+            }
+            hostPushRegistration = nil
+            pushWrites += 1
             do {
-                let answer = try await client.registerPush(token: token, environment: Self.pushEnvironment, content: notificationContentWanted)
+                let answer = try await client.registerPush(token: token, environment: Self.pushEnvironment, content: content)
                 guard session == mine, self.pairing?.token == pairing.token else { return }
                 switch answer {
                 case .on(let binding):
+                    hostPushRegistration = .some(DeviceInfo.HostPushRegistration(
+                        registration: Self.registrationFingerprint(token: token, environment: Self.pushEnvironment, channel: binding.channel),
+                        content: content
+                    ))
                     // Turned off while the host answered: undo it now.
                     guard notificationsWanted else {
                         pushSyncAgain = true
@@ -1095,9 +1136,11 @@ extension AppModel {
                     } else {
                         // A registration this phone cannot act on: take it back.
                         pushProblem = String(localized: "Could not keep the notification key in this device's Keychain. Notifications stay off; try again.")
-                        try? await client.removePush()
+                        hostPushRegistration = nil
+                        if (try? await client.removePush()) != nil { hostPushRegistration = .some(nil) }
                     }
                 case .off(let reason):
+                    hostPushRegistration = .some(nil)
                     _ = keep(nil)
                     pushProblem = reason == "environment"
                         ? String(localized: "This dashboard's notification key does not serve this build of the app.")
@@ -1109,9 +1152,12 @@ extension AppModel {
             }
         } else if !notificationsWanted, pairing.push != nil || pushRemovalOwed {
             // Off: remove on the host whether or not a binding was kept here.
+            hostPushRegistration = nil
+            pushWrites += 1
             do {
                 try await client.removePush()
                 guard session == mine, self.pairing?.token == pairing.token else { return }
+                hostPushRegistration = .some(nil)
                 pushRemovalOwed = false
                 _ = keep(nil)
             } catch {
