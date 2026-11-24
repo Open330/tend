@@ -753,7 +753,11 @@ allow_content = false           # default false
   (`{"removed": bool}`). Removing a device (Remove, Remove all, Sign out,
   expiry) drops its registration; Limit does not.
 - `GET /api/device` gains `"push": {"enabled", "content_allowed",
-  "environments"}`.
+  "environments"}`, and `"push_registration"`: what the host holds for this
+  device, `{"registration", "content"}` or `null`. `registration` is the
+  hex of the first 16 bytes of SHA-256(token NUL environment NUL channel
+  NUL), never the token; the app registers only when it differs from what
+  it would send (once per token, wish or lost row, not at every launch).
 - Every 15 s, while push is on and a phone is registered, tendd reads the
   same queue Your turn shows (500 entries per host) and alerts each phone
   about what is new: at most one alert every 30 s, one per host, saying
