@@ -1,6 +1,7 @@
 //! Operator diagnostics over the existing memory projection; never copies bodies.
 use super::{
-    CollaborationError, CollaborationRequest, CollaborationStore, RequestKind, RequestStatus,
+    CollaborationError, CollaborationRequest, CollaborationStore, LaunchPurpose, RequestKind,
+    RequestStatus,
 };
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -96,6 +97,51 @@ pub struct WeeklyOutcome {
     pub reply_overdue: usize,
     pub wake_unsubmitted: usize,
     pub other_interruptions: usize,
+    /// Absent on older daemons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_delivery: Option<WorkerDeliveryOutcome>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkerDeliveryOutcome {
+    pub requests: usize,
+    pub still_queued_over_5m: usize,
+    pub slow_claim_early_evidence: usize,
+    pub slow_claim_late_evidence: usize,
+    pub slow_claim_no_evidence: usize,
+}
+
+impl WorkerDeliveryOutcome {
+    fn record(&mut self, request: &CollaborationRequest, now: OffsetDateTime) {
+        const THRESHOLD: time::Duration = time::Duration::minutes(5);
+        self.requests += 1;
+        let Some(claimed_at) = request.claimed_at else {
+            if request.status == RequestStatus::Queued && now - request.created_at > THRESHOLD {
+                self.still_queued_over_5m += 1;
+            }
+            return;
+        };
+        if claimed_at - request.created_at <= THRESHOLD {
+            return;
+        }
+        // Hook fields keep the latest offer per event. These are retained
+        // transport markers, not proof of a provider turn or a first attempt.
+        let offer = request.turn_offer.as_ref();
+        let earliest = [
+            request.notified_at,
+            offer.and_then(|offer| offer.last_stop_offer_at),
+            offer.and_then(|offer| offer.last_prompt_offer_at),
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|at| request.created_at <= *at && *at <= claimed_at)
+        .min();
+        match earliest {
+            Some(at) if at - request.created_at <= THRESHOLD => self.slow_claim_early_evidence += 1,
+            Some(_) => self.slow_claim_late_evidence += 1,
+            None => self.slow_claim_no_evidence += 1,
+        }
+    }
 }
 
 /// Buckets reported by [`CollaborationStore::health`].
@@ -111,6 +157,7 @@ fn weekly_outcomes<'a>(
                 .date()
                 .to_string(),
             until: (now - time::Duration::days(7 * week)).date().to_string(),
+            worker_delivery: Some(WorkerDeliveryOutcome::default()),
             ..WeeklyOutcome::default()
         })
         .collect();
@@ -134,6 +181,12 @@ fn weekly_outcomes<'a>(
         let Some(bucket) = weeks.get_mut(week) else {
             continue;
         };
+        if request.to.launch_purpose == LaunchPurpose::Worker {
+            bucket
+                .worker_delivery
+                .get_or_insert_with(WorkerDeliveryOutcome::default)
+                .record(request, now);
+        }
         bucket.requests += 1;
         if request.reply.is_some() {
             bucket.replied += 1;
@@ -233,6 +286,54 @@ mod tests {
             "pane":"%1","room":{"host":"tmux","window_id":"@1"},"state":"idle"}),
         )
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn worker_delivery_counts_slow_claims_by_retained_pre_claim_evidence() {
+        let store = CollaborationStore::in_memory(CollaborationOptions::default());
+        let mut worker = participant("worker");
+        worker.launch_purpose = LaunchPurpose::Worker;
+        let mut request = store
+            .create(
+                participant("sender"),
+                worker,
+                NewRequest {
+                    body: "worker delivery test".into(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        request.to.launch_purpose = LaunchPurpose::Worker;
+        let sent = request.created_at;
+        let after = |minutes| sent + time::Duration::minutes(minutes);
+        let mut rows = vec![request.clone()]; // Still queued.
+        request.claimed_at = Some(after(5));
+        rows.push(request.clone()); // Exact threshold is not slow.
+        request.claimed_at = Some(after(10));
+        request.notified_at = Some(after(8));
+        request.turn_offer = Some(super::super::turn_offer::TurnOffer {
+            last_stop_offer_at: Some(after(4)),
+            ..Default::default()
+        });
+        rows.push(request.clone()); // Earlier retained hook marker wins.
+        request.turn_offer = None;
+        rows.push(request.clone()); // Only late evidence.
+        request.notified_at = Some(after(11));
+        rows.push(request.clone()); // Post-claim evidence does not count.
+        request.to.launch_purpose = LaunchPurpose::Primary;
+        rows.push(request); // Primary is excluded from worker diagnostics.
+        let weeks = weekly_outcomes(rows.iter(), after(12));
+        assert_eq!(
+            weeks[0].worker_delivery,
+            Some(WorkerDeliveryOutcome {
+                requests: 5,
+                still_queued_over_5m: 1,
+                slow_claim_early_evidence: 1,
+                slow_claim_late_evidence: 1,
+                slow_claim_no_evidence: 1,
+            })
+        );
     }
 
     #[tokio::test]

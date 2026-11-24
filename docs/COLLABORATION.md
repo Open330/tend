@@ -61,6 +61,13 @@ reusable; this does not add caller affinity or change logical-recipient routing.
 Older daemons without this capability refuse automatic creation. Upgrade/restart
 tendd and run `tend doctor`; existing eligible workers can still be reused.
 
+For Worker requests that took over five minutes to claim, `tend doctor`
+groups the earliest retained wake or hook-offer marker as within five minutes,
+later, or absent before claim. It also counts requests still queued over five
+minutes. A marker records a transport action, and later hook offers can replace
+older timestamps, so the report cannot establish when a model first saw the
+request or whether a missing marker was a delivery failure.
+
 The launch UUID is persisted before creation, stamped on the new pane, and reused
 for the process-fenced worker grant. A renewable lease covers startup. Expiry
 after creation has been authorized is uncertain, not permission to spawn again.
