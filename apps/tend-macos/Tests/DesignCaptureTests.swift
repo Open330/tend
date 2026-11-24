@@ -90,7 +90,7 @@ struct DesignCaptureTests {
             UserDefaults.standard.set(layout.rawValue, forKey: TendPreferences.homeCardLayoutKey)
             model.select(.workBoard)
             try await window.settle(seconds: 2)
-            try write(window.image(), name: name, scheme: scheme)
+            try write(window.image(), text: window.text(), name: name, scheme: scheme)
         }
         UserDefaults.standard.set(FleetCardLayout.emphasis.rawValue, forKey: TendPreferences.homeCardLayoutKey)
         try await window.settle(seconds: 1)
@@ -101,7 +101,7 @@ struct DesignCaptureTests {
         for (layout, name) in [(FleetCardLayout.emphasis, "home-narrow"), (.compact, "home-compact-narrow")] {
             UserDefaults.standard.set(layout.rawValue, forKey: TendPreferences.homeCardLayoutKey)
             try await narrow.settle(seconds: 2)
-            try write(narrow.image(), name: name, scheme: scheme)
+            try write(narrow.image(), text: narrow.text(), name: name, scheme: scheme)
         }
         UserDefaults.standard.set(FleetCardLayout.emphasis.rawValue, forKey: TendPreferences.homeCardLayoutKey)
 
@@ -111,7 +111,7 @@ struct DesignCaptureTests {
             let window = OffscreenWindow(FleetHomeView(model: model, homeBoard: hosts).environmentObject(model), scheme: scheme, size: size)
             defer { window.close() }
             try await window.settle(seconds: 2)
-            try write(window.image(), name: name, scheme: scheme)
+            try write(window.image(), text: window.text(), name: name, scheme: scheme)
         }
 
         // The Review sheet. Pressing its toolbar button through the
@@ -121,18 +121,18 @@ struct DesignCaptureTests {
                                      scheme: scheme, size: CGSize(width: 1440, height: 900))
         defer { review.close() }
         try await review.settle(seconds: 3)
-        try write(review.sheetImage(), name: "home-review", scheme: scheme)
+        try write(review.sheetImage(), text: review.sheetText(), name: "home-review", scheme: scheme)
 
         model.isPresentingWorkStart = true
         try await window.settle(seconds: 2)
-        if let sheet = window.sheetImage() { try write(sheet, name: "home-start-work", scheme: scheme) }
+        if let sheet = window.sheetImage() { try write(sheet, text: window.sheetText(), name: "home-start-work", scheme: scheme) }
         model.isPresentingWorkStart = false
         window.closeSheet()
 
         for (selection, name) in [(TendSidebarSelection.watch, "explore"), (.inbox, "inbox"), (.ask, "ask")] {
             model.select(selection)
             try await window.settle(seconds: 3)
-            try write(window.image(), name: name, scheme: scheme)
+            try write(window.image(), text: window.text(), name: name, scheme: scheme)
         }
 
         // The detail screens a sidebar row opens: a Work, an agent, a host.
@@ -142,7 +142,7 @@ struct DesignCaptureTests {
         for (selection, name) in details {
             model.select(selection)
             try await window.settle(seconds: 2)
-            try write(window.image(), name: name, scheme: scheme)
+            try write(window.image(), text: window.text(), name: name, scheme: scheme)
         }
 
         // The fixture runs no managed Work, so the Work screen draws one
@@ -154,7 +154,7 @@ struct DesignCaptureTests {
                                      scheme: scheme, size: CGSize(width: 1180, height: 900))
         defer { detail.close() }
         try await detail.settle(seconds: 2)
-        try write(detail.image(), name: "detail-work", scheme: scheme)
+        try write(detail.image(), text: detail.text(), name: "detail-work", scheme: scheme)
 
         // The opt-in sidebar material, list folded (Home) and shown
         // (Explore). Off-screen the window is never key, so the material
@@ -163,7 +163,7 @@ struct DesignCaptureTests {
         for (selection, name) in [(TendSidebarSelection.workBoard, "home-material"), (.watch, "explore-material")] {
             model.select(selection)
             try await window.settle(seconds: 2)
-            try write(window.image(), name: name, scheme: scheme)
+            try write(window.image(), text: window.text(), name: name, scheme: scheme)
         }
         UserDefaults.standard.set(false, forKey: TendPreferences.sidebarMaterialKey)
         model.select(.workBoard)
@@ -264,14 +264,22 @@ struct DesignCaptureTests {
         let window = OffscreenWindow(view, scheme: scheme, size: size, fit: fit)
         defer { window.close() }
         try await window.settle(seconds: 1.5)
-        try write(window.image(), name: name, scheme: scheme)
+        try write(window.image(), text: window.text(), name: name, scheme: scheme)
     }
 
-    private func write(_ rep: NSBitmapImageRep?, name: String, scheme: ColorScheme) throws {
+    /// With TEND_RENDER_TEXT=1 (the parity audit, scripts/parity-shots),
+    /// the screen's accessibility text goes beside its PNG as a .txt: the
+    /// labels, values and button titles a semantic comparison reads.
+    private static let writesText = environment["TEND_RENDER_TEXT"] == "1"
+
+    private func write(_ rep: NSBitmapImageRep?, text: @autoclosure () -> String? = nil, name: String, scheme: ColorScheme) throws {
         let rep = try #require(rep, "\(name) did not render")
         let png = try #require(rep.representation(using: .png, properties: [:]))
-        let file = directory.appendingPathComponent("\(name)-\(scheme == .dark ? "dark" : "light")-\(language).png")
-        try png.write(to: file)
+        let base = "\(name)-\(scheme == .dark ? "dark" : "light")-\(language)"
+        try png.write(to: directory.appendingPathComponent("\(base).png"))
+        if Self.writesText, let text = text() {
+            try Data(text.utf8).write(to: directory.appendingPathComponent("\(base).txt"))
+        }
     }
 
     private struct TimedOut: Error, CustomStringConvertible {
@@ -371,6 +379,35 @@ private final class OffscreenWindow {
         sheet.draw(in: bounds, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
         NSGraphicsContext.restoreGraphicsState()
         return rep
+    }
+
+    /// The accessibility tree's text, one element a line, indented by depth.
+    func text() -> String { Self.text(host) }
+
+    func sheetText() -> String? { window.attachedSheet?.contentView.map { Self.text($0) } }
+
+    private static func text(_ root: NSView) -> String {
+        func get(_ object: NSObject, _ key: String) -> Any? {
+            object.responds(to: Selector(key)) ? object.value(forKey: key) : nil
+        }
+        var lines: [String] = []
+        func walk(_ element: Any, depth: Int) {
+            guard let element = element as? NSObject, depth < 64, lines.count < 5_000 else { return }
+            let role = ((get(element, "accessibilityRole") as? String) ?? "").replacingOccurrences(of: "AX", with: "")
+            var parts: [String] = []
+            for key in ["accessibilityLabel", "accessibilityTitle", "accessibilityValue"] {
+                if let value = get(element, key) as? String, !value.isEmpty, !parts.contains(value) { parts.append(value) }
+            }
+            if !parts.isEmpty {
+                let line = parts.joined(separator: " | ").replacingOccurrences(of: "\n", with: " ")
+                lines.append(String(repeating: "  ", count: depth) + "\(role): \(line)")
+            }
+            for child in (get(element, "accessibilityChildren") as? [Any]) ?? [] {
+                walk(child, depth: parts.isEmpty ? depth : depth + 1)
+            }
+        }
+        walk(root, depth: 0)
+        return lines.joined(separator: "\n") + "\n"
     }
 
     func closeSheet() {
