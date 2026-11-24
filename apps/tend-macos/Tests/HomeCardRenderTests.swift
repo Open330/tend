@@ -203,6 +203,11 @@ private func board(_ layout: FleetCardLayout, works: [FleetWork], decisions: [Fl
         }
         .environment(\.fleetCardEmphasis, true)
         _ = try render(cards, name: "home-emphasis-cards", scheme: scheme)
+        // A narrow lane right after a move: the mark folds to its arrow
+        // before the host loses its name.
+        let moved = FleetWorkCard(work: works[works.count - 1], isSelected: false, select: {}, movedFrom: .running)
+            .environment(\.fleetCardEmphasis, true)
+        _ = try render(moved, name: "home-moved-card-narrow", scheme: scheme, width: 260)
         let rows = VStack(spacing: 2) {
             FleetCompactRow(decision: decisions[0], isSelected: true) {}
             ForEach(works) { work in

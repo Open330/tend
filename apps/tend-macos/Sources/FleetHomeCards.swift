@@ -213,23 +213,17 @@ struct FleetWorkCard: View {
             // line either way, and the capsule's padding is taken back so
             // it adds no height.
             if let movedFrom {
-                // Label ink on the tinted capsule; the arrow keeps the
-                // lane's colour.
-                Label {
-                    Text(String(localized: "From \(movedFrom.title)"))
-                        .foregroundStyle(TendInk.label(colorScheme))
-                } icon: {
-                    Image(systemName: "arrow.turn.down.right")
-                        .foregroundStyle(work.lane.tint)
+                // The arrow alone when the line is short, so the host keeps
+                // its name; the full "From …" stays in the tooltip and the
+                // accessibility label.
+                ViewThatFits(in: .horizontal) {
+                    moveMark(movedFrom, showsLane: true)
+                    moveMark(movedFrom, showsLane: false)
                 }
-                    .font(TendType.label)
-                    .lineLimit(1)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(TendInk.control(colorScheme), in: Capsule())
-                    .padding(.vertical, -2)
-                    .fixedSize()
-                    .transition(.opacity)
+                .help(String(localized: "From \(movedFrom.title)"))
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(String(localized: "From \(movedFrom.title)"))
+                .transition(.opacity)
             }
             if !work.agentKinds.isEmpty {
                 TendAgentLogoStack(kinds: work.agentKinds, size: 12)
@@ -258,6 +252,27 @@ struct FleetWorkCard: View {
         .font(TendType.meta)
         .foregroundStyle(TendInk.secondary(colorScheme))
         .animation(FleetBoard.moveMarkAnimation(movedFrom), value: movedFrom)
+    }
+
+    /// The tinted capsule that says where a card came from. Its vertical
+    /// padding is taken back, so it adds no height to the meta line.
+    private func moveMark(_ lane: FleetLane, showsLane: Bool) -> some View {
+        // Label ink on the tinted capsule; the arrow keeps the lane's colour.
+        HStack(spacing: 4) {
+            Image(systemName: "arrow.turn.down.right")
+                .foregroundStyle(work.lane.tint)
+            if showsLane {
+                Text(String(localized: "From \(lane.title)"))
+                    .foregroundStyle(TendInk.label(colorScheme))
+            }
+        }
+        .font(TendType.label)
+        .lineLimit(1)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(TendInk.control(colorScheme), in: Capsule())
+        .padding(.vertical, -2)
+        .fixedSize()
     }
 }
 
