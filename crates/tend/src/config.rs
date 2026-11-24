@@ -898,6 +898,7 @@ pub struct PipelineAgentConfig {
 /// Enabling it is an explicit grant for local peer coordination.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
+#[allow(clippy::struct_excessive_bools)] // Independent user opt-ins preserve the TOML shape.
 pub struct CollaborationConfig {
     pub enabled: bool,
     /// Create a dedicated peer when no worker is available. Existing workers are reused.

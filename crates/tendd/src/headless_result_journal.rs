@@ -19,6 +19,11 @@ pub(super) struct Journal {
     directory: PathBuf,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct SealedResult {
+    pub(super) answer: Option<String>,
+}
+
 impl Journal {
     pub(super) fn open(root: &Path) -> Result<Self> {
         let directory = root.join(DIR_NAME);
@@ -83,7 +88,7 @@ impl Journal {
                 if self
                     .read(request_id, generation)?
                     .as_ref()
-                    .map(Option::as_deref)
+                    .map(|result| result.answer.as_deref())
                     != Some(answer)
                 {
                     bail!("a different headless result is already sealed");
@@ -96,11 +101,7 @@ impl Journal {
 
     /// Missing journal file and sealed result with no answer are distinct.
     /// Partial, malformed or mismatched records are errors and remain intact.
-    pub(super) fn read(
-        &self,
-        request_id: &str,
-        generation: Uuid,
-    ) -> Result<Option<Option<String>>> {
+    pub(super) fn read(&self, request_id: &str, generation: Uuid) -> Result<Option<SealedResult>> {
         let path = self.path(request_id, generation)?;
         match fs::symlink_metadata(&path) {
             Ok(metadata) if !metadata.is_file() => bail!("headless result is not a regular file"),
@@ -138,7 +139,9 @@ impl Journal {
         {
             bail!("headless result answer length does not match its seal");
         }
-        Ok(Some(answer.map(str::to_owned)))
+        Ok(Some(SealedResult {
+            answer: answer.map(str::to_owned),
+        }))
     }
 
     pub(super) fn remove(&self, request_id: &str, generation: Uuid) -> Result<()> {
@@ -198,13 +201,21 @@ mod tests {
         let reopened = Journal::open(root.path()).unwrap();
         assert_eq!(
             reopened.read(id, generation).unwrap(),
-            Some(Some("검토 결과".into()))
+            Some(SealedResult {
+                answer: Some("검토 결과".into()),
+            })
         );
-        assert_eq!(reopened.read(id, stale).unwrap(), Some(None));
+        assert_eq!(
+            reopened.read(id, stale).unwrap(),
+            Some(SealedResult { answer: None })
+        );
         reopened.remove(id, generation).unwrap();
         reopened.remove(id, generation).unwrap();
         assert_eq!(reopened.read(id, generation).unwrap(), None);
-        assert_eq!(reopened.read(id, stale).unwrap(), Some(None));
+        assert_eq!(
+            reopened.read(id, stale).unwrap(),
+            Some(SealedResult { answer: None })
+        );
     }
 
     #[test]

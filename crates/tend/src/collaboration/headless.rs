@@ -430,6 +430,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)] // Each durable phase uses the same restart and replay assertions.
     async fn durable_restart_matrix_never_replays_a_reserved_attempt() {
         for _ in 0..5 {
             for phase in [

@@ -502,7 +502,7 @@ async fn run() -> Result<()> {
             tracing::warn!("headless reviews require the default daemon and its default mailbox");
             None
         } else {
-            match headless_reviews::start(collaboration.clone(), &shutdown_tx).await {
+            match headless_reviews::start(collaboration.clone(), &shutdown_tx) {
                 Ok(handle) => Some(handle),
                 Err(error) => {
                     tracing::error!(%error, "headless review runner unavailable");

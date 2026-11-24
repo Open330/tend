@@ -35,7 +35,7 @@ impl HeadlessGroup {
             match waitid(Id::Pid(pid), flags) {
                 Ok(WaitStatus::StillAlive) => tokio::time::sleep(Duration::from_millis(25)).await,
                 Ok(_) => break,
-                Err(Errno::EINTR) => continue,
+                Err(Errno::EINTR) => {}
                 Err(error) => {
                     if error == Errno::ECHILD {
                         self.0 = None;
@@ -55,7 +55,7 @@ impl HeadlessGroup {
             match killpg(pid, Signal::SIGKILL) {
                 Ok(()) | Err(nix::errno::Errno::ESRCH) => {}
                 Err(error) => {
-                    tracing::warn!(%pid, %error, "could not stop headless provider group")
+                    tracing::warn!(%pid, %error, "could not stop headless provider group");
                 }
             }
         }
@@ -129,92 +129,16 @@ pub(super) async fn run(
             }
             Ok::<_, String>(())
         };
-        let read_stdout = async {
-            let mut lines = BufReader::new(stdout.take((OUTPUT_LIMIT + 1) as u64)).lines();
-            let mut raw = String::new();
-            let mut visible = String::new();
-            let mut last_result = None;
-            let mut last_session = None;
-            let mut headless_started = false;
-            let mut headless_completed = false;
-            while let Some(line) = lines.next_line().await.map_err(|error| error.to_string())? {
-                if raw.len() + line.len() + 1 > OUTPUT_LIMIT {
-                    return Err("ask CLI output exceeded 32 MiB".to_string());
-                }
-                raw.push_str(&line);
-                raw.push('\n');
-                if let Ok(event) = serde_json::from_str::<Value>(&line) {
-                    let session = match engine {
-                        AskEngine::Codex if event["type"] == "thread.started" => {
-                            event["thread_id"].as_str()
-                        }
-                        AskEngine::Claude
-                            if event["type"] == "system" || event["type"] == "result" =>
-                        {
-                            event["session_id"].as_str()
-                        }
-                        _ => None,
-                    };
-                    if let (Some(observer), Some(session)) = (observer, session) {
-                        if last_session.as_deref() != Some(session) {
-                            observer.session(session).await;
-                            last_session = Some(session.to_owned());
-                        }
-                    }
-                    if let Some((headless, _)) = headless {
-                        if matches!(
-                            event["type"].as_str(),
-                            Some("item.started" | "item.completed")
-                        ) && !matches!(
-                            event["item"]["type"].as_str(),
-                            Some("agent_message" | "reasoning" | "todo_list")
-                        ) {
-                            return Err(
-                                "unexpected tool or item in text-only headless review".into()
-                            );
-                        }
-                        match event["type"].as_str() {
-                            Some("thread.started") if last_session.is_none() => {
-                                if let Some(session) = session.filter(|id| id.len() <= 128) {
-                                    last_session = Some(session.to_owned());
-                                    let _ = headless.send(HeadlessReviewEvent::ThreadRegistered(
-                                        session.into(),
-                                    ));
-                                }
-                            }
-                            Some("turn.started") if !headless_started => {
-                                headless_started = true;
-                                let _ = headless.send(HeadlessReviewEvent::ProviderTurnStarted(
-                                    time::OffsetDateTime::now_utc(),
-                                ));
-                            }
-                            Some("turn.completed") if headless_started => headless_completed = true,
-                            _ => {}
-                        }
-                    }
-                    if engine == AskEngine::Claude && event["type"] == "result" {
-                        last_result = Some(line.clone());
-                    }
-                    if let Some(text) = message(engine, &event) {
-                        if !visible.is_empty() {
-                            visible.push_str("\n\n");
-                        }
-                        visible.push_str(&text);
-                        trim_front(&mut visible, PROGRESS_LIMIT);
-                        if let Some(progress) = &progress {
-                            progress.send_replace(visible.clone());
-                        }
-                    }
-                }
-            }
-            if headless.is_some() && !headless_completed {
-                return Err("headless review ended without a provider completion event".into());
-            }
-            Ok::<_, String>((raw, last_result))
-        };
+        let read_stdout = read_provider_stdout(
+            stdout,
+            engine,
+            progress.as_ref(),
+            observer,
+            headless.map(|(events, _)| events),
+        );
         let read_stderr = async {
             let mut kept = Vec::new();
-            let mut buffer = [0; 8192];
+            let mut buffer = vec![0; 8192];
             loop {
                 let count = stderr
                     .read(&mut buffer)
@@ -260,6 +184,91 @@ pub(super) async fn run(
     tokio::time::timeout(timeout, exchange)
         .await
         .map_err(|_| timeout_message(program, timeout))?
+}
+
+async fn read_provider_stdout(
+    stdout: tokio::process::ChildStdout,
+    engine: AskEngine,
+    progress: Option<&watch::Sender<String>>,
+    observer: Option<&super::ExecutionObserver>,
+    headless: Option<&tokio::sync::mpsc::UnboundedSender<HeadlessReviewEvent>>,
+) -> Result<(String, Option<String>), String> {
+    let mut lines = BufReader::new(stdout.take((OUTPUT_LIMIT + 1) as u64)).lines();
+    let mut raw = String::new();
+    let mut visible = String::new();
+    let mut last_result = None;
+    let mut last_session = None;
+    let mut headless_started = false;
+    let mut headless_completed = false;
+    while let Some(line) = lines.next_line().await.map_err(|error| error.to_string())? {
+        if raw.len() + line.len() + 1 > OUTPUT_LIMIT {
+            return Err("ask CLI output exceeded 32 MiB".to_string());
+        }
+        raw.push_str(&line);
+        raw.push('\n');
+        if let Ok(event) = serde_json::from_str::<Value>(&line) {
+            let session = match engine {
+                AskEngine::Codex if event["type"] == "thread.started" => {
+                    event["thread_id"].as_str()
+                }
+                AskEngine::Claude if event["type"] == "system" || event["type"] == "result" => {
+                    event["session_id"].as_str()
+                }
+                _ => None,
+            };
+            if let (Some(observer), Some(session)) = (observer, session) {
+                if last_session.as_deref() != Some(session) {
+                    observer.session(session).await;
+                    last_session = Some(session.to_owned());
+                }
+            }
+            if let Some(headless) = headless {
+                if matches!(
+                    event["type"].as_str(),
+                    Some("item.started" | "item.completed")
+                ) && !matches!(
+                    event["item"]["type"].as_str(),
+                    Some("agent_message" | "reasoning" | "todo_list")
+                ) {
+                    return Err("unexpected tool or item in text-only headless review".into());
+                }
+                match event["type"].as_str() {
+                    Some("thread.started") if last_session.is_none() => {
+                        if let Some(session) = session.filter(|id| id.len() <= 128) {
+                            last_session = Some(session.to_owned());
+                            let _ = headless
+                                .send(HeadlessReviewEvent::ThreadRegistered(session.into()));
+                        }
+                    }
+                    Some("turn.started") if !headless_started => {
+                        headless_started = true;
+                        let _ = headless.send(HeadlessReviewEvent::ProviderTurnStarted(
+                            time::OffsetDateTime::now_utc(),
+                        ));
+                    }
+                    Some("turn.completed") if headless_started => headless_completed = true,
+                    _ => {}
+                }
+            }
+            if engine == AskEngine::Claude && event["type"] == "result" {
+                last_result = Some(line.clone());
+            }
+            if let Some(text) = message(engine, &event) {
+                if !visible.is_empty() {
+                    visible.push_str("\n\n");
+                }
+                visible.push_str(&text);
+                trim_front(&mut visible, PROGRESS_LIMIT);
+                if let Some(progress) = progress {
+                    progress.send_replace(visible.clone());
+                }
+            }
+        }
+    }
+    if headless.is_some() && !headless_completed {
+        return Err("headless review ended without a provider completion event".into());
+    }
+    Ok::<_, String>((raw, last_result))
 }
 
 fn trim_front(text: &mut String, limit: usize) {
@@ -504,7 +513,7 @@ printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"D
                 match lock.try_lock() {
                     Ok(()) => break,
                     Err(std::fs::TryLockError::WouldBlock) => {
-                        tokio::time::sleep(Duration::from_millis(10)).await
+                        tokio::time::sleep(Duration::from_millis(10)).await;
                     }
                     Err(error) => panic!("check provider lock: {error}"),
                 }

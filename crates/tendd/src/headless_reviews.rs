@@ -6,12 +6,12 @@ use std::sync::Arc;
 use std::time::Duration;
 use tend::collaboration::{
     headless::{HeadlessAttempt, HeadlessPause, HeadlessPhase},
-    CollaborationRequest, CollaborationStore,
+    CollaborationRequest, CollaborationStore, ProcessFence,
 };
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-pub(super) async fn start(
+pub(super) fn start(
     collaboration: Arc<CollaborationStore>,
     shutdown: &broadcast::Sender<()>,
 ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
@@ -105,8 +105,14 @@ impl Runner {
             })
             .await;
             let had_record = sealed.is_some();
-            self.commit(collaboration, &id, generation, sealed.flatten(), had_record)
-                .await;
+            self.commit(
+                collaboration,
+                &id,
+                generation,
+                sealed.and_then(|result| result.answer),
+                had_record,
+            )
+            .await;
         }
     }
 
@@ -202,7 +208,7 @@ async fn wait_for_legacy_process(collaboration: &CollaborationStore, attempt: &H
                 attempt
                     .process_identity
                     .as_ref()
-                    .is_some_and(|identity| identity.exit_confirmed()),
+                    .is_some_and(ProcessFence::exit_confirmed),
                 "an older attempt has no proof that its provider exited"
             );
             Ok(())
