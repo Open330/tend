@@ -919,6 +919,8 @@ pub struct CollaborationConfig {
     /// delivers every request. `adaptive` also delivers bounded read-only
     /// worker requests inline, avoiding their initial inbox read.
     pub wake_payload: CollaborationWakePayload,
+    /// Enable the explicit local headless:codex target for read-only reviews.
+    pub headless_reviews: bool,
     /// How far an explicit `pane:%N` target may reach. `window` (default)
     /// keeps requests inside the sender's tmux window — co-locating agents
     /// in a window is the consent to let them talk. `host` lets a request
@@ -958,6 +960,7 @@ impl Default for CollaborationConfig {
             path: None,
             wake: CollaborationWake::IdleOnly,
             wake_payload: CollaborationWakePayload::OperatorFull,
+            headless_reviews: false,
             scope: CollaborationScope::default(),
             max_message_bytes: default_collaboration_max_message_bytes(),
             retention_days: default_collaboration_retention_days(),

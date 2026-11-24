@@ -1400,6 +1400,84 @@ fn next_id() -> u64 {
 // Providers
 // ---------------------------------------------------------------------------
 
+/// Evidence from the explicitly selected read-only collaboration executor.
+pub enum HeadlessReviewEvent {
+    ProcessStarted { at: time::OffsetDateTime, pid: u32 },
+    ThreadRegistered(String),
+    ProviderTurnStarted(time::OffsetDateTime),
+}
+
+/// Drive one independent Codex process. Reuse the Ask argv/parser, but never
+/// inherit an interactive session, provider options, or bypass permissions.
+pub async fn run_headless_review(
+    prompt: &str,
+    cwd: &Path,
+    events: tokio::sync::mpsc::UnboundedSender<HeadlessReviewEvent>,
+) -> Result<AskAnswer, String> {
+    let engine = AskEngine::Codex;
+    let (bin, mut args) = engine.argv("-", None, AskPermissionMode::Plan, &[], None);
+    args.splice(
+        0..0,
+        ["--no-daemon".into(), "--ask-for-approval=never".into()],
+    );
+    let prompt_pos = args.len() - 1;
+    args.splice(
+        prompt_pos..prompt_pos,
+        [
+            "--ephemeral".into(),
+            "--skip-git-repo-check".into(),
+            "--disable=shell_tool".into(),
+            "--disable=unified_exec".into(),
+            "-c".into(),
+            "web_search=\"disabled\"".into(),
+            "--ignore-user-config".into(),
+            "--ignore-rules".into(),
+            "--disable=hooks".into(),
+            "--disable=plugins".into(),
+            "--disable=multi_agent".into(),
+            "--disable=multi_agent_v2".into(),
+            "-c".into(),
+            "mcp_servers={}".into(),
+            "-c".into(),
+            "shell_environment_policy.inherit=\"none\"".into(),
+        ],
+    );
+    let mut cmd = tokio::process::Command::from(crate::shell::program_command(bin));
+    cmd.args(args)
+        .current_dir(cwd)
+        .env_clear()
+        .stdin(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    for name in [
+        "HOME",
+        "USERPROFILE",
+        "PATH",
+        "SystemRoot",
+        "TMPDIR",
+        "TEMP",
+        "TMP",
+        "LANG",
+        "LC_ALL",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+    ] {
+        if let Some(value) = std::env::var_os(name) {
+            cmd.env(name, value);
+        }
+    }
+    cmd.env(ASK_ENV_MARKER, "1");
+    cli_stream::run(
+        cmd,
+        engine,
+        bin,
+        Duration::from_secs(600),
+        None,
+        None,
+        Some((&events, prompt)),
+    )
+    .await
+}
+
 /// One finished headless turn: the agent's final text, the conversation id
 /// that would resume it, and what the turn cost.
 #[derive(Debug, Clone)]
@@ -2140,7 +2218,7 @@ impl AskEngine {
             cmd.env("TEND_ASK_ENTRY", &observer.entry_id);
         }
         if streaming {
-            return cli_stream::run(cmd, self, bin, turn.timeout, progress, observer).await;
+            return cli_stream::run(cmd, self, bin, turn.timeout, progress, observer, None).await;
         }
         let output = tokio::time::timeout(turn.timeout, cmd.output())
             .await

@@ -22,6 +22,7 @@ mod open_counts;
 mod read_validator;
 pub use mailbox_snapshot::{MailboxSnapshot, MAILBOX_SNAPSHOT_CAPABILITY};
 pub use open_counts::{CollaborationOpenCounts, HUMAN_QUERY_CAPABILITY, OPEN_COUNTS_CAPABILITY};
+pub mod headless;
 mod health;
 pub use health::{
     CollaborationHealth, ExpireSample, ExpireSummary, WeeklyOutcome, WorkerDeliveryOutcome,
@@ -876,6 +877,9 @@ pub struct CollaborationRequest {
         with = "time::serde::rfc3339::option"
     )]
     pub wake_prompt_observed_at: Option<OffsetDateTime>,
+    /// Daemon-owned dispatch state for the opt-in headless executor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub headless_attempt: Option<headless::HeadlessAttempt>,
     /// Set when tendd successfully injects a short reply notification. A
     /// sender that reads the result first also sets this to suppress a later
     /// redundant wake. The reply body itself remains in the mailbox.
@@ -2709,6 +2713,7 @@ fn request_latest_activity(request: &CollaborationRequest) -> OffsetDateTime {
 pub struct CollaborationStore {
     opts: CollaborationOptions,
     initialization_error: Option<String>,
+    headless_reviews_enabled: std::sync::atomic::AtomicBool,
     /// Indexed `SQLite` sidecar. The configured JSON path remains the migration
     /// source and is deliberately retained as a recoverable backup.
     database: Option<DurableDatabase>,
@@ -2776,6 +2781,7 @@ impl CollaborationStore {
                 ..options
             },
             initialization_error: None,
+            headless_reviews_enabled: std::sync::atomic::AtomicBool::new(false),
             database: None,
             requests: RwLock::new(HashMap::new()),
             identities: RwLock::new(Vec::new()),
@@ -2880,6 +2886,7 @@ impl CollaborationStore {
         let store = Arc::new(Self {
             opts: options,
             initialization_error: None,
+            headless_reviews_enabled: std::sync::atomic::AtomicBool::new(false),
             database,
             requests: RwLock::new(requests),
             identities: RwLock::new(identities),
@@ -3210,6 +3217,9 @@ impl CollaborationStore {
         sender_work: Option<(String, String)>,
     ) -> Result<CollaborationRequest, CollaborationError> {
         self.ensure_enabled()?;
+        if to.is_headless_review_runner() {
+            self.validate_headless_review(&from, &input)?;
+        }
         let body = input.body.trim().to_string();
         if input.human_action.is_some()
             && (!to.console || !input.expects_reply || input.kind == RequestKind::Notice)
@@ -3402,6 +3412,7 @@ impl CollaborationStore {
             wake_delivery: None,
             notified_at: None,
             wake_prompt_observed_at: None,
+            headless_attempt: None,
             reply_notified_at: None,
             reply_read_at: None,
             reply_wake: None,
@@ -3782,6 +3793,11 @@ impl CollaborationStore {
         }
         if updated.status.is_terminal() {
             return Err(CollaborationError::AlreadyTerminal(request_id.into()));
+        }
+        if updated.to.is_headless_review_runner() {
+            return Err(CollaborationError::InvalidDispatch(
+                "headless review instructions are immutable; cancel a queued review before replacing it".into(),
+            ));
         }
         // Retried identical updates from the same participant are idempotent.
         if updated
@@ -4364,6 +4380,7 @@ impl CollaborationStore {
             .values()
             .filter(|request| {
                 !request.to.console
+                    && !request.to.is_headless_review_runner()
                     && ((request.notified_at.is_none()
                     // Finish an already reserved delivery even after an upgrade.
                     && (request.should_notify() || request.wake_delivery.is_some())

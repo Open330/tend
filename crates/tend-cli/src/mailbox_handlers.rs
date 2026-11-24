@@ -408,6 +408,7 @@ pub(super) async fn cmd_msg(client: &Client, action: MsgCmd) -> Result<()> {
         MsgCmd::Send {
             target,
             body,
+            dispatch_id,
             task_contract,
             supersedes,
             human_action,
@@ -467,7 +468,7 @@ pub(super) async fn cmd_msg(client: &Client, action: MsgCmd) -> Result<()> {
                             })
                             .transpose()?,
                         supersedes_request_id: supersedes,
-                        dispatch_id: None,
+                        dispatch_id,
                         source_node_id: None,
                         delegation_parent: None,
                         human_action: human_action

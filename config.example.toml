@@ -144,6 +144,7 @@
 # path is used directly.
 # path              = "/home/$USER/.local/share/tend/collaboration.json"
 # max_message_bytes = 16384
+# headless_reviews  = false # explicit headless:codex read-only review pilot
 # retention_days    = 90 # default; 0 retains indefinitely. Prunes eligible whole
 #                        # terminal threads at daemon startup and hourly
 

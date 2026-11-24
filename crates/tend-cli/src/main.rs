@@ -589,11 +589,13 @@ enum MsgCmd {
         #[arg(long, requires = "json")]
         full: bool,
     },
-    /// Send to `peer`, `%N`, `@alias`, `role:<role>`, or a
-    /// `workspace/work/role[@alias]` path.
+    /// Send to a peer, pane, alias, role, Work path, or opt-in `headless:codex`.
     Send {
         target: String,
         body: String,
+        /// UUID to reuse if a submission's outcome is unknown (required for headless reviews).
+        #[arg(long)]
+        dispatch_id: Option<String>,
         /// Typed v1 task contract JSON file (requires a supporting daemon).
         #[arg(long)]
         task_contract: Option<PathBuf>,

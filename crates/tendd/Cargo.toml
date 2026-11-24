@@ -37,12 +37,12 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 time = { workspace = true }
 uuid = { workspace = true }
+tempfile = "3"
 
 [dev-dependencies]
 tend-aas = { workspace = true, features = ["test-support"] }
 # Test builds never write worktree receipts (see tend-work's `test-no-receipts`).
 tend-work = { workspace = true, features = ["test-no-receipts"] }
-tempfile = "3"
 
 [lints]
 workspace = true

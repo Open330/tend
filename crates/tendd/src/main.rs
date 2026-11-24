@@ -63,6 +63,7 @@ mod work_up_in_process;
 mod automation_engine;
 use automation_engine::spawn_automation_task;
 mod collaboration_waker;
+mod headless_reviews;
 use collaboration_waker::spawn_collaboration_waker_task;
 
 /// Inactivity window before a stopped agent is evicted from the in-memory store.
@@ -495,6 +496,22 @@ async fn run() -> Result<()> {
     let history_compaction_handle = spawn_history_compaction_task(&cfg, &store, &shutdown_tx);
     let activity_compaction_handle =
         spawn_activity_compaction_task(&cfg, activity_log.clone(), &shutdown_tx);
+    let headless_review_handle = if cfg.collaboration.headless_reviews && collaboration.enabled() {
+        if !owns_data_dir || cfg.collaboration.path.is_some() {
+            tracing::warn!("headless reviews require the default daemon and its default mailbox");
+            None
+        } else {
+            match headless_reviews::start(collaboration.clone(), &shutdown_tx).await {
+                Ok(handle) => Some(handle),
+                Err(error) => {
+                    tracing::error!(%error, "headless review runner unavailable");
+                    None
+                }
+            }
+        }
+    } else {
+        None
+    };
     let collaboration_waker_handle = spawn_collaboration_waker_task(
         &cfg,
         collaboration.clone(),
@@ -776,6 +793,7 @@ async fn run() -> Result<()> {
     await_shutdown_task("history compaction", history_compaction_handle).await;
     await_shutdown_task("activity compaction", activity_compaction_handle).await;
     await_shutdown_task("collaboration waker", collaboration_waker_handle).await;
+    await_shutdown_task("headless reviews", headless_review_handle).await;
     await_shutdown_task("automation", Some(automation_handle)).await;
     await_shutdown_task("pipeline reconciler", Some(pipeline_reconciler_handle)).await;
     await_shutdown_task("pipeline state projection", Some(pipeline_state_handle)).await;

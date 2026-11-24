@@ -2867,11 +2867,35 @@ pub(crate) async fn call_peer(
         Ok(origin) => origin,
         Err(error) => return error_result(&error),
     };
+    let target = args.get("target").and_then(Value::as_str).unwrap_or("auto");
+    if target == tend::collaboration::headless::HEADLESS_REVIEW_TARGET {
+        if args.get("context_bound").and_then(Value::as_bool) == Some(true)
+            || args.get("wait").and_then(Value::as_bool) == Some(true)
+            || args.get("spawn_if_missing").and_then(Value::as_bool) == Some(true)
+        {
+            return error_result("headless reviews are independent asynchronous requests; use tend_wait on the returned ID");
+        }
+        let sent = match client
+            .collaboration_send_view(
+                &origin,
+                target,
+                &request,
+                tend::collaboration::CollaborationReadView::Metadata,
+            )
+            .await
+        {
+            Ok(request) => request,
+            Err(error) => return error_result(&format!("headless review send failed: {error}")),
+        };
+        let mut receipt = crate::collaboration_output::receipt(&sent);
+        receipt["sent"] = json!(true);
+        receipt["delivery_diagnostics"] = crate::collaboration_output::delivery_diagnostics(&sent);
+        return json_result(&receipt);
+    }
     let room = match client.collaboration_context(&origin).await {
         Ok(room) => room,
         Err(error) => return error_result(&format!("call_peer context failed: {error}")),
     };
-    let target = args.get("target").and_then(Value::as_str).unwrap_or("auto");
     let target = review_provider_target(target, kind, room.current.agent_kind);
     // A `workspace/work/role` path names a slot the daemon resolves across
     // windows; there is no local peer to select or worker to spawn for it.

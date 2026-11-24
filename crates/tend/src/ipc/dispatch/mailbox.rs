@@ -286,6 +286,11 @@ async fn collaboration_send(
         )
         .await;
         let result = topology.resolve_origin(&origin).and_then(|sender| {
+            if target == crate::collaboration::headless::HEADLESS_REVIEW_TARGET {
+                collaboration.validate_headless_review(&sender, &request)?;
+                let recipient = sender.headless_review_recipient();
+                return Ok((sender, recipient, None));
+            }
             topology
                 .resolve_target_with_slot(&sender, &target, collaboration.scope())
                 .map(|(recipient, slot)| (sender, recipient, slot))

@@ -922,6 +922,35 @@ that record's `request_id`; it is a placeholder, not a literal reply target.
 The 1536-byte body cap accommodates up to 512 three-byte Korean characters;
 additional context or JSON escaping can still hit the 2048-byte document cap.
 
+
+### Headless review pilot
+
+On a daemon that owns its default local SQLite mailbox, set
+`[collaboration] headless_reviews = true` to enable the explicit
+`headless:codex` target. This does not change ordinary peer routing.
+From a tracked agent, use:
+
+```sh
+tend msg send headless:codex 'Review the following supplied diff: …' --kind review --dispatch-id UUID --json
+tend msg wait REQUEST_ID --body
+```
+
+MCP also accepts `tend_call_peer(target="headless:codex", intent="review", dispatch_id=UUID, wait=false)`.
+Reuse the same dispatch UUID and payload after an ambiguous submission.
+Retrieve the result with the original request ID; this route does not wake a terminal.
+Include the evidence in the body. The pilot runs one independent,
+text-only Codex process in an empty directory, with shell, plugin, hook,
+network search and agent tools disabled. It does not inspect the sender's
+checkout or resume an interactive session.
+
+The daemon saves its reservation before launching. Process start,
+provider thread/turn evidence, and committed result can be inspected by
+request ID. If the daemon stops after reservation and before committing a
+result, the request becomes uncertain and is never automatically replayed.
+A completed result is committed in the same SQLite row as the attempt and
+is not executed again. An answer that existed only in the interrupted
+process's output cannot be recovered by this pilot.
+
 For reproducible renderer measurements, run the `adaptive_delivery_cost_matrix`
 test in `tendd` on both revisions with `TEND_DELIVERY_MATRIX_REPORT` pointing to
 separate JSON files. Run `adaptive_reply_cost_matrix` in `tend-cli` with

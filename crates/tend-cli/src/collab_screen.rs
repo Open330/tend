@@ -659,6 +659,7 @@ mod tests {
             wake_delivery: None,
             notified_at: None,
             wake_prompt_observed_at: None,
+            headless_attempt: None,
             reply_notified_at: None,
             reply_read_at: None,
             reply_wake: None,

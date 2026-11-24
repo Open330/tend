@@ -361,7 +361,8 @@ async fn stranded_requests(
         .await
         .into_iter()
         .filter(|request| {
-            !tend::collaboration::is_pending_session(&request.to.agent_session_id)
+            !request.to.is_headless_review_runner()
+                && !tend::collaboration::is_pending_session(&request.to.agent_session_id)
                 && !agents.iter().any(|agent| {
                     agent.session_id == request.to.agent_session_id
                         && agent.state != tend::AgentState::Stopped

@@ -231,6 +231,7 @@ fn recovery_action(
     action.claimed_at = None;
     action.notified_at = None;
     action.wake_prompt_observed_at = None;
+    action.headless_attempt = None;
     action.reply_notified_at = None;
     action.reply_read_at = None;
     action.reply_wake = None;
@@ -381,6 +382,7 @@ impl CollaborationStore {
             .collect();
         for original in snapshot.values().filter(|r| {
             !r.to.console
+                && !r.to.is_headless_review_runner()
                 && r.expects_reply
                 && r.kind != RequestKind::Notice
                 && (!r.status.is_terminal() || r.interruption.is_some())

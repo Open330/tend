@@ -3,11 +3,12 @@
 //! decide the terminal outcome.
 use super::{
     non_zero_detail, parse_claude_json, parse_codex_jsonl, timeout_message, AskAnswer, AskEngine,
+    HeadlessReviewEvent,
 };
 use serde_json::Value;
 use std::process::Stdio;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::watch;
 
 const OUTPUT_LIMIT: usize = 32 * 1024 * 1024;
@@ -21,23 +22,48 @@ pub(super) async fn run(
     timeout: Duration,
     progress: Option<watch::Sender<String>>,
     observer: Option<&super::ExecutionObserver>,
+    headless: Option<(
+        &tokio::sync::mpsc::UnboundedSender<HeadlessReviewEvent>,
+        &str,
+    )>,
 ) -> Result<AskAnswer, String> {
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command
         .spawn()
         .map_err(|error| format!("spawning {program}: {error}"))?;
+    if let Some((events, _)) = headless {
+        let pid = child.id().ok_or("missing headless CLI process ID")?;
+        let _ = events.send(HeadlessReviewEvent::ProcessStarted {
+            at: time::OffsetDateTime::now_utc(),
+            pid,
+        });
+    }
+    let stdin = child.stdin.take();
     let stdout = child.stdout.take().ok_or("missing CLI stdout")?;
     let mut stderr = child.stderr.take().ok_or("missing CLI stderr")?;
     if let Some(progress) = &progress {
         progress.send_replace("Starting the provider…".to_string());
     }
     let exchange = async {
+        let write_stdin = async {
+            if let Some((_, prompt)) = headless {
+                let mut stdin = stdin.ok_or("missing headless CLI stdin")?;
+                stdin
+                    .write_all(prompt.as_bytes())
+                    .await
+                    .map_err(|e| e.to_string())?;
+                stdin.shutdown().await.map_err(|e| e.to_string())?;
+            }
+            Ok::<_, String>(())
+        };
         let read_stdout = async {
             let mut lines = BufReader::new(stdout.take((OUTPUT_LIMIT + 1) as u64)).lines();
             let mut raw = String::new();
             let mut visible = String::new();
             let mut last_result = None;
             let mut last_session = None;
+            let mut headless_started = false;
+            let mut headless_completed = false;
             while let Some(line) = lines.next_line().await.map_err(|error| error.to_string())? {
                 if raw.len() + line.len() + 1 > OUTPUT_LIMIT {
                     return Err("ask CLI output exceeded 32 MiB".to_string());
@@ -62,6 +88,37 @@ pub(super) async fn run(
                             last_session = Some(session.to_owned());
                         }
                     }
+                    if let Some((headless, _)) = headless {
+                        if matches!(
+                            event["type"].as_str(),
+                            Some("item.started" | "item.completed")
+                        ) && !matches!(
+                            event["item"]["type"].as_str(),
+                            Some("agent_message" | "reasoning" | "todo_list")
+                        ) {
+                            return Err(
+                                "unexpected tool or item in text-only headless review".into()
+                            );
+                        }
+                        match event["type"].as_str() {
+                            Some("thread.started") if last_session.is_none() => {
+                                if let Some(session) = session.filter(|id| id.len() <= 128) {
+                                    last_session = Some(session.to_owned());
+                                    let _ = headless.send(HeadlessReviewEvent::ThreadRegistered(
+                                        session.into(),
+                                    ));
+                                }
+                            }
+                            Some("turn.started") if !headless_started => {
+                                headless_started = true;
+                                let _ = headless.send(HeadlessReviewEvent::ProviderTurnStarted(
+                                    time::OffsetDateTime::now_utc(),
+                                ));
+                            }
+                            Some("turn.completed") if headless_started => headless_completed = true,
+                            _ => {}
+                        }
+                    }
                     if engine == AskEngine::Claude && event["type"] == "result" {
                         last_result = Some(line.clone());
                     }
@@ -76,6 +133,9 @@ pub(super) async fn run(
                         }
                     }
                 }
+            }
+            if headless.is_some() && !headless_completed {
+                return Err("headless review ended without a provider completion event".into());
             }
             Ok::<_, String>((raw, last_result))
         };
@@ -98,7 +158,8 @@ pub(super) async fn run(
             Ok::<_, String>(String::from_utf8_lossy(&kept).into_owned())
         };
         let wait = async { child.wait().await.map_err(|error| error.to_string()) };
-        let ((raw, result), stderr, status) = tokio::try_join!(read_stdout, read_stderr, wait)?;
+        let ((raw, result), stderr, status, ()) =
+            tokio::try_join!(read_stdout, read_stderr, wait, write_stdin)?;
         if !status.success() {
             return Err(format!(
                 "{program} exited non-zero: {}",
@@ -279,6 +340,48 @@ printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"D
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn headless_review_requires_provider_completion_and_rejects_tools() {
+        for (ending, success) in [
+            (r#"{"type":"turn.completed"}"#, true),
+            ("", false),
+            (
+                r#"{"type":"item.started","item":{"type":"command_execution"}}"#,
+                false,
+            ),
+        ] {
+            let mut cmd = tokio::process::Command::new("/bin/sh");
+            cmd.kill_on_drop(true)
+                .stdin(Stdio::piped())
+                .args(["-c", r#"read -r body; test "$body" = "fixture review" || exit 2
+                    printf '%s\n' '{"type":"thread.started","thread_id":"fixture"}' '{"type":"turn.started"}' '{"type":"item.completed","item":{"type":"agent_message","text":"answer"}}' "$1""#, "sh", ending]);
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let result = run(
+                cmd,
+                AskEngine::Codex,
+                "fixture-codex",
+                Duration::from_secs(5),
+                None,
+                None,
+                Some((&tx, "fixture review\n")),
+            )
+            .await;
+            assert_eq!(result.is_ok(), success);
+            assert!(matches!(
+                rx.try_recv().unwrap(),
+                HeadlessReviewEvent::ProcessStarted { .. }
+            ));
+            assert!(
+                matches!(rx.try_recv().unwrap(), HeadlessReviewEvent::ThreadRegistered(id) if id == "fixture")
+            );
+            assert!(matches!(
+                rx.try_recv().unwrap(),
+                HeadlessReviewEvent::ProviderTurnStarted(_)
+            ));
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn messages_arrive_before_exit_and_do_not_complete_the_turn() {
         let mut cmd = tokio::process::Command::new("/bin/sh");
         cmd.kill_on_drop(true).args(["-c", r#"
@@ -295,6 +398,7 @@ printf '%s\n' '{"type":"item.completed","item":{"type":"command_execution","text
             "fake-codex",
             Duration::from_secs(5),
             Some(sender),
+            None,
             None,
         );
         tokio::pin!(execution);
@@ -325,6 +429,7 @@ printf '%s\n' '{"type":"item.completed","item":{"type":"command_execution","text
             Duration::from_secs(5),
             None,
             None,
+            None,
         )
         .await
         .unwrap_err();
@@ -348,6 +453,7 @@ printf '%s\n' '{"type":"item.completed","item":{"type":"command_execution","text
                 AskEngine::Claude,
                 "fake-claude",
                 Duration::from_secs(5),
+                None,
                 None,
                 None,
             )

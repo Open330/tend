@@ -127,6 +127,29 @@ pub(crate) fn mutation_receipt(request: &CollaborationRequest) -> Value {
 
 /// Exact-request diagnostics. Keep these out of broad mailbox pages.
 pub(crate) fn delivery_diagnostics(request: &CollaborationRequest) -> Value {
+    if request.to.is_headless_review_runner() {
+        let next_action = if request.status.is_terminal() {
+            "Read the result or closure for this request ID. An uncertain attempt is never automatically restarted."
+        } else {
+            "Wait on the original request ID. The executor reports provider evidence separately."
+        };
+        let mut details = json!({"stage":"headless_queued","next_action":next_action});
+        if let Some(attempt) = &request.headless_attempt {
+            let evidence = json!(attempt);
+            details["stage"] = evidence["phase"].clone();
+            details.as_object_mut().expect("diagnostic object").extend(
+                evidence
+                    .as_object()
+                    .expect("attempt object")
+                    .iter()
+                    .filter(|(key, _)| *key != "phase")
+                    .map(|(key, value)| (key.clone(), value.clone())),
+            );
+        } else if request.status.is_terminal() {
+            details["stage"] = json!("closed");
+        }
+        return details;
+    }
     let (stage, next_action) = if request.status.is_terminal() {
         ("closed", "Read the result or closure for this request ID.")
     } else if request.needs_human_response() {

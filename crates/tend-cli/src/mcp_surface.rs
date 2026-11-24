@@ -584,7 +584,7 @@ fn schema_extension(name: &str) -> Option<(Value, &'static str)> {
             "expects_reply": {"type": "boolean", "description": "exact/notice only; independent of notify."},
             "host": {"type": "string", "description": "Control-mode Fleet host: one exact pane (pane or target); never auto-selects remotely."},
             "pane": {"type": "string" },
-            "dispatch_id": {"type": "string", "description": "host: UUID, reuse on retry."}
+            "dispatch_id": {"type": "string", "description": "Required UUID for headless:codex and remote dispatch; reuse on retry."}
         }),
         " Returns at once (wait=false); the reply arrives as a wake: tend_inbox(view=report, request_id) or tend_wait(id).",
     ),
