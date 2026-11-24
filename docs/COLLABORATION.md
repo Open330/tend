@@ -884,7 +884,7 @@ new task; updates are quiet and retain the original authority and paths.
 Opt in with `[collaboration] wake_payload = "adaptive"`. Operator messages keep
 the existing direct delivery. Agent-originated read-only questions, reviews and
 notices can be claimed and delivered inline to an idle worker when the original
-UTF-8 body is at most 768 bytes and its complete instruction JSON at most 1024
+UTF-8 body is at most 1536 bytes and its complete instruction JSON at most 2048
 bytes. Contracts, attempts, attachments, updates, delegation, human actions,
 unsafe terminal controls and larger/execute requests retain reference delivery.
 Primary conversations remain protected, and quiet notices do not trigger a
@@ -899,8 +899,8 @@ request kind or editing permission from body wording.
 
 The request ID appears once in the JSON record. The reply hint's `ID` means
 that record's `request_id`; it is a placeholder, not a literal reply target.
-The 768-byte body cap accommodates up to 256 three-byte Korean characters;
-additional context or JSON escaping can still hit the 1024-byte document cap.
+The 1536-byte body cap accommodates up to 512 three-byte Korean characters;
+additional context or JSON escaping can still hit the 2048-byte document cap.
 
 For reproducible renderer measurements, run the `adaptive_delivery_cost_matrix`
 test in `tendd` on both revisions with `TEND_DELIVERY_MATRIX_REPORT` pointing to

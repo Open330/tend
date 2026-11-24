@@ -90,8 +90,8 @@ pub fn inbox_instruction(request: &CollaborationRequest) -> Value {
 }
 
 /// Bound both the original message and its complete authority/context envelope.
-pub const SHORT_BODY_BYTES: usize = 768;
-pub const SHORT_INSTRUCTION_BYTES: usize = 1024;
+pub const SHORT_BODY_BYTES: usize = 1536;
+pub const SHORT_INSTRUCTION_BYTES: usize = 2048;
 
 pub fn terminal_safe(body: &str) -> bool {
     body.chars()
@@ -187,7 +187,7 @@ mod tests {
         assert!(short_inline_prompt(&r).is_some());
         r.body.push('x');
         assert!(short_inline_prompt(&r).is_none());
-        r.body = format!("{}abc", "한".repeat(255));
+        r.body = "한".repeat(SHORT_BODY_BYTES / "한".len());
         assert_eq!(r.body.len(), SHORT_BODY_BYTES);
         assert!(short_inline_prompt(&r).is_some());
         r.body.push('x');
