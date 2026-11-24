@@ -114,7 +114,7 @@ private func fullDecode(_ data: Data) throws -> [TendFleetHost] {
     for json in cases {
         #expect(try cache.hosts(fromResponse: Data(json.replacingOccurrences(of: "HOST", with: host).utf8)) == nil, "\(json)")
     }
-    // Nesting the full response would refuse is left to the full decoder.
+    // Nesting past the scan's conservative cap is left to the full decoder.
     let deep = String(repeating: "[", count: 100) + String(repeating: "]", count: 100)
     let nested = Data(#"{"ok":true,"fleet":{"hosts":[{"alias":"a","local":false,"mode":"control","state":"online","x":DEEP}]}}"#
         .replacingOccurrences(of: "DEEP", with: deep).utf8)
