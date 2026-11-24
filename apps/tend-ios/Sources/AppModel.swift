@@ -326,6 +326,11 @@ final class AppModel {
     /// Bumped at every push write: a device read that started before one
     /// does not say what the host holds now.
     private var pushWrites = 0
+    /// When the last write was answered.
+    private var pushWrittenAt = Date.distantPast
+    /// How long a tend that does not report registrations is taken to
+    /// still hold the last one written.
+    static let legacyPushConfirmation: TimeInterval = 300
 
     init() {
         if ProcessInfo.processInfo.arguments.contains("-TendResetState") {
@@ -359,9 +364,16 @@ final class AppModel {
             let info = try await client.device()
             guard session == mine, capability == generation else { return }
             pushSupport = info.push
-            // An older tend does not say; then the last write's answer stands.
-            if let held = info.pushRegistration, pushWrites == writes, !pushSyncing {
-                hostPushRegistration = held
+            // A read that started before a write says nothing about now. An
+            // older tend does not say at all: then the last write's answer
+            // stands for a few minutes (one launch's burst), and a later
+            // foregrounding sends again, so a row it dropped comes back.
+            if pushWrites == writes, !pushSyncing {
+                if let held = info.pushRegistration {
+                    hostPushRegistration = held
+                } else if Date().timeIntervalSince(pushWrittenAt) > Self.legacyPushConfirmation {
+                    hostPushRegistration = nil
+                }
             }
             if info.scope == .decide, scope == .operate {
                 narrow()
@@ -654,7 +666,11 @@ final class AppModel {
         defer { signingOut = false }
         let mine = session
         // Best effort: the host also drops it with the device.
-        if pairing?.push != nil { try? await client.removePush() }
+        if pairing?.push != nil {
+            hostPushRegistration = nil
+            pushWrites += 1
+            try? await client.removePush()
+        }
         do {
             try await client.forget()
         } catch DashboardError.signedOut {
@@ -1106,12 +1122,17 @@ extension AppModel {
         guard let client, let pairing else { return }
         let mine = session
         let wanted = notificationsWanted && pushSupport?.enabled == true
-        if wanted, let token = apnsToken {
+        if wanted, let token = apnsToken, let support = pushSupport {
             let content = notificationContentWanted
             // The host already holds exactly this: iOS hands the same token
             // at every launch, and every foregrounding re-reads the device.
+            // The binding must still be what the host's offer gives now (its
+            // content switch, this build's environment), or registering again
+            // refreshes it, or says why not.
             if let binding = pairing.push, case .some(.some(let held)) = hostPushRegistration,
                held.content == content,
+               binding.content == (content && support.contentAllowed),
+               support.environments.contains(Self.pushEnvironment),
                held.registration == Self.registrationFingerprint(token: token, environment: Self.pushEnvironment, channel: binding.channel) {
                 return
             }
@@ -1122,6 +1143,7 @@ extension AppModel {
                 guard session == mine, self.pairing?.token == pairing.token else { return }
                 switch answer {
                 case .on(let binding):
+                    pushWrittenAt = Date()
                     hostPushRegistration = .some(DeviceInfo.HostPushRegistration(
                         registration: Self.registrationFingerprint(token: token, environment: Self.pushEnvironment, channel: binding.channel),
                         content: content
@@ -1137,7 +1159,9 @@ extension AppModel {
                         // A registration this phone cannot act on: take it back.
                         pushProblem = String(localized: "Could not keep the notification key in this device's Keychain. Notifications stay off; try again.")
                         hostPushRegistration = nil
-                        if (try? await client.removePush()) != nil { hostPushRegistration = .some(nil) }
+                        pushWrites += 1
+                        let removed = (try? await client.removePush()) != nil
+                        if removed, session == mine { hostPushRegistration = .some(nil) }
                     }
                 case .off(let reason):
                     hostPushRegistration = .some(nil)
