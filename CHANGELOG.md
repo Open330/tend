@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   decoded. Home's projection also reads each agent's peer request once
   instead of twice. On optimized copies against the live fleet, 52% of
   host decodes were skipped and the app used about 7% less CPU.
+- The menu bar cluster no longer checks the pointer 15 times a second
+  while it rests near a menu bar. Mouse-moved events now say when the
+  pointer moved; a check every 0.25 s only catches a move that sent no
+  event (a warped pointer), and then polling resumes at the old rate
+  until events come back. Hover, unfold and peek timing are unchanged.
+  With the pointer resting near the menu bar on optimized copies against
+  the live fleet, the cluster's checks fell from about 13.5 to 4 a second.
 
 ## [0.10.39] - 2026-11-24
 
