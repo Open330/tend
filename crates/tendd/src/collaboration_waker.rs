@@ -175,7 +175,7 @@ async fn rearm_unsubmitted_wakes(collaboration: &CollaborationStore, store: &ten
 
 #[cfg(test)]
 async fn wake_idle_collaboration_peers(
-    collaboration: &CollaborationStore,
+    collaboration: &Arc<CollaborationStore>,
     store: &tend::SharedStore,
     backends: &[tend::SharedBackend],
 ) {
@@ -192,7 +192,7 @@ async fn wake_idle_collaboration_peers(
 
 #[cfg(test)]
 async fn wake_idle_collaboration_peers_with_full_payload(
-    collaboration: &CollaborationStore,
+    collaboration: &Arc<CollaborationStore>,
     store: &tend::SharedStore,
     backends: &[tend::SharedBackend],
 ) {
@@ -208,7 +208,7 @@ async fn wake_idle_collaboration_peers_with_full_payload(
 }
 
 async fn wake_idle_collaboration_peers_with_inflight(
-    collaboration: &CollaborationStore,
+    collaboration: &Arc<CollaborationStore>,
     store: &tend::SharedStore,
     backends: &[tend::SharedBackend],
     wake_payload: CollaborationWakePayload,
@@ -838,7 +838,7 @@ fn direct_wake_body_is_terminal_safe(body: &str) -> bool {
 /// Type a mailbox notice for `request` and record the attempt. Returns
 /// whether Enter was delivered.
 async fn send_mailbox_wake(
-    collaboration: &CollaborationStore,
+    collaboration: &Arc<CollaborationStore>,
     recipient: &tend::collaboration::Participant,
     request: &CollaborationRequest,
     prompt: &str,
@@ -864,7 +864,7 @@ async fn send_mailbox_wake(
     // The unsubmitted-wake check judges the recipient's row against this
     // instant, taken before anything is typed.
     let attempt_started_at = time::OffsetDateTime::now_utc();
-    let (sent, submitted) = send_collaboration_wake_holding(
+    let delivered = send_collaboration_wake_holding(
         guard,
         &agents,
         collaboration,
@@ -874,7 +874,7 @@ async fn send_mailbox_wake(
         store,
     )
     .await;
-    if !sent {
+    if delivered.is_none() {
         // Nothing typed: release the reservation so the hook may take it.
         if let Some(reserved_at) = reserved_at {
             let _ = collaboration
@@ -882,7 +882,10 @@ async fn send_mailbox_wake(
                 .await;
         }
     }
-    if sent {
+    let submitted = delivered
+        .as_ref()
+        .is_some_and(|delivery| delivery.submitted);
+    if let Some(delivered) = delivered {
         if let Err(error) = collaboration
             .mark_wake_notified(&request.id, attempt_started_at)
             .await
@@ -895,6 +898,24 @@ async fn send_mailbox_wake(
             submitted,
             "collaboration wake delivered",
         );
+        if submitted {
+            let collaboration = Arc::clone(collaboration);
+            let recipient = recipient.clone();
+            let request_id = request.id.clone();
+            tokio::spawn(async move {
+                if let Some(at) = delivered
+                    .peer_prompt_observed_at(&recipient.agent_session_id)
+                    .await
+                {
+                    if let Err(error) = collaboration
+                        .record_wake_prompt_observed(&request_id, &recipient, at)
+                        .await
+                    {
+                        tracing::warn!(request_id, %error, "failed to persist wake prompt evidence");
+                    }
+                }
+            });
+        }
     }
     submitted
 }
@@ -1087,7 +1108,7 @@ pub(super) async fn send_collaboration_wake(
 ) -> (bool, bool) {
     let guard = tend::prompt_delivery::lock_pane(collaboration, &participant.pane).await;
     let agents = store.by_pane(&participant.pane).await;
-    send_collaboration_wake_holding(
+    let delivered = send_collaboration_wake_holding(
         guard,
         &agents,
         collaboration,
@@ -1096,7 +1117,20 @@ pub(super) async fn send_collaboration_wake(
         backends,
         store,
     )
-    .await
+    .await;
+    let Some(delivered) = delivered else {
+        return (false, false);
+    };
+    let submitted = delivered.submitted;
+    if submitted {
+        let pane = participant.pane.clone();
+        tokio::spawn(async move {
+            let confirmed = delivered.confirm().await;
+            tracing::debug!(pane, submission_confirmed = ?confirmed,
+                "collaboration Enter delivered; application acknowledgement observed separately");
+        });
+    }
+    (true, submitted)
 }
 
 /// [`send_collaboration_wake`] with the pane's input guard already held and
@@ -1109,14 +1143,12 @@ async fn send_collaboration_wake_holding(
     prompt: &str,
     backends: &[tend::SharedBackend],
     store: &tend::Store,
-) -> (bool, bool) {
-    let Some(backend) = text_backend(backends, &participant.pane) else {
-        return (false, false);
-    };
+) -> Option<tend::prompt_delivery::Delivered> {
+    let backend = text_backend(backends, &participant.pane)?;
     // A peer delivery: the shared path holds the pane guard from the drain
     // check through Enter, and registers the prompt before typing so the
     // hook reporting it is stamped as from a peer rather than a person.
-    let delivered = tend::prompt_delivery::deliver_prompt_holding(
+    tend::prompt_delivery::deliver_prompt_holding(
         guard,
         collaboration,
         store,
@@ -1130,23 +1162,8 @@ async fn send_collaboration_wake_holding(
             origin: Some(tend::PromptOrigin::Peer),
         },
     )
-    .await;
-    let Ok(delivered) = delivered else {
-        return (false, false);
-    };
-    let submitted = delivered.submitted;
-    if submitted {
-        // A missing hook must not delay mailbox bookkeeping, the next peer's
-        // wake, or shutdown. This bounded observer only logs evidence and
-        // never sends keys or retries the body.
-        let pane = participant.pane.clone();
-        tokio::spawn(async move {
-            let confirmed = delivered.confirm().await;
-            tracing::debug!(pane, submission_confirmed = ?confirmed,
-                "collaboration Enter delivered; application acknowledgement observed separately");
-        });
-    }
-    (true, submitted)
+    .await
+    .ok()
 }
 
 async fn send_collaboration_text(

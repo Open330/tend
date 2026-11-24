@@ -399,6 +399,7 @@ pub(super) fn supersession_notice(
     notice.claimed_at = None;
     notice.wake_delivery = None;
     notice.notified_at = None;
+    notice.wake_prompt_observed_at = None;
     notice.reply_notified_at = None;
     notice.reply_read_at = None;
     notice.reply_wake = None;

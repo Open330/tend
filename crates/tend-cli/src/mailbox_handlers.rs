@@ -852,7 +852,7 @@ pub(super) async fn cmd_msg_list(
     if requests.len() < total.saturating_sub(filters.offset) {
         eprintln!("Showing {} of {total} matching messages; next page: --offset {} (or --limit 0 for all).", requests.len(), filters.offset.saturating_add(requests.len()));
     }
-    print_collaboration_messages(&requests, json, full, origin, scope)
+    print_collaboration_messages(&requests, json, full, origin, scope, true)
 }
 
 #[allow(clippy::too_many_arguments)] // Existing display flags plus server-side auto scope.
@@ -935,7 +935,7 @@ pub(super) async fn cmd_msg_list_page(
     if requests.len() < total.saturating_sub(filters.offset) {
         eprintln!("Showing {} of {total} matching messages; next page: --offset {} (or --limit 0 for all).", requests.len(), filters.offset.saturating_add(requests.len()));
     }
-    print_collaboration_messages(&requests, json, full, origin, scope)
+    print_collaboration_messages(&requests, json, full, origin, scope, false)
 }
 
 pub(super) fn read_collaboration_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
@@ -1130,6 +1130,7 @@ pub(super) fn participant_location(participant: &Participant) -> String {
 pub(super) fn render_message_list(
     requests: &[tend::collaboration::CollaborationRequest],
     full: bool,
+    exact_request: bool,
 ) -> Result<String> {
     if full {
         return Ok(serde_json::to_string_pretty(requests)?);
@@ -1138,6 +1139,9 @@ pub(super) fn render_message_list(
         .iter()
         .map(|request| -> Result<serde_json::Value> {
             let mut value = collaboration_output::message(request, false);
+            if exact_request {
+                value["delivery_diagnostics"] = collaboration_output::delivery_diagnostics(request);
+            }
             let object = value.as_object_mut().expect("message is an object");
             let id = object.remove("request_id").expect("message has an id");
             object.insert("id".into(), id);
@@ -1161,9 +1165,10 @@ pub(super) fn print_collaboration_messages(
     full: bool,
     origin: &CollaborationOrigin,
     scope: MailboxScope,
+    exact_request: bool,
 ) -> Result<()> {
     if json {
-        println!("{}", render_message_list(requests, full)?);
+        println!("{}", render_message_list(requests, full, exact_request)?);
     } else if requests.is_empty() {
         println!("No collaboration messages.");
     } else {
@@ -1213,6 +1218,19 @@ pub(super) fn print_collaboration_messages(
                 "{}  {:?}  {:?}  {}{}",
                 request.id, request.status, request.kind, direction, provenance
             );
+            if exact_request {
+                let details = collaboration_output::delivery_diagnostics(request);
+                let fields = details.as_object().expect("delivery details are an object");
+                println!(
+                    "  {}",
+                    fields["next_action"].as_str().expect("next action is text")
+                );
+                for (key, value) in fields.iter().filter(|(key, _)| *key != "next_action") {
+                    if let Some(value) = value.as_str() {
+                        println!("  {key}: {value}");
+                    }
+                }
+            }
             if !full {
                 continue;
             }

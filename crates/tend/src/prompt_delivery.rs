@@ -41,12 +41,24 @@ impl SubmissionObserver {
 
     /// Missing evidence is unknown, not failed submission. Never inject more
     /// keys based on a timeout: hook delivery can be slow or unavailable.
-    pub async fn confirm(mut self) -> Option<bool> {
-        self.session.as_ref()?;
+    pub async fn confirm(self) -> Option<bool> {
+        self.observe(None).await.map(|_| true)
+    }
+
+    async fn observe(mut self, peer_session: Option<&str>) -> Option<time::OffsetDateTime> {
+        let session = self.session.as_deref()?;
+        if peer_session.is_some_and(|expected| expected != session) {
+            return None;
+        }
         tokio::time::timeout(Duration::from_millis(750), async {
             loop {
                 match self.receiver.recv().await {
-                    Ok(record) if self.matches(&record) => return Some(true),
+                    Ok(record)
+                        if self.matches(&record)
+                            && (peer_session.is_none() || record.origin == PromptOrigin::Peer) =>
+                    {
+                        return Some(record.at);
+                    }
                     Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
                     Err(broadcast::error::RecvError::Closed) => return None,
                 }
@@ -166,6 +178,15 @@ impl Delivered {
     pub async fn confirm(self) -> Option<bool> {
         if self.submitted {
             self.observer.confirm().await
+        } else {
+            None
+        }
+    }
+
+    /// Require the turn hook to match the intended peer, not a replacement pane occupant.
+    pub async fn peer_prompt_observed_at(self, session: &str) -> Option<time::OffsetDateTime> {
+        if self.submitted {
+            self.observer.observe(Some(session)).await
         } else {
             None
         }

@@ -125,8 +125,91 @@ pub(crate) fn mutation_receipt(request: &CollaborationRequest) -> Value {
     value
 }
 
+/// Exact-request diagnostics. Keep these out of broad mailbox pages.
+pub(crate) fn delivery_diagnostics(request: &CollaborationRequest) -> Value {
+    let (stage, next_action) = if request.status.is_terminal() {
+        ("closed", "Read the result or closure for this request ID.")
+    } else if request.needs_human_response() {
+        (
+            "human_action_pending",
+            "This item needs a human answer. Read it and use the existing request ID to answer.",
+        )
+    } else if request.peer_interrupted() {
+        ("recovery_pending", "Check the interruption and continue through its linked recovery request. Keep this request ID.")
+    } else if request.status == RequestStatus::Queued && request.awaits_turn_boundary(&request.to) {
+        (
+            "awaiting_primary_turn",
+            "The recipient hook can offer this request at its next turn. Do not resend it.",
+        )
+    } else if request.status == RequestStatus::Queued
+        && !request.bypasses_primary_protection()
+        && !request.to.accepts_peer_work()
+    {
+        ("protected_primary", "The recipient must accept this request by ID. For independent work, route to a Worker after cancelling this queued request.")
+    } else if request.wake_delivery.is_some() {
+        ("inline_wake_pending", "The inline delivery is reserved. Wait on this request ID; a reservation does not prove a provider turn.")
+    } else if request.status == RequestStatus::Claimed {
+        ("claim_recorded", "Wait for the result on this request ID.")
+    } else if request.wake_prompt_observed_at.is_some() {
+        ("wake_prompt_observed", "The provider reported the wake prompt. Wait for the recipient to claim this request ID.")
+    } else if request.notified_at.is_some()
+        || request.turn_offer.as_ref().is_some_and(|offer| {
+            offer.last_stop_offer_at.is_some() || offer.last_prompt_offer_at.is_some()
+        })
+    {
+        (
+            "wake_or_offer_recorded",
+            "A wake or hook offer is recorded; receipt is unconfirmed. Keep this request ID.",
+        )
+    } else {
+        (
+            "queued",
+            "No wake or offer is recorded yet. Keep this request ID.",
+        )
+    };
+    let mut value = json!({ "stage": stage, "next_action": next_action });
+    let offer = request.turn_offer.as_ref();
+    for (key, timestamp) in [
+        (
+            "latest_wake_attempt_started_at",
+            request
+                .wake_retry
+                .as_ref()
+                .map(|retry| retry.attempt_started_at),
+        ),
+        ("wake_notified_at", request.notified_at),
+        (
+            "latest_prompt_hook_offer_at",
+            offer.and_then(|offer| offer.last_prompt_offer_at),
+        ),
+        (
+            "latest_stop_hook_offer_at",
+            offer.and_then(|offer| offer.last_stop_offer_at),
+        ),
+        ("wake_prompt_observed_at", request.wake_prompt_observed_at),
+        ("claim_recorded_at", request.claimed_at),
+    ] {
+        if let Some(timestamp) = timestamp.and_then(|at| {
+            at.format(&time::format_description::well_known::Rfc3339)
+                .ok()
+        }) {
+            value[key] = json!(timestamp);
+        }
+    }
+    if let Some(recovery_id) = request
+        .interruption
+        .as_ref()
+        .filter(|interruption| interruption.active && interruption.request_id == request.id)
+        .and_then(|interruption| interruption.action_request_id.as_ref())
+    {
+        value["recovery_request_id"] = json!(recovery_id);
+    }
+    value
+}
+
 pub(crate) fn outcome(request: &CollaborationRequest) -> Value {
     let mut value = receipt(request);
+    value["delivery_diagnostics"] = delivery_diagnostics(request);
     if let Some(reply) = &request.reply {
         value["reply"] = json!(reply);
     }
@@ -348,6 +431,14 @@ mod tests {
         });
         let observed = outcome(&request);
         assert_eq!(observed["reason"], "peer_interrupted");
+        assert_eq!(
+            observed["delivery_diagnostics"]["stage"],
+            "recovery_pending"
+        );
+        assert_eq!(
+            observed["delivery_diagnostics"]["recovery_request_id"],
+            "human-choice"
+        );
         assert_eq!(observed["final_reply_received"], false);
         assert_eq!(
             observed["interruption"]["action_request_id"],
@@ -411,6 +502,23 @@ mod tests {
         let next = value["next_step"].as_str().unwrap();
         assert!(next.contains(&format!("tend msg cancel {}", request.id)));
         assert!(next.contains(&format!("tend peer {}", request.to.pane)));
+    }
+
+    #[test]
+    fn exact_delivery_diagnostics_keep_wake_evidence_separate_from_claim() {
+        let mut request = fixture();
+        request.status = RequestStatus::Queued;
+        request.to.launch_purpose = tend::collaboration::LaunchPurpose::Worker;
+        request.notified_at = Some(OffsetDateTime::UNIX_EPOCH);
+        let detail = delivery_diagnostics(&request);
+        assert_eq!(detail["stage"], "wake_or_offer_recorded");
+        assert_eq!(detail["wake_notified_at"], "1970-01-01T00:00:00Z");
+        assert!(detail.get("wake_prompt_observed_at").is_none());
+        request.wake_prompt_observed_at = Some(OffsetDateTime::UNIX_EPOCH);
+        let detail = delivery_diagnostics(&request);
+        assert_eq!(detail["stage"], "wake_prompt_observed");
+        assert!(detail.get("claim_recorded_at").is_none());
+        assert!(receipt(&request).get("delivery_diagnostics").is_none());
     }
 
     #[test]

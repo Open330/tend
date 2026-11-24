@@ -68,6 +68,15 @@ minutes. A marker records a transport action, and later hook offers can replace
 older timestamps, so the report cannot establish when a model first saw the
 request or whether a missing marker was a delivery failure.
 
+For one request, `tend msg list --request-id ID` shows its current stage,
+the next action, and any linked recovery request. The compact JSON and wait
+outcome expose these as `delivery_diagnostics`. Wake attempts and hook offers
+are separate from a matching provider prompt hook and from the mailbox's
+claim timestamp. A matching prompt is recorded only when Tend can correlate
+the mailbox wake with the exact provider session. Inline delivery may reserve
+a claim before the provider receives the prompt. Missing timestamps mean
+evidence was unavailable.
+
 The launch UUID is persisted before creation, stamped on the new pane, and reused
 for the process-fenced worker grant. A renewable lease covers startup. Expiry
 after creation has been authorized is uncertain, not permission to spawn again.

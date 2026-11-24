@@ -109,14 +109,15 @@ fn message_list_defaults_are_bounded_and_full_output_is_explicit() {
     let mut request = collaboration_output::fixture();
     request.body = "private original instructions".into();
     let compact: serde_json::Value =
-        serde_json::from_str(&render_message_list(&[request.clone()], false).unwrap()).unwrap();
+        serde_json::from_str(&render_message_list(&[request.clone()], false, false).unwrap())
+            .unwrap();
     assert_eq!(compact[0]["id"], request.id);
     assert_eq!(compact[0]["created_at"], "2026-10-14T00:00:00Z");
     assert!(compact[0].get("body").is_none());
     assert!(compact[0].get("reply").is_none());
     assert!(compact[0].get("provenance").is_none());
     let legacy: serde_json::Value =
-        serde_json::from_str(&render_message_list(&[request], true).unwrap()).unwrap();
+        serde_json::from_str(&render_message_list(&[request], true, false).unwrap()).unwrap();
     assert_eq!(legacy[0]["body"], "private original instructions");
     assert!(
         Args::try_parse_from(["tend", "msg", "list", "--request-id", "req-1", "--full"]).is_ok()
@@ -924,6 +925,7 @@ fn collaboration_request(
         claimed_at: None,
         wake_delivery: None,
         notified_at: None,
+        wake_prompt_observed_at: None,
         reply_notified_at: None,
         reply_read_at: None,
         reply_wake: None,
