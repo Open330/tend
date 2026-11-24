@@ -88,6 +88,10 @@ enum TendFleetSnapshotScanner {
     private final class Scanner {
         let bytes: UnsafeBufferPointer<UInt8>
         private(set) var at = 0
+        /// Deeper values are left to the full decoder: a host decoded on its
+        /// own must not get past a nesting limit the whole response hits.
+        /// Real hosts nest a few levels; this is far below Foundation's.
+        static let maximumDepth = 64
 
         init(bytes: UnsafeBufferPointer<UInt8>) {
             self.bytes = bytes
@@ -133,7 +137,9 @@ enum TendFleetSnapshotScanner {
             var seen = Set<String>()
             while true {
                 skipWhitespace()
-                guard let key = string(), seen.insert(key).inserted else { return false }
+                // An escaped key could spell a name the decoder would match;
+                // leave such a response to it.
+                guard let key = string(), !key.contains("\\"), seen.insert(key).inserted else { return false }
                 skipWhitespace()
                 guard consume(UInt8(ascii: ":")) else { return false }
                 skipWhitespace()
@@ -181,8 +187,10 @@ enum TendFleetSnapshotScanner {
                         continue
                     case UInt8(ascii: "{"):
                         stack.append(UInt8(ascii: "}"))
+                        guard stack.count <= Self.maximumDepth else { return false }
                     case UInt8(ascii: "["):
                         stack.append(UInt8(ascii: "]"))
+                        guard stack.count <= Self.maximumDepth else { return false }
                     case UInt8(ascii: "}"), UInt8(ascii: "]"):
                         guard stack.popLast() == byte else { return false }
                         if stack.isEmpty {

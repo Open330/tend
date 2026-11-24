@@ -107,10 +107,18 @@ private func fullDecode(_ data: Data) throws -> [TendFleetHost] {
         #"{"ok":false,"ok":true,"fleet":{"hosts":[HOST]}}"#,
         #"{"ok":true,"fleet":{"hosts":[]},"fleet":{"hosts":[HOST]}}"#,
         #"{"ok":true,"fleet":{"hosts":[],"hosts":[HOST]}}"#,
+        // An escaped key the decoder reads as a repeat.
+        #"{"ok":true,"fleet":{"h\u006fsts":[],"hosts":[HOST]}}"#,
+        #"{"ok":true,"fl\u0065et":{"hosts":[]},"fleet":{"hosts":[HOST]}}"#,
     ]
     for json in cases {
         #expect(try cache.hosts(fromResponse: Data(json.replacingOccurrences(of: "HOST", with: host).utf8)) == nil, "\(json)")
     }
+    // Nesting the full response would refuse is left to the full decoder.
+    let deep = String(repeating: "[", count: 100) + String(repeating: "]", count: 100)
+    let nested = Data(#"{"ok":true,"fleet":{"hosts":[{"alias":"a","local":false,"mode":"control","state":"online","x":DEEP}]}}"#
+        .replacingOccurrences(of: "DEEP", with: deep).utf8)
+    #expect(try cache.hosts(fromResponse: nested) == nil)
     // A host the decoder rejects is an error, as in the full decode.
     let badHost = Data(#"{"ok":true,"fleet":{"hosts":[{"alias":1}]}}"#.utf8)
     #expect(throws: (any Error).self) { try cache.hosts(fromResponse: badHost) }
