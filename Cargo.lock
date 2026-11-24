@@ -738,9 +738,9 @@ dependencies = [
 
 [[package]]
 name = "cookie"
-version = "0.18.2"
+version = "0.18.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a373e3602691c3cdea496d2f0ee5935151e6168fe87739483c463db1b2f2f87"
+checksum = "d55f2d6c30eeec7d5c6f98bd4395d4abb1895629eab97ee6522d340623615f8a"
 dependencies = [
  "time",
  "version_check",
@@ -5358,7 +5358,7 @@ dependencies = [
 
 [[package]]
 name = "tend"
-version = "0.10.35"
+version = "0.10.36"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -5402,7 +5402,7 @@ dependencies = [
 
 [[package]]
 name = "tend-aas"
-version = "0.10.35"
+version = "0.10.36"
 dependencies = [
  "dirs 5.0.1",
  "rusqlite",
@@ -5423,7 +5423,7 @@ dependencies = [
 
 [[package]]
 name = "tend-app"
-version = "0.10.35"
+version = "0.10.36"
 dependencies = [
  "dirs 5.0.1",
  "hmac 0.12.1",
@@ -5444,7 +5444,7 @@ dependencies = [
 
 [[package]]
 name = "tend-cli"
-version = "0.10.35"
+version = "0.10.36"
 dependencies = [
  "ansi-to-tui",
  "anyhow",
@@ -5484,7 +5484,7 @@ dependencies = [
 
 [[package]]
 name = "tend-work"
-version = "0.10.35"
+version = "0.10.36"
 dependencies = [
  "anyhow",
  "clap",
@@ -5507,7 +5507,7 @@ dependencies = [
 
 [[package]]
 name = "tendd"
-version = "0.10.35"
+version = "0.10.36"
 dependencies = [
  "anyhow",
  "clap",
