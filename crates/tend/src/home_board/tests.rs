@@ -590,3 +590,92 @@ fn the_asked_digest_reads_markdown_as_the_mac_does() {
     );
     assert_eq!(digest("word word word", 9).as_deref(), Some("word\u{2026}"));
 }
+
+/// apps/shared/Design/COUNTS.md: one meaning per number, the same on
+/// every client.
+#[test]
+fn counts_have_one_meaning_each() {
+    let finished = |session: &str| {
+        json!({"agent_session_id": session, "kind": "claude_code", "pane": "%3", "state": "idle",
+               "last_prompt": "fix toast", "last_response": "done", "state_entered_at": at(10)})
+    };
+    let decisions = vec![
+        json!({
+            "alias": "mba", "local": true, "control": true, "decides_reviews": true,
+            "subject_check": true,
+            "queue": {"items": [
+                {"kind": "human_request", "request_id": "live", "body": "merge?", "created_at": at(30), "from_session_id": "a"},
+                {"kind": "human_request", "request_id": "gone", "body": "deploy?", "created_at": at(3000), "from_session_id": "b",
+                 "unanswerable": {"cause": "pane_gone", "episode": "ep1", "since": at(1600), "pane": "%9"}},
+            ], "truncated": true, "unanswerable_count": 3},
+        }),
+        // Another host that does not take review decisions from here.
+        json!({
+            "alias": "mini", "local": false, "control": true, "decides_reviews": false,
+            "queue": {"items": [
+                {"kind": "review", "id": "rv", "summary": "ship?", "requested_at": at(20), "target": {"kind": "session", "session_id": "x"}},
+            ]},
+        }),
+    ];
+    let hosts = vec![host(
+        "mba",
+        true,
+        vec![
+            agent("w", "%1", "working", "port", 5),
+            finished("d1"),
+            finished("d2"),
+        ],
+        vec![],
+    )];
+    let first = board(BoardInput {
+        hosts: hosts.clone(),
+        decisions: decisions.clone(),
+        ..Default::default()
+    });
+    let key = items(&first, "finished")[0]["review_key"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let b = board(BoardInput {
+        hosts,
+        decisions,
+        reviewed: Some(HashSet::from([key])),
+        ..Default::default()
+    });
+    let counts = &b["counts"];
+    // Your turn: the live question and the other host's review, not the
+    // question nobody can answer. The badge says this number.
+    assert_eq!(counts["your_turn"], 2, "{counts}");
+    assert_eq!(counts["your_turn"], b["lanes"]["needs_you"]["count"]);
+    // The other host's review is listed but not decidable from here.
+    assert_eq!(counts["actionable"], 1);
+    // One listed, three by the host's exact count.
+    assert_eq!(counts["cant_answer"], 3);
+    assert_eq!(counts["in_progress"], 1);
+    // Two finished, one set aside with Looks Good.
+    assert_eq!(counts["finished"], 1);
+    assert_eq!(counts["reviewed"], 1);
+    // mba's queue was cut: the numbers are not all there is.
+    assert_eq!(counts["coverage"], "partial");
+}
+
+#[test]
+fn counts_are_complete_when_every_queue_was_read_whole() {
+    let b = board(BoardInput {
+        decisions: vec![json!({
+            "alias": "mba", "local": true, "control": true,
+            "queue": {"items": [], "truncated": false}, "unavailable": [],
+        })],
+        ..Default::default()
+    });
+    assert_eq!(b["counts"]["coverage"], "complete");
+    assert_eq!(b["counts"]["your_turn"], 0);
+    let unread = board(BoardInput {
+        decisions: vec![json!({
+            "alias": "mini", "local": false, "covers": [],
+            "unavailable": ["host is offline"],
+        })],
+        ..Default::default()
+    });
+    assert_eq!(unread["counts"]["coverage"], "partial");
+}

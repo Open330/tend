@@ -1622,6 +1622,76 @@ fn decision_json(decision: &Decision) -> Value {
     })
 }
 
+/// Home's numbers, each with one meaning on every client
+/// (apps/shared/Design/COUNTS.md).
+///
+/// - `your_turn`: Your turn's cards, decisions and units, without the
+///   questions nobody can answer. Your turn never folds, so this is also
+///   every card the lane shows. The badge.
+/// - `actionable`: of those, the ones the viewer can decide from here (a
+///   decision on another host that does not take them is not).
+/// - `cant_answer`: the questions nobody can answer, at least as many as
+///   are listed (a host's exact count when it has one).
+/// - `in_progress`: In progress's units, folded ones included.
+/// - `finished`: Finished's units not set aside with Looks Good, folded
+///   ones included; `reviewed` counts the ones set aside. Decided history
+///   is never counted.
+/// - `coverage`: `complete`, or `partial` when a host's queue could not be
+///   read or was cut, so a client never shows a partial number as all.
+fn counts_json(
+    turn: &[TurnEntry],
+    units: &[Unit],
+    reviewed: Option<&HashSet<String>>,
+    input: &BoardInput,
+) -> Value {
+    let unanswerable = |item: &Value| item.pointer("/entry/unanswerable").is_some();
+    let your_turn = turn.iter().filter(|entry| !unanswerable(&entry.4)).count();
+    let actionable = turn
+        .iter()
+        .filter(|entry| !unanswerable(&entry.4))
+        .filter(|entry| entry.4.get("actionable").and_then(Value::as_bool) != Some(false))
+        .count();
+    let listed: HashMap<&str, usize> = turn.iter().filter(|entry| unanswerable(&entry.4)).fold(
+        HashMap::new(),
+        |mut by_host, entry| {
+            let host = entry.4.get("host").and_then(Value::as_str).unwrap_or("");
+            *by_host.entry(host).or_default() += 1;
+            by_host
+        },
+    );
+    let mut cant_answer: usize = listed.values().sum();
+    for section in &input.decisions {
+        let host = str_of(section, "alias").unwrap_or("");
+        let exact = section
+            .pointer("/queue/unanswerable_count")
+            .and_then(Value::as_u64)
+            .and_then(|n| usize::try_from(n).ok());
+        if let Some(exact) = exact {
+            let shown = listed.get(host).copied().unwrap_or(0);
+            cant_answer += exact.saturating_sub(shown);
+        }
+    }
+    let lane = |lane: Lane| units.iter().filter(move |u| u.lane == lane);
+    let is_reviewed =
+        |u: &Unit| reviewed.is_some_and(|set| set.contains(&review_key(&u.id, &u.revision)));
+    let partial = input.decisions.iter().any(|section| {
+        section.pointer("/queue/truncated").and_then(Value::as_bool) == Some(true)
+            || section
+                .get("unavailable")
+                .and_then(Value::as_array)
+                .is_some_and(|reasons| !reasons.is_empty())
+    });
+    json!({
+        "your_turn": your_turn,
+        "actionable": actionable,
+        "cant_answer": cant_answer,
+        "in_progress": lane(Lane::Running).count(),
+        "finished": lane(Lane::Finished).filter(|u| !is_reviewed(u)).count(),
+        "reviewed": lane(Lane::Finished).filter(|u| is_reviewed(u)).count(),
+        "coverage": if partial { "partial" } else { "complete" },
+    })
+}
+
 /// Items of one lane grouped by project, a project where its first item
 /// is, tend's own asks last in their own group.
 fn grouped(items: Vec<(Option<String>, bool, Value)>) -> Vec<Value> {
@@ -1804,6 +1874,7 @@ pub fn build(input: &BoardInput) -> Value {
         .iter()
         .filter(|entry| entry.4.pointer("/entry/unanswerable").is_none())
         .count();
+    let counts = counts_json(&turn, &units, reviewed, input);
     let needs_you = grouped(
         turn.into_iter()
             .map(|(system, _, _, repo, item)| (repo, system, item))
@@ -1839,6 +1910,10 @@ pub fn build(input: &BoardInput) -> Value {
         "backlog": backlog_json(input, &units),
         "projects": projects,
         "reviewed_marks": input.reviewed.is_some(),
+        // The numbers every client shows, one meaning each (PARITY P3,
+        // apps/shared/Design/COUNTS.md): a lane header says its count and
+        // the badge says `your_turn`.
+        "counts": counts,
         // What each host's queue covers and could not read, so a client can
         // tell an empty Your turn from one it could not see.
         "decision_hosts": input.decisions.iter().map(|section| json!({

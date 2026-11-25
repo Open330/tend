@@ -550,6 +550,14 @@ Home's lanes are computed in tendd, once for every client
   it), and `result`, the agent's last response or else its recap, cut to
   4,000 characters with `result_truncated` set when it was cut.
 - **Backlog.** Queued Work that is not running is listed in `backlog`.
+- **Counts.** `counts` holds the numbers every client shows, one meaning
+  each (`apps/shared/Design/COUNTS.md`): `your_turn` (Your turn's header
+  and the badge, without questions nobody can answer), `actionable`,
+  `cant_answer` (at least as many as listed, a host's exact count when it
+  has one), `in_progress`, `finished` (not set aside with Looks Good),
+  `reviewed`, and `coverage` (`complete`, or `partial` when a host's queue
+  could not be read or was cut). `/api/device/home` carries the same
+  `counts`, uncut. A lane's own `count` stays as before for older clients.
 
 Words a client owns (state labels, the fixed headlines such as "Waiting on
 claude · mini: …") come back as `{"key": …, …}` objects, so each client

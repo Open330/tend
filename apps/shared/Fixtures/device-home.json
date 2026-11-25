@@ -11,6 +11,15 @@
       "workspace": "tend"
     }
   ],
+  "counts": {
+    "actionable": 2,
+    "cant_answer": 0,
+    "coverage": "complete",
+    "finished": 2,
+    "in_progress": 2,
+    "reviewed": 0,
+    "your_turn": 2
+  },
   "decided": [
     {
       "alias": "local",
