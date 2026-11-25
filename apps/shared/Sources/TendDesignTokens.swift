@@ -25,9 +25,9 @@ enum TendDesignTokens {
     static let hover = TendTokenColor(light: 0x000000, lightAlpha: 0.05, dark: 0xFFFFFF, darkAlpha: 0.07)
     static let pressed = TendTokenColor(light: 0x000000, lightAlpha: 0.09, dark: 0xFFFFFF, darkAlpha: 0.12)
     static let segmentTrack = TendTokenColor(light: 0x000000, lightAlpha: 0.055, dark: 0xFFFFFF, darkAlpha: 0.06)
-    static let text = TendTokenColor(light: 0x000000, lightAlpha: 0.85, dark: 0xFFFFFF, darkAlpha: 0.85)
-    static let textSecondary = TendTokenColor(light: 0x000000, lightAlpha: 0.5, dark: 0xFFFFFF, darkAlpha: 0.55)
-    static let textTertiary = TendTokenColor(light: 0x000000, lightAlpha: 0.26, dark: 0xFFFFFF, darkAlpha: 0.25)
+    static let text = TendTokenColor(light: 0x000000, lightAlpha: 0.86, dark: 0xFFFFFF, darkAlpha: 0.88)
+    static let textSecondary = TendTokenColor(light: 0x000000, lightAlpha: 0.65, dark: 0xFFFFFF, darkAlpha: 0.65)
+    static let textTertiary = TendTokenColor(light: 0x000000, lightAlpha: 0.55, dark: 0xFFFFFF, darkAlpha: 0.52)
     static let accent = TendTokenColor(light: 0x007AFF, lightAlpha: 1, dark: 0x007AFF, darkAlpha: 1)
     static let orange = TendTokenColor(light: 0xFF8D28, lightAlpha: 1, dark: 0xFF9230, darkAlpha: 1)
     static let blue = TendTokenColor(light: 0x0088FF, lightAlpha: 1, dark: 0x0091FF, darkAlpha: 1)
@@ -65,7 +65,7 @@ enum TendDesignTokens {
     /// Type sizes in points.
     enum Size {
         static let title: Double = 17
-        static let cardTitle: Double = 14.5
+        static let cardTitle: Double = 14
         static let inspectorTitle: Double = 16
         static let now: Double = 13.5
         static let body: Double = 13
@@ -83,13 +83,13 @@ enum TendDesignTokens {
         static let activityBarWidth: Double = 46
         static let controlRadius: Double = 4
         static let panelRadius: Double = 6
-        static let buttonRadius: Double = 5
+        static let buttonRadius: Double = 6
         static let buttonHeight: Double = 26
         static let buttonHeightSmall: Double = 22
         static let optionRadius: Double = 6
         static let choiceRadius: Double = 7
-        static let cardRadius: Double = 8
-        static let laneRadius: Double = 9
+        static let cardRadius: Double = 10
+        static let laneRadius: Double = 12
         static let stripeWidth: Double = 5
         static let insetRadius: Double = 6
         static let insetPadding: Double = 9
@@ -154,8 +154,8 @@ enum TendDesignTokens {
 
         // Inks
         static let inkLabel = TendTokenColor(light: 0x000000, lightAlpha: 0.86, dark: 0xFFFFFF, darkAlpha: 0.88)
-        static let inkSecondary = TendTokenColor(light: 0x000000, lightAlpha: 0.55, dark: 0xFFFFFF, darkAlpha: 0.58)
-        static let inkTertiary = TendTokenColor(light: 0x000000, lightAlpha: 0.45, dark: 0xFFFFFF, darkAlpha: 0.42)
+        static let inkSecondary = TendTokenColor(light: 0x000000, lightAlpha: 0.65, dark: 0xFFFFFF, darkAlpha: 0.65)
+        static let inkTertiary = TendTokenColor(light: 0x000000, lightAlpha: 0.55, dark: 0xFFFFFF, darkAlpha: 0.52)
         static let inkHairline = TendTokenColor(light: 0x000000, lightAlpha: 0.08, dark: 0xFFFFFF, darkAlpha: 0.08)
         static let inkControl = TendTokenColor(light: 0x000000, lightAlpha: 0.05, dark: 0xFFFFFF, darkAlpha: 0.08)
         static let inkTrack = TendTokenColor(light: 0x000000, lightAlpha: 0.16, dark: 0xFFFFFF, darkAlpha: 0.2)

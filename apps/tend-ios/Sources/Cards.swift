@@ -326,8 +326,8 @@ struct InsetBox<Content: View>: View {
         VStack(alignment: .leading, spacing: 7) { content }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(token: TendDesignTokens.inset), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Color(token: TendDesignTokens.insetBorder)))
+            .background(Color(token: TendDesignTokens.inset), in: RoundedRectangle(cornerRadius: CGFloat(TendDesignTokens.Metric.insetRadius), style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: CGFloat(TendDesignTokens.Metric.insetRadius), style: .continuous).strokeBorder(Color(token: TendDesignTokens.insetBorder)))
     }
 }
 

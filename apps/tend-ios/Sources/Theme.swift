@@ -73,24 +73,23 @@ enum TendSurface {
     /// The attention stripe's width (`stripe-width`).
     static let stripeWidth = CGFloat(TendDesignTokens.Metric.stripeWidth)
 
-    static let cardRadius: CGFloat = 10
-    static let laneRadius: CGFloat = 12
-    static let controlRadius: CGFloat = 8
+    // One radius set on every surface (tokens.json, PARITY P5).
+    static let cardRadius = CGFloat(TendDesignTokens.Metric.cardRadius)
+    static let laneRadius = CGFloat(TendDesignTokens.Metric.laneRadius)
+    static let controlRadius = CGFloat(TendDesignTokens.Metric.buttonRadius)
 }
 
-/// Quieter text, readable on a phone. The Mac's text-secondary and
-/// text-tertiary tokens measure about 4:1 and 1.9:1 on a white card (iOS's
-/// own secondary and tertiary label styles 3.4:1 and 1.7:1), under the
-/// 4.5:1 that small text needs; on a phone outdoors they wash out. These
-/// keep the same order at 4.5:1 or better on a card and on the lane, in
-/// both schemes.
+/// Quieter text, readable on a phone and on every other surface: the
+/// shared `text-secondary` and `text-tertiary` (tokens.json, PARITY P5),
+/// which read at 4.5:1 or more on every card, lane and Your turn's fill in
+/// both schemes, in order (crates/tend/tests-js/design-tokens.test.mjs).
+/// They were this app's own values first; the Mac and the web now share
+/// them.
 enum TendInk {
-    /// Explanations, meta rows, subtitles: #5C5C5C, 6.7:1 on white and
-    /// 6.3:1 on the lane; #B0B0B0, 7.6:1 on #1F1F1F and 7.1:1 on #252526.
-    static let secondary = Color.tend(light: 0x5C5C5C, dark: 0xB0B0B0)
-    /// Times, counts, hints: #6E6E6E, 5.1:1 on white and 4.8:1 on the
-    /// lane; #8E8E8E, 5.0:1 on #1F1F1F and 4.7:1 on #252526.
-    static let tertiary = Color.tend(light: 0x6E6E6E, dark: 0x8E8E8E)
+    /// Explanations, meta rows, subtitles.
+    static let secondary = Color(token: TendDesignTokens.textSecondary)
+    /// Times, counts, hints.
+    static let tertiary = Color(token: TendDesignTokens.textTertiary)
 }
 
 /// Type roles (`TendType` plus the weights the Mac views use).
