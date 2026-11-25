@@ -849,6 +849,9 @@ const UNIT_FIELDS: &[&str] = &[
     "empty_session",
     "recent",
     "reviewed",
+    // Its Looks Good key (a digest of id and revision): the app sends it
+    // back so a mark never accepts a result that changed since.
+    "review_key",
     "requested_by_person",
 ];
 

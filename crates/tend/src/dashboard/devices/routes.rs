@@ -18,6 +18,7 @@
 //! | `POST /api/device/capture` | that device, `operate` | one agent's recent output |
 //! | `GET /api/device/work-options` | that device, `operate` | a host's pipelines and projects |
 //! | `POST /api/device/work` | that device, `operate` | start new work (create-only) |
+//! | `POST /api/device/home/reviewed` | that device, `operate` | Looks Good on a finished unit, checked against the board |
 //!
 //! The decision routes accept a device token through the dashboard's
 //! decision gate (`server.rs`), not here. Requests, approvals, issued
@@ -142,6 +143,11 @@ pub(in crate::dashboard) fn operate_routes(state: AppState) -> Router<AppState> 
         .route(
             "/api/device/work",
             post(super::operate::work).layer(DefaultBodyLimit::max(16 * 1024)),
+        )
+        // Looks Good on a finished unit, as Home's operator route does it.
+        .route(
+            "/api/device/home/reviewed",
+            post(super::super::home::reviewed_handler).layer(DefaultBodyLimit::max(1024)),
         )
         .layer(middleware::from_fn_with_state(state.clone(), operate_only))
         .layer(middleware::from_fn_with_state(state, device_only))

@@ -160,12 +160,17 @@ fn refusal(status: StatusCode, message: &str) -> Response {
 /// unit that changes after the mark shows again. The unit, its target and
 /// its key come from the board tendd builds now; the person's `review_key`
 /// only has to match it.
+///
+/// An `operate` device marks the same way (`POST /api/device/home/reviewed`,
+/// PARITY P6): the same board check, the same record, its own name in the
+/// record and the audit.
 pub(super) async fn reviewed_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
+    device: Option<axum::Extension<super::devices::DeviceAuth>>,
     Json(body): Json<Reviewed>,
 ) -> Response {
-    let (by, account) = super::decisions::operator_identity(&state, &headers, None);
+    let (by, account) = super::decisions::operator_identity(&state, &headers, device.as_deref());
     let board = board(&state, DEFAULT_LIMIT).await;
     let (status, outcome, result) = match finished_unit(&board, &body.id) {
         None => (

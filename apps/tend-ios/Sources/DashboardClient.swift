@@ -79,6 +79,8 @@ enum DashboardError: Error, Equatable, LocalizedError {
     case notAllowed
     /// The dashboard does not allow starting work (`allow_work_start`).
     case workStartOff
+    /// Looks Good on a result that changed since it was shown (409).
+    case resultChanged
 
     var errorDescription: String? {
         switch self {
@@ -90,6 +92,7 @@ enum DashboardError: Error, Equatable, LocalizedError {
         case .undecodable(let message): String(localized: "Unexpected answer from the dashboard: \(message)")
         case .notAllowed: String(localized: "This device may only decide. Pair it again with hosts and new work to see this.")
         case .workStartOff: String(localized: "Starting work is turned off on this dashboard ([dashboard] allow_work_start).")
+        case .resultChanged: String(localized: "This result changed since it was shown; look again.")
         }
     }
 }
@@ -578,6 +581,19 @@ struct DashboardClient: Sendable {
         if status == 403 { throw DashboardError.notAllowed }
         try check(status, data)
         return try decode(DeviceHome.self, data)
+    }
+
+    /// `POST /api/device/home/reviewed`: Looks Good on a finished unit, for
+    /// the result named by `reviewKey`. 409 means it changed since it was
+    /// shown; 404 that it left the board; 403 that this device only decides.
+    func markReviewed(id: String, reviewKey: String) async throws {
+        let body: [String: Any] = ["id": id, "review_key": reviewKey]
+        let (status, data) = try await send("POST", "/api/device/home/reviewed", body: body, authorized: true)
+        switch status {
+        case 403: throw DashboardError.notAllowed
+        case 409: throw DashboardError.resultChanged
+        default: try check(status, data)
+        }
     }
 
     /// `POST /api/device/capture`: the recent output of one agent's pane,

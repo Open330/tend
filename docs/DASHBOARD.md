@@ -618,7 +618,11 @@ two scopes:
   host and session), decisions exactly as the queue lists them, units as
   `"kind": "unit"`, what was decided in `decided` (with each host's
   `truncated`), and the planned Work in `backlog` (title, line, priority,
-  pipeline, project; no ticket reference). A device only shows the
+  pipeline, project; no ticket reference). Its finished units carry `review_key`, and
+  `POST /api/device/home/reviewed` `{"id", "review_key"}` marks one Looks
+  Good exactly as Home's `/api/home/reviewed` does: the unit must be on
+  the board tendd builds now with that key (else 404, or 409 when it
+  changed since), the record names the device, and the audit says so. A device only shows the
   backlog: starting a planned Work names an existing Work, which only the
   operator routes do. `GET /api/device` lists what the dashboard serves the
   device in `features` (`home` always, `capture` and `work` when Fleet

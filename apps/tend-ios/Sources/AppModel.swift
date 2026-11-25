@@ -255,6 +255,11 @@ final class AppModel {
     /// dashboard serves it; then the lanes, Your turn included, come from
     /// it, as on the Mac. nil otherwise: lanes from the queue and Fleet.
     private(set) var board: DeviceHome?
+    /// Looks Good marks tendd confirmed (unit id to review key) that no
+    /// board has shown yet: held over the board, as the Mac and the web
+    /// do, until a board shows the unit reviewed, with another key, or
+    /// not at all. A failed read after a mark never brings its card back.
+    private(set) var heldMarks: [String: String] = [:]
     /// What this device may do, as the dashboard last said.
     private(set) var scope: DeviceScope = .decide
     /// Why the hosts could not be read (the queue may still be fine).
@@ -358,7 +363,7 @@ final class AppModel {
     /// Whether Home reads the daemon's board.
     var readsBoard: Bool { operates && features.contains("home") }
     /// The board, only while this device may read it.
-    var visibleBoard: DeviceHome? { readsBoard ? board : nil }
+    var visibleBoard: DeviceHome? { readsBoard ? board?.holding(heldMarks) : nil }
 
     /// Re-read what the dashboard says this device is and may do. Scope
     /// only ever narrows for one key: an answer can never widen it, and an
@@ -734,6 +739,7 @@ final class AppModel {
         history = []
         fleet = nil
         board = nil
+        heldMarks = [:]
         fleetProblem = nil
         features = []
         scope = .decide
@@ -866,6 +872,8 @@ final class AppModel {
         do {
             let read = try await client.home()
             guard session == mine, capability == generation, readsBoard else { return }
+            let held = heldMarks.filter { read.awaitsMark(id: $0.key, key: $0.value) }
+            if held != heldMarks { heldMarks = held }
             if board != read { board = read }
             loaded = true
             problem = nil
@@ -884,6 +892,7 @@ final class AppModel {
     /// Your turn waits for it instead of showing an empty queue as clear.
     private func leaveBoard() {
         board = nil
+        heldMarks = [:]
         hosts = []
         loaded = false
         refreshAgain = refreshing
@@ -898,6 +907,7 @@ final class AppModel {
         features = []
         fleet = nil
         board = nil
+        heldMarks = [:]
         fleetProblem = DashboardError.notAllowed.localizedDescription
         if var pairing {
             pairing.scope = .decide
@@ -1036,6 +1046,61 @@ final class AppModel {
         let host = decision.hostIsLocal ? nil : decision.host
         return await act(decision, done: declined ? String(localized: "Declined.") : String(localized: "Answered.")) {
             try await $0.answer(requestID: entry.requestID, answer: text, declined: declined, host: host)
+        }
+    }
+
+    // MARK: Looks Good
+
+    /// Looks Good is offered on a finished unit not yet set aside, with
+    /// the key of the result shown, on a device that reads the board.
+    func canMarkReviewed(_ unit: BoardUnit) -> Bool {
+        readsBoard && unit.lane == .finished && !unit.reviewed && unit.reviewKey != nil
+    }
+
+    /// The unit a detail opened from `snapshot` may mark: the one the
+    /// board lists now, finished with the same review key, not yet set
+    /// aside. nil once it left the board, changed or was marked.
+    func liveReviewable(_ snapshot: BoardUnit) -> BoardUnit? {
+        guard let board = visibleBoard else { return nil }
+        for case .unit(let live) in board.items(.finished) where live.id == snapshot.id {
+            return live.reviewKey == snapshot.reviewKey && canMarkReviewed(live) ? live : nil
+        }
+        return nil
+    }
+
+    /// The busy and failure key of a unit's Looks Good.
+    static func reviewSlot(_ unit: BoardUnit) -> String { "unit/" + unit.id }
+
+    /// Looks Good: set this result aside until it changes again. On
+    /// success the mark is held here and the board read again: the unit
+    /// folds under "Show N reviewed" even if that read fails. When it
+    /// changed since it was shown (409) or left the board (404, it went
+    /// back to work), that is said and the board is read again; on any
+    /// failure nothing is marked.
+    func markReviewed(_ unit: BoardUnit) async -> Bool {
+        guard canMarkReviewed(unit), let key = unit.reviewKey, let client else { return false }
+        let slot = Self.reviewSlot(unit)
+        guard !busy.contains(slot) else { return false }
+        let mine = session
+        busy.insert(slot)
+        failures[slot] = nil
+        defer { busy.remove(slot) }
+        do {
+            try await client.markReviewed(id: unit.id, reviewKey: key)
+            guard session == mine, readsBoard else { return false }
+            heldMarks[unit.id] = key
+            await refresh()
+            return true
+        } catch {
+            guard session == mine else { return false }
+            let message = handle(error, session: mine)
+            guard session == mine else { return false }
+            failures[slot] = message
+            switch error {
+            case DashboardError.resultChanged, DashboardError.server(404, _): await refresh()
+            default: break
+            }
+            return false
         }
     }
 

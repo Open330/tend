@@ -701,6 +701,16 @@
         }
       }
     },
+    "Closed by tend, asker gone: %@": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "질문한 에이전트가 없어 tend가 닫음: %@"
+          }
+        }
+      }
+    },
     "Closed by tend: %@": {
       "localizations": {
         "ko": {
@@ -757,16 +767,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "tend가 닫음: 대상 세션이 사라졌습니다 (%@)"
-          }
-        }
-      }
-    },
-    "Closed by tend, asker gone: %@": {
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "질문한 에이전트가 없어 tend가 닫음: %@"
           }
         }
       }
@@ -1327,6 +1327,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "제한됨"
+          }
+        }
+      }
+    },
+    "Looks Good": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "확인 완료"
           }
         }
       }
@@ -1997,6 +2007,16 @@
         }
       }
     },
+    "Set this aside until it changes again": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "다시 바뀔 때까지 보드에서 치워 둡니다"
+          }
+        }
+      }
+    },
     "Settings": {
       "localizations": {
         "ko": {
@@ -2453,6 +2473,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "이 호스트는 Fleet 스냅숏에 없습니다."
+          }
+        }
+      }
+    },
+    "This result changed since it was shown; look again.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "표시된 뒤 이 결과가 바뀌었습니다. 다시 확인해 주세요."
           }
         }
       }
