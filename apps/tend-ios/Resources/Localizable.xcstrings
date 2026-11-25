@@ -751,6 +751,16 @@
         }
       }
     },
+    "Closed by tend, asker gone: %@": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "질문한 에이전트가 없어 tend가 닫음: %@"
+          }
+        }
+      }
+    },
     "Closed, asker gone: %@": {
       "localizations": {
         "ko": {

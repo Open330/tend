@@ -189,7 +189,7 @@ test("history: tend's own closures and a person's close say why", () => {
   assert.equal(closed.reason, "stale");
   assert.equal(closed.reasonText, "stale: nobody left to act on it");
   const declined = finished.find((u) => u.outcome === "declined");
-  assert.deepEqual(declined.closure, { cause: "pane_gone", surface: "web" });
+  assert.deepEqual(declined.closure, { cause: "pane_gone", surface: "web", by: "person" });
   assert.equal(decidedCard(history.hosts[0].history.items[0], now).label, "closed by tend");
 });
 

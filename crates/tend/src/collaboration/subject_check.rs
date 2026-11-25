@@ -1356,6 +1356,9 @@ impl CollaborationStore {
     ) -> Result<CloseOutcome, CollaborationError> {
         let _transaction = self.transaction_lock.lock().await;
         let snapshot = self.requests.read().await;
+        // The candidates are read with the registry already held, at the
+        // time the rechecks and the closures use.
+        let hold = registry.hold().await;
         let now = OffsetDateTime::now_utc();
         let chosen: Vec<CloseItem>;
         let items = if let Some(items) = items {
@@ -1380,7 +1383,6 @@ impl CollaborationStore {
         // held still from this read through the commit below, so a resume,
         // a hook or a scan lands either before this evaluation or after the
         // commit, never in between.
-        let hold = registry.hold().await;
         let agents = hold.agents();
         let observations = hold.observations();
         let scan = observations.scan();

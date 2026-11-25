@@ -70,8 +70,9 @@ const COLLABORATION_KEYS: &[&str] = &[
     "max_message_bytes",
     "retention_days",
 ];
-/// `hook_transport` is a per-host rollout choice, never copied to another.
-const COLLABORATION_LOCAL: &[&str] = &["path", "hook_transport"];
+/// `hook_transport` is a per-host rollout choice, never copied to another;
+/// so is `close_unanswerable_after`, which a host older than it would refuse.
+const COLLABORATION_LOCAL: &[&str] = &["path", "hook_transport", "close_unanswerable_after"];
 
 /// `[ticket]` scalars; `source.<name>` entries travel whole. The working
 /// directory and extra roots are paths on this machine.

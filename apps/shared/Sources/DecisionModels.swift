@@ -533,27 +533,36 @@ struct TendHumanAnswerEntry: Decodable, Hashable, Sendable {
     }
 }
 
-/// Why a person closed a question: its asker was gone (Close all).
+/// Why a question was closed because its asker was gone: a person's Close
+/// all, or tend once the asker was gone `close_unanswerable_after`.
 struct TendQuestionClosure: Decodable, Hashable, Sendable {
     var cause: TendUnanswerable.Cause
-    /// `cli`, `web`, `mac` or `ios`.
+    /// `cli`, `web`, `mac` or `ios`; `tend` when tend closed it.
     var surface: String
+    /// `person` or `tend`.
+    var by: String
 
-    enum CodingKeys: String, CodingKey { case cause, surface }
+    enum CodingKeys: String, CodingKey { case cause, surface, by }
 
-    init(cause: TendUnanswerable.Cause, surface: String) {
+    init(cause: TendUnanswerable.Cause, surface: String, by: String = "person") {
         self.cause = cause
         self.surface = surface
+        self.by = by
     }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         cause = TendUnanswerable.Cause((try? values.decode(String.self, forKey: .cause)) ?? "")
         surface = (try? values.decodeIfPresent(String.self, forKey: .surface)) ?? ""
+        by = (try? values.decodeIfPresent(String.self, forKey: .by)) ?? "person"
     }
 
-    /// `Closed: Pane gone`.
-    var text: String { String(localized: "Closed, asker gone: \(cause.text)") }
+    /// `Closed: Pane gone`, or `Closed by tend, asker gone: Pane gone`.
+    var text: String {
+        by == "tend"
+            ? String(localized: "Closed by tend, asker gone: \(cause.text)")
+            : String(localized: "Closed, asker gone: \(cause.text)")
+    }
 }
 
 /// An item tendd opened itself and closed without an answer, with why
