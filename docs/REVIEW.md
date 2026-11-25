@@ -265,6 +265,12 @@ ignore both and list the item as before.
   questions is turned off; set [review] close_unanswerable = true") and
   `hello` does not advertise `close_unanswerable_v1`, so surfaces show no
   button. Folding and Keep work either way.
+- **Closed by tend after a week.** An agent's own question whose asker has
+  been gone `[collaboration] close_unanswerable_after` (default `7d`, from
+  `episode_since`) is closed by tendd's hourly pass the way Close all closes
+  it, with the same rechecks in one transaction, regardless of `[review]
+  close_unanswerable`. Its closure says `by: "tend"`, `surface: "tend"`,
+  `gone_since` and `after`. Keep wins; `"off"` disables it.
 
 Both are operator actions: the IPC calls need the console origin, and the
 routes are authorized like the other decision routes (an operator on the web

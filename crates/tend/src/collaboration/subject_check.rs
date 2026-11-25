@@ -216,16 +216,41 @@ pub struct QuestionClosure {
     pub reason: ClosureReason,
     pub cause: GoneCause,
     pub episode: String,
-    /// Always `person`: nothing closes these without one.
+    /// `person`, or `tend` for an asker gone longer than `[collaboration]
+    /// close_unanswerable_after`.
     pub by: String,
-    /// Where: `cli`, `web`, `mac` or `ios`.
+    /// Where: `cli`, `web`, `mac` or `ios`; `tend` when tend closed it.
     pub surface: String,
     /// The signed-in operator or paired device, when the surface knows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
     pub at: OffsetDateTime,
+    /// When tend closed it: since when the asker was gone.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "time::serde::rfc3339::option"
+    )]
+    pub gone_since: Option<OffsetDateTime>,
+    /// When tend closed it: the setting it applied (`7d`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<String>,
 }
+
+/// Who closes unanswerable questions in [`CollaborationStore::close_pairs`].
+enum Closer<'a> {
+    /// A person's Close all, from `surface`.
+    Person {
+        surface: &'a str,
+        actor: Option<String>,
+    },
+    /// tend, for agents' questions whose asker has been gone `after`.
+    Tend { after: time::Duration },
+}
+
+/// The default of `[collaboration] close_unanswerable_after`.
+pub const CLOSE_UNANSWERABLE_AFTER: time::Duration = time::Duration::days(7);
 
 /// One `(request id, episode)` pair Close all sends.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -288,6 +313,8 @@ pub(super) struct SubjectRuntime {
     facts: std::sync::Mutex<Vec<SubjectFact>>,
     pass: std::sync::Mutex<Pass>,
     close_enabled: std::sync::atomic::AtomicBool,
+    /// `[collaboration] close_unanswerable_after`; `None` is off.
+    close_after: std::sync::Mutex<Option<time::Duration>>,
 }
 
 impl SubjectRuntime {
@@ -956,6 +983,19 @@ impl CollaborationStore {
             .store(enabled, std::sync::atomic::Ordering::SeqCst);
     }
 
+    /// Set `[collaboration] close_unanswerable_after`: tend closes an
+    /// agent's question whose asker has been gone this long. `None` is off.
+    pub fn set_close_unanswerable_after(&self, after: Option<time::Duration>) {
+        if let Ok(mut held) = self.subject.close_after.lock() {
+            *held = after;
+        }
+    }
+
+    #[must_use]
+    pub fn close_unanswerable_after(&self) -> Option<time::Duration> {
+        self.subject.close_after.lock().ok().and_then(|held| *held)
+    }
+
     #[must_use]
     pub fn close_unanswerable_enabled(&self) -> bool {
         self.subject
@@ -1282,8 +1322,60 @@ impl CollaborationStore {
                 SURFACES.join(", ")
             )));
         }
+        self.close_pairs(Some(items), registry, &Closer::Person { surface, actor })
+            .await
+    }
+
+    /// `[collaboration] close_unanswerable_after`: close, as Close all
+    /// would, every agent's own question whose asker has been established
+    /// gone that long (since the episode began) and that the person did not
+    /// keep. Each is recorded as closed by tend, with the setting, and is
+    /// in `tend review history`. tend's own items are not touched here
+    /// ([`super::system_asks`] closes them). Nothing while the setting is
+    /// off. The same rechecks as Close all, in one transaction.
+    pub async fn close_long_unanswerable(
+        &self,
+        registry: &crate::state::Store,
+    ) -> Result<CloseOutcome, CollaborationError> {
+        self.ensure_enabled()?;
+        let Some(after) = self.close_unanswerable_after() else {
+            return Ok(CloseOutcome::default());
+        };
+        self.close_pairs(None, registry, &Closer::Tend { after })
+            .await
+    }
+
+    /// Close `items`, or for tend every agent's question unanswerable now,
+    /// after rechecking each inside one transaction.
+    #[allow(clippy::too_many_lines)] // every recheck of one pair sits in one transaction
+    async fn close_pairs(
+        &self,
+        items: Option<&[CloseItem]>,
+        registry: &crate::state::Store,
+        closer: &Closer<'_>,
+    ) -> Result<CloseOutcome, CollaborationError> {
         let _transaction = self.transaction_lock.lock().await;
         let snapshot = self.requests.read().await;
+        let now = OffsetDateTime::now_utc();
+        let chosen: Vec<CloseItem>;
+        let items = if let Some(items) = items {
+            items
+        } else {
+            let mut found: Vec<CloseItem> = snapshot
+                .values()
+                .filter(|request| super::system_asks::system_ask_kind(request).is_none())
+                .filter_map(|request| {
+                    let folded = self.unanswerable(request, now)?;
+                    Some(CloseItem {
+                        request_id: request.id.clone(),
+                        episode: folded.episode,
+                    })
+                })
+                .collect();
+            found.sort_by(|a, b| a.request_id.cmp(&b.request_id));
+            chosen = found;
+            &chosen
+        };
         // Lock order: the mailbox's, then the registry's. The registry is
         // held still from this read through the commit below, so a resume,
         // a hook or a scan lands either before this evaluation or after the
@@ -1300,7 +1392,6 @@ impl CollaborationStore {
             scan: scan.as_deref(),
             bindings: &bindings,
         };
-        let now = OffsetDateTime::now_utc();
         let mut outcome = CloseOutcome::default();
         let mut rows = Vec::new();
         let mut seen = std::collections::HashSet::new();
@@ -1337,6 +1428,14 @@ impl CollaborationStore {
                 outcome.skipped.push(skip("not unanswerable now"));
                 continue;
             };
+            if let Closer::Tend { after } = closer {
+                if now - unanswerable.since < *after {
+                    outcome
+                        .skipped
+                        .push(skip("its asker is not gone long enough"));
+                    continue;
+                }
+            }
             match evaluate(request, &snapshot, &inputs, &facts, now, Purpose::Close) {
                 Some(Verdict::Gone { .. }) => {}
                 Some(Verdict::Alive) => {
@@ -1359,14 +1458,29 @@ impl CollaborationStore {
                 artifacts: Vec::new(),
                 at: now,
             });
-            row.closure = Some(QuestionClosure {
-                reason: ClosureReason::SubjectGone,
-                cause: unanswerable.cause,
-                episode: item.episode.clone(),
-                by: "person".into(),
-                surface: surface.to_owned(),
-                actor: actor.clone(),
-                at: now,
+            row.closure = Some(match closer {
+                Closer::Person { surface, actor } => QuestionClosure {
+                    reason: ClosureReason::SubjectGone,
+                    cause: unanswerable.cause,
+                    episode: item.episode.clone(),
+                    by: "person".into(),
+                    surface: (*surface).to_owned(),
+                    actor: actor.clone(),
+                    at: now,
+                    gone_since: None,
+                    after: None,
+                },
+                Closer::Tend { after } => QuestionClosure {
+                    reason: ClosureReason::SubjectGone,
+                    cause: unanswerable.cause,
+                    episode: item.episode.clone(),
+                    by: "tend".into(),
+                    surface: "tend".into(),
+                    actor: None,
+                    at: now,
+                    gone_since: Some(unanswerable.since),
+                    after: Some(crate::automation::render_duration(*after)),
+                },
             });
             outcome.closed.push(row.id.clone());
             rows.push(row);
@@ -1377,11 +1491,17 @@ impl CollaborationStore {
             drop(hold);
             self.publish_change();
             for row in &rows {
-                tracing::info!(
-                    request_id = row.id,
-                    surface,
-                    "the person closed a question whose subject is gone",
-                );
+                match closer {
+                    Closer::Person { surface, .. } => tracing::info!(
+                        request_id = row.id,
+                        surface,
+                        "the person closed a question whose subject is gone",
+                    ),
+                    Closer::Tend { .. } => tracing::info!(
+                        request_id = row.id,
+                        "closed a question whose asker has been gone past close_unanswerable_after",
+                    ),
+                }
             }
         }
         Ok(outcome)

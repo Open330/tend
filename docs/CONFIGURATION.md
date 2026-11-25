@@ -542,7 +542,15 @@ max_message_bytes = 16384
 # path = "$XDG_DATA_HOME/tend/collaboration.json"
 retention_days = 90 # default; 0 retains indefinitely
 hook_transport = "off" # off | primary (per host; never synced)
+close_unanswerable_after = "7d" # default; "off" keeps them (per host)
 ```
+
+`close_unanswerable_after` closes an agent's own question once its asker
+has been established gone this long (counted from when the episode began;
+see [REVIEW.md](REVIEW.md)). It is closed as Close all closes it: the asker
+gets the reply Dismiss sends, and `tend review history` shows it as closed
+by tend. A question the person kept with `tend review keep` stays.
+At least `1h`; `"off"` leaves them for a person to close.
 
 `auto_spawn_workers` lets high-level peer calls reuse a worker or create one
 when missing. `worker_bypass_permissions` defaults to false: worker launches
