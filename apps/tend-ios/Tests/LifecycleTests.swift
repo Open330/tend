@@ -682,4 +682,63 @@ extension LifecycleTests {
             XCTAssertEqual(StubProtocol.authorized.filter { $0.path == "/api/decisions/requests/r1" }.count, 2)
         }
     }
+
+    private static let oneReview = #"{"hosts":[{"alias":"here","local":true,"unavailable":[],"queue":{"items":[{"kind":"review","id":"rev_1","target":{"kind":"agent","label":"impl"},"generation":1,"summary":"Ship it?","requested_by":{"kind":"agent","label":"impl"},"requested_at":"2026-11-19T10:00:00Z"}],"truncated":false,"unavailable":[]}}]}"#
+
+    private func reviewPayload() -> PushPayload {
+        let ref = PushRef.of(key: Self.pushKey, host: "here", kind: "review", id: "rev_1")
+        return PushPayload(userInfo: ["tend": ["v": 1, "channel": "ch_new", "host": "here", "ref": ref]], category: PushCategory.review, body: "Ship it?", subtitle: "impl")!
+    }
+
+    /// Return's reason is optional (apps/shared/Design/CARDS.md): an empty
+    /// note from the notification returns it with no note.
+    func testANotificationReturnsWithoutANote() async throws {
+        try await withPreferences(wanted: true, content: true) {
+            StubProtocol.on("/api/device", .init(status: 200, body: Self.pushDevice))
+            StubProtocol.on("/api/decisions", .init(status: 200, body: Self.oneReview))
+            StubProtocol.on("/api/decisions/reviews/rev_1", .init(status: 200, body: "{}"))
+            let model = pairedModel()
+            await model.refreshDevice()
+            model.adoptTestBinding(PushBinding(channel: "ch_new", refKey: Self.pushKey, content: true))
+            let result = await model.act(on: reviewPayload(), action: PushCategory.sendBack, text: "  ")
+            XCTAssertEqual(result, .done("Returned."))
+            let body = try XCTUnwrap(StubProtocol.bodies["/api/decisions/reviews/rev_1"])
+            let sent = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            XCTAssertEqual(sent["disposition"] as? String, "returned")
+            XCTAssertNil(sent["note"], "an empty note was sent")
+        }
+    }
+
+    /// An answer still needs text.
+    func testANotificationDoesNotSendAnEmptyAnswer() async {
+        await withPreferences(wanted: true, content: true) {
+            StubProtocol.on("/api/device", .init(status: 200, body: Self.pushDevice))
+            StubProtocol.on("/api/decisions", .init(status: 200, body: Self.oneQuestion))
+            StubProtocol.on("/api/decisions/requests/r1", .init(status: 200, body: "{}"))
+            let model = pairedModel()
+            await model.refreshDevice()
+            model.adoptTestBinding(PushBinding(channel: "ch_new", refKey: Self.pushKey, content: true))
+            let result = await model.act(on: answerPayload(), action: PushCategory.answer, text: " ")
+            XCTAssertEqual(result, .refused(.changed))
+            XCTAssertFalse(StubProtocol.seen.contains("/api/decisions/requests/r1"))
+        }
+    }
+
+    /// Decline with no reason: an empty answer marked declined, for tendd
+    /// to give the asker its standard text.
+    func testDeclineWithoutAReasonSendsAnEmptyDeclinedAnswer() async throws {
+        StubProtocol.on("/api/decisions", .init(status: 200, body: Self.oneQuestion))
+        StubProtocol.on("/api/decisions/requests/r1", .init(status: 200, body: "{}"))
+        StubProtocol.on("/api/decisions/history", .init(status: 200, body: #"{"hosts":[]}"#))
+        let model = pairedModel()
+        await model.refresh()
+        let question = try XCTUnwrap(model.pending.first)
+        let declined = await model.answer(question, text: "", declined: true)
+        XCTAssertTrue(declined)
+        let body = try XCTUnwrap(StubProtocol.bodies["/api/decisions/requests/r1"])
+        let sent = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(sent["answer"] as? String, "")
+        XCTAssertEqual(sent["declined"] as? Bool, true)
+        XCTAssertEqual(model.outcome, "Declined.")
+    }
 }

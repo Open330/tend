@@ -85,7 +85,7 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
             title: String(localized: "Return"),
             options: [.authenticationRequired, .destructive],
             textInputButtonTitle: String(localized: "Return"),
-            textInputPlaceholder: String(localized: "What should change?")
+            textInputPlaceholder: String(localized: "What should change? (optional)")
         )
         let answer = UNTextInputNotificationAction(
             identifier: PushCategory.answer,

@@ -1345,7 +1345,9 @@ extension AppModel {
                 try await client.review(id: item.id, disposition: .accepted, note: nil, option: nil, host: host, via: "notification")
                 return .done(String(localized: "Accepted."))
             case (PushCategory.sendBack, .result(let item)):
-                try await client.review(id: item.id, disposition: .returned, note: text, option: nil, host: host, via: "notification")
+                // The note is optional: an empty one returns it without.
+                let note = text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? text : nil
+                try await client.review(id: item.id, disposition: .returned, note: note, option: nil, host: host, via: "notification")
                 return .done(String(localized: "Returned."))
             case (PushCategory.answer, .question(let entry)):
                 guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .refused(.changed) }

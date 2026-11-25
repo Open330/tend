@@ -361,6 +361,62 @@ private func message(host: TendFleetHostIdentity, id: String, created: String, s
     }
 
     @MainActor
+    @Test func declineStartsItsOwnComposerAndCancelForgetsIt() {
+        let drafts = FleetDecisionDrafts()
+        let row = drafts.row(for: "q")
+        let answer = drafts.binding(for: "q")
+        answer.wrappedValue = ""
+        answer.wrappedValue = "half an answer"
+        // Decline… on the same card: the answer is not a reason.
+        row.update("", mode: .decline)
+        #expect(row.mode == .decline)
+        #expect(row.value == "")
+        drafts.binding(for: "q").wrappedValue = "not now"
+        #expect(row.mode == .decline, "typing keeps the purpose")
+        #expect(row.value == "not now")
+        // Another card's answer takes over; coming back keeps the reason.
+        drafts.binding(for: "other").wrappedValue = ""
+        #expect(row.value == nil)
+        row.update("", mode: .decline)
+        #expect(row.value == "not now")
+        // Cancel closes it and the next one opens as an answer.
+        row.update(nil)
+        #expect(row.value == nil)
+        #expect(row.mode == .answer)
+    }
+
+    @Test func aDeclineWithoutAReasonSendsTheStandardText() {
+        #expect(FleetDecisions.declineBody("") == FleetDecisions.declinedBody)
+        #expect(FleetDecisions.declineBody("  \n ") == FleetDecisions.declinedBody)
+        #expect(FleetDecisions.declineBody(" Not this release ") == "Not this release")
+        #expect(FleetDecisions.declinedBody.contains("declined"))
+        #expect(!FleetDecisions.declinedBody.contains("dismissed"))
+    }
+
+    @Test func onlyAnAnswerNeedsText() {
+        // A question's answer needs text; its reason to decline does not.
+        #expect(!FleetDecisions.canSend(.answer, isQuestion: true, text: " "))
+        #expect(FleetDecisions.canSend(.answer, isQuestion: true, text: "Merge"))
+        #expect(FleetDecisions.canSend(.decline, isQuestion: true, text: ""))
+        // Return and Accept go without a note, and send none.
+        #expect(FleetDecisions.canSend(.decline, isQuestion: false, text: ""))
+        #expect(FleetDecisions.canSend(.answer, isQuestion: false, text: ""))
+        #expect(FleetDecisions.reviewNote("") == nil)
+        #expect(FleetDecisions.reviewNote(" \n") == nil)
+        #expect(FleetDecisions.reviewNote("tests missing") == "tests missing")
+    }
+
+    @Test func theMetaLineNamesTheAskerHostAndProjectEvenOnThisMac() throws {
+        let entry = try JSONDecoder().decode(TendHumanRequestEntry.self, from: Data("""
+        {"request_id":"req_m","body":"Ship it?","from_session_id":"s1","from_pane":"%3","from_alias":"impl",
+         "created_at":"2026-11-16T01:00:00Z"}
+        """.utf8))
+        var decision = FleetDecision(humanRequest: entry, host: local)
+        decision.askerCwd = "/src/tend"
+        #expect(FleetDecisions.metaLine(decision) == "@impl · mac · tend")
+    }
+
+    @MainActor
     @Test func aRecordedRevisionTakesNoReviewCommentsOrViewedMarks() throws {
         let revision = try #require(ChangesRevision(commit: "abcdef12"))
         let model = ChangesModel(source: ChangesSource(hostAlias: "local", isLocal: true, path: "/tmp"), revision: revision)

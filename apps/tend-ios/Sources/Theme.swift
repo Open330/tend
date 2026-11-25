@@ -68,6 +68,11 @@ enum TendSurface {
     /// Meta rows (agent, project, host, time).
     static let metaText = TendInk.secondary
 
+    /// A Your-turn card's fill (`card-your-turn`).
+    static let yourTurn = Color(token: TendDesignTokens.cardYourTurn)
+    /// The attention stripe's width (`stripe-width`).
+    static let stripeWidth = CGFloat(TendDesignTokens.Metric.stripeWidth)
+
     static let cardRadius: CGFloat = 10
     static let laneRadius: CGFloat = 12
     static let controlRadius: CGFloat = 8
@@ -374,26 +379,38 @@ struct Chip: View {
 }
 
 /// A card: the Mac app's work and decision cards (workspace fill, rounded,
-/// 1 pt border; a decision card's border is orange).
+/// 1 pt border). A Your-turn card carries the attention mark of
+/// apps/shared/Design/CARDS.md: an orange stripe at its leading edge and
+/// the card-your-turn fill.
 struct CardBackground: ViewModifier {
     var stroke: Color = TendSurface.border
     var lineWidth: CGFloat = 1
+    var attention = false
 
     func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: TendSurface.cardRadius, style: .continuous)
         content
             .padding(14)
+            .padding(.leading, attention ? TendSurface.stripeWidth : 0)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(TendSurface.workspace, in: RoundedRectangle(cornerRadius: TendSurface.cardRadius, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: TendSurface.cardRadius, style: .continuous)
-                    .strokeBorder(stroke, lineWidth: lineWidth)
-            )
+            .background {
+                if attention {
+                    TendSurface.yourTurn
+                        .overlay(alignment: .leading) {
+                            TendPalette.orange.frame(width: TendSurface.stripeWidth)
+                        }
+                        .clipShape(shape)
+                } else {
+                    shape.fill(TendSurface.workspace)
+                }
+            }
+            .overlay(shape.strokeBorder(stroke, lineWidth: lineWidth))
     }
 }
 
 extension View {
-    func tendCard(stroke: Color = TendSurface.border, lineWidth: CGFloat = 1) -> some View {
-        modifier(CardBackground(stroke: stroke, lineWidth: lineWidth))
+    func tendCard(stroke: Color = TendSurface.border, lineWidth: CGFloat = 1, attention: Bool = false) -> some View {
+        modifier(CardBackground(stroke: stroke, lineWidth: lineWidth, attention: attention))
     }
 }
 

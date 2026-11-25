@@ -26,11 +26,13 @@ struct BoardGroupHeader: View {
 /// One item of a lane: a decision card, or a unit that opens its detail.
 struct BoardItemView: View {
     let item: BoardItem
+    /// The project group it is listed in, for a decision's meta row.
+    var project: String?
 
     var body: some View {
         switch item {
         case .decision(let decision):
-            DecisionCard(decision: decision)
+            DecisionCard(decision: decision, project: project)
         case .unit(let unit):
             UnitLink(unit: unit)
         }
@@ -96,7 +98,7 @@ struct BoardYourTurn: View {
         ForEach(groups) { group in
             VStack(alignment: .leading, spacing: 10) {
                 if groups.count > 1 { BoardGroupHeader(group: group) }
-                ForEach(group.items) { BoardItemView(item: $0) }
+                ForEach(group.items) { BoardItemView(item: $0, project: group.project) }
             }
         }
         CantAnswerGroup()
@@ -122,7 +124,7 @@ struct BoardLaneItems: View {
         ForEach(folded.groups) { group in
             VStack(alignment: .leading, spacing: 10) {
                 if folded.groups.count > 1 { BoardGroupHeader(group: group) }
-                ForEach(group.items) { BoardItemView(item: $0) }
+                ForEach(group.items) { BoardItemView(item: $0, project: group.project) }
             }
         }
         fold(folded.helpers, shown: $showsHelpers, show: { String(localized: "\($0) possible helper sessions") }, hide: String(localized: "Hide possible helpers"), id: "foldHelpers")

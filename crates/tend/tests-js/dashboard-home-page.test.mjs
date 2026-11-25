@@ -142,6 +142,26 @@ test("the three lanes render with the Mac's words and counts", () => {
   assert.equal(document.getElementById("rail-badge").textContent, "1");
 });
 
+test("a question offers Answer… and Decline… on the card; a reason is optional (apps/shared/Design/CARDS.md)", () => {
+  const card = find(lanes(), (n) => n.dataset?.id === "req_9");
+  const labels = [];
+  const walk = (n) => {
+    if (n.tag === "button") labels.push(n.text.trim());
+    for (const c of n.children || []) if (typeof c !== "string") walk(c);
+  };
+  walk(card);
+  assert.ok(labels.includes("Answer…") && labels.includes("Decline…"), labels.join(" | "));
+  assert.ok(labels.indexOf("Answer…") < labels.indexOf("Decline…"), "Answer… comes first");
+  find(card, (n) => n.tag === "button" && n.text.includes("Decline…")).click();
+  const fresh = find(lanes(), (n) => n.dataset?.id === "req_9");
+  const area = find(fresh, (n) => n.tag === "textarea");
+  assert.equal(area.placeholder, "Reason (optional)");
+  const decline = find(fresh, (n) => n.tag === "button" && n.text.trim() === "Decline");
+  assert.equal(decline.disabled, false, "Decline needs no reason");
+  find(fresh, (n) => n.tag === "button" && n.text.includes("Cancel")).click();
+  assert.equal(posts.length, 0, "nothing was sent");
+});
+
 test("answering sends the audited route with the operator header", async () => {
   const card = find(lanes(), (n) => n.dataset?.id === "req_9");
   find(card, (n) => n.tag === "button" && n.text.includes("Answer…")).click();

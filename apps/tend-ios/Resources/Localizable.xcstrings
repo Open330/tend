@@ -881,12 +881,12 @@
         }
       }
     },
-    "Decide this on %@; its tend cannot take decisions from here.": {
+    "Decide this on %@.": {
       "localizations": {
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "%@에서 결정하세요. 그 호스트의 tend는 여기서 보낸 결정을 받을 수 없습니다."
+            "value": "%@에서 결정하세요."
           }
         }
       }
@@ -967,6 +967,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "거절했습니다."
+          }
+        }
+      }
+    },
+    "Decline…": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "거절…"
           }
         }
       }
@@ -1471,12 +1481,12 @@
         }
       }
     },
-    "Note for the asker": {
+    "Note for the asker (optional)": {
       "localizations": {
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "요청자에게 남길 메모"
+            "value": "요청자에게 남길 메모 (선택)"
           }
         }
       }
@@ -1827,6 +1837,16 @@
         }
       }
     },
+    "Reason (optional)": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이유 (선택)"
+          }
+        }
+      }
+    },
     "Recent output": {
       "localizations": {
         "ko": {
@@ -1923,6 +1943,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "보내기"
+          }
+        }
+      }
+    },
+    "Sending…": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "보내는 중…"
           }
         }
       }
@@ -2637,12 +2667,12 @@
         }
       }
     },
-    "What should change?": {
+    "What should change? (optional)": {
       "localizations": {
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "무엇을 바꿔야 하나요?"
+            "value": "무엇을 바꿔야 하나요? (선택)"
           }
         }
       }

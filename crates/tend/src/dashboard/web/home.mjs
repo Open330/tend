@@ -272,7 +272,7 @@ function composer(unit) {
   area.rows = 2;
   area.dataset.key = key;
   area.maxLength = unit.decision === "question" ? 16384 : 1024;
-  area.placeholder = unit.decision === "question" ? S.yourAnswer : S.noteForAsker;
+  area.placeholder = mode === "decline" ? S.reasonOptional : unit.decision === "question" ? S.yourAnswer : S.noteOptional;
   area.value = state.drafts.get(key) || "";
   const row = el("div", "row end");
   const cancel = button(S.cancel, () => {
@@ -288,18 +288,27 @@ function composer(unit) {
   } else if (unit.decision === "question") {
     primary = button(S.send, () => decide(unit, questionPath, { answer: area.value }, S.answered), "btn primary");
     row.append(cancel, primary);
-  } else {
-    const accept = button(S.accept, () => {
-      const body = { disposition: "accepted" };
+  } else if (option) {
+    // An option chosen: accept with it (docs: apps/shared/Design/CARDS.md).
+    primary = button(S.accept, () => {
+      const body = { disposition: "accepted", option };
       if (area.value.trim()) body.note = area.value;
-      if (option) body.option = option;
       decide(unit, reviewPath, body, S.accepted);
-    }, "btn");
-    primary = button(S.returnVerb, () => decide(unit, reviewPath, { disposition: "returned", note: area.value }, S.returned), "btn primary");
-    row.append(cancel, accept, primary);
+    }, "btn primary");
+    row.append(cancel, primary);
+  } else {
+    // Return: the note is optional.
+    primary = button(S.returnVerb, () => {
+      const body = { disposition: "returned" };
+      if (area.value.trim()) body.note = area.value;
+      decide(unit, reviewPath, body, S.returned);
+    }, "btn primary");
+    row.append(cancel, primary);
   }
+  // Only an answer needs text: a reason or a note is optional.
+  const needsText = unit.decision === "question" && mode !== "decline";
   const sync = () => {
-    primary.disabled = !area.value.trim();
+    primary.disabled = needsText && !area.value.trim();
   };
   area.addEventListener("input", () => {
     if (area.value) state.drafts.set(key, area.value);
@@ -405,7 +414,7 @@ function answering(unit) {
   const key = cardKey(unit);
   const nodes = [];
   if (unit.actionable === false) {
-    nodes.push(el("div", "flag", unit.decision === "review" ? S.decideThere : S.observeOnly));
+    nodes.push(el("div", "flag", S.decideOn(unit.host)));
     return nodes;
   }
   if (!canDecide()) return nodes;
@@ -416,7 +425,7 @@ function answering(unit) {
       row.type = "button";
       row.title = S.optionHelp;
       row.append(el("span", "n", String(index + 1)), el("span", "t", option));
-      row.addEventListener("click", () => openComposer(unit, unit.decision === "question" ? "answer" : "return", option, option));
+      row.addEventListener("click", () => (unit.decision === "question" ? openComposer(unit, "answer", option) : openComposer(unit, "accept", null, option)));
       list.append(row);
     });
     nodes.push(list);
@@ -425,9 +434,12 @@ function answering(unit) {
     nodes.push(composer(unit));
   } else if (unit.decision === "question") {
     const row = el("div", "row");
-    row.append(unit.options.length
-      ? button(S.other, () => openComposer(unit, "answer"), "btn ghost")
-      : button(S.answer, () => openComposer(unit, "answer"), "btn"));
+    row.append(
+      unit.options.length
+        ? button(S.other, () => openComposer(unit, "answer"), "btn ghost")
+        : button(S.answer, () => openComposer(unit, "answer"), "btn"),
+      button(`${S.decline}…`, () => openComposer(unit, "decline"), "btn ghost"),
+    );
     nodes.push(row);
   } else {
     const row = el("div", "row");
@@ -442,8 +454,9 @@ function answering(unit) {
 
 function decisionMenu(unit) {
   if (unit.actionable === false || !canDecide()) return null;
+  // Decline is on the card itself; Withdraw (a review) stays in ⋯.
   return unit.decision === "question"
-    ? overflowMenu([[`${S.decline}…`, () => openComposer(unit, "decline"), "danger"]])
+    ? null
     : overflowMenu([[S.withdraw, () => decide(unit, `/api/decisions/reviews/${encodeURIComponent(unit.id)}`, { disposition: "withdrawn" }, S.withdrawn), "danger"]]);
 }
 

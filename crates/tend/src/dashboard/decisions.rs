@@ -760,6 +760,21 @@ fn decides_reviews(host: &crate::fleet::FleetHostSnapshot) -> bool {
             .any(|c| c == crate::fleet::FLEET_REVIEW_DISPOSE_CAPABILITY)
 }
 
+/// What a question's asker reads when the person declines it without a
+/// reason. In English: the asking agent reads it, not the person
+/// (Tend for Mac's `FleetDecisions.declinedBody` says the same).
+pub(crate) const DECLINED_WITHOUT_REASON: &str = "The person declined this question from Tend without answering it. Do not wait for an answer to it; ask again only if it still matters.";
+
+/// The reply's body. A reason is optional when declining: the asker
+/// still reads why nothing came (the Mac sends the same words).
+fn reply_body(answer: String, declined: bool) -> String {
+    if declined && answer.trim().is_empty() {
+        DECLINED_WITHOUT_REASON.to_owned()
+    } else {
+        answer
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct HumanAnswer {
@@ -780,8 +795,9 @@ pub(super) async fn answer_handler(
     Path(id): Path<String>,
     headers: HeaderMap,
     device: Option<axum::Extension<super::devices::DeviceAuth>>,
-    Json(answer): Json<HumanAnswer>,
+    Json(mut answer): Json<HumanAnswer>,
 ) -> Response {
+    answer.answer = reply_body(answer.answer, answer.declined);
     let (by, account) = operator_identity(&state, &headers, device.as_deref());
     if answer.answer.len() > MAX_ANSWER_BYTES {
         return error(
@@ -1135,4 +1151,18 @@ async fn close_remote(
     )
     .await
     .map_err(refusal)
+}
+
+#[cfg(test)]
+mod reply_body_tests {
+    use super::{reply_body, DECLINED_WITHOUT_REASON};
+
+    #[test]
+    fn a_decline_without_a_reason_tells_the_asker_why_nothing_came() {
+        assert_eq!(reply_body(String::new(), true), DECLINED_WITHOUT_REASON);
+        assert_eq!(reply_body("  \n".into(), true), DECLINED_WITHOUT_REASON);
+        assert_eq!(reply_body("not now".into(), true), "not now");
+        // An answer is never replaced, even an empty one (refused elsewhere).
+        assert_eq!(reply_body(String::new(), false), "");
+    }
 }

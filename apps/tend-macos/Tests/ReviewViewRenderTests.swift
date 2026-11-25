@@ -49,8 +49,12 @@ private func render<V: View>(_ view: V, name: String, scheme: ColorScheme) throw
             FleetDecisionCard(decision: decision, openRevision: { _ in }, answer: { _ in true }, decide: { _, _ in true }),
             name: "request-row", scheme: scheme)
         _ = try render(
-            FleetDecisionCard(decision: decision, openRevision: { _ in }, answer: { _ in true }, decide: { _, _ in true }, initialAnswer: "tests missing"),
+            FleetDecisionCard(decision: decision, openRevision: { _ in }, answer: { _ in true }, decide: { _, _ in true }, initialAnswer: "tests missing", initialMode: .decline),
             name: "request-row-returning", scheme: scheme)
+        _ = try render(
+            FleetDecisionCard(decision: decision, openRevision: { _ in }, answer: { _ in true }, decide: { _, _ in true },
+                              initialAnswer: "", initialMode: .decline),
+            name: "request-row-return-no-note", scheme: scheme)
         _ = try render(FleetEvidenceList(evidence: evidence), name: "recorded-commands", scheme: scheme)
     }
 }

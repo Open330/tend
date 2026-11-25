@@ -1710,7 +1710,7 @@ actor TendIPCClient {
 
     /// Closes exactly these `(request id, episode)` pairs as the person
     /// (`close_unanswerable_v1`): each still unanswerable in that episode
-    /// gets the reply Dismiss sends; the rest are skipped and said so.
+    /// gets the reply Decline sends without a reason; the rest are skipped and said so.
     func decisionCloseUnanswerable(_ items: [(requestID: String, episode: String)]) async throws -> TendCloseOutcome {
         guard capabilities.contains(tendCloseUnanswerableCapability) else {
             throw TendIPCError.server(String(localized: "Closing these questions is turned off on this Mac's tendd"))
