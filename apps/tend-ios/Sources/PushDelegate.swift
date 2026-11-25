@@ -77,14 +77,14 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         // Every button needs an unlocked phone; none opens the app.
         let accept = UNNotificationAction(
             identifier: PushCategory.accept,
-            title: String(localized: "Looks good"),
+            title: String(localized: "Accept"),
             options: [.authenticationRequired]
         )
         let sendBack = UNTextInputNotificationAction(
             identifier: PushCategory.sendBack,
-            title: String(localized: "Send back"),
+            title: String(localized: "Return"),
             options: [.authenticationRequired, .destructive],
-            textInputButtonTitle: String(localized: "Send back"),
+            textInputButtonTitle: String(localized: "Return"),
             textInputPlaceholder: String(localized: "What should change?")
         )
         let answer = UNTextInputNotificationAction(
@@ -204,7 +204,7 @@ struct NotificationSettings: View {
         } footer: {
             if model.pushSupport?.enabled == true {
                 Text(content && model.pushSupport?.contentAllowed == true
-                     ? String(localized: "A notification shows the question or result and who asked. The text passes through Apple and shows on the lock screen as far as iOS's Show Previews allows; turning this off stops later ones only. Looks good, Send back and Answer work from the notification once the phone is unlocked.")
+                     ? String(localized: "A notification shows the question or result and who asked. The text passes through Apple and shows on the lock screen as far as iOS's Show Previews allows; turning this off stops later ones only. Accept, Return and Answer work from the notification once the phone is unlocked.")
                      : String(localized: "A notification says only which host needs you and how many. Tap it to open the item."))
             }
         }

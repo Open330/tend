@@ -5,7 +5,7 @@
 // Windows app, in which case the page never sees it) or the OIDC operator
 // session cookie. Everything an agent wrote is set with textContent only.
 
-import { boardAttention, buildBoard, byProject, digest, fromServerBoard, hostHue, keepPayload, LANES, productOf, replyTarget, reviewQueue, sameTarget, TEND_PROJECT, withLater } from "./home-board.mjs";
+import { boardAttention, buildBoard, byProject, digest, fromServerBoard, hostHue, keepPayload, LANES, productOf, replyTarget, reviewQueue, sameTarget, TEND_PROJECT, UNKNOWN_ASKER, withLater } from "./home-board.mjs";
 import { languageOf, relativeTime, stringsFor, textOf } from "./home-strings.mjs";
 import { itemHash, linkedHostOf, linkedItemOf } from "./needs-model.mjs";
 import { mountExplore } from "./explore.mjs";
@@ -178,6 +178,11 @@ function hostBadge(alias, local) {
   disc.append(icon(local ? "laptop" : "server"));
   box.append(disc, el("span", null, alias));
   return box;
+}
+
+/// Who asked, in the page's language when tendd does not name them.
+function askerOf(unit) {
+  return unit.asker === UNKNOWN_ASKER ? S.anAgent : unit.asker;
 }
 
 function when(iso) {
@@ -355,11 +360,13 @@ function metaLine(lane, parts) {
 function checksBox(checks) {
   const box = el("div", `checks ${checks.passed ? "pass" : "fail"}`);
   const top = el("div", "head");
-  top.append(icon(checks.passed ? "seal-pass" : "seal-fail"), el("span", null, checks.headline));
+  const ran = checks.ranAt ? when(checks.ranAt) : "";
+  top.append(icon(checks.passed ? "seal-pass" : "seal-fail"), el("span", null, `${S.checksRan(checks.passedCount, checks.total)}${ran ? ` · ${ran}` : ""}`));
   box.append(top);
   for (const line of checks.lines) {
     const row = el("div", `line ${line.cls}`);
-    row.append(icon(line.cls === "pass" ? "check" : "xmark"), el("span", null, line.text));
+    const how = !line.how ? "" : line.how.timedOut ? S.checkTimedOut : line.how.exit !== undefined ? S.checkExit(line.how.exit) : S.checkKilled;
+    row.append(icon(line.cls === "pass" ? "check" : "xmark"), el("span", null, S.checkLine(line.ok, line.label, how)));
     box.append(row);
     if (line.tail) box.append(el("pre", null, line.tail));
   }
@@ -464,7 +471,7 @@ function decisionCard(unit, emphasis = state.layout === "emphasis") {
     const result = resultLine(key);
     if (result) card.append(result);
     card.append(metaLine(null, [
-      unit.asker ? el("span", "who", unit.asker) : null,
+      unit.asker ? el("span", "who", askerOf(unit)) : null,
       el("span", null, unit.host),
       unit.project && unit.project !== TEND_PROJECT ? el("span", "repo", `· ${unit.project}`) : null,
       el("span", "when", when(unit.since)),
@@ -473,7 +480,7 @@ function decisionCard(unit, emphasis = state.layout === "emphasis") {
   }
   const head = el("div", "d-head");
   head.append(icon(question ? "question" : "checklist", "kind-icon"), el("span", "kind", question ? S.question : S.review));
-  if (unit.asker) head.append(el("span", "who", unit.asker));
+  if (unit.asker) head.append(el("span", "who", askerOf(unit)));
   if (unit.remote) head.append(el("span", "who", unit.host));
   head.append(el("span", "when", busy ? S.sending : when(unit.since)));
   const menu = decisionMenu(unit);
@@ -753,7 +760,7 @@ function cantAnswerRow(unit) {
   const cause = S.causes[unit.unanswerable.cause] || S.causes.other;
   why.append(icon("exclaim"), el("span", null, unit.unanswerable.since ? `${cause} · ${S.since(when(unit.unanswerable.since))}` : cause));
   card.append(why);
-  const meta = [unit.asker ? el("span", "who", unit.asker) : null, el("span", null, unit.host), el("span", "when", when(unit.since))];
+  const meta = [unit.asker ? el("span", "who", askerOf(unit)) : null, el("span", null, unit.host), el("span", "when", when(unit.since))];
   const row = metaLine(null, meta);
   if (unit.keepable && unit.actionable !== false && canDecide()) {
     const keep = button(S.keep, () => decide(unit, "/api/decisions/keep", keepPayload(unit), S.kept), "btn ghost small");
@@ -1685,7 +1692,7 @@ function renderDecisionDetail(box, unit) {
   const titles = el("div", "titles");
   const kind = el("div", "e-kind");
   kind.append(icon(unit.decision === "question" ? "question" : "checklist"), el("span", "kind", unit.decision === "question" ? S.question : S.review));
-  titles.append(kind, el("div", "sub", [unit.asker, unit.host, unit.project !== TEND_PROJECT ? unit.project : ""].filter(Boolean).join(" · ")));
+  titles.append(kind, el("div", "sub", [askerOf(unit), unit.host, unit.project !== TEND_PROJECT ? unit.project : ""].filter(Boolean).join(" · ")));
   head.append(titles);
   if (unit.pane && !unit.remote && state.data.access) {
     const open = el("a", "btn", S.openAgent);
@@ -1774,7 +1781,7 @@ function renderHeader(board) {
       ? hosts.map((host) => {
           const li = el("li");
           li.append(el("span", `dot${host.state === "online" ? "" : host.state === "auth_failed" ? " bad" : host.state === "connecting" ? " connecting" : host.state === "degraded" || host.state === "version_skew" ? " warn" : " off"}`));
-          li.append(el("span", "name", host.alias), el("span", "state", host.state));
+          li.append(el("span", "name", host.alias), el("span", "state", S.hostStates[host.state] || host.state));
           if (host.error) li.title = host.error;
           return li;
         })

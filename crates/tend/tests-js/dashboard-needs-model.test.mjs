@@ -186,10 +186,12 @@ test("tend's own checks come first and are not repeated as evidence", () => {
     },
     now,
   );
-  assert.equal(review.checks.headline, "tend ran 2/2 checks passed · 2m ago");
   assert.equal(review.checks.passed, true);
-  assert.deepEqual(review.checks.lines[0], { text: "passed: unit", cls: "pass", command: "cargo test -p tend", tail: null });
-  assert.equal(review.checks.lines[1].text, "passed: node --test");
+  assert.equal(review.checks.passedCount, 2);
+  assert.equal(review.checks.total, 2);
+  assert.ok(review.checks.ranAt, "when tend ran them, for the page to say");
+  assert.deepEqual(review.checks.lines[0], { ok: true, label: "unit", how: null, cls: "pass", command: "cargo test -p tend", tail: null });
+  assert.equal(review.checks.lines[1].label, "node --test");
   // The agent's own test stays; tend's copy of its check does not.
   assert.deepEqual(review.evidence.map((line) => line.text), ["test passed: make lint"]);
 });
@@ -204,9 +206,9 @@ test("a failed or timed-out check shows how it ended, with its output", () => {
     ],
   });
   assert.equal(checks.passed, false);
-  assert.equal(checks.headline, "tend ran 0/2 checks passed");
-  assert.deepEqual(checks.lines[0], { text: "FAILED: a (exit 2)", cls: "fail", command: null, tail: "boom" });
-  assert.equal(checks.lines[1].text, "FAILED: b (timed out)");
+  assert.equal(checks.passedCount, 0);
+  assert.deepEqual(checks.lines[0], { ok: false, label: "a", how: { exit: 2 }, cls: "fail", command: null, tail: "boom" });
+  assert.deepEqual(checks.lines[1].how, { timedOut: true });
   assert.equal(checksOf(null), null);
   assert.equal(checksOf({ checks: [] }), null);
 });
@@ -232,7 +234,7 @@ test("a decided result keeps its checks in the history", () => {
     verification: { passed: true, ran_at: "2026-11-12T11:00:00Z", checks: [{ command: "x", passed: true, tail: "" }] },
     disposition: { kind: "accepted", at: "2026-11-12T11:30:00Z", by: { kind: "person" } },
   }, now);
-  assert.equal(card.checks.headline, "tend ran 1/1 check passed · 1h ago");
+  assert.deepEqual([card.checks.passedCount, card.checks.total, card.checks.ranAt], [1, 1, "2026-11-12T11:00:00Z"]);
 });
 
 test("the history is per host, and says what kept a host out", () => {

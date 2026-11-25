@@ -1,0 +1,50 @@
+{
+  "$comment": "One word per concept on Tend for Mac, the iOS app and the web dashboard (docs/proposals/PARITY.md §2.2). Each term names the key that shows it on each surface: the xcstrings key (the English source) for mac and ios, the path in home-strings.mjs for web. crates/tend/tests-js/vocabulary.test.mjs checks every listed key says exactly `en` and `ko`, and that no Korean string breaks a `ko_rules` entry. Add a surface's key here when it starts showing the concept.",
+  "terms": [
+    { "id": "lane.yourTurn", "en": "Your turn", "ko": "내 차례", "mac": "Your turn", "ios": "Your turn", "web": "yourTurn" },
+    { "id": "lane.inProgress", "en": "In progress", "ko": "진행 중", "mac": "In progress", "ios": "In progress", "web": "inProgress" },
+    { "id": "lane.finished", "en": "Finished", "ko": "완료", "mac": "Finished", "ios": "Finished", "web": "finished" },
+    { "id": "lane.backlog", "en": "Backlog", "ko": "백로그", "mac": "Backlog", "ios": "Backlog" },
+    { "id": "status.working", "en": "Working", "ko": "작업 중", "mac": "Working", "ios": "Working", "web": "statusWorking" },
+    { "id": "status.yourTurn", "en": "Your turn", "ko": "내 차례", "web": "statusYourTurn" },
+    { "id": "status.finished", "en": "Finished", "ko": "완료", "web": "statusFinished" },
+    { "id": "now.needsDecision", "en": "Needs your decision", "ko": "결정이 필요합니다", "mac": "Needs your decision", "ios": "Needs your decision" },
+
+    { "id": "review.accept", "en": "Accept", "ko": "수락", "mac": "Accept", "ios": "Accept" },
+    { "id": "review.returnEllipsis", "en": "Return…", "ko": "돌려보내기…", "mac": "Return…", "ios": "Return…" },
+    { "id": "review.return", "en": "Return", "ko": "돌려보내기", "mac": "Return", "ios": "Return" },
+    { "id": "unit.looksGood", "en": "Looks Good", "ko": "확인 완료", "mac": "Looks Good" },
+    { "id": "unit.sendBack", "en": "Send Back", "ko": "다시 시키기", "mac": "Send Back" },
+
+    { "id": "answer.placeholder", "en": "Your answer", "ko": "답변", "mac": "Your answer", "ios": "Your answer" },
+    { "id": "report.dismiss", "en": "Dismiss", "ko": "닫기", "mac": "Dismiss", "ios": "Dismiss", "web": "dismissReport" },
+
+    { "id": "outcome.answered", "en": "Answered", "ko": "답변 완료", "mac": "Answered", "ios": "Answered", "web": "answered" },
+    { "id": "outcome.returned", "en": "Returned", "ko": "반려함", "mac": "Returned", "ios": "Returned", "web": "returned" },
+    { "id": "outcome.declined", "en": "Declined", "ko": "거절됨", "mac": "Declined", "ios": "Declined", "web": "declined" },
+    { "id": "outcome.withdrawn", "en": "Withdrawn", "ko": "철회됨", "mac": "Withdrawn", "ios": "Withdrawn", "web": "withdrawn" },
+
+    { "id": "cause.ended", "en": "Session ended", "ko": "세션이 종료되었습니다", "mac": "Session ended", "ios": "Session ended", "web": "causes.ended" },
+    { "id": "cause.paneGone", "en": "Pane gone", "ko": "페인 없음", "mac": "Pane gone", "ios": "Pane gone", "web": "causes.pane_gone" },
+
+    { "id": "pane.open", "en": "Open Pane", "ko": "페인 열기", "mac": "Open Pane", "web": "openPane" },
+    { "id": "pane.answerIn", "en": "Answer in Pane", "ko": "페인에서 답하기", "mac": "Answer in Pane", "web": "answerInPane" },
+
+    { "id": "host.online", "en": "Online", "ko": "온라인", "mac": "Online", "ios": "Online", "web": "hostStates.online" },
+    { "id": "host.offline", "en": "Offline", "ko": "오프라인", "mac": "Offline", "ios": "Offline", "web": "hostStates.offline" },
+    { "id": "host.connecting", "en": "Connecting", "ko": "연결 중", "mac": "Connecting", "ios": "Connecting", "web": "hostStates.connecting" },
+    { "id": "host.degraded", "en": "Degraded", "ko": "성능 저하", "mac": "Degraded", "ios": "Degraded", "web": "hostStates.degraded" },
+    { "id": "host.versionSkew", "en": "Version skew", "ko": "버전 불일치", "mac": "Version skew", "ios": "Version skew", "web": "hostStates.version_skew" },
+    { "id": "host.authFailed", "en": "Authentication failed", "ko": "인증 실패", "mac": "Authentication failed", "ios": "Authentication failed", "web": "hostStates.auth_failed" },
+    { "id": "host.disabled", "en": "Disabled", "ko": "비활성", "mac": "Disabled", "ios": "Disabled", "web": "hostStates.disabled" },
+
+    { "id": "checks.passed", "en": "passed", "ko": "통과", "mac": "passed", "ios": "passed" },
+    { "id": "checks.failed", "en": "failed", "ko": "실패", "mac": "failed", "ios": "failed" },
+    { "id": "asker.unknown", "en": "an agent", "ko": "에이전트", "mac": "an agent", "ios": "an agent", "web": "anAgent" }
+  ],
+  "ko_rules": [
+    { "pattern": "패인", "why": "Pane is 페인 in Korean." },
+    { "pattern": "(?<![A-Za-z])[Pp]anes?(?![A-Za-z])", "except": ["Live Pane"], "why": "Pane is 페인 in Korean, not the English word." },
+    { "pattern": "좋습니다$", "why": "A review is accepted with 수락, not 좋습니다." }
+  ]
+}

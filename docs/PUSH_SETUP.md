@@ -81,7 +81,7 @@ allow_content = false           # true: notifications may show the question's te
 - `allow_content`: with `false`, a notification says only which host needs
   you and how many. With `true`, and **Show what was asked** on in the app,
   it also shows the first line of the item and who asked. It then offers
-  **Looks good** / **Send back** / **Answer**, which work only on an
+  **Accept** / **Return** / **Answer**, which work only on an
   unlocked phone.
 
 Then restart tendd:
