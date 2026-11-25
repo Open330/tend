@@ -1037,6 +1037,12 @@ pub(super) fn device_board(board: &Value, history: Option<&Value>) -> Value {
         "decided": decided,
         "decision_hosts": board.get("decision_hosts").map(bounded_tree),
         "agent_count": board.get("agent_count"),
+        // Numbers only (apps/shared/Design/COUNTS.md): the lanes above may
+        // be cut to fit, these never are.
+        "counts": board.get("counts"),
+        // Whether Looks Good marks were read: without them `finished`
+        // counts every finished unit.
+        "reviewed_marks": board.get("reviewed_marks"),
     })
 }
 

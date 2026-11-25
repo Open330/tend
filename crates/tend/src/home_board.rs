@@ -1622,6 +1622,112 @@ fn decision_json(decision: &Decision) -> Value {
     })
 }
 
+/// Home's numbers, each with one meaning on every client
+/// (apps/shared/Design/COUNTS.md).
+///
+/// - `your_turn`: Your turn's cards, decisions and units, without the
+///   questions nobody can answer. Your turn never folds, so this is also
+///   every card the lane shows. The badge.
+/// - `actionable`: of those, the ones the viewer can decide from here (a
+///   decision on another host that does not take them is not).
+/// - `cant_answer`: the questions nobody can answer, at least as many as
+///   are listed (a host's exact count when it has one).
+/// - `in_progress`: In progress's units, folded ones included.
+/// - `finished`: Finished's units not set aside with Looks Good, folded
+///   ones included; `reviewed` counts the ones set aside. Decided history
+///   is never counted.
+/// - `coverage`: of the decision queues only: `complete` when every host has
+///   a queue read whole for every kind, else `partial`, so a client never
+///   shows a partial Your turn as all. Whether Looks Good marks were read is
+///   `reviewed_marks`, beside it.
+///
+/// All are totals before a client's own host or project filter.
+fn counts_json(
+    turn: &[TurnEntry],
+    units: &[Unit],
+    reviewed: Option<&HashSet<String>>,
+    input: &BoardInput,
+) -> Value {
+    const KINDS: [&str; 3] = ["questions", "waiting agents", "review items"];
+    let unanswerable = |item: &Value| item.pointer("/entry/unanswerable").is_some();
+    let your_turn = turn.iter().filter(|entry| !unanswerable(&entry.4)).count();
+    // Only a decision the board marks decidable from here: a unit is
+    // answered in its pane, which may be on another host or offer a choice
+    // only there, so it is never counted here.
+    let actionable = turn
+        .iter()
+        .filter(|entry| !unanswerable(&entry.4))
+        .filter(|entry| entry.4.get("actionable").and_then(Value::as_bool) == Some(true))
+        .count();
+    let listed: HashMap<&str, usize> = turn.iter().filter(|entry| unanswerable(&entry.4)).fold(
+        HashMap::new(),
+        |mut by_host, entry| {
+            let host = entry.4.get("host").and_then(Value::as_str).unwrap_or("");
+            *by_host.entry(host).or_default() += 1;
+            by_host
+        },
+    );
+    let mut cant_answer: usize = listed.values().sum();
+    for section in &input.decisions {
+        let host = str_of(section, "alias").unwrap_or("");
+        let exact = section
+            .pointer("/queue/unanswerable_count")
+            .and_then(Value::as_u64)
+            .and_then(|n| usize::try_from(n).ok());
+        if let Some(exact) = exact {
+            let shown = listed.get(host).copied().unwrap_or(0);
+            cant_answer += exact.saturating_sub(shown);
+        }
+    }
+    let in_progress = units.iter().filter(|u| u.lane == Lane::Running).count();
+    let finished_total = units.iter().filter(|u| u.lane == Lane::Finished).count();
+    let set_aside = reviewed.map_or(0, |set| {
+        units
+            .iter()
+            .filter(|u| u.lane == Lane::Finished)
+            .filter(|u| set.contains(&review_key(&u.id, &u.revision)))
+            .count()
+    });
+    // Complete only when every host has a decision section that was read
+    // whole, for every kind: a missing section, a missing queue, a kind not
+    // covered, a cut list or any reason it could not be read is partial.
+    let read_whole = |section: &Value| {
+        section.get("queue").is_some_and(Value::is_object)
+            && section.pointer("/queue/truncated").and_then(Value::as_bool) != Some(true)
+            && section
+                .get("unavailable")
+                .and_then(Value::as_array)
+                .is_none_or(Vec::is_empty)
+            && section
+                .get("covers")
+                .and_then(Value::as_array)
+                .is_some_and(|covers| {
+                    KINDS
+                        .iter()
+                        .all(|kind| covers.iter().any(|c| c.as_str() == Some(kind)))
+                })
+    };
+    let sections: HashSet<&str> = input
+        .decisions
+        .iter()
+        .filter_map(|section| str_of(section, "alias"))
+        .collect();
+    let partial = input.decisions.iter().any(|section| !read_whole(section))
+        || input
+            .hosts
+            .iter()
+            .any(|host| !sections.contains(host.alias.as_str()));
+    json!({
+        "your_turn": your_turn,
+        "actionable": actionable,
+        "cant_answer": cant_answer,
+        "in_progress": in_progress,
+        "finished": finished_total - set_aside,
+        "reviewed": set_aside,
+        "coverage": if partial { "partial" } else { "complete" },
+    })
+}
+
 /// Items of one lane grouped by project, a project where its first item
 /// is, tend's own asks last in their own group.
 fn grouped(items: Vec<(Option<String>, bool, Value)>) -> Vec<Value> {
@@ -1804,6 +1910,7 @@ pub fn build(input: &BoardInput) -> Value {
         .iter()
         .filter(|entry| entry.4.pointer("/entry/unanswerable").is_none())
         .count();
+    let counts = counts_json(&turn, &units, reviewed, input);
     let needs_you = grouped(
         turn.into_iter()
             .map(|(system, _, _, repo, item)| (repo, system, item))
@@ -1839,6 +1946,10 @@ pub fn build(input: &BoardInput) -> Value {
         "backlog": backlog_json(input, &units),
         "projects": projects,
         "reviewed_marks": input.reviewed.is_some(),
+        // The numbers every client shows, one meaning each (PARITY P3,
+        // apps/shared/Design/COUNTS.md): a lane header says its count and
+        // the badge says `your_turn`.
+        "counts": counts,
         // What each host's queue covers and could not read, so a client can
         // tell an empty Your turn from one it could not see.
         "decision_hosts": input.decisions.iter().map(|section| json!({
