@@ -5477,6 +5477,7 @@ mod tests {
     /// "token"`; `public_read` gets the credentials it can carry.
     struct HomeMatrix {
         app: Router,
+        state: AppState,
         credentials: Vec<(Principal, Vec<(header::HeaderName, String)>)>,
     }
 
@@ -5630,7 +5631,11 @@ mod tests {
                 ),
             ]);
         }
-        HomeMatrix { app, credentials }
+        HomeMatrix {
+            app,
+            state,
+            credentials,
+        }
     }
 
     fn cache_control(response: &Response) -> Option<&str> {
@@ -5729,6 +5734,118 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// `POST /api/device/home/reviewed` (PARITY P6): an `operate` device
+    /// reaches the board check (an unknown unit is 404), `decide` is 403,
+    /// everyone else 401, the operator's own credentials included.
+    #[tokio::test]
+    async fn device_looks_good_route_matrix() {
+        for auth in [DashboardAuthMode::Token, DashboardAuthMode::PublicRead] {
+            let matrix = home_matrix(auth).await;
+            for (principal, headers) in &matrix.credentials {
+                let expected = match principal {
+                    OperateDevice => StatusCode::NOT_FOUND,
+                    DecideDevice => StatusCode::FORBIDDEN,
+                    _ => StatusCode::UNAUTHORIZED,
+                };
+                let response = matrix_call(
+                    &matrix.app,
+                    "POST",
+                    "/api/device/home/reviewed",
+                    headers,
+                    Some(json!({"id": "agent:nope", "review_key": "home:00"})),
+                )
+                .await;
+                assert_eq!(response.status(), expected, "{auth:?} {principal:?}");
+            }
+        }
+    }
+
+    /// An `operate` device marks Looks Good the way Home does: the key
+    /// comes from its own board, a stale key is refused, and the mark is
+    /// the Mac's record, so the operator's board shows it reviewed.
+    #[tokio::test]
+    async fn an_operate_device_marks_looks_good_on_the_boards_key() {
+        let matrix = home_matrix(DashboardAuthMode::Token).await;
+        let id = AgentId {
+            tmux_socket: None,
+            kind: AgentKind::Codex,
+            session_id: "done-1".into(),
+            surface: None,
+            pane: Some("%4".into()),
+            cwd: Some("/w/tend".into()),
+        };
+        let at = OffsetDateTime::now_utc() - time::Duration::minutes(3);
+        let store = &matrix.state.store;
+        store
+            .apply(&AgentEvent::Started { id: id.clone(), at })
+            .await;
+        store
+            .apply(&AgentEvent::PromptSubmitted {
+                id: id.clone(),
+                prompt: "fix the toast".into(),
+                at,
+            })
+            .await;
+        store
+            .apply(&AgentEvent::TurnStopped {
+                id,
+                response: Some("Toast fixed.".into()),
+                recap: None,
+                ai_title: None,
+                idle_confirmed: true,
+                at,
+            })
+            .await;
+        let device = matrix
+            .credentials
+            .iter()
+            .find(|(p, _)| *p == OperateDevice)
+            .map(|(_, h)| h.clone())
+            .unwrap();
+        let board =
+            body_json(matrix_call(&matrix.app, "GET", "/api/device/home", &device, None).await)
+                .await;
+        let unit = &board["lanes"]["finished"]["groups"][0]["items"][0];
+        let key = unit["review_key"]
+            .as_str()
+            .expect("the device board carries the key");
+        let id = unit["id"].as_str().unwrap();
+        let stale = matrix_call(
+            &matrix.app,
+            "POST",
+            "/api/device/home/reviewed",
+            &device,
+            Some(json!({"id": id, "review_key": "home:00"})),
+        )
+        .await;
+        assert_eq!(stale.status(), StatusCode::CONFLICT);
+        let marked = matrix_call(
+            &matrix.app,
+            "POST",
+            "/api/device/home/reviewed",
+            &device,
+            Some(json!({"id": id, "review_key": key})),
+        )
+        .await;
+        assert_eq!(marked.status(), StatusCode::OK);
+        let record = body_json(marked).await;
+        assert_eq!(record["review_key"], key);
+        let by = record["review"]["disposition"]["by"]["label"]
+            .as_str()
+            .unwrap_or("");
+        assert!(
+            by.contains("route-matrix"),
+            "recorded as the device: {record}"
+        );
+        let operator = [(header::AUTHORIZATION, format!("Bearer {MATRIX_TOKEN}"))];
+        let board =
+            body_json(matrix_call(&matrix.app, "GET", "/api/home", &operator, None).await).await;
+        assert_eq!(
+            board["lanes"]["finished"]["groups"][0]["items"][0]["reviewed"], true,
+            "{board}"
+        );
     }
 
     /// The pages hold no data: everyone gets them, under the same headers.
