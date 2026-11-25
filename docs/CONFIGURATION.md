@@ -550,7 +550,10 @@ has been established gone this long (counted from when the episode began;
 see [REVIEW.md](REVIEW.md)). It is closed as Close all closes it: the asker
 gets the reply Dismiss sends, and `tend review history` shows it as closed
 by tend. A question the person kept with `tend review keep` stays.
-At least `1h`; `"off"` leaves them for a person to close.
+At least `1h`; `"off"` leaves them for a person to close. The key is new
+in this release and stays on this host (`tend config sync` does not copy
+it); remove it before running an older tend against the same config,
+which refuses keys it does not know.
 
 `auto_spawn_workers` lets high-level peer calls reuse a worker or create one
 when missing. `worker_bypass_permissions` defaults to false: worker launches
