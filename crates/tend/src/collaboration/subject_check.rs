@@ -1439,6 +1439,15 @@ impl CollaborationStore {
                 }
             }
             match evaluate(request, &snapshot, &inputs, &facts, now, Purpose::Close) {
+                Some(Verdict::Gone { .. })
+                    if matches!(closer, Closer::Tend { .. })
+                        && !nothing_could_be_subject(request, &snapshot, &inputs, now) =>
+                {
+                    outcome
+                        .skipped
+                        .push(skip("an agent running unnamed could be its asker"));
+                    continue;
+                }
                 Some(Verdict::Gone { .. }) => {}
                 Some(Verdict::Alive) => {
                     outcome.skipped.push(skip("its subject is back"));

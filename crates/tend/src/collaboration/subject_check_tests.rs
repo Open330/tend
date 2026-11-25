@@ -2499,6 +2499,28 @@ async fn tend_closes_a_question_whose_asker_is_gone_past_the_setting() {
     assert_eq!(closure.after.as_deref(), Some("7d"));
     assert!(closure.gone_since.is_some());
     assert!(get(&store, &kept.id).await.needs_human_response());
+    // An unnamed agent of the asker's kind running: tend closes nothing.
+    let other = question(&store, &participant("s8", "%8", "default")).await;
+    store.fold_for_test(&other.id, GoneCause::PaneGone).await;
+    let mut aged = get(&store, &other.id).await;
+    aged.subject_check.as_mut().unwrap().episode_since =
+        Some(OffsetDateTime::now_utc() - Duration::days(8));
+    put(&store, aged).await;
+    let ambiguous = registry(&[]).await;
+    let mut scan_now = walked(
+        scan(OffsetDateTime::now_utc(), &[("default", Some(A))], &[]),
+        &[],
+    );
+    scan_now.outside = vec![UnnamedAgent::process(
+        9,
+        Some("1"),
+        Some(AgentKind::ClaudeCode),
+        OffsetDateTime::now_utc() - Duration::hours(3),
+    )];
+    ambiguous.subject_observations().set_scan(scan_now);
+    let held = store.close_long_unanswerable(&ambiguous).await.unwrap();
+    assert!(held.closed.is_empty(), "{held:?}");
+    assert!(get(&store, &other.id).await.needs_human_response());
     // Off again: nothing more.
     store.set_close_unanswerable_after(None);
     let off = store
