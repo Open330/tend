@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildBoard, evidenceChip, groupByProject, hostHue, isPaneless, needsAttention, productOf, TEND_PROJECT } from "../src/dashboard/web/home-board.mjs";
+import { buildBoard, evidenceChip, fromServerBoard, groupByProject, hostHue, isPaneless, needsAttention, productOf, TEND_PROJECT } from "../src/dashboard/web/home-board.mjs";
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "../../../apps/shared/Fixtures");
 const load = (name) => JSON.parse(readFileSync(join(fixtures, name), "utf8"));
@@ -49,7 +49,9 @@ test("lanes: the queue in Your turn, working agents in progress, idle ones finis
   assert.deepEqual(finished.map((u) => u.title), ["fix toast"]);
   assert.equal(finished[0].headline.text, "Done: toast fixed", "the last result's first line");
   assert.equal(board.lanes.finished.older.length, 1, "older than a day folds away");
-  assert.equal(board.lanes.finished.count, 1);
+  // apps/shared/Design/COUNTS.md: a folded card still counts.
+  assert.equal(board.lanes.finished.count, 2);
+  assert.equal(board.yourTurn, yourTurn.length, "the badge is Your turn's number");
 });
 
 test("a question takes its asker's project; an agent without cwd takes its pane's path", () => {
@@ -244,4 +246,35 @@ test("an asker tendd does not name is marked, not named", () => {
   const named = units.find((u) => u.id === "rv_alias");
   assert.equal(named.asker, "an agent", "a real alias is kept as written");
   assert.ok(!named.askerMissing);
+});
+
+test("the daemon's counts are shown as given; a filter shows N of the total; the badge stays whole", () => {
+  const unit = (id, lane, repo, extra = {}) => ({
+    type: "unit", id, lane, repo, title: id, since: new Date(NOW - 60_000).toISOString(),
+    agents: [], helpers: [], stages: [], host_aliases: ["mba"], recent: true, ...extra,
+  });
+  const server = {
+    hosts: [{ alias: "mba", local: true, state: "online" }],
+    lanes: {
+      needs_you: { count: 2, groups: [{ project: "a", items: [unit("y1", "needs_you", "a")] }, { project: "b", items: [unit("y2", "needs_you", "b")] }] },
+      running: { count: 1, groups: [{ project: "a", items: [unit("r1", "running", "a")] }] },
+      finished: { count: 3, groups: [{ project: "a", items: [unit("f1", "finished", "a"), unit("f2", "finished", "a", { reviewed: true })] }, { project: "b", items: [unit("f3", "finished", "b")] }] },
+    },
+    counts: { your_turn: 2, actionable: 0, cant_answer: 0, in_progress: 1, finished: 2, reviewed: 1, coverage: "partial" },
+    decision_hosts: [],
+  };
+  const history = { hosts: [{ alias: "mba", local: true, history: { items: [
+    { kind: "human_answer", request_id: "old", body: "done?", answer: "yes", status: "completed", answered_at: new Date(NOW - 120_000).toISOString() },
+  ] } }] };
+  const whole = fromServerBoard(server, { history, now: NOW });
+  assert.equal(whole.lanes.needsYou.count, 2);
+  assert.equal(whole.lanes.finished.count, 2, "tendd's number: not reviewed, history never counted");
+  assert.equal(whole.lanes.finished.total, undefined);
+  assert.equal(whole.yourTurn, 2);
+  assert.equal(whole.partial, true);
+  const narrowed = fromServerBoard(server, { history, now: NOW, filter: { project: "a" } });
+  assert.equal(narrowed.lanes.needsYou.count, 1);
+  assert.equal(narrowed.lanes.needsYou.total, 2, "the header says 1 of 2");
+  assert.equal(narrowed.lanes.finished.count, 1, "f1 only: f2 is reviewed, history is not counted");
+  assert.equal(narrowed.yourTurn, 2, "the badge is never narrowed");
 });

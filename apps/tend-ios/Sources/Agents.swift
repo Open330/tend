@@ -120,7 +120,7 @@ extension HostsView {
     /// What a decide key can say about one host: never "nothing" unless
     /// its whole queue was read.
     static func waitingLine(_ section: HostQueue) -> String {
-        let waiting = PendingDecision.from(section).count
+        let waiting = PendingDecision.waiting(section).count
         if complete(section) {
             return waiting > 0 ? String(localized: "\(waiting) need you") : String(localized: "Nothing needs you")
         }

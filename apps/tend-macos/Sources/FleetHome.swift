@@ -700,6 +700,49 @@ enum FleetTurnItem: Identifiable, Sendable {
     }
 }
 
+/// Home's numbers, each with one meaning (apps/shared/Design/COUNTS.md),
+/// as `FleetBoard.counts` works them out. Your turn is its units and
+/// decisions without the questions nobody can answer, and is also the
+/// rail's Home badge; In progress and Finished count their folded units
+/// too; Finished leaves out what Looks Good set aside, which is
+/// `reviewed`. Decided history is never counted.
+struct FleetCounts: Equatable, Sendable {
+    var yourTurn = 0
+    var inProgress = 0
+    var finished = 0
+    var reviewed = 0
+
+    /// The number a lane's header shows.
+    func count(_ lane: FleetLane) -> Int {
+        switch lane {
+        case .needsYou: yourTurn
+        case .running: inProgress
+        case .finished: finished
+        }
+    }
+}
+
+/// A lane header's number: what the lane shows, the unfiltered total
+/// beside it while a host or project filter narrows the lane, and a mark
+/// when a decision queue was not read whole, so it never reads as all.
+struct FleetLaneNumber: Equatable, Sendable {
+    var shown: Int
+    /// Set only while a filter leaves fewer than the lane holds.
+    var total: Int?
+    var partial = false
+
+    init(shown: Int, total: Int? = nil, partial: Bool = false) {
+        self.shown = shown
+        self.total = total.flatMap { $0 != shown ? $0 : nil }
+        self.partial = partial
+    }
+
+    var text: String {
+        let number = total.map { String(localized: "\(shown) of \($0)") } ?? "\(shown)"
+        return partial ? number + "+" : number
+    }
+}
+
 /// Your turn's entries of one project.
 struct FleetTurnGroup: Identifiable, Sendable {
     let project: String?
@@ -765,6 +808,24 @@ extension FleetBoard {
     static func isRecent(_ work: FleetWork, now: Date = .now) -> Bool {
         guard let changed = work.lastChange ?? work.since else { return true }
         return now.timeIntervalSince(changed) <= recentFinish
+    }
+
+    /// Home's numbers (apps/shared/Design/COUNTS.md), the ones the lane
+    /// headers and the rail's badge show, from the units and decisions
+    /// given: the whole board for the totals, the filtered one for what a
+    /// filter leaves.
+    static func counts(works: [FleetWork], decisions: [FleetDecision], marks: FleetReviewMarks) -> FleetCounts {
+        var counts = FleetCounts()
+        counts.yourTurn = decisions.lazy.filter { !$0.isUnanswerable }.count
+        for work in works {
+            switch work.lane {
+            case .needsYou: counts.yourTurn += 1
+            case .running: counts.inProgress += 1
+            case .finished:
+                if marks.hides(work) { counts.reviewed += 1 } else { counts.finished += 1 }
+            }
+        }
+        return counts
     }
 
     /// The units on the chosen host and in the chosen project.

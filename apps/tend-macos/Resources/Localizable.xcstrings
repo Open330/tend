@@ -24882,6 +24882,32 @@
           }
         }
       }
+    },
+    "%lld of %lld" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld of %2$lld"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%2$lld개 중 %1$lld"
+          }
+        }
+      }
+    },
+    "Some decisions could not be read, so there may be more." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "일부 결정을 읽지 못해 더 있을 수 있습니다."
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

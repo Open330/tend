@@ -646,7 +646,8 @@ function renderLane(lane, data) {
   const section = el("section", `lane ${lane}${data.count ? " has-items" : ""} ${state.layout}`);
   section.setAttribute("aria-label", S[title]);
   const head = el("header", "lane-head");
-  head.append(el("h2", null, S[title]), el("span", "count", String(data.count)), el("span", "sub", S[sub]));
+  const count = data.total === undefined ? String(data.count) : S.countOf(data.count, data.total);
+  head.append(el("h2", null, S[title]), el("span", "count", count), el("span", "sub", S[sub]));
   const body = el("div", "lane-body");
   const error = state.errors[lane === "needsYou" ? "decisions" : lane === "running" ? "fleet" : "history"];
   if (error) {
@@ -1844,7 +1845,8 @@ function renderStatus(board) {
   $("stat-agents").textContent = S.agentsStatus(board?.agentCount || 0);
   const counts = board ? board.lanes : null;
   const badge = $("rail-badge");
-  const waiting = counts?.needsYou.count || 0;
+  // The badge and the tab title: Your turn, unfiltered (COUNTS.md).
+  const waiting = board?.yourTurn ?? counts?.needsYou.count ?? 0;
   badge.hidden = !waiting;
   badge.textContent = waiting > 99 ? "99+" : String(waiting);
   for (const lane of LANES) $(`seg-${lane}`).textContent = counts ? String(counts[lane].count) : "";

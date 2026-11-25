@@ -43,6 +43,14 @@ final class FleetDecisionFeed: ObservableObject {
         let localHost: TendFleetHostIdentity
     }
     @Published private(set) var problem: String?
+    /// This Mac's queue was not read whole at the last read: a source
+    /// tendd could not read, a cut page that may have left folded
+    /// questions out, or a failed read. Unlike `problem`, never about
+    /// anything but the decisions (COUNTS.md `coverage`).
+    @Published private(set) var localPartial = false
+    /// Other hosts whose queue the last read could not read whole: it
+    /// failed, or came back cut or with a source missing.
+    @Published private(set) var partialHosts: Set<String> = []
     /// Decisions being recorded, by id.
     @Published private(set) var busy: Set<String> = []
     /// What the daemon lets Can't be answered do: Keep (`subject_check_v1`)
@@ -96,8 +104,6 @@ final class FleetDecisionFeed: ObservableObject {
     func loadRemote(_ client: TendIPCClient, hosts: [TendFleetHost]) async {
         let link = await client.dashboardURL
         if dashboard != link { dashboard = link }
-        let deciding = Set(hosts.filter(FleetDecisions.decidesReviews).map(\.alias))
-        if reviewHosts != deciding { reviewHosts = deciding }
         let read = hosts.filter(FleetDecisions.readsQueue).map(\.identity)
         let found = await withTaskGroup(of: (Int, TendPendingQueue?).self) { group in
             for (index, host) in read.enumerated() {
@@ -110,13 +116,34 @@ final class FleetDecisionFeed: ObservableObject {
             }
             return found
         }
+        apply(hosts: hosts, read: read, found: found)
+    }
+
+    /// What one read of the other hosts' queues found: `read` are the
+    /// Fleet `hosts` that send one, `found` each one's queue by its
+    /// position there. From Home's own loop, or, while no Home is open,
+    /// from the model's read of the same queues.
+    func apply(hosts: [TendFleetHost], read: [TendFleetHostIdentity], found: [Int: TendPendingQueue]) {
+        let deciding = Set(hosts.filter(FleetDecisions.decidesReviews).map(\.alias))
+        if reviewHosts != deciding { reviewHosts = deciding }
         let queues = read.enumerated().compactMap { index, host in
             found[index].map { (host: host, queue: $0) }
         }
+        let partial = Set(read.enumerated().compactMap { index, host in
+            found[index]?.isComplete == true ? nil : host.alias
+        })
+        if partialHosts != partial { partialHosts = partial }
         // Polled every `remoteEvery` while Home is open: an unchanged read
         // publishes nothing, so it neither redraws Home nor rebuilds the
         // merged decisions.
         if !Self.sameQueues(queues, remoteQueues) { remoteQueues = queues }
+    }
+
+    /// Whether Your turn's number may leave decisions out: a queue on
+    /// `host` (every host when nil) was not read whole.
+    func isPartial(host: String?, localHost: String) -> Bool {
+        guard let host else { return localPartial || !partialHosts.isEmpty }
+        return host == localHost ? localPartial : partialHosts.contains(host)
     }
 
     /// Whether two reads of the other hosts' queues hold the same hosts and
@@ -145,20 +172,25 @@ final class FleetDecisionFeed: ObservableObject {
                 if !reviews.isEmpty { reviews = [] }
                 if !queue.unavailable.isEmpty {
                     setProblem(String(localized: "Some decisions could not be read: \(queue.unavailable.joined(separator: "; "))"))
+                    setLocalPartial(true)
                 } else if FleetDecisions.omitsFoldedRows(queue) {
                     // The mailbox cannot fill in what the cut page left out.
                     setProblem(String(localized: "Showing the first decisions on this Mac; more are waiting."))
+                    setLocalPartial(true)
                 } else {
                     setProblem(nil)
+                    setLocalPartial(false)
                 }
             } else {
                 if queue != nil { queue = nil }
                 let page = try await client.reviewItems(offset: 0, limit: 200)
                 if reviews != page.items { reviews = page.items }
                 setProblem(nil)
+                setLocalPartial(page.hasMore)
             }
         } catch {
             setProblem(String(localized: "Could not read decisions: \(error.localizedDescription)"))
+            setLocalPartial(true)
         }
         // Without the board there is nothing to decide what to hide for.
         if !works.isEmpty { await loadReviewed(client, works: works, force: false) }
@@ -166,6 +198,10 @@ final class FleetDecisionFeed: ObservableObject {
 
     private func setProblem(_ problem: String?) {
         if self.problem != problem { self.problem = problem }
+    }
+
+    private func setLocalPartial(_ partial: Bool) {
+        if localPartial != partial { localPartial = partial }
     }
 
     /// Reads the history (for the history view) at most every

@@ -468,15 +468,25 @@ export function buildBoard({ decisions = null, history = null, fleet = null, now
     const all = lanes[lane].filter(keep);
     const visible = all.filter((u) => !u.unanswerable);
     result[lane] = {
-      count: visible.filter((u) => !u.older).length,
+      // apps/shared/Design/COUNTS.md: folded cards count, decided history
+      // never does.
+      count: visible.filter((u) => u.type !== "decided").length,
       groups: groupByProject(visible.filter((u) => !u.older)),
       older: visible.filter((u) => u.older),
       notes: notes[lane],
     };
     if (lane === "needsYou") result[lane].cantAnswer = cantAnswerGroup(all, queueHosts, filter);
   }
+  const filtered = Boolean(filter.host || filter.project);
+  if (filtered) {
+    for (const lane of LANES) {
+      result[lane].total = lanes[lane].filter((u) => !u.unanswerable && u.type !== "decided").length;
+    }
+  }
   return {
     lanes: result,
+    // The badge: Your turn, never narrowed by a filter.
+    yourTurn: lanes.needsYou.filter((u) => !u.unanswerable).length,
     projects,
     hosts: hostList(fleet, decisions),
     agentCount: hostsOf(fleet).reduce((sum, host) => sum + agentsOf(host).length, 0),
@@ -511,6 +521,7 @@ export function laneCounts(board) {
 
 const STAGE = { needs_you: "needsYou", running: "running", done: "done", waiting: "waiting" };
 const LANE = { needs_you: "needsYou", running: "running", finished: "finished" };
+const SERVER_COUNT = { needsYou: "your_turn", running: "in_progress", finished: "finished" };
 
 function serverAgent(ref) {
   return {
@@ -643,8 +654,14 @@ export function fromServerBoard(server, { history = null, filter = {}, now = Dat
       else if (unit.recent === false || unit.older) folds.older.push(unit);
       else shown.push(unit);
     }
+    // tendd's numbers as given (apps/shared/Design/COUNTS.md); under a
+    // filter, the filtered count by the same rule and the total beside it.
+    const own = lane === "needsYou" ? visible.length : visible.filter((u) => u.type !== "decided" && !u.reviewed).length;
+    const total = server?.counts?.[SERVER_COUNT[lane]];
+    const filtered = Boolean(filter.host || filter.project);
     result[lane] = {
-      count: visible.length - folds.reviewed.length,
+      count: filtered || !Number.isInteger(total) ? own : total,
+      total: filtered && Number.isInteger(total) ? total : undefined,
       groups: groupByProject(shown),
       older: folds.older,
       folds,
@@ -653,9 +670,13 @@ export function fromServerBoard(server, { history = null, filter = {}, now = Dat
     if (lane === "needsYou") result[lane].cantAnswer = cantAnswerGroup(all, sections, filter);
   }
   const reviewedCount = result.finished.folds.reviewed.length;
+  const counts = server?.counts || {};
   return {
     server: true,
     lanes: result,
+    // The badge: Your turn as tendd counts it, never narrowed by a filter.
+    yourTurn: Number.isInteger(counts.your_turn) ? counts.your_turn : lanes.needsYou.filter((u) => !u.unanswerable).length,
+    partial: counts.coverage === "partial",
     projects: Array.isArray(server?.projects) ? server.projects : [],
     hosts: ordered((server?.hosts || []).map((h) => ({ alias: h.alias, local: Boolean(h.local), state: h.local ? "online" : h.state || "unknown", error: h.error || null, hue: hostHue(h.alias) }))),
     agentCount: Number(server?.agent_count) || 0,

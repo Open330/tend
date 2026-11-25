@@ -131,6 +131,12 @@ struct PendingDecision: Identifiable, Hashable, Sendable {
         self.decidable = decidable
     }
 
+    /// A host's part of Your turn: its queue without the questions nobody
+    /// can answer.
+    static func waiting(_ section: HostQueue) -> [PendingDecision] {
+        from(section).filter { $0.unanswerable == nil }
+    }
+
     static func from(_ section: HostQueue) -> [PendingDecision] {
         section.queue.items.map { item in
             switch item {
@@ -412,7 +418,7 @@ final class AppModel {
     }
 
     var pending: [PendingDecision] {
-        visibleBoard?.decisions ?? hosts.flatMap(PendingDecision.from).filter { $0.unanswerable == nil }
+        visibleBoard?.decisions ?? hosts.flatMap(PendingDecision.waiting)
     }
 
     /// Your turn's Can't be answered group: questions whose asker is gone,
@@ -492,8 +498,21 @@ final class AppModel {
         }
     }
 
-    /// What the person can act on from here, for the badge.
-    var actionableCount: Int { pending.filter(\.decidable).count }
+    /// Of Your turn, what can be decided from here (COUNTS.md
+    /// `actionable`). Not the badge: the badge is Your turn's number.
+    var actionableCount: Int {
+        visibleBoard?.counts?.actionable ?? pending.filter(\.decidable).count
+    }
+
+    /// The Home tab's and the iPad sidebar's badge: Your turn's number.
+    var badgeCount: Int { count(.yourTurn) }
+
+    /// Whether more may need the person than Your turn's number says: a
+    /// queue that was not read whole.
+    var yourTurnMayBeMore: Bool {
+        if let board = visibleBoard { return board.yourTurnMayBeMore }
+        return loaded && !hosts.allSatisfy { $0.unavailable.isEmpty && $0.queue.isComplete }
+    }
 
     var past: [PastDecision] {
         history
@@ -897,21 +916,16 @@ final class AppModel {
         return past.filter { $0.at.map { now.timeIntervalSince($0) <= FleetLanes.finishedWindow } ?? false }
     }
 
+    /// A lane's number (apps/shared/Design/COUNTS.md): tendd's counts as
+    /// given, or the same rules applied to what this app read. Decided
+    /// history is never counted: it has its own heading.
     func count(_ lane: Lane) -> Int {
-        if let board = visibleBoard {
-            switch lane {
-            case .backlog: return board.backlog.count
-            // Every decided item, the older ones behind their fold too
-            // (fromServerBoard counts them).
-            case .finished: return FoldedLane(board, lane: lane).count + past.count
-            default: return FoldedLane(board, lane: lane).count
-            }
-        }
+        if let board = visibleBoard { return board.count(lane) }
         switch lane {
         case .backlog: return 0
         case .yourTurn: return pending.count
         case .inProgress: return inProgress.count
-        case .finished: return recentPast.count + finishedAgents.count
+        case .finished: return finishedAgents.count
         }
     }
 

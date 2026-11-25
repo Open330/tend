@@ -1,6 +1,12 @@
 {
   "cases": [
     {
+      "counts": {
+        "finished": 1,
+        "in_progress": 1,
+        "reviewed": 0,
+        "your_turn": 1
+      },
       "lanes": {
         "finished": [
           {
@@ -114,6 +120,12 @@
       "name": "solo agents take the lane of their state"
     },
     {
+      "counts": {
+        "finished": 0,
+        "in_progress": 1,
+        "reviewed": 0,
+        "your_turn": 0
+      },
       "lanes": {
         "finished": [],
         "needs_you": [],
@@ -162,6 +174,12 @@
       "name": "a pipeline run is one unit with stages"
     },
     {
+      "counts": {
+        "finished": 1,
+        "in_progress": 1,
+        "reviewed": 0,
+        "your_turn": 0
+      },
       "lanes": {
         "finished": [
           {
@@ -242,6 +260,12 @@
       "name": "a helper folds into the unit it helps; an orphan stays marked"
     },
     {
+      "counts": {
+        "finished": 1,
+        "in_progress": 1,
+        "reviewed": 0,
+        "your_turn": 0
+      },
       "lanes": {
         "finished": [
           {
@@ -320,6 +344,12 @@
       "name": "the same session id on two hosts is two units"
     },
     {
+      "counts": {
+        "finished": 4,
+        "in_progress": 0,
+        "reviewed": 0,
+        "your_turn": 0
+      },
       "lanes": {
         "finished": [
           {
@@ -465,6 +495,12 @@
       "name": "who asked: a person's result counts for Review, a peer's does not"
     },
     {
+      "counts": {
+        "finished": 1,
+        "in_progress": 0,
+        "reviewed": 1,
+        "your_turn": 2
+      },
       "lanes": {
         "finished": [
           {

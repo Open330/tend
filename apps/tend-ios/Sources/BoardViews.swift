@@ -130,7 +130,9 @@ struct BoardLaneItems: View {
         fold(folded.helpers, shown: $showsHelpers, show: { String(localized: "\($0) possible helper sessions") }, hide: String(localized: "Hide possible helpers"), id: "foldHelpers")
         fold(folded.empty, shown: $showsEmpty, show: { String(localized: "\($0) empty sessions") }, hide: String(localized: "Hide empty sessions"), id: "foldEmpty")
         fold(folded.older, shown: $showsOlder, show: { String(localized: "\($0) older") }, hide: String(localized: "Hide older"), id: "foldOlder")
-        fold(folded.reviewed, shown: $showsReviewed, show: { String(localized: "Show \($0) reviewed") }, hide: String(localized: "Hide reviewed"), id: "foldReviewed")
+        // The number tendd counted when it read the Looks Good marks.
+        let reviewed = board.reviewedCount(lane)
+        fold(folded.reviewed, shown: $showsReviewed, show: { _ in String(localized: "Show \(reviewed) reviewed") }, hide: String(localized: "Hide reviewed"), id: "foldReviewed")
         if let undecoded = board.undecoded[lane], undecoded > 0 {
             Label(String(localized: "\(undecoded) this app cannot show"), systemImage: "exclamationmark.triangle")
                 .font(TendType.meta)

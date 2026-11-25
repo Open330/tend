@@ -115,6 +115,10 @@ final class CantAnswerTests: XCTestCase {
         await model.refresh()
         XCTAssertEqual(model.pending.map(\.title), ["live?"])
         XCTAssertEqual(model.actionableCount, 1)
+        // The badge is Your turn without Can't be answered; the queue was
+        // cut, so it may be more.
+        XCTAssertEqual(model.badgeCount, 1)
+        XCTAssertTrue(model.yourTurnMayBeMore)
         XCTAssertEqual(model.cantAnswer.map(\.title), ["g?"])
         XCTAssertEqual(model.cantAnswerCount, 3)
         XCTAssertTrue(model.canKeep(model.cantAnswer[0]))

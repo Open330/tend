@@ -45,6 +45,17 @@ final class FleetHomeBoard: ObservableObject, TendWindowVisibilityTracking {
     /// A decisions change that arrived while the window was off screen.
     private var heldDecisions = false
 
+    /// The daemon's decision queue Home shows, kept for the app's life so
+    /// the rail's Home badge counts the same decisions as Your turn when no
+    /// Home is open. Home polls it while on screen; with no Home mounted the
+    /// model reads it at the folded-questions pace
+    /// (`AppModel.refreshFoldedQuestions`).
+    let decisionFeed: FleetDecisionFeed
+
+    /// Whether a Home is mounted in any window (shown or not): its loops,
+    /// not the model's, keep `decisionFeed` read.
+    var hasHome: Bool { !readers.isEmpty }
+
     var localHostAlias: String {
         hosts.first(where: \.local)?.alias ?? "local"
     }
@@ -53,6 +64,7 @@ final class FleetHomeBoard: ObservableObject, TendWindowVisibilityTracking {
     private var perfSubscription: AnyCancellable?
 
     init() {
+        decisionFeed = FleetDecisionFeed()
         perfSubscription = TendPerf.observe(self, "board.publish")
     }
 
