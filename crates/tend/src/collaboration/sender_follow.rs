@@ -746,6 +746,53 @@ mod tests {
         assert_eq!(cleanup.closed.len(), 1, "{cleanup:?}");
     }
 
+    /// tend's own item about a sender established gone closes in the full
+    /// pass, recorded as such, unless the person kept it; it does not come
+    /// back.
+    #[tokio::test]
+    async fn a_folded_gone_sender_item_closes_unless_kept() {
+        use super::super::subject_check::GoneCause;
+        use super::super::system_asks::{SystemAskCloseReason, SystemAskCloser};
+        let store = CollaborationStore::in_memory(CollaborationOptions::default());
+        let lead = participant("lead-1", "%1", None);
+        let id = replied(&store, &lead).await;
+        {
+            let mut requests = store.requests.write().await;
+            requests.get_mut(&id).unwrap().reply.as_mut().unwrap().at -= SENDER_GONE_GRACE;
+        }
+        let action = store.report_gone_sender(&id).await.unwrap().unwrap();
+        // Listed, not folded: stays.
+        let cleanup = store.cleanup_system_asks(&[], true).await.unwrap();
+        assert!(cleanup.closed.is_empty(), "{cleanup:?}");
+        let episode = store.fold_for_test(&action.id, GoneCause::Ended).await;
+        let cleanup = store.cleanup_system_asks(&[], true).await.unwrap();
+        assert_eq!(cleanup.closed.len(), 1, "{cleanup:?}");
+        assert_eq!(cleanup.closed[0].reason, SystemAskCloseReason::SubjectGone);
+        // Kept: the person's call wins.
+        store.keep_unanswerable(&action.id, &episode).await.unwrap();
+        let cleanup = store.cleanup_system_asks(&[], true).await.unwrap();
+        assert!(cleanup.closed.is_empty(), "{cleanup:?}");
+        // Not kept: the hourly pass closes it, and it stays closed.
+        {
+            let mut requests = store.requests.write().await;
+            let check = requests
+                .get_mut(&action.id)
+                .unwrap()
+                .subject_check
+                .as_mut()
+                .unwrap();
+            check.kept_episode = None;
+        }
+        let swept = store.sweep_system_asks(&[]).await.unwrap();
+        assert_eq!(swept.closed.len(), 1, "{swept:?}");
+        let closed = row(&store, &action.id).await;
+        assert_eq!(closed.status, RequestStatus::Cancelled);
+        let closure = closed.system_ask.unwrap().closed.unwrap();
+        assert_eq!(closure.reason, SystemAskCloseReason::SubjectGone);
+        assert_eq!(closure.by, SystemAskCloser::Daemon);
+        assert!(store.report_gone_sender(&id).await.unwrap().is_none());
+    }
+
     #[tokio::test]
     async fn answering_the_gone_sender_item_owes_no_further_wake() {
         let store = CollaborationStore::in_memory(CollaborationOptions::default());

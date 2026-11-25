@@ -180,8 +180,11 @@ The state machine runs on every reconcile, and every pass yields **alive**,
 - **Unknown** pauses the episode. If the time since `confirmed_at` exceeds 10
   minutes (a failed scan, the daemon being down, an ambiguous foreground),
   only the grace clock restarts: `gone_since` becomes the next confirmed
-  *gone*. The episode id and `kept_episode` are unchanged, because nothing
-  showed the subject alive. A daemon that was down therefore cannot
+  *gone*. The episode id, `episode_since` (when the episode began, what
+  the person reads as "gone since") and `kept_episode` are unchanged,
+  because nothing showed the subject alive. (Before 2026-11-25 the shown
+  date was `gone_since`, so every upgrade moved it: a pane gone since
+  2026-11-01 read "since 2026-11-24".) A daemon that was down therefore cannot
   fold anything at start, and an item kept before the outage stays kept.
 
 An item is **unanswerable** when all of these hold:

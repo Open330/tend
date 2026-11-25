@@ -571,6 +571,7 @@ impl CollaborationStore {
             now,
             super::system_asks::Scope::Managed,
             super::system_asks::SystemAskCloser::Daemon,
+            &std::collections::HashMap::new(),
         );
         let changed: Vec<_> = view.overlay.into_values().collect();
         drop(snapshot);

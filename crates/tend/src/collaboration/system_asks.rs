@@ -16,7 +16,10 @@
 //!   reply was delivered or read); or nobody is left to act on an answer
 //!   (see [`abandoned`]) and every request it covers has been in its
 //!   condition for [`SYSTEM_ASK_STALE_AFTER`], once the item itself has been
-//!   listed for [`SYSTEM_ASK_MIN_VISIBLE`]. A recovery ask
+//!   listed for [`SYSTEM_ASK_MIN_VISIBLE`]; or its subject is established
+//!   gone and the item is folded under "Can't be answered"
+//!   ([`SystemAskCloseReason::SubjectGone`], the full pass only: the asker
+//!   is tend, and the session it asks about cannot be acted on). A recovery ask
 //!   whose original request came from the operator console, or from a Fleet
 //!   initiator, closes for age only when its recipient vanished (no agent
 //!   row at all): a recipient still there, failing, is the person's to
@@ -109,6 +112,10 @@ pub enum SystemAskCloseReason {
     Stale,
     /// Another open item about the same session covers it now.
     Collapsed,
+    /// The session it is about is established gone past the grace
+    /// (`subject_check.rs`): it is folded under "Can't be answered", and
+    /// the person was not asked to keep it.
+    SubjectGone,
 }
 
 impl SystemAskCloseReason {
@@ -119,6 +126,7 @@ impl SystemAskCloseReason {
             Self::ParentClosed => "original request no longer waiting",
             Self::Stale => "stale: nobody left to act on it",
             Self::Collapsed => "merged",
+            Self::SubjectGone => "the session it is about is gone",
         }
     }
 }
@@ -381,13 +389,17 @@ struct OpenAsk {
 /// Apply the rules to `view`: close what can no longer matter, merge
 /// duplicates, and keep each managed item's text and cover list current.
 /// Changed rows land in `view.overlay`; the closures are returned, oldest
-/// first. With [`Scope::All`], every ask left open becomes managed.
+/// first. With [`Scope::All`], every ask left open becomes managed. `gone`
+/// is the asks unanswerable now by the subject check, with when their
+/// subject's episode began; they close as
+/// [`SystemAskCloseReason::SubjectGone`] ([`subject_gone_closes`]).
 pub(super) fn settle(
     view: &mut View<'_>,
     agents: &[Agent],
     now: OffsetDateTime,
     scope: Scope,
     by: SystemAskCloser,
+    gone: &HashMap<String, OffsetDateTime>,
 ) -> Vec<SettledAsk> {
     let open = open_asks(view, scope);
     let mut settled = Vec::new();
@@ -405,6 +417,11 @@ pub(super) fn settle(
             })
         {
             Some(SystemAskCloseReason::Stale)
+        } else if gone
+            .get(&ask.id)
+            .is_some_and(|since| subject_gone_closes(view, &ask, *since, now))
+        {
+            Some(SystemAskCloseReason::SubjectGone)
         } else {
             None
         };
@@ -423,6 +440,26 @@ pub(super) fn settle(
             .then(a.request_id.cmp(&b.request_id))
     });
     settled
+}
+
+/// Whether an ask folded because its subject is gone closes now. A
+/// recovery for a request a person sent (console or Fleet initiator) is
+/// about the person's own request: it waits until the recipient has been
+/// gone [`SYSTEM_ASK_STALE_AFTER`], as [`stale`] does for one that
+/// vanished. Every other ask closes at once: the asker is tend, and the
+/// session it is about cannot act on an answer.
+fn subject_gone_closes(
+    view: &View<'_>,
+    ask: &OpenAsk,
+    since: OffsetDateTime,
+    now: OffsetDateTime,
+) -> bool {
+    ask.kind != SystemAskKind::Recovery
+        || now - since >= SYSTEM_ASK_STALE_AFTER
+        || ask.waiting.iter().all(|id| {
+            view.get(id)
+                .is_some_and(|parent| !parent.from.console && parent.initiator.is_none())
+        })
 }
 
 /// The open system asks `scope` covers, oldest first, with the original
@@ -694,7 +731,19 @@ impl CollaborationStore {
             base: &snapshot,
             overlay: HashMap::new(),
         };
-        let closed = settle(&mut view, agents, now, Scope::All, by);
+        // Folded now, by the newest pass: the asks whose subject is gone.
+        let confirmed = self.subject_confirmations();
+        let gone: HashMap<String, OffsetDateTime> = snapshot
+            .values()
+            .filter_map(|request| {
+                let at = confirmed
+                    .get(&request.id)
+                    .map(|(episode, at)| (episode.as_str(), *at));
+                super::subject_check::unanswerable(request, at, now)
+                    .map(|folded| (request.id.clone(), folded.since))
+            })
+            .collect();
+        let closed = settle(&mut view, agents, now, Scope::All, by, &gone);
         let (mut open_after, mut agent_asks_open) = (0, 0);
         for request in view.all().filter(|r| r.needs_human_response()) {
             if system_ask_kind(request).is_some() {

@@ -203,6 +203,21 @@ async fn pass(
     store.check_subjects(&inputs).await.unwrap();
 }
 
+async fn pass_at(
+    store: &CollaborationStore,
+    agents: &[Agent],
+    bindings: &HashMap<String, SubjectBinding>,
+    scan: Option<&PaneScan>,
+    at: OffsetDateTime,
+) {
+    let inputs = SubjectInputs {
+        agents,
+        scan,
+        bindings,
+    };
+    store.check_subjects_at(&inputs, at).await.unwrap();
+}
+
 async fn folded(store: &CollaborationStore, id: &str) -> Option<Unanswerable> {
     store.unanswerable(&get(store, id).await, OffsetDateTime::now_utc())
 }
@@ -597,6 +612,7 @@ async fn a_daemon_down_a_day_restarts_the_grace_clock_not_the_episode() {
         episode: "ep_before".into(),
         state: SubjectState::Gone,
         gone_since: Some(now - Duration::hours(50)),
+        episode_since: Some(now - Duration::hours(50)),
         confirmed_at: now - Duration::hours(24),
         causes: vec![GoneCause::PaneGone],
         kept_episode: Some("ep_before".into()),
@@ -616,7 +632,87 @@ async fn a_daemon_down_a_day_restarts_the_grace_clock_not_the_episode() {
         check.gone_since.unwrap() > now - Duration::minutes(1),
         "the grace restarts"
     );
+    assert_eq!(
+        check.episode_since,
+        Some(now - Duration::hours(50)),
+        "but not when the episode began"
+    );
     assert!(folded(&store, &q.id).await.is_none());
+}
+
+/// Measured on jiun-mini (2026-11-25): a question 23 days old whose
+/// asker's pane was gone since 2026-11-01 read "pane gone since
+/// 2026-11-24", because every daemon restart (each upgrade) restarted the
+/// clock the person reads.
+#[tokio::test]
+async fn restart_gaps_never_move_when_the_episode_began() {
+    let store = CollaborationStore::in_memory(CollaborationOptions::default());
+    let q = question(&store, &participant("s7", "%7", "default")).await;
+    backdate(&store, &q.id, Duration::days(15)).await;
+    let start = OffsetDateTime::now_utc() - Duration::days(20);
+    pass_at(&store, &[], &everyone(), gone_scan(start).as_ref(), start).await;
+    let began = get(&store, &q.id).await.subject_check.unwrap();
+    assert_eq!(began.episode_since, Some(start));
+    // Five upgrades a few days apart: each a gap of an hour with no pass.
+    for day in [3, 7, 11, 15, 19] {
+        let at = start + Duration::days(day);
+        pass_at(&store, &[], &everyone(), gone_scan(at).as_ref(), at).await;
+        let check = get(&store, &q.id).await.subject_check.unwrap();
+        assert_eq!(check.episode, began.episode, "same episode");
+        assert_eq!(check.gone_since, Some(at), "only the grace clock restarts");
+        assert_eq!(check.episode_since, Some(start), "day {day}");
+    }
+    // An unknown stretch keeps it too.
+    let at = start + Duration::days(19) + Duration::hours(2);
+    pass_at(&store, &[], &everyone(), None, at).await;
+    let check = get(&store, &q.id).await.subject_check.unwrap();
+    assert_eq!(check.state, SubjectState::Unknown);
+    assert_eq!(check.episode_since, Some(start));
+    // Seen alive ends it.
+    let alive = row("s7", "%7", "default", AgentState::Idle, Duration::ZERO).await;
+    pass(&store, &[alive], &everyone(), None).await;
+    assert!(get(&store, &q.id).await.subject_check.is_none());
+}
+
+/// A row written before `episode_since` takes the subject's last sign of
+/// life, never before the question was asked.
+#[tokio::test]
+async fn a_legacy_row_takes_the_subjects_last_sign_of_life() {
+    let store = CollaborationStore::in_memory(CollaborationOptions::default());
+    let q = question(&store, &participant("s7", "%7", "default")).await;
+    backdate(&store, &q.id, Duration::days(23)).await;
+    let now = OffsetDateTime::now_utc();
+    let mut left = get(&store, &q.id).await;
+    left.subject_check = Some(SubjectCheck {
+        episode: "ep_legacy".into(),
+        state: SubjectState::Gone,
+        gone_since: Some(now - Duration::hours(20)),
+        episode_since: None,
+        confirmed_at: now - Duration::hours(20),
+        causes: vec![GoneCause::PaneGone],
+        kept_episode: None,
+        pane: Some("%7".into()),
+    });
+    put(&store, left.clone()).await;
+    // Its row, stopped, last active 21 days ago.
+    let stopped = row(
+        "s7",
+        "%7",
+        "default",
+        AgentState::Stopped,
+        Duration::days(21),
+    )
+    .await;
+    let seen = stopped.last_activity_at;
+    pass(&store, &[stopped], &everyone(), gone_scan(now).as_ref()).await;
+    let check = get(&store, &q.id).await.subject_check.unwrap();
+    assert_eq!(check.episode, "ep_legacy");
+    assert_eq!(check.episode_since, Some(seen));
+    // No sign of life left: its own clock, the oldest it has.
+    put(&store, left).await;
+    pass(&store, &[], &everyone(), gone_scan(now).as_ref()).await;
+    let check = get(&store, &q.id).await.subject_check.unwrap();
+    assert_eq!(check.episode_since, Some(now - Duration::hours(20)));
 }
 
 #[tokio::test]
@@ -680,21 +776,24 @@ fn the_state_machine_steps() {
         causes: vec![GoneCause::PaneGone],
         pane: Some("%1".into()),
     };
-    let first = step(None, &gone, now, None).unwrap();
+    let first = step(None, &gone, now, None, None).unwrap();
     assert_eq!(first.gone_since, Some(now));
-    assert!(step(None, &Verdict::Unknown, now, None).is_none());
-    assert!(step(Some(&first), &Verdict::Alive, now, Some(now)).is_none());
+    assert!(step(None, &Verdict::Unknown, now, None, None).is_none());
+    assert!(step(Some(&first), &Verdict::Alive, now, Some(now), None).is_none());
     // A short unknown keeps the grace clock; a long one restarts only it.
     let later = now + Duration::minutes(5);
-    let paused = step(Some(&first), &Verdict::Unknown, later, Some(now)).unwrap();
+    let paused = step(Some(&first), &Verdict::Unknown, later, Some(now), None).unwrap();
     assert_eq!(paused.gone_since, Some(now));
     let much_later = now + Duration::minutes(11);
-    let gap = step(Some(&first), &Verdict::Unknown, much_later, Some(now)).unwrap();
+    let gap = step(Some(&first), &Verdict::Unknown, much_later, Some(now), None).unwrap();
     assert_eq!(gap.gone_since, None);
     assert_eq!(gap.episode, first.episode);
-    let again = step(Some(&gap), &gone, much_later, Some(now)).unwrap();
+    let again = step(Some(&gap), &gone, much_later, Some(now), None).unwrap();
     assert_eq!(again.gone_since, Some(much_later));
     assert_eq!(again.episode, first.episode);
+    assert_eq!(first.episode_since, Some(now));
+    assert_eq!(gap.episode_since, Some(now), "a gap keeps when it began");
+    assert_eq!(again.episode_since, Some(now));
 }
 
 /// The two E1/E2 facts are written at ingestion, from real hooks only.
@@ -931,6 +1030,18 @@ async fn a_console_recovery_whose_recipient_pane_is_gone_folds_and_is_not_closed
     assert!(
         get(&store, &item.id).await.needs_human_response(),
         "not closed for age within the week"
+    );
+    // Its recipient gone a week: tend closes it, recorded as such.
+    let mut aged = get(&store, &item.id).await;
+    let check = aged.subject_check.as_mut().unwrap();
+    check.episode_since = check.episode_since.map(|at| at - Duration::days(7));
+    put(&store, aged).await;
+    store.sweep_system_asks(&[]).await.unwrap();
+    let closed = get(&store, &item.id).await;
+    assert_eq!(closed.status, RequestStatus::Cancelled);
+    assert_eq!(
+        closed.system_ask.unwrap().closed.unwrap().reason,
+        super::super::system_asks::SystemAskCloseReason::SubjectGone
     );
 }
 
@@ -1930,6 +2041,7 @@ async fn a_walk_that_was_not_complete_shows_nothing_without_a_binding() {
         episode: "ep_x".into(),
         state: SubjectState::Gone,
         gone_since: Some(OffsetDateTime::now_utc() - Duration::hours(1)),
+        episode_since: None,
         confirmed_at: OffsetDateTime::now_utc(),
         causes: vec![GoneCause::PaneGone],
         kept_episode: None,

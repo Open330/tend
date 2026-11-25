@@ -560,7 +560,8 @@ struct TendQuestionClosure: Decodable, Hashable, Sendable {
 /// (`decision_history_closures_v1`, only when asked for).
 struct TendClosedByTendEntry: Decodable, Hashable, Sendable {
     let request: TendHumanRequestEntry
-    /// `parent_missing`, `parent_closed`, `stale` or `collapsed`.
+    /// `parent_missing`, `parent_closed`, `stale`, `collapsed` or
+    /// `subject_gone`.
     let reason: String
     /// The reason in words, as `tend review cleanup` prints it.
     let reasonText: String
@@ -594,6 +595,7 @@ struct TendClosedByTendEntry: Decodable, Hashable, Sendable {
         case "parent_closed": String(localized: "Closed by tend: the original request no longer waits")
         case "stale": String(localized: "Closed by tend: nobody is left to act on it")
         case "collapsed": String(localized: "Closed by tend: merged into another item")
+        case "subject_gone": String(localized: "Closed by tend: the session it was about is gone")
         default: String(localized: "Closed by tend: \(reasonText)")
         }
     }
