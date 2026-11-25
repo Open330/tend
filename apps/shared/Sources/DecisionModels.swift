@@ -565,18 +565,25 @@ struct TendClosedByTendEntry: Decodable, Hashable, Sendable {
     /// The reason in words, as `tend review cleanup` prints it.
     let reasonText: String
     let closedAt: String
+    /// Closed (as `stale`) because the session it was about is gone: how.
+    let subjectGone: TendUnanswerable.Cause?
 
     enum CodingKeys: String, CodingKey {
         case reason
         case reasonText = "reason_text"
         case closedAt = "closed_at"
+        case subjectGone = "subject_gone"
     }
 
-    init(request: TendHumanRequestEntry, reason: String, reasonText: String, closedAt: String) {
+    init(
+        request: TendHumanRequestEntry, reason: String, reasonText: String, closedAt: String,
+        subjectGone: TendUnanswerable.Cause? = nil
+    ) {
         self.request = request
         self.reason = reason
         self.reasonText = reasonText
         self.closedAt = closedAt
+        self.subjectGone = subjectGone
     }
 
     init(from decoder: Decoder) throws {
@@ -585,11 +592,16 @@ struct TendClosedByTendEntry: Decodable, Hashable, Sendable {
         reason = try values.decode(String.self, forKey: .reason)
         reasonText = (try? values.decodeIfPresent(String.self, forKey: .reasonText)) ?? reason
         closedAt = try values.decode(String.self, forKey: .closedAt)
+        subjectGone = (try? values.decodeIfPresent(String.self, forKey: .subjectGone))
+            .map { TendUnanswerable.Cause($0) }
     }
 
     /// Why, for people.
     var reasonDescription: String {
-        switch reason {
+        if let subjectGone {
+            return String(localized: "Closed by tend: the session it was about is gone (\(subjectGone.text))")
+        }
+        return switch reason {
         case "parent_missing": String(localized: "Closed by tend: the original request is gone")
         case "parent_closed": String(localized: "Closed by tend: the original request no longer waits")
         case "stale": String(localized: "Closed by tend: nobody is left to act on it")

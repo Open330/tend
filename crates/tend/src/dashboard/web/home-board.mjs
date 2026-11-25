@@ -303,6 +303,7 @@ function decidedUnit(item, host, now) {
       outcome: "closedByTend",
       reason: String(item.reason || ""),
       reasonText: String(item.reason_text || item.reason || ""),
+      subjectGone: item.subject_gone ? String(item.subject_gone) : null,
       note: "",
       by: null,
       since: item.closed_at || null,

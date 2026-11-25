@@ -2709,6 +2709,16 @@
         }
       }
     },
+    "Closed by tend: the session it was about is gone (%@)" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "tend가 닫음: 대상 세션이 사라졌습니다 (%@)"
+          }
+        }
+      }
+    },
     "Closed, asker gone: %@" : {
       "localizations" : {
         "ko" : {

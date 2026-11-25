@@ -717,7 +717,7 @@ async fn cleanup(client: &Client, apply: bool, questions: bool, json: bool) -> R
         bail!("{CLOSE_UNANSWERABLE_OFF}");
     }
     // The list is read first: --questions --apply closes exactly it.
-    let (listed, unanswerable_count) = if has(SUBJECT_CHECK_CAPABILITY) {
+    let (mut listed, mut unanswerable_count) = if has(SUBJECT_CHECK_CAPABILITY) {
         let queue = client
             .decision_queue(
                 &tend::decision_queue::operator_origin(),
@@ -729,6 +729,16 @@ async fn cleanup(client: &Client, apply: bool, questions: bool, json: bool) -> R
         (Vec::new(), 0)
     };
     let cleanup = client.system_ask_cleanup(apply).await?;
+    // tend's own items it closes (or would) because their subject is gone
+    // are listed once, there.
+    let before = listed.len();
+    listed.retain(|entry| {
+        !cleanup
+            .closed
+            .iter()
+            .any(|closed| closed.request_id == entry.request_id)
+    });
+    unanswerable_count = unanswerable_count.saturating_sub(before - listed.len());
     let questions_closed = if close_questions && !listed.is_empty() {
         let pairs: Vec<CloseItem> = listed
             .iter()
@@ -999,7 +1009,16 @@ fn render_cleanup(cleanup: &SystemAskCleanup, now: OffsetDateTime) -> String {
         };
         let why = match (ask.reason, &ask.into) {
             (SystemAskCloseReason::Collapsed, Some(into)) => format!("merged into {into}"),
-            (reason, _) => reason.as_str().to_owned(),
+            (reason, _) => ask.subject_gone.map_or_else(
+                || reason.as_str().to_owned(),
+                |cause| {
+                    format!(
+                        "{}: the session it is about is gone ({})",
+                        reason.as_str(),
+                        cause.as_str()
+                    )
+                },
+            ),
         };
         let session: String = ask.subject_session.chars().take(8).collect();
         let _ = writeln!(

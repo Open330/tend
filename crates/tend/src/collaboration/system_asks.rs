@@ -16,7 +16,11 @@
 //!   reply was delivered or read); or nobody is left to act on an answer
 //!   (see [`abandoned`]) and every request it covers has been in its
 //!   condition for [`SYSTEM_ASK_STALE_AFTER`], once the item itself has been
-//!   listed for [`SYSTEM_ASK_MIN_VISIBLE`]. A recovery ask
+//!   listed for [`SYSTEM_ASK_MIN_VISIBLE`]; or the session it is about is
+//!   established gone and the item is folded under "Can't be answered"
+//!   (the full pass only, rechecked as Close all is; recorded as stale with
+//!   [`SystemAskClosure::subject_gone`]: the asker is tend, and the
+//!   session cannot act on an answer). A recovery ask
 //!   whose original request came from the operator console, or from a Fleet
 //!   initiator, closes for age only when its recipient vanished (no agent
 //!   row at all): a recipient still there, failing, is the person's to
@@ -95,6 +99,30 @@ pub struct SystemAskClosure {
     /// For [`SystemAskCloseReason::Collapsed`]: the item that covers it now.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub into: Option<String>,
+    /// Closed as [`SystemAskCloseReason::Stale`] because the session it is
+    /// about is established gone: how. A field, not a reason of its own, so
+    /// readers and daemons from before it (a rollback) still read the row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_gone: Option<super::subject_check::GoneCause>,
+}
+
+impl SystemAskClosure {
+    /// Why, in words, as `tend review cleanup` and the history print it.
+    #[must_use]
+    pub fn reason_text(&self) -> String {
+        match self.subject_gone {
+            Some(cause) => subject_gone_text(cause),
+            None => self.reason.as_str().to_owned(),
+        }
+    }
+}
+
+fn subject_gone_text(cause: super::subject_check::GoneCause) -> String {
+    format!(
+        "{}: the session it is about is gone ({})",
+        SystemAskCloseReason::Stale.as_str(),
+        cause.as_str()
+    )
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -141,6 +169,9 @@ pub struct SettledAsk {
     pub reason: SystemAskCloseReason,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub into: Option<String>,
+    /// As on [`SystemAskClosure::subject_gone`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_gone: Option<super::subject_check::GoneCause>,
     pub subject_session: String,
     /// The original requests it was about.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -357,6 +388,13 @@ impl View<'_> {
     }
 }
 
+/// An ask whose subject is established gone now: how, and since when.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Gone {
+    pub cause: super::subject_check::GoneCause,
+    pub since: OffsetDateTime,
+}
+
 /// Which asks a settle pass may touch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Scope {
@@ -381,18 +419,24 @@ struct OpenAsk {
 /// Apply the rules to `view`: close what can no longer matter, merge
 /// duplicates, and keep each managed item's text and cover list current.
 /// Changed rows land in `view.overlay`; the closures are returned, oldest
-/// first. With [`Scope::All`], every ask left open becomes managed.
+/// first. With [`Scope::All`], every ask left open becomes managed. `gone`
+/// is the asks whose subject is established gone now (folded, and
+/// rechecked as Close all rechecks), with how and since when; they close
+/// as stale with [`SystemAskClosure::subject_gone`]
+/// ([`subject_gone_closes`]).
 pub(super) fn settle(
     view: &mut View<'_>,
     agents: &[Agent],
     now: OffsetDateTime,
     scope: Scope,
     by: SystemAskCloser,
+    gone: &HashMap<String, Gone>,
 ) -> Vec<SettledAsk> {
     let open = open_asks(view, scope);
     let mut settled = Vec::new();
     let mut survivors = Vec::new();
     for ask in open {
+        let mut subject_gone = None;
         let reason = if !ask.linked.iter().any(|id| view.get(id).is_some()) {
             Some(SystemAskCloseReason::ParentMissing)
         } else if ask.waiting.is_empty() {
@@ -405,13 +449,21 @@ pub(super) fn settle(
             })
         {
             Some(SystemAskCloseReason::Stale)
+        } else if let Some(gone) = gone
+            .get(&ask.id)
+            .filter(|gone| subject_gone_closes(view, &ask, gone.since, now))
+        {
+            subject_gone = Some(gone.cause);
+            Some(SystemAskCloseReason::Stale)
         } else {
             None
         };
         match reason {
             Some(reason) => {
-                close(view, &ask, reason, None, now, by);
-                settled.push(report(&ask, reason, None));
+                close(view, &ask, reason, None, now, by, subject_gone);
+                let mut done = report(&ask, reason, None);
+                done.subject_gone = subject_gone;
+                settled.push(done);
             }
             None => survivors.push(ask),
         }
@@ -423,6 +475,27 @@ pub(super) fn settle(
             .then(a.request_id.cmp(&b.request_id))
     });
     settled
+}
+
+/// Whether an ask folded because its subject is gone closes now. A
+/// recovery for a request a person sent (console or Fleet initiator) is
+/// about the person's own request: it waits until the recipient has been
+/// gone [`SYSTEM_ASK_STALE_AFTER`], as [`stale`] does for one that
+/// vanished. Every other ask closes at once: the asker is tend, and the
+/// session it is about cannot act on an answer.
+fn subject_gone_closes(
+    view: &View<'_>,
+    ask: &OpenAsk,
+    since: OffsetDateTime,
+    now: OffsetDateTime,
+) -> bool {
+    // `since` is confirmed evidence only (`subject_check::legacy_since`).
+    ask.kind != SystemAskKind::Recovery
+        || now - since >= SYSTEM_ASK_STALE_AFTER
+        || ask.waiting.iter().all(|id| {
+            view.get(id)
+                .is_some_and(|parent| !parent.from.console && parent.initiator.is_none())
+        })
 }
 
 /// The open system asks `scope` covers, oldest first, with the original
@@ -526,6 +599,7 @@ fn collapse(
                 Some(survivor.id.clone()),
                 now,
                 by,
+                None,
             );
             settled.push(report(
                 ask,
@@ -560,6 +634,7 @@ fn report(ask: &OpenAsk, reason: SystemAskCloseReason, into: Option<String>) -> 
         kind: ask.kind,
         reason,
         into,
+        subject_gone: None,
         subject_session: ask.subject.clone(),
         parents: ask.linked.clone(),
         created_at: ask.created_at,
@@ -573,6 +648,7 @@ fn close(
     into: Option<String>,
     now: OffsetDateTime,
     by: SystemAskCloser,
+    subject_gone: Option<super::subject_check::GoneCause>,
 ) {
     let Some(mut row) = view.get(&ask.id).cloned() else {
         return;
@@ -599,6 +675,7 @@ fn close(
         at: now,
         by,
         into: into.clone(),
+        subject_gone,
     });
     view.put(row);
 }
@@ -648,7 +725,7 @@ pub(super) fn log_settled(settled: &[SettledAsk], by: SystemAskCloser) {
     for ask in settled {
         tracing::info!(
             request_id = ask.request_id,
-            reason = ask.reason.as_str(),
+            reason = ask.subject_gone.map_or_else(|| ask.reason.as_str().to_owned(), subject_gone_text),
             into = ask.into.as_deref().unwrap_or(""),
             subject = ask.subject_session,
             by = ?by,
@@ -666,7 +743,30 @@ impl CollaborationStore {
         agents: &[Agent],
         dry_run: bool,
     ) -> Result<SystemAskCleanup, CollaborationError> {
-        self.settle_all(agents, dry_run, SystemAskCloser::Cleanup)
+        self.settle_all(agents, None, dry_run, SystemAskCloser::Cleanup)
+            .await
+    }
+
+    /// [`Self::cleanup_system_asks`] that also closes the asks whose
+    /// subject `registry` establishes gone (see [`settle`]), as tendd and
+    /// `tend review cleanup` run it. The registry is held still from its
+    /// read through the commit, as for Close all.
+    pub async fn cleanup_system_asks_checked(
+        &self,
+        registry: &crate::state::Store,
+        dry_run: bool,
+    ) -> Result<SystemAskCleanup, CollaborationError> {
+        self.settle_all(&[], Some(registry), dry_run, SystemAskCloser::Cleanup)
+            .await
+    }
+
+    /// [`Self::sweep_system_asks`] with the subject check of
+    /// [`Self::cleanup_system_asks_checked`]: tendd's hourly pass.
+    pub async fn sweep_system_asks_checked(
+        &self,
+        registry: &crate::state::Store,
+    ) -> Result<SystemAskCleanup, CollaborationError> {
+        self.settle_all(&[], Some(registry), false, SystemAskCloser::Daemon)
             .await
     }
 
@@ -676,25 +776,44 @@ impl CollaborationStore {
         &self,
         agents: &[Agent],
     ) -> Result<SystemAskCleanup, CollaborationError> {
-        self.settle_all(agents, false, SystemAskCloser::Daemon)
+        self.settle_all(agents, None, false, SystemAskCloser::Daemon)
             .await
     }
 
+    /// With `registry`, its agents stand for `agents`, and it is held from
+    /// this read through the commit (lock order: the mailbox's, then the
+    /// registry's, as in Close all).
     async fn settle_all(
         &self,
         agents: &[Agent],
+        registry: Option<&crate::state::Store>,
         dry_run: bool,
         by: SystemAskCloser,
     ) -> Result<SystemAskCleanup, CollaborationError> {
         self.ensure_enabled()?;
         let _transaction = self.transaction_lock.lock().await;
-        let now = OffsetDateTime::now_utc();
         let snapshot = self.requests.read().await;
+        let hold = match registry {
+            Some(registry) => Some(registry.hold().await),
+            None => None,
+        };
+        // After the hold: evidence that expired while waiting for it is not
+        // fresh now.
+        let now = OffsetDateTime::now_utc();
+        let registry_agents: Vec<Agent>;
+        let (agents, gone) = match &hold {
+            Some(hold) => {
+                registry_agents = hold.agents();
+                let gone = self.gone_system_asks(&snapshot, hold, &registry_agents, now);
+                (registry_agents.as_slice(), gone)
+            }
+            None => (agents, HashMap::new()),
+        };
         let mut view = View {
             base: &snapshot,
             overlay: HashMap::new(),
         };
-        let closed = settle(&mut view, agents, now, Scope::All, by);
+        let closed = settle(&mut view, agents, now, Scope::All, by, &gone);
         let (mut open_after, mut agent_asks_open) = (0, 0);
         for request in view.all().filter(|r| r.needs_human_response()) {
             if system_ask_kind(request).is_some() {
@@ -707,6 +826,7 @@ impl CollaborationStore {
         drop(snapshot);
         if !dry_run && !rows.is_empty() {
             self.commit_request_rows(&rows).await?;
+            drop(hold);
             self.publish_change();
             log_settled(&closed, by);
         }

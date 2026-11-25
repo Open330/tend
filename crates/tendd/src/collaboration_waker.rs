@@ -153,10 +153,7 @@ async fn check_subjects(collaboration: &CollaborationStore, store: &tend::Store)
 }
 
 async fn sweep_system_asks(collaboration: &CollaborationStore, store: &tend::Store) {
-    if let Err(error) = collaboration
-        .sweep_system_asks(&store.snapshot().await)
-        .await
-    {
+    if let Err(error) = collaboration.sweep_system_asks_checked(store).await {
         tracing::warn!(%error, "scheduled cleanup of tend's own items failed");
     }
 }

@@ -138,8 +138,10 @@ pub(super) async fn decision_response(
             if let Some(refused) = operator_only(origin.as_ref()) {
                 return ("system_ask_cleanup", Response::err(refused.to_string()));
             }
-            let agents = store.snapshot().await;
-            let response = match collaboration.cleanup_system_asks(&agents, !apply).await {
+            let response = match collaboration
+                .cleanup_system_asks_checked(store, !apply)
+                .await
+            {
                 Ok(cleanup) => Response {
                     system_ask_cleanup: Some(Box::new(cleanup)),
                     ..Response::ok()

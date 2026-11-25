@@ -151,6 +151,15 @@ longer matter:
   not from the item, because items are recreated. An item is listed for at
   least a day before it can close this way. A recovery item for a request
   the person sent is never closed for age.
+- the session it is about is established gone and the item has folded
+  under "Can't be answered" (below), unless the person kept it: the asker
+  is tend, and nothing can act on an answer. A recovery item for a request
+  the person sent waits until its recipient has been gone a week. This
+  closure runs in the hourly pass and `tend review cleanup`, rechecked
+  with the registry held as Close all is, and is recorded as `stale` with
+  `subject_gone: <cause>` (a field, so older readers still read the row);
+  a recovery item closed this way is asked again only once its recipient
+  is live and still interrupted.
 
 tendd applies the rules on every reconcile to the items it opened under
 them, and to every item, the backlog included, at start and every hour.
@@ -206,9 +215,14 @@ same `list-panes` call as the panes; rmux does not report one, so on rmux only
 `ended` and `pane_gone` apply.
 
 Every reconcile pass keeps an evidence episode on the request
-(`subject_check`: `episode`, `state`, `gone_since`, `confirmed_at`, `causes`,
-`kept_episode`). Alive ends it; gone extends it; unknown pauses it, and more
-than 10 minutes of unknown restarts only the grace clock, never the episode.
+(`subject_check`: `episode`, `state`, `gone_since`, `episode_since`,
+`confirmed_at`, `causes`, `kept_episode`). Alive ends it; gone extends it;
+unknown pauses it, and more than 10 minutes of unknown (a daemon restart, a
+host asleep) restarts only the grace clock `gone_since`, never the episode
+or `episode_since`, when it began, which is the "gone since" every surface
+shows. A row from before `episode_since` takes its own oldest clock,
+never before the item: later than the truth if restarts moved it, never
+earlier.
 An item is unanswerable when the episode is gone and confirmed by a pass in
 the last 5 minutes, has been for 15 minutes, the item is at least 15 minutes old, and
 the person has not kept this episode. A daemon that was down cannot fold

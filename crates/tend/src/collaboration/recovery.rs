@@ -430,6 +430,18 @@ impl CollaborationStore {
                                 .system_ask
                                 .as_ref()
                                 .is_some_and(|state| match &state.closed {
+                                    // Closed because the recipient was
+                                    // established gone: asked again only
+                                    // once it is live again and still
+                                    // interrupted.
+                                    Some(closed) if closed.subject_gone.is_some() => {
+                                        exact_agent(&original.to, agents)
+                                            .is_some_and(|a| a.state != AgentState::Stopped)
+                                            || agents.iter().any(|a| {
+                                                a.session_id == original.to.agent_session_id
+                                                    && a.state != AgentState::Stopped
+                                            })
+                                    }
                                     Some(closed)
                                         if closed.reason
                                             == super::system_asks::SystemAskCloseReason::Stale =>
@@ -571,6 +583,7 @@ impl CollaborationStore {
             now,
             super::system_asks::Scope::Managed,
             super::system_asks::SystemAskCloser::Daemon,
+            &std::collections::HashMap::new(),
         );
         let changed: Vec<_> = view.overlay.into_values().collect();
         drop(snapshot);
