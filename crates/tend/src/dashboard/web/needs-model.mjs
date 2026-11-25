@@ -63,29 +63,28 @@ export function evidenceLine(evidence) {
 /// What tend ran itself before the result reached the person (the Work's
 /// declared checks, `verification`), shown ahead of the agent's account.
 /// Null when tend ran nothing.
-export function checksOf(verification, now = Date.now()) {
+export function checksOf(verification) {
   const checks = Array.isArray(verification?.checks) ? verification.checks : [];
   if (!checks.length) return null;
   const passed = checks.filter((check) => check?.passed === true).length;
-  const when = ago(verification.ran_at, now);
+  // Counts and facts only: the page says them in its language
+  // (home-strings.mjs `checksRan`, `checkLine`), as the apps do.
   return {
     passed: verification.passed === true && passed === checks.length,
-    headline: `tend ran ${passed}/${checks.length} ${checks.length === 1 ? "check" : "checks"} passed${when ? ` · ${when} ago` : ""}`,
+    passedCount: passed,
+    total: checks.length,
+    ranAt: verification.ran_at || null,
     lines: checks.map((check) => {
-      const how = check?.timed_out
-        ? "timed out"
-        : Number.isInteger(check?.exit_code)
-          ? `exit ${check.exit_code}`
-          : check?.passed === true
-            ? ""
-            : "killed";
-      const label = check?.name || check?.command || "check";
+      const ok = check?.passed === true;
       return {
-        text: `${check?.passed === true ? "passed" : "FAILED"}: ${label}${how && check?.passed !== true ? ` (${how})` : ""}`,
-        cls: check?.passed === true ? "pass" : "fail",
+        ok,
+        label: check?.name || check?.command || "check",
+        // Why a check failed: it timed out, exited with a code, or was killed.
+        how: ok ? null : check?.timed_out ? { timedOut: true } : Number.isInteger(check?.exit_code) ? { exit: check.exit_code } : { killed: true },
+        cls: ok ? "pass" : "fail",
         // The command under its name, so the person sees what ran.
         command: check?.name && check?.command ? check.command : null,
-        tail: check?.passed === true ? null : check?.tail || null,
+        tail: ok ? null : check?.tail || null,
       };
     }),
   };
@@ -94,7 +93,7 @@ export function checksOf(verification, now = Date.now()) {
 /// The asker's decision. With tend's own checks shown above, the copies
 /// tendd also put in the evidence (marked `verified`) are not repeated.
 function decisionParts(decision, verification = null, now = Date.now()) {
-  const checks = checksOf(verification, now);
+  const checks = checksOf(verification);
   const evidence = Array.isArray(decision?.evidence) ? decision.evidence : [];
   return {
     checks,

@@ -287,14 +287,14 @@ struct AgentDetailView: View {
     }
 }
 
-/// The summary box (`FleetQuickLook`): "Needs you" or "Now" / "Last
+/// The summary box (`FleetQuickLook`): "Needs your decision" or "Now" / "Last
 /// result", then what the agent said, as Markdown.
 struct NowBox: View {
     let agent: FleetAgent
 
     var body: some View {
         let tint: Color = agent.status.needsAttention ? TendPalette.orange : agent.running ? TendPalette.blue : TendPalette.green
-        let label = agent.status.needsAttention ? String(localized: "Needs you")
+        let label = agent.status.needsAttention ? String(localized: "Needs your decision")
             : agent.running ? String(localized: "Now") : String(localized: "Last result")
         let text = agent.status.needsAttention
             ? (agent.lastNotification ?? String(localized: "Waits for your answer in its pane."))

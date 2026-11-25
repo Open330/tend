@@ -257,8 +257,8 @@ enum HostState {
         case "online": String(localized: "Online")
         case "connecting": String(localized: "Connecting")
         case "degraded": String(localized: "Degraded")
-        case "version_skew": String(localized: "Needs update")
-        case "auth_failed": String(localized: "Sign-in failed")
+        case "version_skew": String(localized: "Version skew")
+        case "auth_failed": String(localized: "Authentication failed")
         case "disabled": String(localized: "Disabled")
         default: String(localized: "Offline")
         }

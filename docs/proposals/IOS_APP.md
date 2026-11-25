@@ -527,7 +527,7 @@ By default, nothing anyone wrote:
   option provides only that unlock; the binding below is the app's job.
   - `TEND_OPEN` is the default, sent without content. It has no buttons;
     tapping opens the item.
-  - `TEND_REVIEW` (with content) offers **Looks good** and **Send back**,
+  - `TEND_REVIEW` (with content) offers **Accept** and **Return**,
     the latter with a text field for the note.
   - `TEND_QUESTION` (with content) offers **Answer**, with a text field.
   - `TEND_WAITING` only opens the item, because answering a pane is not a

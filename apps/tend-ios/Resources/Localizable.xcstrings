@@ -261,12 +261,12 @@
         }
       }
     },
-    "A notification shows the question or result and who asked. The text passes through Apple and shows on the lock screen as far as iOS's Show Previews allows; turning this off stops later ones only. Looks good, Send back and Answer work from the notification once the phone is unlocked.": {
+    "A notification shows the question or result and who asked. The text passes through Apple and shows on the lock screen as far as iOS's Show Previews allows; turning this off stops later ones only. Accept, Return and Answer work from the notification once the phone is unlocked.": {
       "localizations": {
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "알림에 질문이나 결과와 물어본 쪽이 표시됩니다. 이 내용은 Apple을 거쳐 전달되고, iOS의 미리보기 표시 설정이 허용하는 만큼 잠금 화면에 보입니다. 이 설정을 끄면 이후 알림부터 적용됩니다. 좋습니다, 돌려보내기, 답하기는 휴대폰 잠금을 푼 뒤 알림에서 바로 쓸 수 있습니다."
+            "value": "알림에 질문이나 결과와 물어본 쪽이 표시됩니다. 이 내용은 Apple을 거쳐 전달되고, iOS의 미리보기 표시 설정이 허용하는 만큼 잠금 화면에 보입니다. 이 설정을 끄면 이후 알림부터 적용됩니다. 수락, 돌려보내기, 답하기는 휴대폰 잠금을 푼 뒤 알림에서 바로 쓸 수 있습니다."
           }
         }
       }
@@ -517,6 +517,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "선택을 기다립니다. 열어서 질문을 확인하세요."
+          }
+        }
+      }
+    },
+    "Authentication failed": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "인증 실패"
           }
         }
       }
@@ -1301,16 +1311,6 @@
         }
       }
     },
-    "Looks good": {
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "좋습니다"
-          }
-        }
-      }
-    },
     "Model": {
       "localizations": {
         "ko": {
@@ -1351,22 +1351,12 @@
         }
       }
     },
-    "Needs update": {
+    "Needs your decision": {
       "localizations": {
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "업데이트 필요"
-          }
-        }
-      }
-    },
-    "Needs you": {
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "내 차례"
+            "value": "결정이 필요합니다"
           }
         }
       }
@@ -1937,16 +1927,6 @@
         }
       }
     },
-    "Send back": {
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "돌려보내기"
-          }
-        }
-      }
-    },
     "Session": {
       "localizations": {
         "ko": {
@@ -2023,16 +2003,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "로그아웃"
-          }
-        }
-      }
-    },
-    "Sign-in failed": {
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "로그인 실패"
           }
         }
       }
@@ -2537,6 +2507,16 @@
         }
       }
     },
+    "Version skew": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "버전 불일치"
+          }
+        }
+      }
+    },
     "Waiting": {
       "localizations": {
         "ko": {
@@ -2752,7 +2732,7 @@
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "답"
+            "value": "답변"
           }
         }
       }
