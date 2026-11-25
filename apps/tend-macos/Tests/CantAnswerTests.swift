@@ -494,19 +494,48 @@ private func remoteQuestionQueue(_ ids: [String]) throws -> TendPendingQueue {
     }
 
     @MainActor
-    @Test func anAnswerFromHereStaysHiddenUntilALaterReadComesBack() throws {
+    @Test func anAnswerFromHereStaysHiddenUntilItsHostIsReadBackOnBothSides() throws {
         let feed = FleetDecisionFeed()
-        let question = FleetDecision(humanRequest: try mailboxQuestion("rq_mine", status: "queued", host: dev))
-        let inFlight = feed.beginRemote()
-        feed.noteWritten(question)
-        #expect(feed.settled(messages: []).contains(question.id))
-        // A read that started before the answer still lists it: hidden.
+        let staleCopy = try mailboxQuestion("rq_mine", status: "queued", host: dev)
+        let question = FleetDecision(humanRequest: staleCopy)
         let mini = try fleetHost("dev", capabilities: ["fleet_decision_queue_v1"])
-        feed.apply(hosts: [mini], read: [mini.identity], found: [0: try remoteQuestionQueue(["rq_mine"])], generation: inFlight)
-        #expect(feed.settled(messages: []).contains(question.id))
-        // One that started after it says where it stands.
-        feed.apply(hosts: [mini], read: [mini.identity], found: [0: try remoteQuestionQueue([])], generation: feed.beginRemote())
-        #expect(feed.settled(messages: []).isEmpty)
+        // What Home would list, the feed's own answers left out.
+        func shown(_ messages: [TendOperatorMessage], queue: TendPendingQueue) -> [String] {
+            let merged = FleetDecisions.merge(queue: nil, reviews: [], messages: messages, localHost: local)
+            return FleetDecisions.withRemote(merged, queues: [(dev, queue)], deciding: [], settled: feed.settled(messages: messages))
+                .filter { feed.written[$0.id] == nil }
+                .map(\.id)
+        }
+        let listing = try remoteQuestionQueue(["rq_mine"])
+        #expect(shown([staleCopy], queue: listing) == [question.id], "the fixture: pending before the answer")
+
+        // The answer goes through while a queue read and a mailbox read
+        // (number 5) are in flight.
+        let inFlight = feed.beginRemote()
+        feed.noteWritten(question, mailboxAfter: 5)
+        #expect(shown([staleCopy], queue: listing).isEmpty, "hidden at once")
+        feed.apply(hosts: [mini], read: [mini.identity], found: [0: listing], generation: inFlight)
+        feed.noteMailboxRead(hosts: ["dev"], generation: 5, messages: [staleCopy])
+        #expect(shown([staleCopy], queue: listing).isEmpty, "reads that started before it say nothing")
+
+        // The first queue poll after it fails, and the next comes back
+        // empty: the mailbox still holds the stale pending copy.
+        feed.apply(hosts: [mini], read: [mini.identity], found: [:], generation: feed.beginRemote())
+        #expect(feed.written[question.id]?.queueRead == false, "a failed read does not count")
+        let empty = try remoteQuestionQueue([])
+        feed.apply(hosts: [mini], read: [mini.identity], found: [0: empty], generation: feed.beginRemote())
+        #expect(feed.written[question.id]?.queueRead == true)
+        #expect(shown([staleCopy], queue: empty).isEmpty, "the stale mailbox copy does not bring it back")
+        // A mailbox read after it that failed for that host neither.
+        feed.noteMailboxRead(hosts: [], generation: 6, messages: [staleCopy])
+        #expect(shown([staleCopy], queue: empty).isEmpty)
+
+        // A mailbox read after it went through: read back on both sides,
+        // and the mailbox now has it answered.
+        let answered = try mailboxQuestion("rq_mine", status: "completed", host: dev)
+        feed.noteMailboxRead(hosts: ["dev"], generation: 7, messages: [answered])
+        #expect(feed.written.isEmpty)
+        #expect(shown([answered], queue: listing).isEmpty, "and a stale queue row stays gone by the mailbox's word")
     }
 
     @Test func aQuestionOnAnObserveHostIsCountedButAnsweredThere() throws {

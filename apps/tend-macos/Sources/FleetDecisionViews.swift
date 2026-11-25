@@ -62,11 +62,11 @@ final class FleetDecisionFeed: ObservableObject {
     private var localApplied: UInt64 = 0
     /// A read of this Mac's queue was asked for during one.
     private var localReloadRequested = false
-    /// Questions this app answered or declined, by decision id, with the
-    /// read generation (`localStarted`, or `remoteStarted` for another
-    /// host) at the write: hidden until a read that started after it is
-    /// applied, so a queue read before the answer cannot bring one back.
-    private(set) var written: [String: (local: Bool, after: UInt64)] = [:] {
+    /// Questions this app answered or declined, by decision id: hidden
+    /// until both the host's queue and its mailbox were read whole after
+    /// the write (`FleetWrittenQuestion`), so neither a queue nor a mailbox
+    /// copy read before the answer can bring one back.
+    private(set) var written: [String: FleetWrittenQuestion] = [:] {
         didSet { sourceRevision &+= 1 }
     }
     /// Decisions being recorded, by id.
@@ -162,8 +162,15 @@ final class FleetDecisionFeed: ObservableObject {
     func apply(hosts: [TendFleetHost], read: [TendFleetHostIdentity], found: [Int: TendPendingQueue], generation: UInt64) -> Bool {
         guard generation > remoteApplied else { return false }
         remoteApplied = generation
-        let done = written.filter { !$0.value.local && $0.value.after < generation }.map(\.key)
-        if !done.isEmpty { done.forEach { written[$0] = nil } }
+        // A host read after the write says where its questions stand; a
+        // failed read says nothing. A host no queue was asked of has none
+        // that could list them.
+        let answered = Set(read.enumerated().compactMap { index, host in found[index] == nil ? nil : host.alias })
+        let asked = Set(read.map(\.alias))
+        updateWritten { write in
+            guard !write.local, write.queueAfter < generation else { return }
+            if answered.contains(write.host) || !asked.contains(write.host) { write.queueRead = true }
+        }
         lastRemoteRead = Date()
         let deciding = Set(hosts.filter(FleetDecisions.decidesReviews).map(\.alias))
         if reviewHosts != deciding { reviewHosts = deciding }
@@ -227,14 +234,14 @@ final class FleetDecisionFeed: ObservableObject {
                 await ingestLocal(queue, client: client, generation: generation)
             } else {
                 let page = try await client.reviewItems(offset: 0, limit: 200)
-                guard claimLocal(generation) else { return }
+                guard claimLocal(generation, read: true) else { return }
                 if queue != nil { queue = nil }
                 if reviews != page.items { reviews = page.items }
                 setProblem(nil)
                 setLocalPartial(page.hasMore)
             }
         } catch {
-            guard claimLocal(generation) else { return }
+            guard claimLocal(generation, read: false) else { return }
             setProblem(String(localized: "Could not read decisions: \(error.localizedDescription)"))
             setLocalPartial(true)
         }
@@ -246,18 +253,54 @@ final class FleetDecisionFeed: ObservableObject {
         return localStarted
     }
 
-    private func claimLocal(_ generation: UInt64) -> Bool {
+    /// Whether a read of this Mac's queue that started at `generation` is
+    /// the latest; `read` is whether it read the queue (a failure does
+    /// not count as having seen where this Mac's answers stand).
+    private func claimLocal(_ generation: UInt64, read: Bool) -> Bool {
         guard generation > localApplied else { return false }
         localApplied = generation
-        let done = written.filter { $0.value.local && $0.value.after < generation }.map(\.key)
-        if !done.isEmpty { done.forEach { written[$0] = nil } }
+        if read {
+            updateWritten { write in
+                if write.local, write.queueAfter < generation { write.queueRead = true }
+            }
+        }
         return true
     }
 
-    /// Hides a question this app just answered or declined until a read
-    /// that started after it shows where it stands.
-    func noteWritten(_ decision: FleetDecision) {
-        written[decision.id] = decision.host.local ? (true, localStarted) : (false, remoteStarted)
+    /// Hides a question this app just answered or declined until a queue
+    /// read and a mailbox read of its host, both started after the write
+    /// (`mailboxAfter` is `AppModel.inboxReadsStarted` then), went through.
+    func noteWritten(_ decision: FleetDecision, mailboxAfter: UInt64) {
+        written[decision.id] = FleetWrittenQuestion(
+            host: decision.host.alias, local: decision.host.local,
+            queueAfter: decision.host.local ? localStarted : remoteStarted,
+            mailboxAfter: mailboxAfter
+        )
+    }
+
+    /// A mailbox read that started at `generation` went through for
+    /// `hosts`; `messages` is the mailbox now. A question it holds as
+    /// settled needs no more reads.
+    func noteMailboxRead(hosts: Set<String>, generation: UInt64, messages: [TendOperatorMessage]) {
+        guard !written.isEmpty else { return }
+        let settled = FleetDecisions.settledQuestions(messages)
+        var next = written
+        for (id, write) in written where settled.contains(id)
+            || (hosts.contains(write.host) && write.mailboxAfter < generation) {
+            next[id]?.mailboxRead = true
+        }
+        next = next.filter { !$0.value.isReadBack }
+        if next != written { written = next }
+    }
+
+    /// Changes every marker, then drops the ones read back on both sides,
+    /// in one assignment.
+    private func updateWritten(_ change: (inout FleetWrittenQuestion) -> Void) {
+        guard !written.isEmpty else { return }
+        var next = written
+        for key in next.keys { change(&next[key]!) }
+        next = next.filter { !$0.value.isReadBack }
+        if next != written { written = next }
     }
 
     /// What no queue read may list again: the mailbox's settled questions
@@ -272,7 +315,7 @@ final class FleetDecisionFeed: ObservableObject {
         let queue = read.projected(limit: FleetDecisions.displayQueueLimit)
         let keep = await client.supports(tendSubjectCheckCapability)
         let close = await client.supports(tendCloseUnanswerableCapability)
-        guard claimLocal(generation) else { return }
+        guard claimLocal(generation, read: true) else { return }
         if self.queue != queue { self.queue = queue }
         if canKeep != keep { canKeep = keep }
         if canCloseAll != close { canCloseAll = close }
@@ -440,7 +483,8 @@ final class FleetDecisionFeed: ObservableObject {
             queues: remoteQueues,
             deciding: reviewHosts,
             settled: settled(messages: model.operatorMessages)
-        ).filter { written[$0.id] == nil }
+        )
+        .filter { written[$0.id] == nil }
         let value = FleetDecisions.attachAskers(merged, index: model.hostedAgentIndex)
         cachedDecisions = (key, value)
         drafts.prune(keeping: Set(value.map(\.id)))
@@ -479,7 +523,7 @@ final class FleetDecisionFeed: ObservableObject {
     /// The write went through: the card leaves at once, and the queue that
     /// listed it is read again.
     private func settle(_ decision: FleetDecision, model: AppModel) {
-        noteWritten(decision)
+        noteWritten(decision, mailboxAfter: model.inboxReadsStarted)
         model.homeBoard.requestDecisions(decision.host.local ? [.local] : [.remote])
     }
 
@@ -580,6 +624,23 @@ final class FleetDecisionFeed: ObservableObject {
         await load(model.client)
         return succeeded
     }
+}
+
+/// A question this app answered or declined, kept hidden until its host
+/// was read back on both sides: a queue read and a mailbox read that each
+/// started after the write and went through. Either one read earlier, or
+/// failing, may still offer it as pending.
+struct FleetWrittenQuestion: Equatable, Sendable {
+    let host: String
+    let local: Bool
+    /// The feed's queue read generation at the write.
+    let queueAfter: UInt64
+    /// `AppModel.inboxReadsStarted` at the write.
+    let mailboxAfter: UInt64
+    var queueRead = false
+    var mailboxRead = false
+
+    var isReadBack: Bool { queueRead && mailboxRead }
 }
 
 /// What a decision card's composer is for (apps/shared/Design/CARDS.md).

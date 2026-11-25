@@ -290,6 +290,11 @@ final class AppModel: ObservableObject {
     private var pipelineRefreshPending = false
     private var lastFleetRefresh = Date.distantPast
     private var pendingInboxHosts = Set<String>()
+    /// How many mailbox reads have started, so Home can tell a read that
+    /// began after an answer from one that began before it.
+    private(set) var inboxReadsStarted: UInt64 = 0
+    /// Hosts to read again once the running mailbox read is done.
+    private var trailingInboxHosts = Set<String>()
     private var shellNumber = 1
     private var lastInboxRefresh = Date.distantPast
     /// When the folded questions were last read (`refreshFoldedQuestions`).
@@ -1771,9 +1776,29 @@ final class AppModel: ObservableObject {
         force: Bool,
         hostAliases: Set<String>?
     ) async {
+        guard !isRefreshingInbox else {
+            // A read of these hosts is asked for during one that may have
+            // started before (an answer sent from Home): one more follows.
+            if let hostAliases { trailingInboxHosts.formUnion(hostAliases) }
+            return
+        }
+        await performInboxRefresh(force: force, hostAliases: hostAliases)
+        while !trailingInboxHosts.isEmpty {
+            let hosts = trailingInboxHosts
+            trailingInboxHosts.removeAll()
+            await performInboxRefresh(force: false, hostAliases: hosts)
+        }
+    }
+
+    private func performInboxRefresh(
+        force: Bool,
+        hostAliases: Set<String>?
+    ) async {
         guard !isRefreshingInbox else { return }
         if !force, hostAliases == nil, Date().timeIntervalSince(lastInboxRefresh) < 4 { return }
         let generation = connectionGeneration
+        inboxReadsStarted &+= 1
+        let readGeneration = inboxReadsStarted
         isRefreshingInbox = true
         if hostAliases == nil { lastInboxRefresh = Date() }
         if inboxError != nil { inboxError = nil }
@@ -1827,9 +1852,11 @@ final class AppModel: ObservableObject {
         }
 
         guard connectionGeneration == generation else { return }
+        var readHosts = Set<String>()
         for result in results {
             let target = result.target
             if let mailbox = result.mailbox {
+                readHosts.insert(target.host.alias)
                 inboxReadTokens[target.host.alias] = mailbox.readToken
                 if mailbox.unchanged {
                     failures[target.host.alias] = nil
@@ -1874,6 +1901,7 @@ final class AppModel: ObservableObject {
             if changed.contains(where: { !$0.local }) { reads.append(.remote) }
             homeBoard.requestDecisions(reads)
         }
+        homeBoard.decisionFeed.noteMailboxRead(hosts: readHosts, generation: readGeneration, messages: updatedMessages)
         attention.ingestHumanRequests(updatedMessages)
         if inboxHostFailures != failures { inboxHostFailures = failures }
         await refreshFoldedQuestions(force: false)
