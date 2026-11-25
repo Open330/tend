@@ -62,6 +62,13 @@ final class FleetDecisionFeed: ObservableObject {
     private var localApplied: UInt64 = 0
     /// A read of this Mac's queue was asked for during one.
     private var localReloadRequested = false
+    /// Questions this app answered or declined, by decision id, with the
+    /// read generation (`localStarted`, or `remoteStarted` for another
+    /// host) at the write: hidden until a read that started after it is
+    /// applied, so a queue read before the answer cannot bring one back.
+    private(set) var written: [String: (local: Bool, after: UInt64)] = [:] {
+        didSet { sourceRevision &+= 1 }
+    }
     /// Decisions being recorded, by id.
     @Published private(set) var busy: Set<String> = []
     /// What the daemon lets Can't be answered do: Keep (`subject_check_v1`)
@@ -155,6 +162,8 @@ final class FleetDecisionFeed: ObservableObject {
     func apply(hosts: [TendFleetHost], read: [TendFleetHostIdentity], found: [Int: TendPendingQueue], generation: UInt64) -> Bool {
         guard generation > remoteApplied else { return false }
         remoteApplied = generation
+        let done = written.filter { !$0.value.local && $0.value.after < generation }.map(\.key)
+        if !done.isEmpty { done.forEach { written[$0] = nil } }
         lastRemoteRead = Date()
         let deciding = Set(hosts.filter(FleetDecisions.decidesReviews).map(\.alias))
         if reviewHosts != deciding { reviewHosts = deciding }
@@ -214,7 +223,7 @@ final class FleetDecisionFeed: ObservableObject {
         do {
             // Polled every few seconds while Home is open: assign only what
             // changed, so an unchanged queue does not redraw the board.
-            if let queue = try await client.decisionQueue() {
+            if let queue = try await client.decisionQueue(limit: FleetDecisions.displayQueueLimit) {
                 await ingestLocal(queue, client: client, generation: generation)
             } else {
                 let page = try await client.reviewItems(offset: 0, limit: 200)
@@ -240,12 +249,27 @@ final class FleetDecisionFeed: ObservableObject {
     private func claimLocal(_ generation: UInt64) -> Bool {
         guard generation > localApplied else { return false }
         localApplied = generation
+        let done = written.filter { $0.value.local && $0.value.after < generation }.map(\.key)
+        if !done.isEmpty { done.forEach { written[$0] = nil } }
         return true
+    }
+
+    /// Hides a question this app just answered or declined until a read
+    /// that started after it shows where it stands.
+    func noteWritten(_ decision: FleetDecision) {
+        written[decision.id] = decision.host.local ? (true, localStarted) : (false, remoteStarted)
+    }
+
+    /// What no queue read may list again: the mailbox's settled questions
+    /// and this app's own answers not yet read back.
+    func settled(messages: [TendOperatorMessage]) -> Set<String> {
+        FleetDecisions.settledQuestions(messages).union(written.keys)
     }
 
     /// This Mac's queue as one read found it (the feed's, or the model's
     /// read for the folded questions), unless a later read was applied.
-    func ingestLocal(_ queue: TendPendingQueue, client: TendIPCClient, generation: UInt64) async {
+    func ingestLocal(_ read: TendPendingQueue, client: TendIPCClient, generation: UInt64) async {
+        let queue = read.projected(limit: FleetDecisions.displayQueueLimit)
         let keep = await client.supports(tendSubjectCheckCapability)
         let close = await client.supports(tendCloseUnanswerableCapability)
         guard claimLocal(generation) else { return }
@@ -414,8 +438,9 @@ final class FleetDecisionFeed: ObservableObject {
         let merged = FleetDecisions.withRemote(
             FleetDecisions.merge(queue: queue, reviews: reviews, messages: model.operatorMessages, localHost: local),
             queues: remoteQueues,
-            deciding: reviewHosts
-        )
+            deciding: reviewHosts,
+            settled: settled(messages: model.operatorMessages)
+        ).filter { written[$0.id] == nil }
         let value = FleetDecisions.attachAskers(merged, index: model.hostedAgentIndex)
         cachedDecisions = (key, value)
         drafts.prune(keeping: Set(value.map(\.id)))
@@ -430,7 +455,7 @@ final class FleetDecisionFeed: ObservableObject {
 
     /// Replies to a human request as the person; tendd records the answer.
     func answer(_ decision: FleetDecision, text: String, model: AppModel) async -> Bool {
-        guard case .humanRequest(let requestID) = decision.source else { return false }
+        guard case .humanRequest(let requestID) = decision.source, writable(decision) else { return false }
         guard let route = model.consoleRoute(hostAlias: decision.host.alias) else {
             failures[decision.id] = String(localized: "\(decision.host.alias) is not connected.")
             return false
@@ -439,8 +464,23 @@ final class FleetDecisionFeed: ObservableObject {
             try await model.client.replyCollaboration(
                 host: route.host, pane: route.pane, requestID: requestID, status: "completed", body: text
             )
+            self.settle(decision, model: model)
             await model.refreshOperatorInbox(force: false, hostAliases: [decision.host.alias])
         }
+    }
+
+    /// A question on a host that only lets this Mac look is answered there.
+    private func writable(_ decision: FleetDecision) -> Bool {
+        guard decision.observeOnly else { return true }
+        failures[decision.id] = String(localized: "Decide this on \(decision.host.alias).")
+        return false
+    }
+
+    /// The write went through: the card leaves at once, and the queue that
+    /// listed it is read again.
+    private func settle(_ decision: FleetDecision, model: AppModel) {
+        noteWritten(decision)
+        model.homeBoard.requestDecisions(decision.host.local ? [.local] : [.remote])
     }
 
     /// Declines a human request without an answer: the asker, if it is
@@ -448,7 +488,7 @@ final class FleetDecisionFeed: ObservableObject {
     /// when they gave none; tendd's own items record it as their decision.
     /// Either way it leaves every client's queue, on the host that holds it.
     func decline(_ decision: FleetDecision, reason: String, model: AppModel) async -> Bool {
-        guard case .humanRequest(let requestID) = decision.source else { return false }
+        guard case .humanRequest(let requestID) = decision.source, writable(decision) else { return false }
         guard let route = model.consoleRoute(hostAlias: decision.host.alias) else {
             failures[decision.id] = String(localized: "\(decision.host.alias) is not connected.")
             return false
@@ -458,6 +498,7 @@ final class FleetDecisionFeed: ObservableObject {
                 host: route.host, pane: route.pane, requestID: requestID, status: "declined",
                 body: FleetDecisions.declineBody(reason)
             )
+            self.settle(decision, model: model)
             await model.refreshOperatorInbox(force: false, hostAliases: [decision.host.alias])
         }
     }
@@ -1052,7 +1093,7 @@ struct FleetDecisionCard: View {
 
     /// Withdraw: only a review this Mac decides.
     private var canWithdraw: Bool {
-        if case .review = decision.source { return !decision.decidedOnDashboard }
+        if case .review = decision.source { return !decision.decidedElsewhere }
         return false
     }
 
@@ -1279,8 +1320,9 @@ struct FleetDecisionCard: View {
         return TendDashboardLink.item(item.id, host: decision.host.alias, on: dashboard)
     }
 
-    /// Another host's review item: the person decides it on that host, or
-    /// on the dashboard under its sign-in. This app never decides it
+    /// Another host's review item, or a question on a host that only lets
+    /// this Mac look: the person decides it on that host, or (a review of a
+    /// host Home decides for) on the dashboard under its sign-in. This app never decides it
     /// itself; one line says where, with the dashboard when tendd names one.
     private var dashboardAction: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1298,7 +1340,7 @@ struct FleetDecisionCard: View {
 
     @ViewBuilder
     private var actions: some View {
-        if decision.decidedOnDashboard {
+        if decision.decidedElsewhere {
             dashboardAction
         } else {
             localActions

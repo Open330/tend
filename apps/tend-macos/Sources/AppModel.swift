@@ -1863,15 +1863,26 @@ final class AppModel: ObservableObject {
                 return lhs.id < rhs.id
             }
         if operatorMessages != updatedMessages {
+            // A question came or went: the queue of each host it changed
+            // on, which lists that host's questions in Your turn and the
+            // badge, is read again soon.
+            let changed = Self.changedHosts(operatorMessages, updatedMessages)
             operatorMessagesRevision &+= 1
             operatorMessages = updatedMessages
-            // A question came or went: this Mac's queue, which decides its
-            // own questions in Your turn and the badge, is read again soon.
-            homeBoard.requestDecisions([.local])
+            var reads: [FleetDecisionSchedule.Read] = []
+            if changed.contains(where: \.local) { reads.append(.local) }
+            if changed.contains(where: { !$0.local }) { reads.append(.remote) }
+            homeBoard.requestDecisions(reads)
         }
         attention.ingestHumanRequests(updatedMessages)
         if inboxHostFailures != failures { inboxHostFailures = failures }
         await refreshFoldedQuestions(force: false)
+    }
+
+    /// The hosts whose messages differ between two mailbox reads.
+    static func changedHosts(_ old: [TendOperatorMessage], _ new: [TendOperatorMessage]) -> Set<TendFleetHostIdentity> {
+        let before = Dictionary(grouping: old, by: \.host), after = Dictionary(grouping: new, by: \.host)
+        return Set(before.keys).union(after.keys).filter { before[$0] != after[$0] }
     }
 
     /// Which questions nobody can answer, so no badge counts them
@@ -1893,6 +1904,8 @@ final class AppModel: ObservableObject {
             // The same queue serves the rail's badge, unless a Home on
             // screen reads its own page every few seconds.
             if homeBoard.decisionPace != .home {
+                // Cut to the page Home reads (`displayQueueLimit`), so the
+                // badge never moves with which read came last.
                 await feed.ingestLocal(queue, client: client, generation: generation)
                 homeBoard.decisionPoller?.noteRead(.local)
             }

@@ -42,10 +42,20 @@ struct FleetDecision: Identifiable, Hashable, Sendable {
     /// (`subject_check_v1`). Listed under Can't be answered, not in Your
     /// turn, and not counted.
     var unanswerable: TendUnanswerable?
-    /// Another host's review item that neither this app nor its dashboard
-    /// decides (an observe-only host): listed and counted, as tendd counts
-    /// it, but decided only on that host.
+    /// A decision on another host that neither this app nor its dashboard
+    /// decides: a question on an observe-mode host, or a review item of a
+    /// host Home does not decide reviews for. Listed and counted, as tendd
+    /// counts it, but decided only on that host.
     var observeOnly = false
+
+    /// Whether `host` only lets this Mac look: an observe-mode Fleet host.
+    static func observes(_ host: TendFleetHostIdentity) -> Bool {
+        !host.local && host.mode == "observe"
+    }
+
+    /// Decided anywhere but in this card: on the dashboard, or only on its
+    /// own host.
+    var decidedElsewhere: Bool { decidedOnDashboard || observeOnly }
 
     var isUnanswerable: Bool { unanswerable != nil }
 
@@ -129,6 +139,7 @@ struct FleetDecision: Identifiable, Hashable, Sendable {
         evidence = entry.decision?.evidence ?? []
         isSystemAsk = entry.system == true || Self.tendServices.contains(entry.fromSessionID)
         unanswerable = entry.unanswerable
+        observeOnly = Self.observes(host)
     }
 
     /// The services an older tendd's own items come from.
@@ -146,6 +157,7 @@ struct FleetDecision: Identifiable, Hashable, Sendable {
         since = TendUsageTimestamp.parse(request.createdAt)
         evidence = request.decision?.evidence ?? []
         isSystemAsk = Self.tendServices.contains(request.from.agentSessionID)
+        observeOnly = Self.observes(message.host)
     }
 
     init(review item: TendReviewItem, host: TendFleetHostIdentity) {
@@ -205,12 +217,15 @@ enum FleetDecisions {
     /// host it did not list as live) and come last, folded. Every other
     /// live decision a queue lists is counted once: its questions the
     /// mailbox did not deliver, and all its open review items, those of a
-    /// host outside `deciding` marked `observeOnly`. Nothing here acts on
-    /// another host: Home opens those on the dashboard.
+    /// host outside `deciding` marked `observeOnly`. A question in
+    /// `settled` (answered or declined, as the mailbox or this app's own
+    /// write knows) is never listed from a queue read before it settled.
+    /// Nothing here acts on another host: Home opens those on the dashboard.
     static func withRemote(
         _ merged: [FleetDecision],
         queues: [(host: TendFleetHostIdentity, queue: TendPendingQueue)],
-        deciding: Set<String>
+        deciding: Set<String>,
+        settled: Set<String> = []
     ) -> [FleetDecision] {
         var remoteFolded = FleetFoldedQuestions()
         var folded: [FleetDecision] = []
@@ -229,6 +244,7 @@ enum FleetDecisions {
         for entry in queues where !entry.host.local {
             for case .humanRequest(let request) in entry.queue.items where request.unanswerable == nil {
                 let decision = FleetDecision(humanRequest: request, host: entry.host)
+                guard !settled.contains(decision.id) else { continue }
                 if seen.insert(decision.id).inserted { listed.append(decision) }
             }
         }
@@ -239,6 +255,18 @@ enum FleetDecisions {
         let live = kept.filter { !$0.isUnanswerable } + listed
         return live.filter { !$0.isSystemAsk } + live.filter(\.isSystemAsk) + kept.filter(\.isUnanswerable) + folded
     }
+
+    /// The questions the mailbox holds as answered, declined or otherwise
+    /// done, by decision id: a queue read earlier may still list them.
+    static func settledQuestions(_ messages: [TendOperatorMessage]) -> Set<String> {
+        Set(messages.lazy.filter { $0.isHumanRequest && !$0.request.needsHumanResponse }
+            .map { "human:\($0.host.alias):\($0.request.id)" })
+    }
+
+    /// How many entries of this Mac's queue Home and the rail's badge show:
+    /// every read the shared feed takes is cut here, so the number does not
+    /// move with which reader read last.
+    static let displayQueueLimit = 200
 
     /// The queue Home shows. With the daemon's queue: its human requests and
     /// review items in its order (waiting agents are already Work cards),
@@ -316,6 +344,19 @@ enum FleetDecisions {
 /// when its page was cut with folded questions past it, every question of
 /// that host it did not list as live (`live`, by host). Ids are
 /// `host:request`.
+extension TendPendingQueue {
+    /// The page a read with `limit` would have returned: the first `limit`
+    /// entries, cut when there were more. A larger read (the folded
+    /// questions') reaches the shared feed only this way.
+    func projected(limit: Int) -> TendPendingQueue {
+        guard items.count > limit else { return self }
+        var page = self
+        page.items = Array(items.prefix(limit))
+        page.truncated = true
+        return page
+    }
+}
+
 struct FleetFoldedQuestions: Equatable, Sendable {
     var folded: Set<String> = []
     var live: [String: Set<String>] = [:]

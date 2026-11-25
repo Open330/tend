@@ -449,3 +449,88 @@ private func pendingQueue(_ json: String) throws -> TendPendingQueue {
         #expect(schedule.due(.remote) == start.addingTimeInterval(25))
     }
 }
+
+// A question answered from here never comes back from a queue read before
+// the answer, and a question on a host that only lets this Mac look is
+// counted but answered on that host.
+
+private func mailboxQuestion(_ id: String, status: String, host: TendFleetHostIdentity) throws -> TendOperatorMessage {
+    let json = """
+    {"id":"\(id)","kind":"question","body":"Deploy?","expects_reply":true,"work_mode":"read_only",
+     "status":"\(status)","created_at":"2026-11-10T11:00:00Z",
+     "from":{"agent_kind":"codex","agent_session_id":"s-\(id)","pane":"%9","room":{"host":"tmux","window_id":"@1"}},
+     "to":{"agent_kind":"unknown","agent_session_id":"__tend_console__","pane":"console","room":{"host":"tmux","window_id":"@1"},"console":true}}
+    """
+    let request = try JSONDecoder().decode(TendCollaborationRequest.self, from: Data(json.utf8))
+    return TendOperatorMessage(host: host, routePane: .operatorRoute, request: request)
+}
+
+private func remoteQuestionQueue(_ ids: [String]) throws -> TendPendingQueue {
+    let items = ids.map {
+        #"{"kind":"human_request","request_id":"\#($0)","body":"Deploy?","from_session_id":"s-\#($0)","from_pane":"%9","created_at":"2026-11-10T11:00:00Z"}"#
+    }
+    return try pendingQueue(#"{"items":["# + items.joined(separator: ",") + "]}")
+}
+
+@Suite struct SettledAndObservedQuestionTests {
+    private let dev = TendFleetHostIdentity(alias: "dev", local: false, state: "online", mode: "control")
+    private let watcher = TendFleetHostIdentity(alias: "watcher", local: false, state: "online", mode: "observe")
+
+    @Test func theMailboxsAnswerVetoesAnEarlierQueueRow() throws {
+        // The queue was read before the answer; the mailbox has it answered.
+        let queue = try remoteQuestionQueue(["rq_done", "rq_open"])
+        let messages = [
+            try mailboxQuestion("rq_done", status: "completed", host: dev),
+            try mailboxQuestion("rq_open", status: "queued", host: dev),
+        ]
+        let merged = FleetDecisions.merge(queue: nil, reviews: [], messages: messages, localHost: local)
+        #expect(merged.map(\.id) == ["human:dev:rq_open"], "the mailbox lists only the open one")
+        let stale = FleetDecisions.withRemote(merged, queues: [(dev, queue)], deciding: [])
+        #expect(stale.map(\.id).contains("human:dev:rq_done"), "the fixture: without the veto it comes back")
+        let settled = FleetDecisions.settledQuestions(messages)
+        #expect(settled == ["human:dev:rq_done"])
+        let decisions = FleetDecisions.withRemote(merged, queues: [(dev, queue)], deciding: [], settled: settled)
+        #expect(decisions.map(\.id) == ["human:dev:rq_open"])
+    }
+
+    @MainActor
+    @Test func anAnswerFromHereStaysHiddenUntilALaterReadComesBack() throws {
+        let feed = FleetDecisionFeed()
+        let question = FleetDecision(humanRequest: try mailboxQuestion("rq_mine", status: "queued", host: dev))
+        let inFlight = feed.beginRemote()
+        feed.noteWritten(question)
+        #expect(feed.settled(messages: []).contains(question.id))
+        // A read that started before the answer still lists it: hidden.
+        let mini = try fleetHost("dev", capabilities: ["fleet_decision_queue_v1"])
+        feed.apply(hosts: [mini], read: [mini.identity], found: [0: try remoteQuestionQueue(["rq_mine"])], generation: inFlight)
+        #expect(feed.settled(messages: []).contains(question.id))
+        // One that started after it says where it stands.
+        feed.apply(hosts: [mini], read: [mini.identity], found: [0: try remoteQuestionQueue([])], generation: feed.beginRemote())
+        #expect(feed.settled(messages: []).isEmpty)
+    }
+
+    @Test func aQuestionOnAnObserveHostIsCountedButAnsweredThere() throws {
+        let mailbox = FleetDecision(humanRequest: try mailboxQuestion("rq_m", status: "queued", host: watcher))
+        #expect(mailbox.observeOnly && mailbox.decidedElsewhere)
+        let controlled = FleetDecision(humanRequest: try mailboxQuestion("rq_c", status: "queued", host: dev))
+        #expect(!controlled.observeOnly && !controlled.decidedElsewhere)
+        // From the queue too, and it stays in Your turn's number.
+        let decisions = FleetDecisions.withRemote([mailbox], queues: [(watcher, try remoteQuestionQueue(["rq_m", "rq_q"]))], deciding: [])
+        #expect(decisions.map(\.id) == ["human:watcher:rq_m", "human:watcher:rq_q"])
+        #expect(decisions.filter { !$0.observeOnly }.isEmpty)
+        #expect(FleetBoard.counts(works: [], decisions: decisions, marks: FleetReviewMarks()).yourTurn == 2)
+        // This Mac's own questions are always answered here.
+        let mine = FleetDecision(humanRequest: try mailboxQuestion("rq_l", status: "queued", host: local))
+        #expect(!mine.observeOnly)
+    }
+
+    @Test func aLargerReadReachesTheFeedAsThePageHomeReads() throws {
+        let limit = FleetDecisions.displayQueueLimit
+        let big = try remoteQuestionQueue((0..<(limit + 50)).map { "rq_\($0)" })
+        let page = big.projected(limit: limit)
+        #expect(page.items.count == limit && page.truncated)
+        #expect(page.items.first == big.items.first)
+        let small = try remoteQuestionQueue(["rq_a"])
+        #expect(small.projected(limit: limit) == small)
+    }
+}
