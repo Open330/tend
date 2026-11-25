@@ -231,7 +231,7 @@ impl ClosedByTendEntry {
         Some(Self {
             request: HumanRequestEntry::from_request(request),
             reason: closure.reason,
-            reason_text: closure.reason.as_str().to_owned(),
+            reason_text: closure.reason_text(),
             closed_by: closure.by,
             into: closure.into.clone(),
             closed_at: closure.at,

@@ -674,27 +674,30 @@ async fn restart_gaps_never_move_when_the_episode_began() {
     assert!(get(&store, &q.id).await.subject_check.is_none());
 }
 
-/// A row written before `episode_since` takes the subject's last sign of
-/// life, never before the question was asked.
+/// A row written before `episode_since` takes confirmed evidence only:
+/// its own clocks or the asker's recorded end, never a last activity, and
+/// never before the question was asked.
 #[tokio::test]
-async fn a_legacy_row_takes_the_subjects_last_sign_of_life() {
+async fn a_legacy_row_takes_confirmed_evidence_only() {
     let store = CollaborationStore::in_memory(CollaborationOptions::default());
     let q = question(&store, &participant("s7", "%7", "default")).await;
     backdate(&store, &q.id, Duration::days(23)).await;
+    let created = get(&store, &q.id).await.created_at;
     let now = OffsetDateTime::now_utc();
-    let mut left = get(&store, &q.id).await;
-    left.subject_check = Some(SubjectCheck {
+    let legacy = |gone_since: OffsetDateTime| SubjectCheck {
         episode: "ep_legacy".into(),
         state: SubjectState::Gone,
-        gone_since: Some(now - Duration::hours(20)),
+        gone_since: Some(gone_since),
         episode_since: None,
-        confirmed_at: now - Duration::hours(20),
+        confirmed_at: gone_since,
         causes: vec![GoneCause::PaneGone],
         kept_episode: None,
         pane: Some("%7".into()),
-    });
+    };
+    let mut left = get(&store, &q.id).await;
+    left.subject_check = Some(legacy(now - Duration::hours(20)));
     put(&store, left.clone()).await;
-    // Its row, stopped, last active 21 days ago.
+    // A row last active 21 days ago is no evidence of when it went.
     let stopped = row(
         "s7",
         "%7",
@@ -703,16 +706,45 @@ async fn a_legacy_row_takes_the_subjects_last_sign_of_life() {
         Duration::days(21),
     )
     .await;
-    let seen = stopped.last_activity_at;
     pass(&store, &[stopped], &everyone(), gone_scan(now).as_ref()).await;
     let check = get(&store, &q.id).await.subject_check.unwrap();
     assert_eq!(check.episode, "ep_legacy");
-    assert_eq!(check.episode_since, Some(seen));
-    // No sign of life left: its own clock, the oldest it has.
+    assert_eq!(check.episode_since, Some(now - Duration::hours(20)));
+    // Its recorded end is.
+    let ended = now - Duration::days(19);
+    store
+        .record_subject_facts(vec![SubjectFact::new(
+            FactKind::Ended,
+            "s7",
+            Some("%7"),
+            Some("default"),
+            None,
+            ended,
+        )])
+        .unwrap();
     put(&store, left).await;
     pass(&store, &[], &everyone(), gone_scan(now).as_ref()).await;
-    let check = get(&store, &q.id).await.subject_check.unwrap();
-    assert_eq!(check.episode_since, Some(now - Duration::hours(20)));
+    assert_eq!(
+        get(&store, &q.id)
+            .await
+            .subject_check
+            .unwrap()
+            .episode_since,
+        Some(ended)
+    );
+    // A clock from before the question (a clock rollback): the question.
+    let mut left = get(&store, &q.id).await;
+    left.subject_check = Some(legacy(created - Duration::days(3)));
+    put(&store, left).await;
+    pass(&store, &[], &everyone(), gone_scan(now).as_ref()).await;
+    assert_eq!(
+        get(&store, &q.id)
+            .await
+            .subject_check
+            .unwrap()
+            .episode_since,
+        Some(created)
+    );
 }
 
 #[tokio::test]
@@ -1031,18 +1063,67 @@ async fn a_console_recovery_whose_recipient_pane_is_gone_folds_and_is_not_closed
         get(&store, &item.id).await.needs_human_response(),
         "not closed for age within the week"
     );
+    store
+        .sweep_system_asks_checked(&registry(&[]).await)
+        .await
+        .unwrap();
+    assert!(
+        get(&store, &item.id).await.needs_human_response(),
+        "a person's own request: not closed because its recipient is gone, within the week"
+    );
     // Its recipient gone a week: tend closes it, recorded as such.
     let mut aged = get(&store, &item.id).await;
     let check = aged.subject_check.as_mut().unwrap();
     check.episode_since = check.episode_since.map(|at| at - Duration::days(7));
     put(&store, aged).await;
-    store.sweep_system_asks(&[]).await.unwrap();
+    // Back at the commit (a resume the registry shows now): kept open.
+    let back = store
+        .cleanup_system_asks_checked(&registry(&[("peer", "%2")]).await, true)
+        .await
+        .unwrap();
+    assert!(back.closed.is_empty(), "{back:?}");
+    store
+        .sweep_system_asks_checked(&registry(&[]).await)
+        .await
+        .unwrap();
     let closed = get(&store, &item.id).await;
     assert_eq!(closed.status, RequestStatus::Cancelled);
+    let closure = closed.system_ask.unwrap().closed.unwrap();
     assert_eq!(
-        closed.system_ask.unwrap().closed.unwrap().reason,
-        super::super::system_asks::SystemAskCloseReason::SubjectGone
+        closure.reason,
+        super::super::system_asks::SystemAskCloseReason::Stale,
+        "a reason every reader knows"
     );
+    assert_eq!(closure.subject_gone, Some(GoneCause::PaneGone));
+    assert!(closure.reason_text().contains("is gone (pane gone)"));
+    // The reconcile does not ask again while the recipient is gone.
+    let before = store.requests.read().await.len();
+    let stopped = row(
+        "peer",
+        "%2",
+        "default",
+        AgentState::Stopped,
+        Duration::days(1),
+    )
+    .await;
+    store
+        .reconcile_peer_interruptions(&[stopped])
+        .await
+        .unwrap();
+    assert_eq!(store.requests.read().await.len(), before, "no new item");
+    let parent = get(&store, &parent_id(&closed_parent(&store, &item.id).await)).await;
+    assert_eq!(
+        parent.interruption.unwrap().action_request_id.as_deref(),
+        Some(item.id.as_str())
+    );
+}
+
+async fn closed_parent(store: &CollaborationStore, item: &str) -> CollaborationRequest {
+    get(store, &get(store, item).await.parent_request_id.unwrap()).await
+}
+
+fn parent_id(parent: &CollaborationRequest) -> String {
+    parent.id.clone()
 }
 
 #[tokio::test]

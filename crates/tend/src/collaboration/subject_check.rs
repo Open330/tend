@@ -344,7 +344,7 @@ pub(super) enum Verdict {
 /// [`UNKNOWN_GAP`] without a confirmation restarts only the grace clock.
 /// `last_confirmed` is the newest confirmation known, the row's or this
 /// process's. `legacy` is when a row written before
-/// [`SubjectCheck::episode_since`] began its episode, as best known.
+/// [`SubjectCheck::episode_since`] began its episode ([`legacy_since`]).
 pub(super) fn step(
     old: Option<&SubjectCheck>,
     verdict: &Verdict,
@@ -353,12 +353,10 @@ pub(super) fn step(
     legacy: Option<OffsetDateTime>,
 ) -> Option<SubjectCheck> {
     let began = |old: &SubjectCheck| {
-        old.episode_since.or_else(|| {
-            [legacy, old.gone_since, Some(old.confirmed_at)]
-                .into_iter()
-                .flatten()
-                .min()
-        })
+        old.episode_since
+            .or(legacy)
+            .or(old.gone_since)
+            .or(Some(old.confirmed_at))
     };
     match verdict {
         Verdict::Alive => None,
@@ -425,7 +423,7 @@ pub(super) fn unanswerable(
     .then(|| Unanswerable {
         cause: check.causes.first().copied().unwrap_or(GoneCause::PaneGone),
         episode: check.episode.clone(),
-        since: check.episode_since.map_or(since, |began| began.min(since)),
+        since: check.episode_since.unwrap_or(since),
         pane: check.pane.clone(),
     })
 }
@@ -892,40 +890,38 @@ pub(super) fn evaluate(
 }
 
 /// When the episode of a row written before
-/// [`SubjectCheck::episode_since`] began, as best known: the last sign of
-/// life of the subject that was seen last (its row's last activity, or the
-/// end hook tendd recorded for it), and never before the item itself,
-/// whose asker was there to ask. `None` when a subject left no such sign;
-/// [`step`] then takes the row's own grace clock. Those rows' grace clock
-/// may have been restarted by every daemon restart since, which made an
-/// asker gone for weeks read as gone since the last upgrade.
+/// [`SubjectCheck::episode_since`] began, from confirmed evidence only: the
+/// row's own clocks, or, when every subject has one, the end hook tendd
+/// recorded for it, whichever is oldest; never before the item itself,
+/// whose asker was there to ask. Those rows' grace clock may have been
+/// restarted by every daemon restart since, which made an asker gone for
+/// weeks read as gone since the last upgrade. A last activity is not
+/// evidence: an idle agent stays quiet for days and is still there.
 fn legacy_since(
     request: &CollaborationRequest,
+    old: &SubjectCheck,
     requests: &HashMap<String, CollaborationRequest>,
-    inputs: &SubjectInputs<'_>,
     facts: &[SubjectFact],
-) -> Option<OffsetDateTime> {
-    let mut latest = request.created_at;
-    for subject in subjects(request, requests)? {
-        let subject = subject?;
-        let session = subject.agent_session_id.as_str();
-        let row = super::recovery::exact_agent(subject, inputs.agents)
-            .map(|row| row.last_activity_at)
-            .into_iter()
-            .chain(
-                inputs
-                    .agents
-                    .iter()
-                    .filter(|agent| agent.session_id == session)
-                    .map(|agent| agent.last_activity_at),
-            );
-        let ended = facts
-            .iter()
-            .filter(|fact| fact.session_id == session && fact.kind == FactKind::Ended)
-            .map(|fact| fact.observed_at);
-        latest = latest.max(row.chain(ended).max()?);
-    }
-    Some(latest)
+) -> OffsetDateTime {
+    let ended = subjects(request, requests).and_then(|subjects| {
+        let mut latest: Option<OffsetDateTime> = None;
+        for subject in subjects {
+            let session = subject?.agent_session_id.as_str();
+            let end = facts
+                .iter()
+                .filter(|fact| fact.session_id == session && fact.kind == FactKind::Ended)
+                .map(|fact| fact.observed_at)
+                .max()?;
+            latest = Some(latest.map_or(end, |at| at.max(end)));
+        }
+        latest
+    });
+    [ended, old.gone_since, Some(old.confirmed_at)]
+        .into_iter()
+        .flatten()
+        .min()
+        .unwrap_or(old.confirmed_at)
+        .max(request.created_at)
 }
 
 /// Load the durable facts, dropping expired ones.
@@ -1039,9 +1035,46 @@ impl CollaborationStore {
         )
     }
 
-    /// The newest pass's confirmations.
-    pub(super) fn subject_confirmations(&self) -> HashMap<String, (String, OffsetDateTime)> {
-        self.subject.snapshot()
+    /// tend's own asks that may close because their subject is gone: folded
+    /// by the newest pass, and established gone again now from the held
+    /// registry with Close all's stricter evidence ([`Purpose::Close`]).
+    pub(super) fn gone_system_asks(
+        &self,
+        requests: &HashMap<String, CollaborationRequest>,
+        hold: &crate::state::RegistryHold<'_>,
+        agents: &[Agent],
+        now: OffsetDateTime,
+    ) -> HashMap<String, super::system_asks::Gone> {
+        let observations = hold.observations();
+        let scan = observations.scan();
+        let bindings = observations.bindings();
+        let mut facts = self.subject.facts();
+        facts.extend(observations.peek_facts());
+        let inputs = SubjectInputs {
+            agents,
+            scan: scan.as_deref(),
+            bindings: &bindings,
+        };
+        requests
+            .values()
+            .filter(|request| super::system_asks::system_ask_kind(request).is_some())
+            .filter_map(|request| {
+                let folded = self.unanswerable(request, now)?;
+                matches!(
+                    evaluate(request, requests, &inputs, &facts, now, Purpose::Close),
+                    Some(Verdict::Gone { .. })
+                )
+                .then(|| {
+                    (
+                        request.id.clone(),
+                        super::system_asks::Gone {
+                            cause: folded.cause,
+                            since: folded.since,
+                        },
+                    )
+                })
+            })
+            .collect()
     }
 
     fn unanswerable_ids(
@@ -1112,7 +1145,7 @@ impl CollaborationStore {
             .max();
             let legacy = old
                 .filter(|old| old.episode_since.is_none())
-                .and_then(|_| legacy_since(request, &snapshot, inputs, &facts));
+                .map(|old| legacy_since(request, old, &snapshot, &facts));
             let next = step(old, &verdict, now, last_confirmed, legacy);
             if let Some(next) = next.as_ref().filter(|n| n.state == SubjectState::Gone) {
                 report.gone += 1;

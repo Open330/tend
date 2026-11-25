@@ -1009,7 +1009,16 @@ fn render_cleanup(cleanup: &SystemAskCleanup, now: OffsetDateTime) -> String {
         };
         let why = match (ask.reason, &ask.into) {
             (SystemAskCloseReason::Collapsed, Some(into)) => format!("merged into {into}"),
-            (reason, _) => reason.as_str().to_owned(),
+            (reason, _) => ask.subject_gone.map_or_else(
+                || reason.as_str().to_owned(),
+                |cause| {
+                    format!(
+                        "{}: the session it is about is gone ({})",
+                        reason.as_str(),
+                        cause.as_str()
+                    )
+                },
+            ),
         };
         let session: String = ask.subject_session.chars().take(8).collect();
         let _ = writeln!(

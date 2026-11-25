@@ -402,6 +402,7 @@ impl CollaborationStore {
                             at: now,
                             by: SystemAskCloser::Daemon,
                             into: None,
+                            subject_gone: None,
                         });
                     }
                     Some(retired)
@@ -747,12 +748,13 @@ mod tests {
     }
 
     /// tend's own item about a sender established gone closes in the full
-    /// pass, recorded as such, unless the person kept it; it does not come
-    /// back.
+    /// pass, recorded as stale with how it went, unless the person kept it
+    /// or the sender is back; it does not come back.
     #[tokio::test]
     async fn a_folded_gone_sender_item_closes_unless_kept() {
         use super::super::subject_check::GoneCause;
         use super::super::system_asks::{SystemAskCloseReason, SystemAskCloser};
+        use crate::subject_evidence::{FactKind, SubjectFact};
         let store = CollaborationStore::in_memory(CollaborationOptions::default());
         let lead = participant("lead-1", "%1", None);
         let id = replied(&store, &lead).await;
@@ -761,16 +763,40 @@ mod tests {
             requests.get_mut(&id).unwrap().reply.as_mut().unwrap().at -= SENDER_GONE_GRACE;
         }
         let action = store.report_gone_sender(&id).await.unwrap().unwrap();
+        store
+            .record_subject_facts(vec![SubjectFact::new(
+                FactKind::Ended,
+                "lead-1",
+                Some("%1"),
+                None,
+                None,
+                OffsetDateTime::now_utc(),
+            )])
+            .unwrap();
+        let registry = crate::state::Store::default();
         // Listed, not folded: stays.
-        let cleanup = store.cleanup_system_asks(&[], true).await.unwrap();
+        let cleanup = store
+            .cleanup_system_asks_checked(&registry, true)
+            .await
+            .unwrap();
         assert!(cleanup.closed.is_empty(), "{cleanup:?}");
         let episode = store.fold_for_test(&action.id, GoneCause::Ended).await;
-        let cleanup = store.cleanup_system_asks(&[], true).await.unwrap();
+        let cleanup = store
+            .cleanup_system_asks_checked(&registry, true)
+            .await
+            .unwrap();
         assert_eq!(cleanup.closed.len(), 1, "{cleanup:?}");
-        assert_eq!(cleanup.closed[0].reason, SystemAskCloseReason::SubjectGone);
+        assert_eq!(cleanup.closed[0].reason, SystemAskCloseReason::Stale);
+        assert_eq!(cleanup.closed[0].subject_gone, Some(GoneCause::Ended));
+        // The plain pass, without the subject check, leaves it.
+        let plain = store.cleanup_system_asks(&[], true).await.unwrap();
+        assert!(plain.closed.is_empty(), "{plain:?}");
         // Kept: the person's call wins.
         store.keep_unanswerable(&action.id, &episode).await.unwrap();
-        let cleanup = store.cleanup_system_asks(&[], true).await.unwrap();
+        let cleanup = store
+            .cleanup_system_asks_checked(&registry, true)
+            .await
+            .unwrap();
         assert!(cleanup.closed.is_empty(), "{cleanup:?}");
         // Not kept: the hourly pass closes it, and it stays closed.
         {
@@ -783,14 +809,20 @@ mod tests {
                 .unwrap();
             check.kept_episode = None;
         }
-        let swept = store.sweep_system_asks(&[]).await.unwrap();
+        let swept = store.sweep_system_asks_checked(&registry).await.unwrap();
         assert_eq!(swept.closed.len(), 1, "{swept:?}");
         let closed = row(&store, &action.id).await;
         assert_eq!(closed.status, RequestStatus::Cancelled);
         let closure = closed.system_ask.unwrap().closed.unwrap();
-        assert_eq!(closure.reason, SystemAskCloseReason::SubjectGone);
+        assert_eq!(closure.reason, SystemAskCloseReason::Stale);
+        assert_eq!(closure.subject_gone, Some(GoneCause::Ended));
         assert_eq!(closure.by, SystemAskCloser::Daemon);
         assert!(store.report_gone_sender(&id).await.unwrap().is_none());
+        store.retire_gone_sender_items().await.unwrap();
+        assert_eq!(
+            row(&store, &action.id).await.status,
+            RequestStatus::Cancelled
+        );
     }
 
     #[tokio::test]

@@ -155,8 +155,11 @@ longer matter:
   under "Can't be answered" (below), unless the person kept it: the asker
   is tend, and nothing can act on an answer. A recovery item for a request
   the person sent waits until its recipient has been gone a week. This
-  closure runs in the hourly pass and `tend review cleanup`, recorded as
-  "the session it is about is gone".
+  closure runs in the hourly pass and `tend review cleanup`, rechecked
+  with the registry held as Close all is, and is recorded as `stale` with
+  `subject_gone: <cause>` (a field, so older readers still read the row);
+  a recovery item closed this way is asked again only once its recipient
+  is live and still interrupted.
 
 tendd applies the rules on every reconcile to the items it opened under
 them, and to every item, the backlog included, at start and every hour.
@@ -217,8 +220,8 @@ Every reconcile pass keeps an evidence episode on the request
 unknown pauses it, and more than 10 minutes of unknown (a daemon restart, a
 host asleep) restarts only the grace clock `gone_since`, never the episode
 or `episode_since`, when it began, which is the "gone since" every surface
-shows. A row from before `episode_since` takes its subject's last sign of
-life (its row's last activity or its end hook), never before the item.
+shows. A row from before `episode_since` takes confirmed evidence only:
+its own clocks or the subject's recorded end hook, never before the item.
 An item is unanswerable when the episode is gone and confirmed by a pass in
 the last 5 minutes, has been for 15 minutes, the item is at least 15 minutes old, and
 the person has not kept this episode. A daemon that was down cannot fold

@@ -2586,6 +2586,7 @@ async fn decision_history_lists_tends_closures_only_when_asked() {
             at: time::OffsetDateTime::now_utc(),
             by: SystemAskCloser::Daemon,
             into: None,
+            subject_gone: None,
         }),
     });
     mailbox.put_rows_for_test(&[closed]).await;

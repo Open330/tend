@@ -1923,6 +1923,7 @@ async fn mailbox_with_a_closure() -> Arc<crate::collaboration::CollaborationStor
             at: time::OffsetDateTime::now_utc(),
             by: SystemAskCloser::Daemon,
             into: None,
+            subject_gone: None,
         }),
     });
     mailbox.put_rows_for_test(&[closed]).await;
