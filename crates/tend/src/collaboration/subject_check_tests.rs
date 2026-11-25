@@ -673,11 +673,11 @@ async fn restart_gaps_never_move_when_the_episode_began() {
     assert!(get(&store, &q.id).await.subject_check.is_none());
 }
 
-/// A row written before `episode_since` takes confirmed evidence only:
-/// its own clocks or the asker's recorded end, never a last activity, and
-/// never before the question was asked.
+/// A row written before `episode_since` takes its own clocks only: not a
+/// last activity, not a retained end hook (it may be an earlier run's),
+/// and never before the question was asked.
 #[tokio::test]
-async fn a_legacy_row_takes_confirmed_evidence_only() {
+async fn a_legacy_row_takes_its_own_clocks_only() {
     let store = CollaborationStore::in_memory(CollaborationOptions::default());
     let q = question(&store, &participant("s7", "%7", "default")).await;
     backdate(&store, &q.id, Duration::days(23)).await;
@@ -696,7 +696,18 @@ async fn a_legacy_row_takes_confirmed_evidence_only() {
     let mut left = get(&store, &q.id).await;
     left.subject_check = Some(legacy(now - Duration::hours(20)));
     put(&store, left.clone()).await;
-    // A row last active 21 days ago is no evidence of when it went.
+    // An end hook ten days old, from a run since resumed whose row is gone,
+    // and a row last active 21 days ago: neither moves it.
+    store
+        .record_subject_facts(vec![SubjectFact::new(
+            FactKind::Ended,
+            "s7",
+            Some("%7"),
+            Some("default"),
+            None,
+            now - Duration::days(10),
+        )])
+        .unwrap();
     let stopped = row(
         "s7",
         "%7",
@@ -709,48 +720,6 @@ async fn a_legacy_row_takes_confirmed_evidence_only() {
     let check = get(&store, &q.id).await.subject_check.unwrap();
     assert_eq!(check.episode, "ep_legacy");
     assert_eq!(check.episode_since, Some(now - Duration::hours(20)));
-    // An end from an earlier run, before the row's last activity, is not.
-    let earlier = now - Duration::days(22);
-    store
-        .record_subject_facts(vec![SubjectFact::new(
-            FactKind::Ended,
-            "s7",
-            Some("%7"),
-            Some("default"),
-            None,
-            earlier,
-        )])
-        .unwrap();
-    put(&store, left.clone()).await;
-    let resumed = row(
-        "s7",
-        "%7",
-        "default",
-        AgentState::Stopped,
-        Duration::days(21),
-    )
-    .await;
-    pass(&store, &[resumed], &everyone(), gone_scan(now).as_ref()).await;
-    assert_eq!(
-        get(&store, &q.id)
-            .await
-            .subject_check
-            .unwrap()
-            .episode_since,
-        Some(now - Duration::hours(20))
-    );
-    // Its recorded end is.
-    let ended = now - Duration::days(19);
-    store
-        .record_subject_facts(vec![SubjectFact::new(
-            FactKind::Ended,
-            "s7",
-            Some("%7"),
-            Some("default"),
-            None,
-            ended,
-        )])
-        .unwrap();
     put(&store, left).await;
     pass(&store, &[], &everyone(), gone_scan(now).as_ref()).await;
     assert_eq!(
@@ -759,7 +728,7 @@ async fn a_legacy_row_takes_confirmed_evidence_only() {
             .subject_check
             .unwrap()
             .episode_since,
-        Some(ended)
+        Some(now - Duration::hours(20))
     );
     // A clock from before the question (a clock rollback): the question.
     let mut left = get(&store, &q.id).await;

@@ -912,55 +912,16 @@ pub(super) fn evaluate(
 }
 
 /// When the episode of a row written before
-/// [`SubjectCheck::episode_since`] began, from confirmed evidence only: the
-/// row's own clocks, or, when every subject has one, the end hook tendd
-/// recorded for it, whichever is oldest; never before the item itself,
-/// whose asker was there to ask. Those rows' grace clock may have been
-/// restarted by every daemon restart since, which made an asker gone for
-/// weeks read as gone since the last upgrade. A last activity is not
-/// evidence: an idle agent stays quiet for days and is still there.
-fn legacy_since(
-    request: &CollaborationRequest,
-    old: &SubjectCheck,
-    requests: &HashMap<String, CollaborationRequest>,
-    agents: &[Agent],
-    facts: &[SubjectFact],
-) -> OffsetDateTime {
-    let ended = subjects(request, requests).and_then(|subjects| {
-        let mut latest: Option<OffsetDateTime> = None;
-        for subject in subjects {
-            let subject = subject?;
-            let session = subject.agent_session_id.as_str();
-            // As in `judge`: an end before the row's last activity belongs
-            // to an earlier run, not to this episode.
-            let floor = super::recovery::exact_agent(subject, agents)
-                .map(|row| row.last_activity_at)
-                .into_iter()
-                .chain(
-                    agents
-                        .iter()
-                        .filter(|agent| agent.session_id == session)
-                        .map(|agent| agent.last_activity_at),
-                )
-                .max();
-            let end = facts
-                .iter()
-                .filter(|fact| {
-                    fact.session_id == session
-                        && fact.kind == FactKind::Ended
-                        && floor.is_none_or(|floor| fact.observed_at >= floor)
-                })
-                .map(|fact| fact.observed_at)
-                .max()?;
-            latest = Some(latest.map_or(end, |at| at.max(end)));
-        }
-        latest
-    });
-    [ended, old.gone_since, Some(old.confirmed_at)]
-        .into_iter()
-        .flatten()
-        .min()
-        .unwrap_or(old.confirmed_at)
+/// [`SubjectCheck::episode_since`] began: the oldest of the row's own
+/// confirmed clocks, never before the item itself, whose asker was there
+/// to ask. Those clocks may have been restarted by every daemon restart
+/// since, so this can be later than the truth, never earlier: neither a
+/// last activity (an idle agent stays quiet for days and is still there)
+/// nor a retained end hook (it may belong to a run resumed since, whose row
+/// is gone) is evidence of when this episode began.
+fn legacy_since(request: &CollaborationRequest, old: &SubjectCheck) -> OffsetDateTime {
+    old.gone_since
+        .map_or(old.confirmed_at, |at| at.min(old.confirmed_at))
         .max(request.created_at)
 }
 
@@ -1185,7 +1146,7 @@ impl CollaborationStore {
             .max();
             let legacy = old
                 .filter(|old| old.episode_since.is_none())
-                .map(|old| legacy_since(request, old, &snapshot, inputs.agents, &facts));
+                .map(|old| legacy_since(request, old));
             let next = step(old, &verdict, now, last_confirmed, legacy);
             if let Some(next) = next.as_ref().filter(|n| n.state == SubjectState::Gone) {
                 report.gone += 1;

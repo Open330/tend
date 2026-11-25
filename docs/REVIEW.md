@@ -220,8 +220,9 @@ Every reconcile pass keeps an evidence episode on the request
 unknown pauses it, and more than 10 minutes of unknown (a daemon restart, a
 host asleep) restarts only the grace clock `gone_since`, never the episode
 or `episode_since`, when it began, which is the "gone since" every surface
-shows. A row from before `episode_since` takes confirmed evidence only:
-its own clocks or the subject's recorded end hook, never before the item.
+shows. A row from before `episode_since` takes its own oldest clock,
+never before the item: later than the truth if restarts moved it, never
+earlier.
 An item is unanswerable when the episode is gone and confirmed by a pass in
 the last 5 minutes, has been for 15 minutes, the item is at least 15 minutes old, and
 the person has not kept this episode. A daemon that was down cannot fold
