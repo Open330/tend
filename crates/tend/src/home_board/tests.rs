@@ -661,15 +661,46 @@ fn counts_have_one_meaning_each() {
 
 #[test]
 fn counts_are_complete_when_every_queue_was_read_whole() {
-    let b = board(BoardInput {
-        decisions: vec![json!({
-            "alias": "mba", "local": true, "control": true,
+    let whole = |alias: &str| {
+        json!({
+            "alias": alias, "local": alias == "mba", "control": true,
+            "covers": ["questions", "waiting agents", "review items"],
             "queue": {"items": [], "truncated": false}, "unavailable": [],
-        })],
+        })
+    };
+    let b = board(BoardInput {
+        hosts: vec![host("mba", true, vec![], vec![])],
+        decisions: vec![whole("mba")],
         ..Default::default()
     });
     assert_eq!(b["counts"]["coverage"], "complete");
     assert_eq!(b["counts"]["your_turn"], 0);
+    // A host with no section at all: not an empty Your turn.
+    let missing = board(BoardInput {
+        hosts: vec![
+            host("mba", true, vec![], vec![]),
+            host("mini", false, vec![], vec![]),
+        ],
+        decisions: vec![whole("mba")],
+        ..Default::default()
+    });
+    assert_eq!(missing["counts"]["coverage"], "partial");
+    // A section that does not cover review items, with no reason given.
+    let mut narrow = whole("mba");
+    narrow["covers"] = json!(["questions", "waiting agents"]);
+    let narrow = board(BoardInput {
+        decisions: vec![narrow],
+        ..Default::default()
+    });
+    assert_eq!(narrow["counts"]["coverage"], "partial");
+    // A section with no queue.
+    let mut empty = whole("mba");
+    empty.as_object_mut().unwrap().remove("queue");
+    let empty = board(BoardInput {
+        decisions: vec![empty],
+        ..Default::default()
+    });
+    assert_eq!(empty["counts"]["coverage"], "partial");
     let unread = board(BoardInput {
         decisions: vec![json!({
             "alias": "mini", "local": false, "covers": [],
@@ -678,4 +709,48 @@ fn counts_are_complete_when_every_queue_was_read_whole() {
         ..Default::default()
     });
     assert_eq!(unread["counts"]["coverage"], "partial");
+}
+
+#[test]
+fn a_unit_in_your_turn_counts_for_the_badge_but_is_not_decidable_here() {
+    let waiting = json!({"agent_session_id": "q", "kind": "claude_code", "pane": "%2",
+                         "state": "waiting_choice", "last_prompt": "pick a font",
+                         "last_notification": "Which font?", "state_entered_at": at(4)});
+    let b = board(BoardInput {
+        hosts: vec![host("mba", true, vec![waiting], vec![])],
+        ..Default::default()
+    });
+    assert_eq!(items(&b, "needs_you").len(), 1);
+    assert_eq!(b["counts"]["your_turn"], 1);
+    assert_eq!(
+        b["counts"]["actionable"], 0,
+        "answered in its pane, not from a card here"
+    );
+}
+
+#[test]
+fn cant_answer_takes_each_hosts_larger_of_listed_and_exact() {
+    let gone = |id: &str| {
+        json!({"kind": "human_request", "request_id": id, "body": "?", "created_at": at(3000), "from_session_id": id,
+               "unanswerable": {"cause": "ended", "episode": format!("ep_{id}"), "since": at(1600)}})
+    };
+    let section = |alias: &str, listed: Vec<Value>, exact: Option<u64>| {
+        let mut queue = json!({"items": listed});
+        if let Some(n) = exact {
+            queue["unanswerable_count"] = json!(n);
+        }
+        json!({"alias": alias, "local": alias == "a", "control": true, "subject_check": true, "queue": queue})
+    };
+    let b = board(BoardInput {
+        decisions: vec![
+            // Lists two, counts one: two.
+            section("a", vec![gone("a1"), gone("a2")], Some(1)),
+            // Lists one, counts four: four.
+            section("b", vec![gone("b1")], Some(4)),
+            // Lists one, no count: one.
+            section("c", vec![gone("c1")], None),
+        ],
+        ..Default::default()
+    });
+    assert_eq!(b["counts"]["cant_answer"], 7);
 }

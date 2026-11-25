@@ -1636,20 +1636,28 @@ fn decision_json(decision: &Decision) -> Value {
 /// - `finished`: Finished's units not set aside with Looks Good, folded
 ///   ones included; `reviewed` counts the ones set aside. Decided history
 ///   is never counted.
-/// - `coverage`: `complete`, or `partial` when a host's queue could not be
-///   read or was cut, so a client never shows a partial number as all.
+/// - `coverage`: of the decision queues only: `complete` when every host has
+///   a queue read whole for every kind, else `partial`, so a client never
+///   shows a partial Your turn as all. Whether Looks Good marks were read is
+///   `reviewed_marks`, beside it.
+///
+/// All are totals before a client's own host or project filter.
 fn counts_json(
     turn: &[TurnEntry],
     units: &[Unit],
     reviewed: Option<&HashSet<String>>,
     input: &BoardInput,
 ) -> Value {
+    const KINDS: [&str; 3] = ["questions", "waiting agents", "review items"];
     let unanswerable = |item: &Value| item.pointer("/entry/unanswerable").is_some();
     let your_turn = turn.iter().filter(|entry| !unanswerable(&entry.4)).count();
+    // Only a decision the board marks decidable from here: a unit is
+    // answered in its pane, which may be on another host or offer a choice
+    // only there, so it is never counted here.
     let actionable = turn
         .iter()
         .filter(|entry| !unanswerable(&entry.4))
-        .filter(|entry| entry.4.get("actionable").and_then(Value::as_bool) != Some(false))
+        .filter(|entry| entry.4.get("actionable").and_then(Value::as_bool) == Some(true))
         .count();
     let listed: HashMap<&str, usize> = turn.iter().filter(|entry| unanswerable(&entry.4)).fold(
         HashMap::new(),
@@ -1671,23 +1679,51 @@ fn counts_json(
             cant_answer += exact.saturating_sub(shown);
         }
     }
-    let lane = |lane: Lane| units.iter().filter(move |u| u.lane == lane);
-    let is_reviewed =
-        |u: &Unit| reviewed.is_some_and(|set| set.contains(&review_key(&u.id, &u.revision)));
-    let partial = input.decisions.iter().any(|section| {
-        section.pointer("/queue/truncated").and_then(Value::as_bool) == Some(true)
-            || section
+    let in_progress = units.iter().filter(|u| u.lane == Lane::Running).count();
+    let finished_total = units.iter().filter(|u| u.lane == Lane::Finished).count();
+    let set_aside = reviewed.map_or(0, |set| {
+        units
+            .iter()
+            .filter(|u| u.lane == Lane::Finished)
+            .filter(|u| set.contains(&review_key(&u.id, &u.revision)))
+            .count()
+    });
+    // Complete only when every host has a decision section that was read
+    // whole, for every kind: a missing section, a missing queue, a kind not
+    // covered, a cut list or any reason it could not be read is partial.
+    let read_whole = |section: &Value| {
+        section.get("queue").is_some_and(Value::is_object)
+            && section.pointer("/queue/truncated").and_then(Value::as_bool) != Some(true)
+            && section
                 .get("unavailable")
                 .and_then(Value::as_array)
-                .is_some_and(|reasons| !reasons.is_empty())
-    });
+                .is_none_or(Vec::is_empty)
+            && section
+                .get("covers")
+                .and_then(Value::as_array)
+                .is_some_and(|covers| {
+                    KINDS
+                        .iter()
+                        .all(|kind| covers.iter().any(|c| c.as_str() == Some(kind)))
+                })
+    };
+    let sections: HashSet<&str> = input
+        .decisions
+        .iter()
+        .filter_map(|section| str_of(section, "alias"))
+        .collect();
+    let partial = input.decisions.iter().any(|section| !read_whole(section))
+        || input
+            .hosts
+            .iter()
+            .any(|host| !sections.contains(host.alias.as_str()));
     json!({
         "your_turn": your_turn,
         "actionable": actionable,
         "cant_answer": cant_answer,
-        "in_progress": lane(Lane::Running).count(),
-        "finished": lane(Lane::Finished).filter(|u| !is_reviewed(u)).count(),
-        "reviewed": lane(Lane::Finished).filter(|u| is_reviewed(u)).count(),
+        "in_progress": in_progress,
+        "finished": finished_total - set_aside,
+        "reviewed": set_aside,
         "coverage": if partial { "partial" } else { "complete" },
     })
 }
