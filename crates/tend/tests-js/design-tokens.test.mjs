@@ -186,11 +186,30 @@ test("Explore's highlighted rows keep their words readable on the sidebar surfac
 test("the shared text inks read at 4.5:1 or more everywhere, in order", () => {
   const surfaces = {
     editor: tokens.color.editor, lane: tokens.color.lane, panel: tokens.color.panel, "side-bar": tokens.color["side-bar"],
-    "card-your-turn": tokens.color["card-your-turn"], ...tokens.mac.surface,
+    "card-your-turn": tokens.color["card-your-turn"],
+    ...Object.fromEntries(Object.entries(tokens.mac.surface).map(([name, value]) => [`mac-${name}`, value])),
+  };
+  // Rows drawn over the lane or a card: hovered, and selected (the accent
+  // at 16%, home.css .row-c.selected).
+  const composites = (scheme) => {
+    const out = [];
+    for (const base of ["editor", "lane"]) {
+      const bg = srgb(tokens.color[base][scheme]).rgb;
+      out.push([`hover over ${base}`, over(srgb(tokens.color.hover[scheme]), bg)]);
+      const accent = srgb(tokens.color.accent[scheme]).rgb;
+      out.push([`selected over ${base}`, over({ rgb: accent, alpha: 0.16 }, bg)]);
+    }
+    return out;
   };
   for (const scheme of ["light", "dark"]) {
-    for (const [surface, value] of Object.entries(surfaces)) {
-      const bg = srgb(value[scheme]).rgb;
+    const backgrounds = [
+      ...Object.entries(surfaces).map(([surface, value]) => [surface, srgb(value[scheme]).rgb]),
+      ...composites(scheme),
+    ];
+    // White on the selection fill (a selected Review row).
+    const fill = srgb(tokens.color["selection-fill"][scheme]).rgb;
+    assert.ok(contrast([255, 255, 255], fill) >= 4.5, `white on selection-fill (${scheme})`);
+    for (const [surface, bg] of backgrounds) {
       const ratios = ["text", "text-secondary", "text-tertiary"].map((name) => contrast(over(srgb(tokens.color[name][scheme]), bg), bg));
       ratios.forEach((ratio, i) => assert.ok(ratio >= 4.5, `${["text", "text-secondary", "text-tertiary"][i]} on ${surface} (${scheme}): ${ratio.toFixed(2)}`));
       assert.ok(ratios[0] > ratios[1] && ratios[1] > ratios[2], `order on ${surface} (${scheme}): ${ratios.map((r) => r.toFixed(2))}`);
