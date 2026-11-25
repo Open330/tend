@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildBoard, evidenceChip, fromServerBoard, groupByProject, hostHue, isPaneless, needsAttention, productOf, TEND_PROJECT } from "../src/dashboard/web/home-board.mjs";
+import { buildBoard, cantAnswerGroup, evidenceChip, fromServerBoard, groupByProject, hostHue, isPaneless, needsAttention, productOf, TEND_PROJECT } from "../src/dashboard/web/home-board.mjs";
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "../../../apps/shared/Fixtures");
 const load = (name) => JSON.parse(readFileSync(join(fixtures, name), "utf8"));
@@ -277,4 +277,29 @@ test("the daemon's counts are shown as given; a filter shows N of the total; the
   assert.equal(narrowed.lanes.needsYou.total, 2, "the header says 1 of 2");
   assert.equal(narrowed.lanes.finished.count, 1, "f1 only: f2 is reviewed, history is not counted");
   assert.equal(narrowed.yourTurn, 2, "the badge is never narrowed");
+});
+
+test("Can't be answered takes each host's floor, summed (2/1, 1/4, 1/none = 7)", () => {
+  const gone = (host, id) => ({ id, host, unanswerable: true, remote: host !== "a" });
+  const units = [gone("a", "a1"), gone("a", "a2"), gone("b", "b1"), gone("c", "c1")];
+  const sections = [
+    { alias: "a", queue: { unanswerable_count: 1 } },
+    { alias: "b", queue: { unanswerable_count: 4 } },
+    { alias: "c", queue: {} },
+  ];
+  assert.equal(cantAnswerGroup(units, sections).count, 7);
+  assert.equal(cantAnswerGroup(units, sections, { host: "b" }).count, 4);
+});
+
+test("an older daemon's board still says N of M under a filter, and partial from its sections", () => {
+  const unit = (id, repo) => ({ type: "unit", id, lane: "running", repo, title: id, since: new Date(NOW - 60_000).toISOString(), agents: [], helpers: [], stages: [], host_aliases: ["mba"], recent: true });
+  const server = {
+    hosts: [{ alias: "mba", local: true, state: "online" }],
+    lanes: { needs_you: { groups: [] }, running: { groups: [{ project: "a", items: [unit("r1", "a")] }, { project: "b", items: [unit("r2", "b")] }] }, finished: { groups: [] } },
+    decision_hosts: [{ alias: "mba", local: true, truncated: true, unavailable: [] }],
+  };
+  const board = fromServerBoard(server, { now: NOW, filter: { project: "a" } });
+  assert.equal(board.lanes.running.count, 1);
+  assert.equal(board.lanes.running.total, 2);
+  assert.equal(board.partial, true, "a cut queue: not all there is");
 });

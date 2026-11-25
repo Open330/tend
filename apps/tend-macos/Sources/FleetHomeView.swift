@@ -126,26 +126,10 @@ struct FleetHomeView: View {
         .sheet(item: $revisionTarget) { target in
             ChangesRevisionView(repo: target.repo, revision: target.revision)
         }
-        // Both polls pause while the window is off screen and restart, with
+        // The decisions are read by the board (`FleetDecisionPoller`), one
+        // schedule for every Home and the rail's badge. The backlog and
+        // the queue pause while the window is off screen and restart, with
         // a read at once, when it is shown again.
-        .task(id: homeBoard.isVisible) {
-            // Decisions made elsewhere (the CLI, an agent, another window)
-            // leave the queue while Home stays open.
-            guard homeBoard.isVisible else { return }
-            while !Task.isCancelled {
-                await decisionFeed.load(model.client, works: allWorks)
-                try? await Task.sleep(for: FleetDecisionFeed.refreshEvery)
-            }
-        }
-        .task(id: homeBoard.isVisible) {
-            // Other hosts' review items, on their own loop: a slow host never
-            // holds up this Mac's decisions.
-            guard homeBoard.isVisible else { return }
-            while !Task.isCancelled {
-                await decisionFeed.loadRemote(model.client, hosts: model.fleetHosts)
-                try? await Task.sleep(for: FleetDecisionFeed.remoteEvery)
-            }
-        }
         .task(id: homeBoard.isVisible) {
             // Work planned with `tend work plan` shows up while Home is open.
             guard homeBoard.isVisible else { return }
@@ -586,7 +570,12 @@ struct FleetHomeView: View {
             let queueIsShown = hostFilter == nil || hostFilter == homeBoard.localHostAlias
             let queued = queueIsShown ? queueFeed.shown : []
             let queueProblem = queueIsShown ? queueFeed.problem : nil
-            let problem = decisionFeed.problem == nil && backlogFeed.problem == nil && queueProblem == nil ? 0 : 1
+            // A decision queue not read whole is never an all-clear either:
+            // Your turn says so where it would say nothing needs you.
+            let decisionNote = decisionFeed.problem
+                ?? (decisionFeed.isPartial(host: hostFilter, localHost: homeBoard.localHostAlias)
+                    ? String(localized: "Some decisions could not be read, so there may be more.") : nil)
+            let problem = decisionNote == nil && backlogFeed.problem == nil && queueProblem == nil ? 0 : 1
             let backlog = backlog
             let cantAnswer = cantAnswerGroup
             if FleetBoard.showsEmptyBoard(visible: works.count + decisions.count + backlog.count + queued.count + problem + (cantAnswer == nil ? 0 : 1), reviewed: reviewedCount) {
@@ -616,7 +605,7 @@ struct FleetHomeView: View {
                             decisions: lane == .needsYou ? decisions : [],
                             number: numbers[lane],
                             decisionCard: { decisionCard($0) { revisionTarget = $0 } },
-                            decisionProblem: lane == .needsYou ? decisionFeed.problem : nil,
+                            decisionProblem: lane == .needsYou ? decisionNote : nil,
                             cantAnswer: lane == .needsYou ? cantAnswer : nil,
                             selectedID: selectedID,
                             select: { id in selectedID = selectedID == id ? nil : id },

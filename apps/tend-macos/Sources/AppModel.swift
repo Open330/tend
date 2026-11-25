@@ -1865,6 +1865,9 @@ final class AppModel: ObservableObject {
         if operatorMessages != updatedMessages {
             operatorMessagesRevision &+= 1
             operatorMessages = updatedMessages
+            // A question came or went: this Mac's queue, which decides its
+            // own questions in Your turn and the badge, is read again soon.
+            homeBoard.requestDecisions([.local])
         }
         attention.ingestHumanRequests(updatedMessages)
         if inboxHostFailures != failures { inboxHostFailures = failures }
@@ -1879,37 +1882,42 @@ final class AppModel: ObservableObject {
     func refreshFoldedQuestions(force: Bool) async {
         guard force || Date().timeIntervalSince(lastFoldedRead) >= 60 else { return }
         lastFoldedRead = Date()
+        let feed = homeBoard.decisionFeed
+        let client = client
         var folded = FleetFoldedQuestions()
         if await client.supports(tendSubjectCheckCapability) {
+            let generation = feed.beginLocal()
             // An unreadable local queue keeps what the badges knew.
             guard let queue = try? await client.decisionQueue(limit: 500) else { return }
             folded = FleetDecisions.foldedQuestions(queue, localHost: localHostAlias)
+            // The same queue serves the rail's badge, unless a Home on
+            // screen reads its own page every few seconds.
+            if homeBoard.decisionPace != .home {
+                await feed.ingestLocal(queue, client: client, generation: generation)
+                homeBoard.decisionPoller?.noteRead(.local)
+            }
         }
-        let client = client
+        // The other hosts' queues: the feed's when it read them within the
+        // minute, else read here and handed to it, never read twice.
         let hosts = fleetHosts
         let remote = hosts.filter(FleetDecisions.readsQueue).map(\.identity)
-        let found = await withTaskGroup(of: (Int, TendPendingQueue?).self) { group in
-            for (index, host) in remote.enumerated() {
-                // A host that cannot be read now folds nothing.
-                group.addTask { (index, try? await client.remoteDecisionQueue(host: host)) }
+        let queues: [(host: TendFleetHostIdentity, queue: TendPendingQueue?)]
+        if !force, let last = feed.lastRemoteRead, Date().timeIntervalSince(last) < 60 {
+            let known = Dictionary(feed.remoteQueues.map { ($0.host.alias, $0.queue) }, uniquingKeysWith: { first, _ in first })
+            queues = remote.map { ($0, known[$0.alias]) }
+        } else {
+            let generation = feed.beginRemote()
+            let found = await FleetDecisionFeed.readRemote(client, hosts: remote)
+            if feed.apply(hosts: hosts, read: remote, found: found, generation: generation) {
+                homeBoard.decisionPoller?.noteRead(.remote)
             }
-            var found: [Int: TendPendingQueue] = [:]
-            for await (index, queue) in group {
-                if let queue { found[index] = queue }
-            }
-            return found
+            queues = remote.enumerated().map { ($1, found[$0]) }
         }
-        for (index, host) in remote.enumerated() {
-            folded.merge(FleetDecisions.foldedQuestions(found[index], localHost: host.alias))
+        for entry in queues {
+            // A host that cannot be read now folds nothing.
+            folded.merge(FleetDecisions.foldedQuestions(entry.queue, localHost: entry.host.alias))
         }
         attention.ingestFoldedQuestions(folded)
-        // No Home is open to read the decisions: the rail's Home badge
-        // (Your turn's number) counts them from these reads.
-        if !homeBoard.hasHome {
-            let feed = homeBoard.decisionFeed
-            feed.apply(hosts: hosts, read: remote, found: found)
-            await feed.load(client)
-        }
     }
 
     func openOperatorMessage(_ message: TendOperatorMessage) {

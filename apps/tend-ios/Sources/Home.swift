@@ -348,6 +348,13 @@ struct LaneContent: View {
             Empty(text: lane.empty, mark: true)
                 .accessibilityIdentifier("emptyQueue")
         }
+        if model.loaded, model.hosts.isEmpty {
+            // An answer that covers no host is not all clear.
+            Label(String(localized: "Not every host's queue could be read, so more may need you."), systemImage: "exclamationmark.triangle")
+                .font(TendType.meta)
+                .foregroundStyle(TendPalette.orange)
+                .accessibilityIdentifier("coverageUnknown")
+        }
         ForEach(model.hosts) { section in
             HostSectionView(section: section)
         }

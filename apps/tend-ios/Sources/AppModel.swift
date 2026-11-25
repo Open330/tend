@@ -427,10 +427,14 @@ final class AppModel {
         visibleBoard?.cantAnswer ?? hosts.flatMap(PendingDecision.from).filter { $0.unanswerable != nil }
     }
 
-    /// The group's count: every host's exact count, never less than listed.
+    /// The group's count: per host, its exact count but never less than
+    /// it lists.
     var cantAnswerCount: Int {
         if let board = visibleBoard { return board.cantAnswerCount }
-        return max(cantAnswer.count, hosts.reduce(0) { $0 + $1.queue.unanswerableCount })
+        return DeviceHome.cantAnswerFloor(
+            listed: cantAnswer.map(\.host),
+            exact: hosts.map { ($0.alias, $0.queue.unanswerableCount) }
+        )
     }
 
     /// Keep and Close all act on the host that holds the question, the
@@ -488,8 +492,10 @@ final class AppModel {
     /// entry decoded, and none is waiting: an item this app cannot read, a
     /// cut-off list or a host that could not be read is never all clear.
     static func allClear(_ hosts: [HostQueue]) -> Bool {
+        // No host in the answer: nothing was read, so nothing is known.
+        guard !hosts.isEmpty else { return false }
         // Questions nobody can answer wait in their own group, not here.
-        hosts.allSatisfy { section in
+        return hosts.allSatisfy { section in
             section.queue.isComplete && section.unavailable.isEmpty
                 && section.queue.items.allSatisfy { item in
                     if case .humanRequest(let entry) = item { return entry.unanswerable != nil }
@@ -511,7 +517,8 @@ final class AppModel {
     /// queue that was not read whole.
     var yourTurnMayBeMore: Bool {
         if let board = visibleBoard { return board.yourTurnMayBeMore }
-        return loaded && !hosts.allSatisfy { $0.unavailable.isEmpty && $0.queue.isComplete }
+        // An answer with no host covers nothing: unknown, so partial.
+        return loaded && (hosts.isEmpty || !hosts.allSatisfy { $0.unavailable.isEmpty && $0.queue.isComplete })
     }
 
     var past: [PastDecision] {

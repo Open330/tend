@@ -82,7 +82,7 @@ struct BoardYourTurn: View {
                     .foregroundStyle(TendInk.secondary)
             }
         }
-        if !board.coverageKnown {
+        if !board.coverageKnown || board.serverPartial {
             Label(String(localized: "Not every host's queue could be read, so more may need you."), systemImage: "exclamationmark.triangle")
                 .font(TendType.meta)
                 .foregroundStyle(TendPalette.orange)

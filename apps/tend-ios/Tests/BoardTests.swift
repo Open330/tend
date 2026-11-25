@@ -105,6 +105,40 @@ final class BoardTests: XCTestCase {
         XCTAssertTrue(b.yourTurnMayBeMore, "a cut queue: maybe more")
     }
 
+    /// All clear needs nothing listed, a zero count and complete coverage
+    /// by both tendd's word and this app's reading; either one's partial
+    /// makes Your turn "maybe more".
+    func testAllClearNeedsBothCoveragesAndAZeroCount() throws {
+        let empty = #""lanes": {"needs_you": {"groups": []}}"#
+        let host = #""decision_hosts": [{"alias": "a", "local": true}]"#
+        let complete = #""counts": {"your_turn": 0, "coverage": "complete"}"#
+        XCTAssertTrue(try board(#"{\#(empty), \#(host), \#(complete)}"#).allClear)
+        // tendd says partial: never all clear, maybe more.
+        let partial = try board(#"{\#(empty), \#(host), "counts": {"your_turn": 0, "coverage": "partial"}}"#)
+        XCTAssertFalse(partial.allClear)
+        XCTAssertTrue(partial.yourTurnMayBeMore)
+        XCTAssertTrue(partial.serverPartial)
+        // Partial with no host section at all.
+        let bare = try board(#"{\#(empty), "decision_hosts": [], "counts": {"your_turn": 0, "coverage": "partial"}}"#)
+        XCTAssertFalse(bare.allClear)
+        XCTAssertTrue(bare.yourTurnMayBeMore)
+        // An empty host list is unknown even without counts.
+        XCTAssertFalse(try board(#"{\#(empty), "decision_hosts": []}"#).allClear)
+        // tendd counts one this app did not list: not all clear.
+        let counted = try board(#"{\#(empty), \#(host), "counts": {"your_turn": 1, "coverage": "complete"}}"#)
+        XCTAssertFalse(counted.allClear)
+        XCTAssertEqual(counted.count(.yourTurn), 1)
+        // tendd says complete, but this app could not read an entry or a
+        // host was cut: still maybe more, never all clear.
+        let undecoded = try board(#"{"lanes": {"needs_you": {"groups": [{"items": [{"kind": "something_new"}]}]}}, \#(host), "counts": {"your_turn": 1, "coverage": "complete"}}"#)
+        XCTAssertEqual(undecoded.undecoded[.yourTurn], 1)
+        XCTAssertTrue(undecoded.yourTurnMayBeMore)
+        XCTAssertFalse(undecoded.allClear)
+        let cut = try board(#"{\#(empty), "decision_hosts": [{"alias": "a", "truncated": true}], \#(complete)}"#)
+        XCTAssertTrue(cut.yourTurnMayBeMore)
+        XCTAssertFalse(cut.allClear)
+    }
+
     func testFoldsFollowTheMac() throws {
         let unit = { (id: String, flags: String) in
             #"{"kind": "unit", "id": "\#(id)", "lane": "running", "title": "\#(id)", \#(flags)}"#

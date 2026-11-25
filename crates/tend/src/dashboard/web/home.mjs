@@ -180,6 +180,14 @@ function hostBadge(alias, local) {
   return box;
 }
 
+/// A lane's number as the header says it (apps/shared/Design/COUNTS.md):
+/// "N of M" under a filter, and Your turn's with "+" when a host's queue
+/// was cut or unread.
+function laneCountText(lane, data, board = state.board) {
+  const text = data.total === undefined ? String(data.count) : S.countOf(data.count, data.total);
+  return lane === "needsYou" && board?.partial ? `${text}+` : text;
+}
+
 /// Who asked, in the page's language when tendd does not name them.
 function askerOf(unit) {
   return unit.asker || (unit.askerMissing ? S.anAgent : "");
@@ -646,7 +654,7 @@ function renderLane(lane, data) {
   const section = el("section", `lane ${lane}${data.count ? " has-items" : ""} ${state.layout}`);
   section.setAttribute("aria-label", S[title]);
   const head = el("header", "lane-head");
-  const count = data.total === undefined ? String(data.count) : S.countOf(data.count, data.total);
+  const count = laneCountText(lane, data);
   head.append(el("h2", null, S[title]), el("span", "count", count), el("span", "sub", S[sub]));
   const body = el("div", "lane-body");
   const error = state.errors[lane === "needsYou" ? "decisions" : lane === "running" ? "fleet" : "history"];
@@ -670,7 +678,8 @@ function renderLane(lane, data) {
     }
     for (const unit of group.units) body.append(unitCard(unit));
   }
-  if (!data.count && !error) body.append(el("div", "lane-empty", S[empty]));
+  // "Nothing needs you" only when every queue was read whole.
+  if (!data.count && !error && !(lane === "needsYou" && state.board?.partial)) body.append(el("div", "lane-empty", S[empty]));
   // The group, or only what the last Close all did once it emptied the
   // group: that report stays until the person dismisses it.
   if (data.cantAnswer?.count) body.append(cantAnswerSection(data.cantAnswer));
@@ -1849,7 +1858,7 @@ function renderStatus(board) {
   const waiting = board?.yourTurn ?? counts?.needsYou.count ?? 0;
   badge.hidden = !waiting;
   badge.textContent = waiting > 99 ? "99+" : String(waiting);
-  for (const lane of LANES) $(`seg-${lane}`).textContent = counts ? String(counts[lane].count) : "";
+  for (const lane of LANES) $(`seg-${lane}`).textContent = counts ? laneCountText(lane, counts[lane], board) : "";
   // The four-room mark, rule A: a room lights when anything is in it.
   // The agents on the board (the daemon's or the Fleet snapshot's).
   const boardAgents = board
@@ -1897,7 +1906,8 @@ function render() {
   // "No work yet" only when every read answered and nothing is noted: an
   // empty board beside a failed Fleet read is not an empty fleet.
   const quiet = !Object.values(state.errors).some(Boolean) && LANES.every((lane) => !board.lanes[lane].notes.length);
-  const nothing = board.empty && quiet && Boolean(state.data.decisions || state.data.server) && !board.reviewedCount;
+  // Never all clear on a partial read: what could not be read may need you.
+  const nothing = board.empty && quiet && !board.partial && Boolean(state.data.decisions || state.data.server) && !board.reviewedCount;
   $("empty-board").hidden = !nothing;
   lanes.hidden = nothing;
   const columns = LANES.map((lane) => renderLane(lane, board.lanes[lane]));

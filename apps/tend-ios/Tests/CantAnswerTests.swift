@@ -64,6 +64,39 @@ final class CantAnswerTests: XCTestCase {
         XCTAssertFalse(older.decisionHosts[0].subjectCheck)
     }
 
+    /// Each host's exact count speaks for that host only: a lists 2 with
+    /// exact 1, b lists 1 with exact 4, c lists 1 with none. 2 + 4 + 1.
+    func testTheCountIsEachHostsFloorSummed() throws {
+        let gone = #""unanswerable":{"cause":"ended","episode":"e","since":"2026-11-16T00:00:00Z"}"#
+        let q = { (id: String, host: String) in
+            #"{"kind":"human_request","request_id":"\#(id)","body":"\#(id)?","from_session_id":"s_\#(id)","from_pane":"%1","created_at":"2026-11-10T10:00:00Z","host":"\#(host)","actionable":true,\#(gone)}"#
+        }
+        let items = [q("a1", "a"), q("a2", "a"), q("b1", "b"), q("c1", "c")].joined(separator: ",")
+        let hosts = #"[{"alias":"a","local":true,"subject_check":true,"unanswerable_count":1},{"alias":"b","subject_check":true,"unanswerable_count":4},{"alias":"c"}]"#
+        let json = #"{"decision_hosts":\#(hosts),"lanes":{"needs_you":{"groups":[{"items":[\#(items)]}]}}}"#
+        let board = try JSONDecoder().decode(DeviceHome.self, from: Data(json.utf8))
+        XCTAssertEqual(board.cantAnswer.count, 4)
+        XCTAssertEqual(board.cantAnswerCount, 7)
+        // tendd's own count wins when it sends one.
+        let counted = json.replacingOccurrences(of: #""lanes""#, with: #""counts":{"cant_answer":9},"lanes""#)
+        XCTAssertEqual(try JSONDecoder().decode(DeviceHome.self, from: Data(counted.utf8)).cantAnswerCount, 9)
+        // The same per-host floor on a decide-only device's queue.
+        XCTAssertEqual(DeviceHome.cantAnswerFloor(listed: ["a", "a", "b", "c"], exact: [("a", 1), ("b", 4), ("c", 0)]), 7)
+    }
+
+    func testAMixedHostQueueCountsEachHostsFloor() async {
+        let gone = #""unanswerable":{"cause":"ended","episode":"e","since":"2026-11-16T00:00:00Z"}"#
+        let q = { (id: String) in
+            #"{"kind":"human_request","request_id":"\#(id)","body":"\#(id)?","from_session_id":"s_\#(id)","from_pane":"%1","created_at":"2026-11-10T10:00:00Z",\#(gone)}"#
+        }
+        let queue = #"{"hosts":[{"alias":"a","local":true,"control":true,"subject_check":true,"queue":{"items":[\#(q("a1")),\#(q("a2"))],"unanswerable_count":1}},{"alias":"b","control":true,"subject_check":true,"queue":{"items":[\#(q("b1"))],"unanswerable_count":4}},{"alias":"c","control":true,"queue":{"items":[\#(q("c1"))]}}]}"#
+        StubProtocol.on("/api/decisions", .init(status: 200, body: queue))
+        let model = decideModel()
+        await model.refresh()
+        XCTAssertEqual(model.cantAnswer.count, 4)
+        XCTAssertEqual(model.cantAnswerCount, 7)
+    }
+
     func testAnOlderDaemonsQueueReadsAsBefore() throws {
         let json = #"{"hosts":[{"alias":"here","local":true,"control":true,"queue":{"items":[\#(Self.question("live")),\#(Self.question("old"))]}}]}"#
         struct Hosts: Decodable { let hosts: [HostQueue] }

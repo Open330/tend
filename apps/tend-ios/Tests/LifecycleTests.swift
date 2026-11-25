@@ -237,6 +237,8 @@ final class LifecycleTests: XCTestCase {
             return try JSONDecoder().decode(Hosts.self, from: Data(json.utf8)).hosts
         }
         XCTAssertTrue(AppModel.allClear(try hosts(Self.emptyQueue)))
+        // An answer that covers no host is unknown, never all clear.
+        XCTAssertFalse(AppModel.allClear(try hosts(#"{"hosts":[]}"#)))
         // Only an item this app cannot read: not all clear.
         let unknown = #"{"hosts":[{"alias":"here","local":true,"unavailable":[],"queue":{"items":[{"kind":"future_item"}],"truncated":false,"unavailable":[]}}]}"#
         XCTAssertFalse(AppModel.allClear(try hosts(unknown)))
@@ -286,6 +288,18 @@ extension LifecycleTests {
         XCTAssertTrue(StubProtocol.seen.contains("/api/decisions"))
         XCTAssertTrue(model.loaded)
         XCTAssertEqual(model.hosts.map(\.alias), ["here"])
+    }
+
+    func testADecideOnlyAnswerWithNoHostIsMaybeMore() async {
+        StubProtocol.on("/api/decisions", .init(status: 200, body: #"{"hosts":[]}"#))
+        let origin = try! ServerOrigin(parsing: "https://tend.test")
+        CredentialStore.save(Pairing(origin: origin, device: PairedDevice(id: "dev_1", name: "phone"), token: "tdv_x"))
+        let model = AppModel()
+        await model.refresh()
+        XCTAssertTrue(model.loaded)
+        XCTAssertEqual(model.badgeCount, 0)
+        XCTAssertTrue(model.yourTurnMayBeMore)
+        XCTAssertFalse(AppModel.allClear(model.hosts))
     }
 
     func testFinishedNeverCountsDecidedHistory() async {

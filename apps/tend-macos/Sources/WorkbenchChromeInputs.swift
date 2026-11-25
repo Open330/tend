@@ -233,6 +233,9 @@ final class TendWindowChrome: TendWindowVisibilityTracking {
 
     /// Whether any workbench window is on screen.
     private(set) var isVisible = false
+    /// Sends `isVisible` on each change (the board reads the decisions for
+    /// the rail's badge only while it is on screen).
+    let visibilityChanged = PassthroughSubject<Bool, Never>()
     /// The time-dependent part of the status bar (a cap lifting, a window
     /// rolling over, "resets at") is read again this often while shown.
     static let clockPeriod: TimeInterval = 30
@@ -311,6 +314,7 @@ final class TendWindowChrome: TendWindowVisibilityTracking {
         let visible = readers.values.contains(true)
         guard visible != isVisible else { return }
         isVisible = visible
+        visibilityChanged.send(visible)
         TendPerf.count(visible ? "chrome.shown" : "chrome.hidden")
         // Shown again: catch up at once, time-only changes (a cap lifting,
         // a reset passing) included.

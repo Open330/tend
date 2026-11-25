@@ -441,7 +441,8 @@ struct DeviceHome: Decodable, Hashable, Sendable {
         let coverage = (try? values.decodeIfPresent([TendLenient<BoardDecisionHost>].self, forKey: .decisionHosts)) ?? nil
         let readHosts = coverage?.compactMap(\.value) ?? []
         decisionHosts = readHosts
-        coverageKnown = coverage.map { $0.count == readHosts.count } ?? false
+        // No host's queue at all says nothing about what is waiting.
+        coverageKnown = coverage.map { !$0.isEmpty && $0.count == readHosts.count } ?? false
         backlog = ((try? values.decodeIfPresent([TendLenient<BacklogRecord>].self, forKey: .backlog)) ?? nil)?.compactMap(\.value) ?? []
         counts = (try? values.decodeIfPresent(BoardCounts.self, forKey: .counts)) ?? nil
         reviewedMarks = (try? values.decodeIfPresent(Bool.self, forKey: .reviewedMarks)) ?? nil ?? false
@@ -490,7 +491,22 @@ struct DeviceHome: Decodable, Hashable, Sendable {
     /// Its count: tendd's, or every host's exact count, never less than
     /// listed.
     var cantAnswerCount: Int {
-        counts?.cantAnswer ?? max(cantAnswer.count, decisionHosts.reduce(0) { $0 + $1.unanswerableCount })
+        counts?.cantAnswer ?? Self.cantAnswerFloor(
+            listed: cantAnswer.map(\.host),
+            exact: decisionHosts.map { ($0.alias, $0.unanswerableCount) }
+        )
+    }
+
+    /// Per host, its exact count but never less than it lists; summed. A
+    /// host's exact count speaks only for that host.
+    static func cantAnswerFloor(listed: [String], exact: [(String, Int)]) -> Int {
+        var listedBy: [String: Int] = [:]
+        for host in listed { listedBy[host, default: 0] += 1 }
+        var exactBy: [String: Int] = [:]
+        for (host, count) in exact { exactBy[host] = max(exactBy[host] ?? 0, count) }
+        return Set(listedBy.keys).union(exactBy.keys).reduce(0) { sum, host in
+            sum + max(listedBy[host] ?? 0, exactBy[host] ?? 0)
+        }
     }
 
     /// A lane's number (COUNTS.md): tendd's `counts` as given; without
@@ -523,13 +539,17 @@ struct DeviceHome: Decodable, Hashable, Sendable {
     }
 
     /// Whether more may need the person than Your turn's number says:
-    /// tendd's `coverage`, or, without it, a queue not read whole or an
-    /// entry this app could not read.
+    /// partial when either tendd (`coverage`) or this app says so. This
+    /// app says so for a queue not read whole or an entry it could not
+    /// read, whatever tendd's coverage is.
     var yourTurnMayBeMore: Bool {
-        if let coverage = counts?.coverage { return coverage != "complete" }
-        return !coverageKnown || (undecoded[.yourTurn] ?? 0) > 0
+        let client = !coverageKnown || (undecoded[.yourTurn] ?? 0) > 0
             || decisionHosts.contains { $0.truncated || !$0.unavailable.isEmpty }
+        return serverPartial || client
     }
+
+    /// tendd said its decision queues were not all read whole.
+    var serverPartial: Bool { counts?.coverage.map { $0 != "complete" } ?? false }
 
     /// Every item in a lane, in order.
     func items(_ lane: Lane) -> [BoardItem] { (lanes[lane] ?? []).flatMap(\.items) }
@@ -538,11 +558,12 @@ struct DeviceHome: Decodable, Hashable, Sendable {
         items(.yourTurn).compactMap { if case .decision(let d) = $0 { d } else { nil } }
     }
 
-    /// "Nothing needs you" only when every host's queue was read in full,
-    /// every entry decoded, and none is waiting.
+    /// "Nothing needs you" only when nothing is listed, Your turn's
+    /// number is 0, and coverage is complete by tendd's word and this
+    /// app's own reading: every host's queue read in full, every entry
+    /// decoded.
     var allClear: Bool {
-        coverageKnown && items(.yourTurn).isEmpty && (undecoded[.yourTurn] ?? 0) == 0
-            && decisionHosts.allSatisfy { !$0.truncated && $0.unavailable.isEmpty }
+        items(.yourTurn).isEmpty && count(.yourTurn) == 0 && !yourTurnMayBeMore
     }
 }
 

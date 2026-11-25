@@ -42,6 +42,10 @@ struct FleetDecision: Identifiable, Hashable, Sendable {
     /// (`subject_check_v1`). Listed under Can't be answered, not in Your
     /// turn, and not counted.
     var unanswerable: TendUnanswerable?
+    /// Another host's review item that neither this app nor its dashboard
+    /// decides (an observe-only host): listed and counted, as tendd counts
+    /// it, but decided only on that host.
+    var observeOnly = false
 
     var isUnanswerable: Bool { unanswerable != nil }
 
@@ -198,8 +202,10 @@ enum FleetDecisions {
     /// Home's decisions with other hosts' queues applied: each host's
     /// folded questions replace their mailbox copies (and, from a cut page
     /// that may have left folded ones out, so does every question of that
-    /// host it did not list as live) and come last, folded; then the
-    /// review items of the hosts in `deciding`. Nothing here acts on
+    /// host it did not list as live) and come last, folded. Every other
+    /// live decision a queue lists is counted once: its questions the
+    /// mailbox did not deliver, and all its open review items, those of a
+    /// host outside `deciding` marked `observeOnly`. Nothing here acts on
     /// another host: Home opens those on the dashboard.
     static func withRemote(
         _ merged: [FleetDecision],
@@ -218,7 +224,19 @@ enum FleetDecisions {
             guard case .humanRequest(let id) = decision.source, !decision.host.local, !decision.isUnanswerable else { return true }
             return remoteFolded.counts(host: decision.host.alias, id: "\(decision.host.alias):\(id)")
         }
-        let live = kept.filter { !$0.isUnanswerable } + remoteReviews(queues, deciding: deciding)
+        var seen = Set(kept.map(\.id))
+        var listed: [FleetDecision] = []
+        for entry in queues where !entry.host.local {
+            for case .humanRequest(let request) in entry.queue.items where request.unanswerable == nil {
+                let decision = FleetDecision(humanRequest: request, host: entry.host)
+                if seen.insert(decision.id).inserted { listed.append(decision) }
+            }
+        }
+        for var review in remoteReviews(queues) where seen.insert(review.id).inserted {
+            review.observeOnly = !deciding.contains(review.host.alias)
+            listed.append(review)
+        }
+        let live = kept.filter { !$0.isUnanswerable } + listed
         return live.filter { !$0.isSystemAsk } + live.filter(\.isSystemAsk) + kept.filter(\.isUnanswerable) + folded
     }
 
