@@ -792,12 +792,14 @@ impl CollaborationStore {
     ) -> Result<SystemAskCleanup, CollaborationError> {
         self.ensure_enabled()?;
         let _transaction = self.transaction_lock.lock().await;
-        let now = OffsetDateTime::now_utc();
         let snapshot = self.requests.read().await;
         let hold = match registry {
             Some(registry) => Some(registry.hold().await),
             None => None,
         };
+        // After the hold: evidence that expired while waiting for it is not
+        // fresh now.
+        let now = OffsetDateTime::now_utc();
         let registry_agents: Vec<Agent>;
         let (agents, gone) = match &hold {
             Some(hold) => {

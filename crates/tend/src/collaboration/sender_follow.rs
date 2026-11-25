@@ -774,6 +774,16 @@ mod tests {
             )])
             .unwrap();
         let registry = crate::state::Store::default();
+        // A scan that read every process and found nothing unnamed.
+        registry
+            .subject_observations()
+            .set_scan(crate::subject_evidence::PaneScan {
+                at: OffsetDateTime::now_utc(),
+                hosts: Vec::new(),
+                processes_read: true,
+                outside: Vec::new(),
+                outside_resumed: Vec::new(),
+            });
         // Listed, not folded: stays.
         let cleanup = store
             .cleanup_system_asks_checked(&registry, true)

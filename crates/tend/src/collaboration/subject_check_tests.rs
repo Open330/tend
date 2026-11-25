@@ -275,9 +275,8 @@ async fn registry(live: &[(&str, &str)]) -> crate::state::Store {
         everyone().into_iter().collect(),
         &std::collections::HashSet::new(),
     );
-    observations.set_scan(scan(
-        OffsetDateTime::now_utc(),
-        &[("default", Some(A))],
+    observations.set_scan(walked(
+        scan(OffsetDateTime::now_utc(), &[("default", Some(A))], &[]),
         &[],
     ));
     registry
@@ -710,6 +709,36 @@ async fn a_legacy_row_takes_confirmed_evidence_only() {
     let check = get(&store, &q.id).await.subject_check.unwrap();
     assert_eq!(check.episode, "ep_legacy");
     assert_eq!(check.episode_since, Some(now - Duration::hours(20)));
+    // An end from an earlier run, before the row's last activity, is not.
+    let earlier = now - Duration::days(22);
+    store
+        .record_subject_facts(vec![SubjectFact::new(
+            FactKind::Ended,
+            "s7",
+            Some("%7"),
+            Some("default"),
+            None,
+            earlier,
+        )])
+        .unwrap();
+    put(&store, left.clone()).await;
+    let resumed = row(
+        "s7",
+        "%7",
+        "default",
+        AgentState::Stopped,
+        Duration::days(21),
+    )
+    .await;
+    pass(&store, &[resumed], &everyone(), gone_scan(now).as_ref()).await;
+    assert_eq!(
+        get(&store, &q.id)
+            .await
+            .subject_check
+            .unwrap()
+            .episode_since,
+        Some(now - Duration::hours(20))
+    );
     // Its recorded end is.
     let ended = now - Duration::days(19);
     store
@@ -1082,6 +1111,28 @@ async fn a_console_recovery_whose_recipient_pane_is_gone_folds_and_is_not_closed
         .await
         .unwrap();
     assert!(back.closed.is_empty(), "{back:?}");
+    // Its old pane conclusively gone, but an unnamed agent of its kind runs
+    // (a session picked from a list): tend closes nothing on its own.
+    let ambiguous = registry(&[]).await;
+    let mut scan_now = walked(
+        scan(OffsetDateTime::now_utc(), &[("default", Some(A))], &[]),
+        &[],
+    );
+    scan_now.outside = vec![UnnamedAgent {
+        since: OffsetDateTime::now_utc() - Duration::hours(3),
+        ..UnnamedAgent::process(
+            9,
+            Some("1"),
+            Some(AgentKind::ClaudeCode),
+            OffsetDateTime::now_utc(),
+        )
+    }];
+    ambiguous.subject_observations().set_scan(scan_now);
+    let held = store
+        .cleanup_system_asks_checked(&ambiguous, true)
+        .await
+        .unwrap();
+    assert!(held.closed.is_empty(), "{held:?}");
     store
         .sweep_system_asks_checked(&registry(&[]).await)
         .await

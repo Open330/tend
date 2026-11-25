@@ -581,6 +581,28 @@ fn judge(
     }
 }
 
+/// For tend's own permanent closes, on top of [`Purpose::Close`]: the
+/// present state accounts for every agent running here, so nothing unnamed
+/// (a session picked from a list, not yet prompted) could be a subject,
+/// even when its old pane is conclusively gone. A person's Close all does
+/// not need this; tend, closing on nobody's say, does.
+pub(super) fn nothing_could_be_subject(
+    request: &CollaborationRequest,
+    requests: &HashMap<String, CollaborationRequest>,
+    inputs: &SubjectInputs<'_>,
+    now: OffsetDateTime,
+) -> bool {
+    let (Some(subjects), Some(scan)) = (subjects(request, requests), inputs.scan) else {
+        return false;
+    };
+    now - scan.at <= SCAN_FRESH
+        && subjects.into_iter().all(|subject| {
+            subject.is_some_and(|subject| {
+                present_state(scan, inputs.agents, subject.agent_kind, now, Purpose::Close)
+            })
+        })
+}
+
 /// What a scan is judged against for one subject.
 struct Seen<'a> {
     session: &'a str,
@@ -901,15 +923,33 @@ fn legacy_since(
     request: &CollaborationRequest,
     old: &SubjectCheck,
     requests: &HashMap<String, CollaborationRequest>,
+    agents: &[Agent],
     facts: &[SubjectFact],
 ) -> OffsetDateTime {
     let ended = subjects(request, requests).and_then(|subjects| {
         let mut latest: Option<OffsetDateTime> = None;
         for subject in subjects {
-            let session = subject?.agent_session_id.as_str();
+            let subject = subject?;
+            let session = subject.agent_session_id.as_str();
+            // As in `judge`: an end before the row's last activity belongs
+            // to an earlier run, not to this episode.
+            let floor = super::recovery::exact_agent(subject, agents)
+                .map(|row| row.last_activity_at)
+                .into_iter()
+                .chain(
+                    agents
+                        .iter()
+                        .filter(|agent| agent.session_id == session)
+                        .map(|agent| agent.last_activity_at),
+                )
+                .max();
             let end = facts
                 .iter()
-                .filter(|fact| fact.session_id == session && fact.kind == FactKind::Ended)
+                .filter(|fact| {
+                    fact.session_id == session
+                        && fact.kind == FactKind::Ended
+                        && floor.is_none_or(|floor| fact.observed_at >= floor)
+                })
                 .map(|fact| fact.observed_at)
                 .max()?;
             latest = Some(latest.map_or(end, |at| at.max(end)));
@@ -1060,10 +1100,10 @@ impl CollaborationStore {
             .filter(|request| super::system_asks::system_ask_kind(request).is_some())
             .filter_map(|request| {
                 let folded = self.unanswerable(request, now)?;
-                matches!(
+                (matches!(
                     evaluate(request, requests, &inputs, &facts, now, Purpose::Close),
                     Some(Verdict::Gone { .. })
-                )
+                ) && nothing_could_be_subject(request, requests, &inputs, now))
                 .then(|| {
                     (
                         request.id.clone(),
@@ -1145,7 +1185,7 @@ impl CollaborationStore {
             .max();
             let legacy = old
                 .filter(|old| old.episode_since.is_none())
-                .map(|old| legacy_since(request, old, &snapshot, &facts));
+                .map(|old| legacy_since(request, old, &snapshot, inputs.agents, &facts));
             let next = step(old, &verdict, now, last_confirmed, legacy);
             if let Some(next) = next.as_ref().filter(|n| n.state == SubjectState::Gone) {
                 report.gone += 1;

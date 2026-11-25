@@ -219,6 +219,9 @@ pub struct ClosedByTendEntry {
     /// For a merged duplicate: the item that covers it now.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub into: Option<String>,
+    /// Closed because the session it is about is gone: how.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_gone: Option<crate::collaboration::subject_check::GoneCause>,
     #[serde(with = "time::serde::rfc3339")]
     pub closed_at: OffsetDateTime,
 }
@@ -234,6 +237,7 @@ impl ClosedByTendEntry {
             reason_text: closure.reason_text(),
             closed_by: closure.by,
             into: closure.into.clone(),
+            subject_gone: closure.subject_gone,
             closed_at: closure.at,
         })
     }
