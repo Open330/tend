@@ -456,6 +456,9 @@ final class FleetDecisionDraft: ObservableObject {
     @Published fileprivate(set) var isOpen = false
     @Published fileprivate(set) var text: String?
     @Published fileprivate(set) var mode: FleetComposerMode = .answer
+    /// The review option the person chose, apart from their note: Accept
+    /// sends it as the option, never as text they can edit.
+    @Published fileprivate(set) var option: String?
 
     fileprivate init(id: String, owner: FleetDecisionDrafts?) {
         self.id = id
@@ -469,6 +472,12 @@ final class FleetDecisionDraft: ObservableObject {
     /// than the one it is in starts it afresh with `value`; nil keeps it.
     func update(_ value: String?, mode: FleetComposerMode? = nil) {
         owner?.set(value, mode: mode, for: id)
+    }
+
+    /// Opens the Accept composer for a review with `option` chosen and an
+    /// empty, optional note.
+    func choose(_ option: String) {
+        owner?.choose(option, for: id)
     }
 }
 
@@ -516,7 +525,10 @@ final class FleetDecisionDrafts {
                 if let openID, let open = rows[openID], open.isOpen { open.isOpen = false }
                 openID = id
             }
-            if let mode, row.mode != mode { row.mode = mode }
+            if let mode, row.mode != mode {
+                row.mode = mode
+                if row.option != nil { row.option = nil }
+            }
             if !(reopening && row.text != nil), row.text != value { row.text = value }
             if !row.isOpen { row.isOpen = true }
         } else if openID == id {
@@ -524,6 +536,17 @@ final class FleetDecisionDrafts {
             if row.isOpen { row.isOpen = false }
             if row.text != nil { row.text = nil }
             if row.mode != .answer { row.mode = .answer }
+            if row.option != nil { row.option = nil }
+        }
+    }
+
+    fileprivate func choose(_ option: String, for id: String) {
+        let row = row(for: id)
+        set("", mode: .answer, for: id)
+        // Another option is a new decision: the note starts afresh.
+        if row.option != option {
+            row.option = option
+            if row.text != "" { row.text = "" }
         }
     }
 }
@@ -553,8 +576,22 @@ extension FleetDecisions {
     /// A review's note: nil when the person typed none, so Accept and
     /// Return go without one (CARDS.md: the note is optional).
     static func reviewNote(_ text: String) -> String? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : text
+        decisionNote(option: nil, note: text)
+    }
+
+    /// The note an Accept with a chosen option records, as tendd's
+    /// `review::decision_note` writes it for the dashboard and the Fleet
+    /// relay: `chose: X`, then the person's own words. This Mac's
+    /// `review_dispose` carries no option field, so the option goes in
+    /// the note in tendd's own format.
+    static func decisionNote(option: String?, note: String) -> String? {
+        let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch (option, trimmed.isEmpty) {
+        case (let option?, false): return "chose: \(option)\n\(trimmed)"
+        case (let option?, true): return "chose: \(option)"
+        case (nil, false): return trimmed
+        case (nil, true): return nil
+        }
     }
 
     /// A decision card's meta line: asker · host · project. The host is
@@ -811,12 +848,15 @@ struct FleetDecisionCard: View {
     var initialAnswer: String?
     /// What that field is for, for previews and tests.
     var initialMode: FleetComposerMode
+    /// The review option chosen with it, for previews and tests.
+    var initialOption: String?
     /// The open answer, shared by every card so only one composer (and one
     /// ⌘↩ Send) exists at a time; a card without one keeps its own.
     @ObservedObject private var draft: FleetDecisionDraft
     private let sharesDraft: Bool
     @State private var localDraft: String?
     @State private var localMode: FleetComposerMode = .answer
+    @State private var localOption: String?
 
     init(
         decision: FleetDecision,
@@ -830,6 +870,7 @@ struct FleetDecisionCard: View {
         dashboard: URL? = nil,
         initialAnswer: String? = nil,
         initialMode: FleetComposerMode = .answer,
+        initialOption: String? = nil,
         draft: FleetDecisionDraft? = nil
     ) {
         self.decision = decision
@@ -843,6 +884,7 @@ struct FleetDecisionCard: View {
         self.dashboard = dashboard
         self.initialAnswer = initialAnswer
         self.initialMode = initialMode
+        self.initialOption = initialOption
         _draft = ObservedObject(wrappedValue: draft ?? .detached)
         sharesDraft = draft != nil
     }
@@ -850,7 +892,12 @@ struct FleetDecisionCard: View {
     private var composing: String? {
         get { sharesDraft ? draft.value : localDraft }
         nonmutating set {
-            if sharesDraft { draft.update(newValue) } else { localDraft = newValue }
+            if sharesDraft {
+                draft.update(newValue)
+            } else {
+                localDraft = newValue
+                if newValue == nil { localOption = nil }
+            }
         }
     }
     @Environment(\.colorScheme) private var colorScheme
@@ -864,6 +911,25 @@ struct FleetDecisionCard: View {
         return sharesDraft ? draft.mode : localMode
     }
 
+    /// The review option chosen in the open composer.
+    private var chosenOption: String? {
+        if composing == nil, initialAnswer != nil { return initialOption }
+        return sharesDraft ? draft.option : localOption
+    }
+
+    /// A review's option: the Accept composer with it shown apart from
+    /// the note, which stays empty and optional.
+    private func choose(_ option: String) {
+        if sharesDraft {
+            draft.choose(option)
+        } else {
+            let kept = localMode == .answer && localOption == option ? localDraft : nil
+            localMode = .answer
+            localOption = option
+            localDraft = kept ?? ""
+        }
+    }
+
     /// Opens the composer for `mode`, filled with `text`.
     private func compose(_ mode: FleetComposerMode, _ text: String = "") {
         if sharesDraft {
@@ -872,6 +938,7 @@ struct FleetDecisionCard: View {
             // As the shared draft does: reopening keeps the text, another
             // purpose starts afresh.
             let kept = localMode == mode && text.isEmpty ? localDraft : nil
+            if localMode != mode { localOption = nil }
             localMode = mode
             localDraft = kept ?? text
         }
@@ -1139,7 +1206,11 @@ struct FleetDecisionCard: View {
                 // wraps under its own number instead of being cut off.
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(Array(decision.options.enumerated()), id: \.offset) { index, option in
-                        FleetDecisionOptionRow(number: index + 1, text: option) { compose(.answer, option) }
+                        FleetDecisionOptionRow(number: index + 1, text: option) {
+                            // A question's option fills its answer; a
+                            // review's is chosen apart from the note.
+                            if decision.isHumanRequest { compose(.answer, option) } else { choose(option) }
+                        }
                     }
                 }
             }
@@ -1184,6 +1255,17 @@ struct FleetDecisionCard: View {
         let mode = composerMode
         let canSend = FleetDecisions.canSend(mode, isQuestion: decision.isHumanRequest, text: answerText)
         return VStack(alignment: .leading, spacing: 6) {
+            if !decision.isHumanRequest, mode == .answer, let chosenOption {
+                Label {
+                    Text("Accept with: \(chosenOption)")
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "checkmark.circle")
+                }
+                .font(TendType.body)
+                .foregroundStyle(TendInk.label(colorScheme))
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
             TextField(composerPlaceholder, text: text, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(1...5)
@@ -1202,7 +1284,7 @@ struct FleetDecisionCard: View {
                         .buttonStyle(.tendPrimary)
                         .keyboardShortcut(.return, modifiers: .command)
                 case (.review, .answer):
-                    Button("Accept") { submit { await decide(.accepted, FleetDecisions.reviewNote(answerText)) } }
+                    Button("Accept") { submit { await decide(.accepted, FleetDecisions.decisionNote(option: chosenOption, note: answerText)) } }
                         .buttonStyle(.tendPrimary)
                         .keyboardShortcut(.return, modifiers: .command)
                 case (.review, .decline):

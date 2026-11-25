@@ -393,6 +393,36 @@ private func message(host: TendFleetHostIdentity, id: String, created: String, s
         #expect(!FleetDecisions.declinedBody.contains("dismissed"))
     }
 
+    @MainActor
+    @Test func aReviewOptionIsKeptApartFromTheNote() {
+        let drafts = FleetDecisionDrafts()
+        let row = drafts.row(for: "r")
+        row.choose("Merge")
+        #expect(row.option == "Merge")
+        #expect(row.value == "", "the note starts empty, not as the option")
+        drafts.binding(for: "r").wrappedValue = "ship it"
+        #expect(row.option == "Merge", "typing a note keeps the option")
+        // Another option starts a new note.
+        drafts.binding(for: "other").wrappedValue = ""
+        row.choose("Hold")
+        #expect(row.option == "Hold")
+        #expect(row.value == "")
+        // Return… is not an Accept with an option.
+        row.update("", mode: .decline)
+        #expect(row.option == nil)
+        row.choose("Merge")
+        row.update(nil)
+        #expect(row.option == nil, "Cancel forgets it")
+    }
+
+    @Test func anAcceptedOptionIsRecordedAsTenddWritesIt() {
+        // crates/tend/src/review.rs decision_note: the option, then the note.
+        #expect(FleetDecisions.decisionNote(option: "Merge", note: "") == "chose: Merge")
+        #expect(FleetDecisions.decisionNote(option: "Merge", note: " after CI \n") == "chose: Merge\nafter CI")
+        #expect(FleetDecisions.decisionNote(option: nil, note: "tests missing") == "tests missing")
+        #expect(FleetDecisions.decisionNote(option: nil, note: "  ") == nil)
+    }
+
     @Test func onlyAnAnswerNeedsText() {
         // A question's answer needs text; its reason to decline does not.
         #expect(!FleetDecisions.canSend(.answer, isQuestion: true, text: " "))

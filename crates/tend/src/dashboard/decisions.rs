@@ -797,7 +797,6 @@ pub(super) async fn answer_handler(
     device: Option<axum::Extension<super::devices::DeviceAuth>>,
     Json(mut answer): Json<HumanAnswer>,
 ) -> Response {
-    answer.answer = reply_body(answer.answer, answer.declined);
     let (by, account) = operator_identity(&state, &headers, device.as_deref());
     if answer.answer.len() > MAX_ANSWER_BYTES {
         return error(
@@ -805,6 +804,9 @@ pub(super) async fn answer_handler(
             format!("answer exceeds {MAX_ANSWER_BYTES} bytes"),
         );
     }
+    // Checked as sent: a decline's standard words replace only an empty
+    // reason, never an oversized one.
+    answer.answer = reply_body(answer.answer, answer.declined);
     let status = if answer.declined {
         crate::collaboration::RequestStatus::Declined
     } else {

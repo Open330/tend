@@ -24862,6 +24862,16 @@
           }
         }
       }
+    },
+    "Accept with: %@" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다음으로 수락: %@"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

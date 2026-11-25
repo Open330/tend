@@ -24,6 +24,11 @@ come in the same order and the actions use the same words. Words are from
    end. The host is always shown, as on work-unit cards. On iOS the time
    moves under the meta on a narrow width.
 
+**The compact layout and the details panel** keep their own one-line
+header: kind, asker, host and time, with the checks above the title. The
+Mac's compact list panel and the web's details panel use it because a row
+there has no room for an inset. Their actions and words follow this page.
+
 **Attention mark:** a Your-turn card has a stripe at its leading edge and a tinted fill.
 The stripe is `stripe-width` (`TendDesignTokens.Metric.stripeWidth`) in the
 orange state colour. The fill is `card-your-turn` (`TendDesignTokens.cardYourTurn`).

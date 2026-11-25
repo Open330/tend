@@ -242,7 +242,8 @@ async function decide(unit, path, body, done) {
   render();
   try {
     await write(path, unit.remote ? { ...body, host: unit.host } : body);
-    state.drafts.delete(key);
+    // Every composer's draft for this card: the decision is made.
+    for (const draft of [...state.drafts.keys()]) if (draft === key || draft.startsWith(`${key}#`)) state.drafts.delete(draft);
     if (state.composer?.key === key) state.composer = null;
     state.results.set(key, { ok: true, text: done });
     setTimeout(refresh, 400);
@@ -255,10 +256,16 @@ async function decide(unit, path, body, done) {
   }
 }
 
+/// A composer's draft is its own: an answer never becomes a decline's
+/// reason, nor a Return note an Accept's.
+function draftKey(key, mode, option) {
+  return `${key}#${mode}${option ? `#${option}` : ""}`;
+}
+
 function openComposer(unit, mode, prefill = null, option = null) {
   const key = cardKey(unit);
   state.composer = { key, mode, option };
-  if (prefill != null) state.drafts.set(key, prefill);
+  if (prefill != null) state.drafts.set(draftKey(key, mode, option), prefill);
   render();
   const area = document.querySelector?.(`textarea[data-key="${CSS.escape(key)}"]`);
   area?.focus?.();
@@ -273,7 +280,9 @@ function composer(unit) {
   area.dataset.key = key;
   area.maxLength = unit.decision === "question" ? 16384 : 1024;
   area.placeholder = mode === "decline" ? S.reasonOptional : unit.decision === "question" ? S.yourAnswer : S.noteOptional;
-  area.value = state.drafts.get(key) || "";
+  const drafted = draftKey(key, mode, option);
+  area.value = state.drafts.get(drafted) || "";
+  if (option && unit.decision !== "question") box.append(el("div", "chosen", S.acceptWith(option)));
   const row = el("div", "row end");
   const cancel = button(S.cancel, () => {
     state.composer = null;
@@ -311,8 +320,8 @@ function composer(unit) {
     primary.disabled = needsText && !area.value.trim();
   };
   area.addEventListener("input", () => {
-    if (area.value) state.drafts.set(key, area.value);
-    else state.drafts.delete(key);
+    if (area.value) state.drafts.set(drafted, area.value);
+    else state.drafts.delete(drafted);
     sync();
   });
   area.addEventListener("keydown", (event) => {

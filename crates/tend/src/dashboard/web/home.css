@@ -259,6 +259,7 @@ a.chip-e { color: var(--accent); background: color-mix(in srgb, var(--accent) 12
 .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .row.end { justify-content: flex-end; }
 .composer { display: grid; gap: 8px; }
+.composer .chosen { font-weight: 600; }
 .field, .composer textarea, dialog input, dialog textarea {
   width: 100%; border: 1px solid var(--input-border); border-radius: var(--panel-radius); background: var(--input-background);
   padding: 6px 8px; resize: vertical; min-height: 30px; font-size: var(--size-body); color: var(--text);
