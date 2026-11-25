@@ -179,7 +179,7 @@ pub fn parse_duration(text: &str) -> Result<time::Duration, String> {
 
 /// Render a duration back into the compact config spelling, choosing the
 /// largest unit that divides it exactly.
-fn render_duration(duration: time::Duration) -> String {
+pub fn render_duration(duration: time::Duration) -> String {
     let seconds = duration.whole_seconds();
     let (magnitude, unit) = if seconds == 0 {
         (0, "s")

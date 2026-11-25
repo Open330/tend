@@ -571,7 +571,7 @@ function compactRow(unit) {
 function outcomeText(unit) {
   if (unit.outcome === "closedByTend" && unit.subjectGone) return `${S.closedByTend}: ${S.subjectGoneReason(S.causes[unit.subjectGone] || S.causes.other)}`;
   if (unit.outcome === "closedByTend") return `${S.closedByTend}: ${S.closeReasons[unit.reason] || unit.reasonText}`;
-  if (unit.closure) return S.closedAskerGone(S.causes[unit.closure.cause] || S.causes.other);
+  if (unit.closure) return (unit.closure.by === "tend" ? S.closedByTendAskerGone : S.closedAskerGone)(S.causes[unit.closure.cause] || S.causes.other);
   const word = S[unit.outcome] || unit.outcome;
   return unit.note ? `${word}: ${unit.note}` : word;
 }

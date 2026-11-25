@@ -123,8 +123,9 @@ pub(super) fn spawn_collaboration_waker_task(
 
 /// The full pass over tend's own items, the backlog included: what `tend
 /// review cleanup --apply` does, at start and every
-/// [`SYSTEM_ASK_SWEEP_EVERY`]. The closures are recorded on the rows and
-/// logged; agents' own questions are never touched.
+/// [`SYSTEM_ASK_SWEEP_EVERY`]; then agents' own questions whose asker has
+/// been gone past `[collaboration] close_unanswerable_after`. The closures
+/// are recorded on the rows and logged.
 const SYSTEM_ASK_SWEEP_EVERY: std::time::Duration = std::time::Duration::from_secs(
     tend::collaboration::system_asks::SYSTEM_ASK_SWEEP_EVERY
         .whole_seconds()
@@ -155,6 +156,11 @@ async fn check_subjects(collaboration: &CollaborationStore, store: &tend::Store)
 async fn sweep_system_asks(collaboration: &CollaborationStore, store: &tend::Store) {
     if let Err(error) = collaboration.sweep_system_asks_checked(store).await {
         tracing::warn!(%error, "scheduled cleanup of tend's own items failed");
+    }
+    // Agents' questions whose asker has been gone past `[collaboration]
+    // close_unanswerable_after`.
+    if let Err(error) = collaboration.close_long_unanswerable(store).await {
+        tracing::warn!(%error, "closing questions whose asker is long gone failed");
     }
 }
 

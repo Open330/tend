@@ -329,7 +329,7 @@ function decidedUnit(item, host, now) {
     since: (item.kind === "review" ? disposition.at : item.answered_at) || null,
     project: "",
     // A person closed it from Can't be answered: why (the asker's cause).
-    closure: item.kind === "human_answer" && item.closure ? { cause: String(item.closure.cause || ""), surface: item.closure.surface || null } : null,
+    closure: item.kind === "human_answer" && item.closure ? { cause: String(item.closure.cause || ""), surface: item.closure.surface || null, by: item.closure.by || "person" } : null,
   };
 }
 

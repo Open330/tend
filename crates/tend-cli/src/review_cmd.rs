@@ -1068,13 +1068,29 @@ fn render_history(history: &DecisionHistory, now: OffsetDateTime) -> String {
                     tend::collaboration::RequestStatus::Blocked => "blocked",
                     _ => "closed",
                 };
+                // tend's own close says why instead of the reply it sent.
+                let (label, said) = match answer.closure.as_ref().filter(|c| c.by == "tend") {
+                    Some(closure) => (
+                        "closed",
+                        format!(
+                            "closed by tend: asker gone ({}) {}",
+                            closure.cause.as_str(),
+                            closure
+                                .after
+                                .as_deref()
+                                .map_or_else(String::new, |after| format!("past {after}")),
+                        )
+                        .trim_end()
+                        .to_owned(),
+                    ),
+                    None => (label, first_line(&answer.answer).to_owned()),
+                };
                 let _ = writeln!(
                     out,
-                    "{ago:>4}  {label:<9} {}  {}  {}  → {}",
+                    "{ago:>4}  {label:<9} {}  {}  {}  → {said}",
                     answer.request.request_id,
                     asker(&answer.request),
                     first_line(&answer.request.body),
-                    first_line(&answer.answer),
                 );
             }
             DecidedItem::ClosedByTend(closed) => {

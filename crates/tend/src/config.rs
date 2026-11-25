@@ -939,6 +939,55 @@ pub struct CollaborationConfig {
     /// a wake only into an agent that is Idle with nothing offered recently.
     /// `off` (default) keeps typed wakes as the transport. Per host.
     pub hook_transport: CollaborationHookTransport,
+    /// Close an agent's own question once its asker has been established
+    /// gone this long (`7d` default; `off` keeps them until a person
+    /// closes them). Closed as Close all closes: the asker gets the reply
+    /// Dismiss sends, recorded as closed by tend in `tend review history`.
+    /// `tend review keep` wins. At least `1h`.
+    pub close_unanswerable_after: CloseAfter,
+}
+
+/// `[collaboration] close_unanswerable_after`: a duration (`7d`, `36h`) or
+/// `off`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CloseAfter(pub Option<time::Duration>);
+
+impl CloseAfter {
+    /// The shortest accepted: an asker away for an hour is not abandoned.
+    pub const MIN: time::Duration = time::Duration::hours(1);
+}
+
+impl Default for CloseAfter {
+    fn default() -> Self {
+        Self(Some(
+            crate::collaboration::subject_check::CLOSE_UNANSWERABLE_AFTER,
+        ))
+    }
+}
+
+impl Serialize for CloseAfter {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.0 {
+            Some(after) => serializer.serialize_str(&crate::automation::render_duration(after)),
+            None => serializer.serialize_str("off"),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for CloseAfter {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        if text.trim().eq_ignore_ascii_case("off") {
+            return Ok(Self(None));
+        }
+        let after = crate::automation::parse_duration(&text).map_err(serde::de::Error::custom)?;
+        if after < Self::MIN {
+            return Err(serde::de::Error::custom(format!(
+                "close_unanswerable_after {text:?} is shorter than 1h; use a longer duration or \"off\""
+            )));
+        }
+        Ok(Self(Some(after)))
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -962,6 +1011,7 @@ impl Default for CollaborationConfig {
             max_message_bytes: default_collaboration_max_message_bytes(),
             retention_days: default_collaboration_retention_days(),
             hook_transport: CollaborationHookTransport::Off,
+            close_unanswerable_after: CloseAfter::default(),
         }
     }
 }
@@ -2799,6 +2849,32 @@ mod tests {
     #[test]
     fn close_all_is_on_unless_review_turns_it_off() {
         assert!(Config::default().review.close_unanswerable);
+        assert_eq!(
+            Config::default().collaboration.close_unanswerable_after,
+            CloseAfter(Some(time::Duration::days(7)))
+        );
+        for (text, want) in [
+            ("off", None),
+            ("3d", Some(time::Duration::days(3))),
+            ("36h", Some(time::Duration::hours(36))),
+        ] {
+            let cfg: Config = toml::from_str(&format!(
+                "[collaboration]\nclose_unanswerable_after = \"{text}\"\n"
+            ))
+            .unwrap();
+            assert_eq!(cfg.collaboration.close_unanswerable_after, CloseAfter(want));
+            let back = toml::to_string(&cfg.collaboration).unwrap();
+            assert!(
+                back.contains(&format!("close_unanswerable_after = \"{text}\"")),
+                "{back}"
+            );
+        }
+        for bad in ["10m", "0", "soon"] {
+            assert!(toml::from_str::<Config>(&format!(
+                "[collaboration]\nclose_unanswerable_after = \"{bad}\"\n"
+            ))
+            .is_err());
+        }
         let off: Config = toml::from_str("[review]\nclose_unanswerable = false\n").unwrap();
         assert!(!off.review.close_unanswerable);
         let empty: Config = toml::from_str("[review]\n").unwrap();

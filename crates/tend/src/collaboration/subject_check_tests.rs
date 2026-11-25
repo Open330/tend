@@ -2436,3 +2436,96 @@ async fn a_session_resumed_outside_every_pane_accounts_only_for_its_own_process(
     .await;
     assert!(folded(&store, &q.id).await.is_none());
 }
+
+/// `[collaboration] close_unanswerable_after`: an agent's question whose
+/// asker has been gone that long closes as Close all closes it, recorded as
+/// tend's; Keep, a live asker and "off" each hold it.
+#[tokio::test]
+async fn tend_closes_a_question_whose_asker_is_gone_past_the_setting() {
+    let store = CollaborationStore::in_memory(CollaborationOptions::default());
+    let q = question(&store, &participant("s9", "%9", "default")).await;
+    let kept = question(&store, &participant("s5", "%5", "default")).await;
+    let back = question(&store, &participant("s7", "%7", "default")).await;
+    for id in [&q.id, &kept.id, &back.id] {
+        store.fold_for_test(id, GoneCause::PaneGone).await;
+    }
+    let kept_episode = folded(&store, &kept.id).await.unwrap().episode;
+    store
+        .keep_unanswerable(&kept.id, &kept_episode)
+        .await
+        .unwrap();
+    // Off by default in the store: nothing.
+    let none = store
+        .close_long_unanswerable(&registry(&[]).await)
+        .await
+        .unwrap();
+    assert_eq!(none, CloseOutcome::default());
+    store.set_close_unanswerable_after(Some(CLOSE_UNANSWERABLE_AFTER));
+    // Gone a day: not yet.
+    let early = store
+        .close_long_unanswerable(&registry(&[]).await)
+        .await
+        .unwrap();
+    assert!(early.closed.is_empty(), "{early:?}");
+    // Gone eight days (the episode, not the grace clock, counts).
+    for id in [&q.id, &kept.id, &back.id] {
+        let mut aged = get(&store, id).await;
+        let check = aged.subject_check.as_mut().unwrap();
+        check.episode_since = Some(OffsetDateTime::now_utc() - Duration::days(8));
+        put(&store, aged).await;
+    }
+    let outcome = store
+        .close_long_unanswerable(&registry(&[("s7", "%7")]).await)
+        .await
+        .unwrap();
+    assert_eq!(outcome.closed, std::slice::from_ref(&q.id));
+    assert_eq!(
+        outcome.skipped,
+        [SkippedClose {
+            request_id: back.id.clone(),
+            reason: "its subject is back".into()
+        }],
+        "kept is not even listed"
+    );
+    let closed = get(&store, &q.id).await;
+    assert_eq!(closed.status, RequestStatus::Declined);
+    assert_eq!(closed.reply.as_ref().unwrap().body, DISMISSED_BODY);
+    let closure = closed.closure.unwrap();
+    assert_eq!(closure.reason, ClosureReason::SubjectGone);
+    assert_eq!(
+        (closure.by.as_str(), closure.surface.as_str()),
+        ("tend", "tend")
+    );
+    assert_eq!(closure.after.as_deref(), Some("7d"));
+    assert!(closure.gone_since.is_some());
+    assert!(get(&store, &kept.id).await.needs_human_response());
+    // An unnamed agent of the asker's kind running: tend closes nothing.
+    let other = question(&store, &participant("s8", "%8", "default")).await;
+    store.fold_for_test(&other.id, GoneCause::PaneGone).await;
+    let mut aged = get(&store, &other.id).await;
+    aged.subject_check.as_mut().unwrap().episode_since =
+        Some(OffsetDateTime::now_utc() - Duration::days(8));
+    put(&store, aged).await;
+    let ambiguous = registry(&[]).await;
+    let mut scan_now = walked(
+        scan(OffsetDateTime::now_utc(), &[("default", Some(A))], &[]),
+        &[],
+    );
+    scan_now.outside = vec![UnnamedAgent::process(
+        9,
+        Some("1"),
+        Some(AgentKind::ClaudeCode),
+        OffsetDateTime::now_utc() - Duration::hours(3),
+    )];
+    ambiguous.subject_observations().set_scan(scan_now);
+    let held = store.close_long_unanswerable(&ambiguous).await.unwrap();
+    assert!(held.closed.is_empty(), "{held:?}");
+    assert!(get(&store, &other.id).await.needs_human_response());
+    // Off again: nothing more.
+    store.set_close_unanswerable_after(None);
+    let off = store
+        .close_long_unanswerable(&registry(&[]).await)
+        .await
+        .unwrap();
+    assert_eq!(off, CloseOutcome::default());
+}
