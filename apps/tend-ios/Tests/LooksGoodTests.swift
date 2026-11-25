@@ -130,6 +130,89 @@ final class LooksGoodTests: XCTestCase {
         XCTAssertFalse(StubProtocol.seen.contains("/api/device/home/reviewed"))
     }
 
+    /// A unit that went back to work is not on the board as finished any
+    /// more: tendd answers 404. Said, and the board is read again.
+    func testAUnitBackAtWorkReadsTheBoardAgain() async throws {
+        StubProtocol.on("/api/device/home/reviewed", .init(status: 404, body: #"{"error":"this unit is not on the board"}"#))
+        let running = Self.board(reviewed: false, key: nil).replacingOccurrences(of: #""lane": "finished""#, with: #""lane": "running""#)
+            .replacingOccurrences(of: #""finished":{"groups""#, with: #""running":{"groups""#)
+        let model = await operateModel(Self.board(reviewed: false), running)
+        let shown = try unit(model)
+        let marked = await model.markReviewed(shown)
+        XCTAssertFalse(marked)
+        XCTAssertEqual(model.failures[AppModel.reviewSlot(shown)], "this unit is not on the board")
+        XCTAssertEqual(StubProtocol.seen.filter { $0 == "/api/device/home" }.count, 2)
+        XCTAssertTrue(try XCTUnwrap(model.visibleBoard).items(.finished).isEmpty)
+        // The detail keeps its snapshot for display but offers nothing.
+        XCTAssertNil(model.liveReviewable(shown))
+    }
+
+    /// The detail's action follows the live board, never its snapshot.
+    func testTheDetailOffersItOnlyOnTheLiveUnit() async throws {
+        let model = await operateModel(Self.board(reviewed: false), Self.board(reviewed: false, key: "home:k2"))
+        let snapshot = try unit(model)
+        XCTAssertEqual(model.liveReviewable(snapshot)?.reviewKey, "home:k1")
+        // The board now has another result for it: not the snapshot's.
+        await model.refresh()
+        XCTAssertNil(model.liveReviewable(snapshot))
+        XCTAssertNotNil(model.liveReviewable(try unit(model)))
+    }
+
+    /// A mark tendd confirmed holds even when the next board read fails,
+    /// until a board shows the unit reviewed, with another key, or gone.
+    func testAConfirmedMarkHoldsUntilABoardSettlesIt() async throws {
+        StubProtocol.on("/api/device/home/reviewed", .init(status: 200, body: #"{"review":{"id":"rv_1"},"review_key":"home:k1"}"#))
+        let counted = Self.board(reviewed: false).replacingOccurrences(of: #""reviewed_marks":true"#, with: #""reviewed_marks":true,"counts":{"your_turn":0,"finished":1,"reviewed":0,"coverage":"complete"}"#)
+        StubProtocol.on("/api/device", .init(status: 200, body: Self.homeDevice))
+        StubProtocol.on("/api/device/fleet", .init(status: 200, body: Self.fleetJSON))
+        StubProtocol.on("/api/device/home",
+                        .init(status: 200, body: counted),
+                        .init(status: 500, body: #"{"error":"busy"}"#),
+                        .init(status: 200, body: counted),
+                        .init(status: 200, body: Self.board(reviewed: false, key: "home:k2")))
+        let model = pair(.operate)
+        await model.refreshDevice()
+        await model.refresh()
+        let shown = try unit(model)
+        let marked = await model.markReviewed(shown)
+        XCTAssertTrue(marked)
+        XCTAssertNotNil(model.problem, "the read after the mark failed")
+        // Held: reviewed, no button, folded and counted as reviewed.
+        func check(_ note: String) throws {
+            let board = try XCTUnwrap(model.visibleBoard)
+            let held = try unit(model)
+            XCTAssertTrue(held.reviewed, note)
+            XCTAssertFalse(model.canMarkReviewed(held), note)
+            XCTAssertNil(model.liveReviewable(shown), note)
+            XCTAssertEqual(FoldedLane(board, lane: .finished).reviewed.map(\.id), ["u1"], note)
+            XCTAssertEqual(board.count(.finished), 0, note)
+            XCTAssertEqual(board.reviewedCount(.finished), 1, note)
+        }
+        try check("after a failed read")
+        XCTAssertEqual(model.heldMarks, ["u1": "home:k1"])
+        // A board that still shows the old result unmarked: still held.
+        await model.refresh()
+        try check("a board not caught up yet")
+        // Another key: the unit changed, the mark is over, the button back.
+        await model.refresh()
+        XCTAssertEqual(model.heldMarks, [:])
+        let changed = try unit(model)
+        XCTAssertFalse(changed.reviewed)
+        XCTAssertTrue(model.canMarkReviewed(changed))
+    }
+
+    func testAHeldMarkEndsWhenTheBoardSaysReviewedOrDropsTheUnit() throws {
+        let unmarked = try JSONDecoder().decode(DeviceHome.self, from: Data(Self.board(reviewed: false).utf8))
+        XCTAssertTrue(unmarked.awaitsMark(id: "u1", key: "home:k1"))
+        XCTAssertFalse(unmarked.awaitsMark(id: "u1", key: "home:k0"), "another key")
+        XCTAssertFalse(unmarked.awaitsMark(id: "u2", key: "home:k1"), "not on the board")
+        let reviewed = try JSONDecoder().decode(DeviceHome.self, from: Data(Self.board(reviewed: true).utf8))
+        XCTAssertFalse(reviewed.awaitsMark(id: "u1", key: "home:k1"), "the board says reviewed")
+        // Held only on the same key.
+        let other = unmarked.holding(["u1": "home:k0"])
+        if case .unit(let u)? = other.items(.finished).first { XCTAssertFalse(u.reviewed) } else { XCTFail("no unit") }
+    }
+
     func testA403SaysThisDeviceOnlyDecides() async throws {
         StubProtocol.on("/api/device/home/reviewed", .init(status: 403, body: #"{"error":"decide only"}"#))
         let model = await operateModel(Self.board(reviewed: false))

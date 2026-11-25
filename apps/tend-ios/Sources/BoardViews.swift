@@ -214,14 +214,19 @@ struct WorkDetailView: View {
     let unit: BoardUnit
     @Environment(AppModel.self) private var model
 
-    /// The unit as the latest board has it; the snapshot it was opened
-    /// with only while this device may still read the board.
-    private var current: BoardUnit? {
+    /// The unit as the latest board lists it; nil once it left the board.
+    private var live: BoardUnit? {
         guard let board = model.visibleBoard else { return nil }
         for lane in Lane.board {
             for case .unit(let found) in board.items(lane) where found.id == unit.id { return found }
         }
-        return unit
+        return nil
+    }
+
+    /// What is shown: the live unit, else the snapshot it was opened with,
+    /// only while this device may still read the board.
+    private var current: BoardUnit? {
+        model.visibleBoard == nil ? nil : (live ?? unit)
     }
 
     var body: some View {
@@ -261,8 +266,10 @@ struct WorkDetailView: View {
                         }
                     }
                 }
-                if model.canMarkReviewed(u) {
-                    LooksGoodButton(unit: u, prominent: true)
+                // Only on the unit the board lists now, finished with the
+                // key of what is shown: never on the old snapshot.
+                if let live = model.liveReviewable(u) {
+                    LooksGoodButton(unit: live, prominent: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 if let headline = u.headlineText {

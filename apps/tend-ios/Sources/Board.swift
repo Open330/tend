@@ -167,7 +167,9 @@ struct BoardUnit: Decodable, Hashable, Sendable, Identifiable {
     let probableHelper: Bool
     let emptySession: Bool
     let recent: Bool
-    let reviewed: Bool
+    /// Set aside with Looks Good; also set here for a mark this device
+    /// made that the board has not confirmed yet (`DeviceHome.holding`).
+    var reviewed: Bool
     let requestedByPerson: Bool
     /// The result on screen, for Looks Good (finished units only): tendd
     /// refuses a mark whose key no longer names the unit's result.
@@ -346,8 +348,8 @@ struct BoardCounts: Decodable, Hashable, Sendable {
     let actionable: Int?
     let cantAnswer: Int?
     let inProgress: Int?
-    let finished: Int?
-    let reviewed: Int?
+    var finished: Int?
+    var reviewed: Int?
     /// `complete` or `partial`, about the decision queues only.
     let coverage: String?
 
@@ -378,7 +380,7 @@ struct DeviceHome: Decodable, Hashable, Sendable {
     let hosts: [BoardHost]
     let decisionHosts: [BoardDecisionHost]
     /// Each lane's groups, in the daemon's order.
-    let lanes: [Lane: [BoardGroup]]
+    private(set) var lanes: [Lane: [BoardGroup]]
     let backlog: [BacklogRecord]
     /// Board entries this app could not read, per lane.
     let undecoded: [Lane: Int]
@@ -387,7 +389,7 @@ struct DeviceHome: Decodable, Hashable, Sendable {
     let coverageKnown: Bool
     /// tendd's own counts; nil from an older tendd, which leaves the
     /// counting to this app by the same rules.
-    let counts: BoardCounts?
+    private(set) var counts: BoardCounts?
     /// Whether Looks Good marks were read: only then is `reviewed` told.
     let reviewedMarks: Bool
 
@@ -555,6 +557,40 @@ struct DeviceHome: Decodable, Hashable, Sendable {
 
     /// tendd said its decision queues were not all read whole.
     var serverPartial: Bool { counts?.coverage.map { $0 != "complete" } ?? false }
+
+    /// Whether this board still shows a unit in Finished, not set aside,
+    /// with this review key: a mark made here for that result is not
+    /// confirmed yet. Reviewed, another key or the unit gone ends it.
+    func awaitsMark(id: String, key: String) -> Bool {
+        items(.finished).contains { item in
+            if case .unit(let unit) = item { return unit.id == id && unit.reviewKey == key && !unit.reviewed }
+            return false
+        }
+    }
+
+    /// The board with this device's confirmed Looks Good marks (unit id
+    /// to review key) held on it until the board itself says so: each
+    /// such unit reads as reviewed, and tendd's counts move it from
+    /// Finished to reviewed.
+    func holding(_ marks: [String: String]) -> DeviceHome {
+        guard !marks.isEmpty else { return self }
+        var copy = self
+        var moved = 0
+        copy.lanes[.finished] = (lanes[.finished] ?? []).map { group in
+            BoardGroup(project: group.project, system: group.system, items: group.items.map { item in
+                guard case .unit(var unit) = item, !unit.reviewed, let key = unit.reviewKey, marks[unit.id] == key else { return item }
+                unit.reviewed = true
+                moved += 1
+                return .unit(unit)
+            })
+        }
+        if moved > 0, var counts = copy.counts {
+            counts.finished = counts.finished.map { max(0, $0 - moved) }
+            counts.reviewed = counts.reviewed.map { $0 + moved }
+            copy.counts = counts
+        }
+        return copy
+    }
 
     /// Every item in a lane, in order.
     func items(_ lane: Lane) -> [BoardItem] { (lanes[lane] ?? []).flatMap(\.items) }
