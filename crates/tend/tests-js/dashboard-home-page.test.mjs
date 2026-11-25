@@ -706,7 +706,7 @@ test("questions nobody can answer fold out of Your turn; Keep and Close all send
   status.home = 200;
   await home.refresh();
   let section = yourTurn();
-  assert.match(section.text, /Your turn 1 Decide or review/, "the count leaves them out");
+  assert.match(section.text, /Your turn 1\+ Decide or review/, "the count leaves them out, and says the cut queue may hold more");
   assert.equal(document.getElementById("rail-badge").textContent, "1");
   assert.match(section.text, /Can't be answered \(3\)/, "the exact count, not just the listed two");
   assert.doesNotMatch(section.text, /Deploy rq_a/, "collapsed by default");
@@ -755,4 +755,20 @@ test("questions nobody can answer fold out of Your turn; Keep and Close all send
   status.home = 404;
   serverBoard = null;
   await home.refresh();
+});
+
+test("a partial read with nothing listed is never shown as all clear (COUNTS.md coverage)", async () => {
+  serverBoard = {
+    hosts: [{ alias: "mba", local: true, state: "online" }],
+    agent_count: 0, projects: [], backlog: [],
+    decision_hosts: [],
+    lanes: { needs_you: { count: 0, groups: [] }, running: { count: 0, groups: [] }, finished: { count: 0, groups: [] } },
+    counts: { your_turn: 0, actionable: 0, cant_answer: 0, in_progress: 0, finished: 0, reviewed: 0, coverage: "partial" },
+  };
+  status.home = 200;
+  await home.refresh();
+  assert.equal(document.getElementById("empty-board").hidden, true, "no all-clear on a partial read");
+  const yourTurn = lanes().children.find((n) => n.className.includes("needsYou"));
+  assert.match(yourTurn.text, /Your turn 0\+/);
+  assert.doesNotMatch(yourTurn.text, /Nothing needs you right now/);
 });

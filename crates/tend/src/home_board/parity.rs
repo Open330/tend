@@ -102,7 +102,20 @@ fn build_case(case: &Value, now: OffsetDateTime) -> Value {
             .collect();
         lanes.insert(lane.to_owned(), Value::Array(units));
     }
-    json!({"name": case["name"], "lanes": lanes})
+    // The numbers Home shows (apps/shared/Design/COUNTS.md). The cases
+    // hold units only, so decisions, coverage and Can't be answered are
+    // not compared here.
+    let counts = &board["counts"];
+    json!({
+        "name": case["name"],
+        "lanes": lanes,
+        "counts": {
+            "your_turn": counts["your_turn"],
+            "in_progress": counts["in_progress"],
+            "finished": counts["finished"],
+            "reviewed": counts["reviewed"],
+        },
+    })
 }
 
 #[test]

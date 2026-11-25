@@ -2877,6 +2877,16 @@
         }
       }
     },
+    "maybe more": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "더 있을 수 있음"
+          }
+        }
+      }
+    },
     "observe only": {
       "localizations": {
         "ko": {

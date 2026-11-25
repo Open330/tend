@@ -290,6 +290,11 @@ final class AppModel: ObservableObject {
     private var pipelineRefreshPending = false
     private var lastFleetRefresh = Date.distantPast
     private var pendingInboxHosts = Set<String>()
+    /// How many mailbox reads have started, so Home can tell a read that
+    /// began after an answer from one that began before it.
+    private(set) var inboxReadsStarted: UInt64 = 0
+    /// Hosts to read again once the running mailbox read is done.
+    private var trailingInboxHosts = Set<String>()
     private var shellNumber = 1
     private var lastInboxRefresh = Date.distantPast
     /// When the folded questions were last read (`refreshFoldedQuestions`).
@@ -1771,9 +1776,29 @@ final class AppModel: ObservableObject {
         force: Bool,
         hostAliases: Set<String>?
     ) async {
+        guard !isRefreshingInbox else {
+            // A read of these hosts is asked for during one that may have
+            // started before (an answer sent from Home): one more follows.
+            if let hostAliases { trailingInboxHosts.formUnion(hostAliases) }
+            return
+        }
+        await performInboxRefresh(force: force, hostAliases: hostAliases)
+        while !trailingInboxHosts.isEmpty {
+            let hosts = trailingInboxHosts
+            trailingInboxHosts.removeAll()
+            await performInboxRefresh(force: false, hostAliases: hosts)
+        }
+    }
+
+    private func performInboxRefresh(
+        force: Bool,
+        hostAliases: Set<String>?
+    ) async {
         guard !isRefreshingInbox else { return }
         if !force, hostAliases == nil, Date().timeIntervalSince(lastInboxRefresh) < 4 { return }
         let generation = connectionGeneration
+        inboxReadsStarted &+= 1
+        let readGeneration = inboxReadsStarted
         isRefreshingInbox = true
         if hostAliases == nil { lastInboxRefresh = Date() }
         if inboxError != nil { inboxError = nil }
@@ -1827,9 +1852,11 @@ final class AppModel: ObservableObject {
         }
 
         guard connectionGeneration == generation else { return }
+        var readHosts = Set<String>()
         for result in results {
             let target = result.target
             if let mailbox = result.mailbox {
+                readHosts.insert(target.host.alias)
                 inboxReadTokens[target.host.alias] = mailbox.readToken
                 if mailbox.unchanged {
                     failures[target.host.alias] = nil
@@ -1863,12 +1890,27 @@ final class AppModel: ObservableObject {
                 return lhs.id < rhs.id
             }
         if operatorMessages != updatedMessages {
+            // A question came or went: the queue of each host it changed
+            // on, which lists that host's questions in Your turn and the
+            // badge, is read again soon.
+            let changed = Self.changedHosts(operatorMessages, updatedMessages)
             operatorMessagesRevision &+= 1
             operatorMessages = updatedMessages
+            var reads: [FleetDecisionSchedule.Read] = []
+            if changed.contains(where: \.local) { reads.append(.local) }
+            if changed.contains(where: { !$0.local }) { reads.append(.remote) }
+            homeBoard.requestDecisions(reads)
         }
+        homeBoard.decisionFeed.noteMailboxRead(hosts: readHosts, generation: readGeneration, messages: updatedMessages)
         attention.ingestHumanRequests(updatedMessages)
         if inboxHostFailures != failures { inboxHostFailures = failures }
         await refreshFoldedQuestions(force: false)
+    }
+
+    /// The hosts whose messages differ between two mailbox reads.
+    static func changedHosts(_ old: [TendOperatorMessage], _ new: [TendOperatorMessage]) -> Set<TendFleetHostIdentity> {
+        let before = Dictionary(grouping: old, by: \.host), after = Dictionary(grouping: new, by: \.host)
+        return Set(before.keys).union(after.keys).filter { before[$0] != after[$0] }
     }
 
     /// Which questions nobody can answer, so no badge counts them
@@ -1879,27 +1921,43 @@ final class AppModel: ObservableObject {
     func refreshFoldedQuestions(force: Bool) async {
         guard force || Date().timeIntervalSince(lastFoldedRead) >= 60 else { return }
         lastFoldedRead = Date()
+        let feed = homeBoard.decisionFeed
+        let client = client
         var folded = FleetFoldedQuestions()
         if await client.supports(tendSubjectCheckCapability) {
+            let generation = feed.beginLocal()
             // An unreadable local queue keeps what the badges knew.
             guard let queue = try? await client.decisionQueue(limit: 500) else { return }
             folded = FleetDecisions.foldedQuestions(queue, localHost: localHostAlias)
-        }
-        let client = client
-        let remote = fleetHosts.filter(FleetDecisions.readsQueue).map(\.identity)
-        let theirs = await withTaskGroup(of: FleetFoldedQuestions.self) { group in
-            for host in remote {
-                // A host that cannot be read now folds nothing.
-                group.addTask {
-                    let queue = try? await client.remoteDecisionQueue(host: host)
-                    return FleetDecisions.foldedQuestions(queue ?? nil, localHost: host.alias)
-                }
+            // The same queue serves the rail's badge, unless a Home on
+            // screen reads its own page every few seconds.
+            if homeBoard.decisionPace != .home {
+                // Cut to the page Home reads (`displayQueueLimit`), so the
+                // badge never moves with which read came last.
+                await feed.ingestLocal(queue, client: client, generation: generation)
+                homeBoard.decisionPoller?.noteRead(.local)
             }
-            var all = FleetFoldedQuestions()
-            for await one in group { all.merge(one) }
-            return all
         }
-        folded.merge(theirs)
+        // The other hosts' queues: the feed's when it read them within the
+        // minute, else read here and handed to it, never read twice.
+        let hosts = fleetHosts
+        let remote = hosts.filter(FleetDecisions.readsQueue).map(\.identity)
+        let queues: [(host: TendFleetHostIdentity, queue: TendPendingQueue?)]
+        if !force, let last = feed.lastRemoteRead, Date().timeIntervalSince(last) < 60 {
+            let known = Dictionary(feed.remoteQueues.map { ($0.host.alias, $0.queue) }, uniquingKeysWith: { first, _ in first })
+            queues = remote.map { ($0, known[$0.alias]) }
+        } else {
+            let generation = feed.beginRemote()
+            let found = await FleetDecisionFeed.readRemote(client, hosts: remote)
+            if feed.apply(hosts: hosts, read: remote, found: found, generation: generation) {
+                homeBoard.decisionPoller?.noteRead(.remote)
+            }
+            queues = remote.enumerated().map { ($1, found[$0]) }
+        }
+        for entry in queues {
+            // A host that cannot be read now folds nothing.
+            folded.merge(FleetDecisions.foldedQuestions(entry.queue, localHost: entry.host.alias))
+        }
         attention.ingestFoldedQuestions(folded)
     }
 

@@ -153,7 +153,7 @@ struct RootView: View {
                 HomeView().withAgentDestinations()
             }
             .tabItem { Label(String(localized: "Home"), systemImage: "house") }
-            .badge(model.actionableCount)
+            .badge(model.badgeCount)
             .tag(0)
             NavigationStack {
                 HostsView().withAgentDestinations()
@@ -170,7 +170,7 @@ struct RootView: View {
         NavigationSplitView {
             List(selection: $selection) {
                 Label(String(localized: "Home"), systemImage: "house")
-                    .badge(model.actionableCount)
+                    .badge(model.badgeCount)
                     .tag(SidebarItem.home)
                     .accessibilityIdentifier("sidebarHome")
                 Section(String(localized: "Hosts")) {
@@ -186,7 +186,7 @@ struct RootView: View {
                                 HostBadge(alias: section.alias, local: section.local, state: section.unavailable.isEmpty ? "online" : "degraded", size: 24)
                                 Text(verbatim: section.alias)
                             }
-                            .badge(PendingDecision.from(section).count)
+                            .badge(PendingDecision.waiting(section).count)
                         }
                     }
                 }

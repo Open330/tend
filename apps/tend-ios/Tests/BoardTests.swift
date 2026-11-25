@@ -36,6 +36,107 @@ final class BoardTests: XCTestCase {
         // The backlog, without its ticket reference.
         XCTAssertEqual(board.backlog.map(\.titleText), ["Document the retry path"])
         XCTAssertEqual(board.backlog.first?.priority, 1)
+        // tendd's counts, shown as given; the client's own count agrees.
+        let counts = try XCTUnwrap(board.counts)
+        XCTAssertEqual(counts.yourTurn, 2)
+        XCTAssertEqual(counts.actionable, 2)
+        XCTAssertEqual(counts.cantAnswer, 0)
+        XCTAssertEqual(counts.inProgress, 2)
+        XCTAssertEqual(counts.finished, 2)
+        XCTAssertEqual(counts.reviewed, 0)
+        XCTAssertEqual(counts.coverage, "complete")
+        XCTAssertTrue(board.reviewedMarks)
+        XCTAssertEqual(Lane.board.map(board.count), [2, 2, 2])
+        XCTAssertEqual(Lane.board.map(board.listedCount), [2, 2, 2])
+        XCTAssertEqual(board.cantAnswerCount, 0)
+        XCTAssertFalse(board.yourTurnMayBeMore)
+    }
+
+    /// COUNTS.md: the numbers are tendd's when it sends them, even where
+    /// the listed cards differ (a host's exact count, a local cut).
+    func testTendsCountsAreShownAsGiven() throws {
+        let unit = { (id: String, lane: String, flags: String) in
+            #"{"kind": "unit", "id": "\#(id)", "lane": "\#(lane)", "title": "\#(id)", \#(flags)}"#
+        }
+        let lanes = #""lanes": {"needs_you": {"groups": [{"items": [\#(unit("w", "needs_you", #""recent": true"#))]}]}, "finished": {"groups": [{"items": [\#(unit("a", "finished", #""reviewed": true"#)), \#(unit("b", "finished", #""recent": true"#))]}]}}"#
+        let counts = #""counts": {"your_turn": 5, "actionable": 1, "cant_answer": 3, "in_progress": 7, "finished": 4, "reviewed": 6, "coverage": "partial"}"#
+        let b = try board(#"{\#(lanes), \#(counts), "reviewed_marks": true, "decision_hosts": [{"alias": "a", "local": true}]}"#)
+        XCTAssertEqual(Lane.board.map(b.count), [5, 7, 4])
+        XCTAssertEqual(b.cantAnswerCount, 3)
+        XCTAssertEqual(b.reviewedCount(.finished), 6)
+        XCTAssertTrue(b.yourTurnMayBeMore, "partial coverage: maybe more")
+        // Without the marks, "Show N reviewed" is what is listed.
+        let unmarked = try board(#"{\#(lanes), \#(counts), "decision_hosts": [{"alias": "a", "local": true}]}"#)
+        XCTAssertFalse(unmarked.reviewedMarks)
+        XCTAssertEqual(unmarked.reviewedCount(.finished), 1)
+        // A counts object this app cannot read in part: those fields fall back.
+        let odd = try board(#"{\#(lanes), "counts": {"your_turn": "many", "finished": 9}, "decision_hosts": [{"alias": "a", "local": true}]}"#)
+        XCTAssertEqual(Lane.board.map(odd.count), [1, 0, 9])
+        XCTAssertFalse(odd.yourTurnMayBeMore)
+        // Not an object at all: the board still reads, counted here.
+        let older = try board(#"{\#(lanes), "counts": [1, 2], "decision_hosts": [{"alias": "a", "local": true}]}"#)
+        XCTAssertNil(older.counts)
+        XCTAssertEqual(Lane.board.map(older.count), [1, 0, 1])
+    }
+
+    /// An older tendd sends no counts: the same rules, counted here. Your
+    /// turn is every listed card; In progress and Finished count their
+    /// folded units, Finished not the reviewed ones.
+    func testWithoutCountsTheLanesAreCountedByTheSameRules() throws {
+        let unit = { (id: String, lane: String, flags: String) in
+            #"{"kind": "unit", "id": "\#(id)", "lane": "\#(lane)", "title": "\#(id)", \#(flags)}"#
+        }
+        let running = [
+            unit("shown", "running", #""recent": true"#),
+            unit("helper", "running", #""probable_helper": true"#),
+            unit("empty", "running", #""empty_session": true"#),
+            unit("old", "running", #""recent": false"#),
+        ].joined(separator: ",")
+        let finished = [
+            unit("done", "finished", #""recent": true"#),
+            unit("older", "finished", #""recent": false"#),
+            unit("seen", "finished", #""reviewed": true"#),
+        ].joined(separator: ",")
+        let question = #"{"kind": "human_request", "request_id": "r1", "body": "Ship?", "from_session_id": "s1", "from_pane": "%1", "created_at": "2026-11-16T09:59:14Z", "host": "a", "actionable": false}"#
+        let b = try board(#"{"decision_hosts": [{"alias": "a", "local": true, "truncated": true}], "lanes": {"needs_you": {"groups": [{"items": [\#(question), \#(unit("w", "needs_you", #""recent": true"#))]}]}, "running": {"groups": [{"items": [\#(running)]}]}, "finished": {"groups": [{"items": [\#(finished)]}]}}}"#)
+        XCTAssertNil(b.counts)
+        XCTAssertEqual(Lane.board.map(b.count), [2, 4, 2])
+        XCTAssertEqual(b.reviewedCount(.finished), 1)
+        XCTAssertTrue(b.yourTurnMayBeMore, "a cut queue: maybe more")
+    }
+
+    /// All clear needs nothing listed, a zero count and complete coverage
+    /// by both tendd's word and this app's reading; either one's partial
+    /// makes Your turn "maybe more".
+    func testAllClearNeedsBothCoveragesAndAZeroCount() throws {
+        let empty = #""lanes": {"needs_you": {"groups": []}}"#
+        let host = #""decision_hosts": [{"alias": "a", "local": true}]"#
+        let complete = #""counts": {"your_turn": 0, "coverage": "complete"}"#
+        XCTAssertTrue(try board(#"{\#(empty), \#(host), \#(complete)}"#).allClear)
+        // tendd says partial: never all clear, maybe more.
+        let partial = try board(#"{\#(empty), \#(host), "counts": {"your_turn": 0, "coverage": "partial"}}"#)
+        XCTAssertFalse(partial.allClear)
+        XCTAssertTrue(partial.yourTurnMayBeMore)
+        XCTAssertTrue(partial.serverPartial)
+        // Partial with no host section at all.
+        let bare = try board(#"{\#(empty), "decision_hosts": [], "counts": {"your_turn": 0, "coverage": "partial"}}"#)
+        XCTAssertFalse(bare.allClear)
+        XCTAssertTrue(bare.yourTurnMayBeMore)
+        // An empty host list is unknown even without counts.
+        XCTAssertFalse(try board(#"{\#(empty), "decision_hosts": []}"#).allClear)
+        // tendd counts one this app did not list: not all clear.
+        let counted = try board(#"{\#(empty), \#(host), "counts": {"your_turn": 1, "coverage": "complete"}}"#)
+        XCTAssertFalse(counted.allClear)
+        XCTAssertEqual(counted.count(.yourTurn), 1)
+        // tendd says complete, but this app could not read an entry or a
+        // host was cut: still maybe more, never all clear.
+        let undecoded = try board(#"{"lanes": {"needs_you": {"groups": [{"items": [{"kind": "something_new"}]}]}}, \#(host), "counts": {"your_turn": 1, "coverage": "complete"}}"#)
+        XCTAssertEqual(undecoded.undecoded[.yourTurn], 1)
+        XCTAssertTrue(undecoded.yourTurnMayBeMore)
+        XCTAssertFalse(undecoded.allClear)
+        let cut = try board(#"{\#(empty), "decision_hosts": [{"alias": "a", "truncated": true}], \#(complete)}"#)
+        XCTAssertTrue(cut.yourTurnMayBeMore)
+        XCTAssertFalse(cut.allClear)
     }
 
     func testFoldsFollowTheMac() throws {

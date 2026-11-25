@@ -127,6 +127,7 @@ struct LaneStrip: View {
     private func cell(_ lane: Lane, narrow: Bool) -> some View {
         let selected = lane == selection
         let count = model.count(lane)
+        let mayBeMore = lane == .yourTurn && model.yourTurnMayBeMore
         return Button {
             withAnimation(.snappy) { selection = lane }
         } label: {
@@ -138,10 +139,16 @@ struct LaneStrip: View {
                         .foregroundStyle(TendInk.secondary)
                         .accessibilityLabel(String(localized: "Not shown on this device"))
                 } else {
-                    Text(verbatim: "\(count)")
-                        .font(.title2.weight(.bold))
-                        .monospacedDigit()
-                        .foregroundStyle(lane == .yourTurn && count > 0 ? lane.tint : Color.primary)
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text(verbatim: "\(count)")
+                            .font(.title2.weight(.bold))
+                            .monospacedDigit()
+                            .foregroundStyle(lane == .yourTurn && count > 0 ? lane.tint : Color.primary)
+                        // A queue not read whole: the number is not everything.
+                        if mayBeMore {
+                            MaybeMore()
+                        }
+                    }
                 }
                 HStack(spacing: 5) {
                     // Four lanes in a row leave no room for the dot.
@@ -169,6 +176,7 @@ struct LaneStrip: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(Text("\(lane.title), \(count)"))
+        .accessibilityValue(mayBeMore ? String(localized: "maybe more") : "")
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityIdentifier("lane-\(lane.rawValue)")
     }
@@ -194,6 +202,9 @@ struct LaneColumn: View {
                             .font(TendType.meta.weight(.semibold))
                             .monospacedDigit()
                             .foregroundStyle(TendInk.secondary)
+                        if lane == .yourTurn, model.yourTurnMayBeMore {
+                            MaybeMore()
+                        }
                     }
                     Spacer(minLength: 4)
                     Text(lane.subtitle).font(TendType.meta).foregroundStyle(TendInk.tertiary).lineLimit(1)
@@ -337,6 +348,13 @@ struct LaneContent: View {
             Empty(text: lane.empty, mark: true)
                 .accessibilityIdentifier("emptyQueue")
         }
+        if model.loaded, model.hosts.isEmpty {
+            // An answer that covers no host is not all clear.
+            Label(String(localized: "Not every host's queue could be read, so more may need you."), systemImage: "exclamationmark.triangle")
+                .font(TendType.meta)
+                .foregroundStyle(TendPalette.orange)
+                .accessibilityIdentifier("coverageUnknown")
+        }
         ForEach(model.hosts) { section in
             HostSectionView(section: section)
         }
@@ -422,7 +440,9 @@ struct LaneContent: View {
         // decisions taken form their own group.
         let groups = Self.finishedGroups(items)
         ForEach(groups, id: \.name) { group in
-            if groups.count > 1 {
+            // Decisions taken keep their own heading: they are history,
+            // not counted in Finished's number.
+            if groups.count > 1 || group.decided {
                 if group.decided {
                     DecidedHeader(count: group.items.count)
                 } else {
@@ -471,6 +491,19 @@ private enum FinishedItem: Identifiable {
         case .decided(let past): past.at
         case .agent(let agent): agent.agent.since
         }
+    }
+}
+
+/// Beside Your turn's number when a queue was not read whole
+/// (COUNTS.md `coverage: partial`): the number is not everything.
+struct MaybeMore: View {
+    var body: some View {
+        Text("maybe more")
+            .font(TendType.meta)
+            .foregroundStyle(TendInk.secondary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .accessibilityIdentifier("maybeMore")
     }
 }
 

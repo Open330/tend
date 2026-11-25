@@ -29,8 +29,9 @@ final class FleetHomeBoard: ObservableObject, TendWindowVisibilityTracking {
     /// fully covered, or on another Space), as each Home's
     /// `TendWindowVisibilityReader` reports it; true while no Home is
     /// mounted. While it is false, the board holds new units back, the
-    /// clock stops, and Home pauses its decision and backlog polls; showing
-    /// a window again applies what arrived and reloads once. Menu-bar,
+    /// clock stops, Home pauses its backlog polls and the decisions are
+    /// read at the rail's slower pace; showing a window again applies what
+    /// arrived and reloads once. Menu-bar,
     /// notification and attention inputs come from the model and keep
     /// running.
     @Published private(set) var isVisible = true
@@ -45,6 +46,25 @@ final class FleetHomeBoard: ObservableObject, TendWindowVisibilityTracking {
     /// A decisions change that arrived while the window was off screen.
     private var heldDecisions = false
 
+    /// The daemon's decision queue Home shows, kept for the app's life so
+    /// the rail's Home badge counts the same decisions as Your turn when no
+    /// Home is open. Only `decisionPoller` reads it on a schedule: quickly
+    /// while a Home is on screen, slowly while only the rail is, not at all
+    /// while neither is.
+    let decisionFeed: FleetDecisionFeed
+    private(set) var decisionPoller: FleetDecisionPoller?
+    /// Whether a workbench window, and so the rail's badge, is on screen.
+    private var railVisible = false
+
+    /// Whether a Home is mounted in any window (shown or not).
+    var hasHome: Bool { !readers.isEmpty }
+
+    /// How often the decisions are read now.
+    var decisionPace: FleetDecisionSchedule.Pace {
+        if hasHome && isVisible { return .home }
+        return railVisible ? .background : .paused
+    }
+
     var localHostAlias: String {
         hosts.first(where: \.local)?.alias ?? "local"
     }
@@ -53,6 +73,7 @@ final class FleetHomeBoard: ObservableObject, TendWindowVisibilityTracking {
     private var perfSubscription: AnyCancellable?
 
     init() {
+        decisionFeed = FleetDecisionFeed()
         perfSubscription = TendPerf.observe(self, "board.publish")
     }
 
@@ -60,7 +81,18 @@ final class FleetHomeBoard: ObservableObject, TendWindowVisibilityTracking {
     /// value before it is stored, so each input is mapped from the value
     /// itself.
     func follow(_ model: AppModel) {
+        let feed = decisionFeed
+        decisionPoller = FleetDecisionPoller { [weak self, weak model] read in
+            guard let model else { return }
+            switch read {
+            case .local: await feed.load(model.client, works: self?.latestWorks ?? [])
+            case .remote: await feed.loadRemote(model.client, hosts: model.fleetHosts)
+            }
+        }
+        railVisible = model.chrome.isVisible
         subscriptions = [
+            model.chrome.visibilityChanged
+                .sink { [weak self] in self?.setRailVisible($0) },
             model.$connectionState.map { $0 == .connected }.removeDuplicates()
                 .sink { [weak self] in self?.setConnected($0) },
             model.$isStartingWork.removeDuplicates()
@@ -72,6 +104,18 @@ final class FleetHomeBoard: ObservableObject, TendWindowVisibilityTracking {
             Timer.publish(every: Self.clockPeriod, tolerance: 2, on: .main, in: .common).autoconnect()
                 .sink { [weak self] _ in self?.tick() },
         ]
+        decisionPoller?.setPace(decisionPace)
+    }
+
+    private func setRailVisible(_ visible: Bool) {
+        railVisible = visible
+        decisionPoller?.setPace(decisionPace)
+    }
+
+    /// Asks for a read of the decisions soon (an event said they changed),
+    /// coalesced with any other ask and after a read in flight.
+    func requestDecisions(_ reads: [FleetDecisionSchedule.Read] = [.local, .remote]) {
+        reads.forEach { decisionPoller?.request($0) }
     }
 
     /// One Home's window went on or off screen.
@@ -88,6 +132,7 @@ final class FleetHomeBoard: ObservableObject, TendWindowVisibilityTracking {
 
     private func updateVisibility() {
         setVisible(readers.isEmpty || readers.values.contains(true))
+        decisionPoller?.setPace(decisionPace)
     }
 
     private func setVisible(_ visible: Bool) {
@@ -234,6 +279,135 @@ struct TendWindowVisibilityReader: NSViewRepresentable {
             guard visible != reported else { return }
             reported = visible
             changed?(visible)
+        }
+    }
+}
+
+// MARK: - Reading the decisions
+
+/// When the shared decision feed is read, for every Home and the rail's
+/// badge at once: one schedule, so several Home windows never poll side by
+/// side and an event that arrives during a read is followed by one more.
+/// Pure, so the cadence can be tested without a clock.
+struct FleetDecisionSchedule: Equatable, Sendable {
+    /// How often the feed is read.
+    enum Pace: Equatable, Sendable {
+        /// Nothing that shows decisions is on screen.
+        case paused
+        /// The rail's badge is on screen, no Home is.
+        case background
+        /// A Home is on screen.
+        case home
+    }
+
+    enum Read: Hashable, Sendable { case local, remote }
+
+    /// The cadence of each read at a pace; nil when paused.
+    static func period(_ read: Read, at pace: Pace) -> TimeInterval? {
+        switch (pace, read) {
+        case (.paused, _): nil
+        case (.home, .local): 5
+        case (.home, .remote): 15
+        case (.background, .local): 30
+        case (.background, .remote): 60
+        }
+    }
+
+    /// The least time between two reads of one kind, however many events
+    /// ask for one: a read asked for sooner waits (and still happens).
+    static let minimumGap: TimeInterval = 2
+
+    var pace = Pace.paused
+    private(set) var lastStart: [Read: Date] = [:]
+    private(set) var inFlight: Set<Read> = []
+    /// Asked for since the last read began: the next one comes after
+    /// `minimumGap`, not a whole period.
+    private(set) var requested: Set<Read> = []
+
+    /// When `read` is due next; nil while one is in flight or paused.
+    func due(_ read: Read) -> Date? {
+        guard !inFlight.contains(read), let period = Self.period(read, at: pace) else { return nil }
+        let last = lastStart[read] ?? .distantPast
+        return last.addingTimeInterval(requested.contains(read) ? Self.minimumGap : period)
+    }
+
+    /// The reads due at `now`, marked in flight, and when to look again.
+    mutating func start(at now: Date) -> (reads: [Read], next: Date?) {
+        var reads: [Read] = []
+        for read in [Read.local, .remote] {
+            guard let due = due(read), due <= now else { continue }
+            reads.append(read)
+            inFlight.insert(read)
+            requested.remove(read)
+            lastStart[read] = now
+        }
+        let next = [Read.local, .remote].compactMap(due).min()
+        return (reads, next)
+    }
+
+    mutating func finish(_ read: Read) { inFlight.remove(read) }
+
+    /// An event says the decisions changed: read again soon, after the
+    /// read in flight if there is one.
+    mutating func request(_ read: Read) { requested.insert(read) }
+
+    /// Another reader just read the same queue, so the next read can wait a
+    /// period from now.
+    mutating func noteRead(_ read: Read, at now: Date) {
+        lastStart[read] = now
+        requested.remove(read)
+    }
+}
+
+/// Reads `FleetDecisionFeed` on `FleetDecisionSchedule`: the feed's one
+/// refresh owner. Reads run in tasks of their own, so rescheduling never
+/// cancels one halfway.
+@MainActor
+final class FleetDecisionPoller {
+    private(set) var schedule = FleetDecisionSchedule()
+    private let read: (FleetDecisionSchedule.Read) async -> Void
+    private let now: () -> Date
+    private var timer: Task<Void, Never>?
+
+    init(now: @escaping () -> Date = Date.init, read: @escaping (FleetDecisionSchedule.Read) async -> Void) {
+        self.now = now
+        self.read = read
+    }
+
+    func setPace(_ pace: FleetDecisionSchedule.Pace) {
+        guard schedule.pace != pace else { return }
+        schedule.pace = pace
+        run()
+    }
+
+    func request(_ read: FleetDecisionSchedule.Read) {
+        schedule.request(read)
+        run()
+    }
+
+    func noteRead(_ read: FleetDecisionSchedule.Read) {
+        schedule.noteRead(read, at: now())
+        run()
+    }
+
+    /// Starts what is due and sleeps until the next one is.
+    private func run() {
+        timer?.cancel()
+        timer = nil
+        let (reads, next) = schedule.start(at: now())
+        for kind in reads {
+            Task { [weak self, read] in
+                await read(kind)
+                self?.schedule.finish(kind)
+                self?.run()
+            }
+        }
+        guard let next else { return }
+        let delay = max(0.05, next.timeIntervalSince(now()))
+        timer = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled else { return }
+            self?.run()
         }
     }
 }

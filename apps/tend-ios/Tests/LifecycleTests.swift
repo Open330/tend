@@ -237,6 +237,8 @@ final class LifecycleTests: XCTestCase {
             return try JSONDecoder().decode(Hosts.self, from: Data(json.utf8)).hosts
         }
         XCTAssertTrue(AppModel.allClear(try hosts(Self.emptyQueue)))
+        // An answer that covers no host is unknown, never all clear.
+        XCTAssertFalse(AppModel.allClear(try hosts(#"{"hosts":[]}"#)))
         // Only an item this app cannot read: not all clear.
         let unknown = #"{"hosts":[{"alias":"here","local":true,"unavailable":[],"queue":{"items":[{"kind":"future_item"}],"truncated":false,"unavailable":[]}}]}"#
         XCTAssertFalse(AppModel.allClear(try hosts(unknown)))
@@ -288,7 +290,19 @@ extension LifecycleTests {
         XCTAssertEqual(model.hosts.map(\.alias), ["here"])
     }
 
-    func testFinishedCountsOlderDecisionsAsTheWebDoes() async {
+    func testADecideOnlyAnswerWithNoHostIsMaybeMore() async {
+        StubProtocol.on("/api/decisions", .init(status: 200, body: #"{"hosts":[]}"#))
+        let origin = try! ServerOrigin(parsing: "https://tend.test")
+        CredentialStore.save(Pairing(origin: origin, device: PairedDevice(id: "dev_1", name: "phone"), token: "tdv_x"))
+        let model = AppModel()
+        await model.refresh()
+        XCTAssertTrue(model.loaded)
+        XCTAssertEqual(model.badgeCount, 0)
+        XCTAssertTrue(model.yourTurnMayBeMore)
+        XCTAssertFalse(AppModel.allClear(model.hosts))
+    }
+
+    func testFinishedNeverCountsDecidedHistory() async {
         StubProtocol.on("/api/device", .init(status: 200, body: Self.homeDevice))
         StubProtocol.on("/api/device/fleet", .init(status: 200, body: Self.fleetJSON))
         StubProtocol.on("/api/device/home", .init(status: 200, body: #"{"decision_hosts":[{"alias":"here","local":true}],"lanes":{"needs_you":{"groups":[]},"finished":{"groups":[]}}}"#))
@@ -299,7 +313,28 @@ extension LifecycleTests {
         await model.refresh()
         await model.refreshHistory()
         XCTAssertEqual(model.past.count, 1)
-        XCTAssertEqual(model.count(.finished), 1)
+        // History has its own heading; Finished counts units only.
+        XCTAssertEqual(model.count(.finished), 0)
+    }
+
+    func testTheBadgeIsYourTurnAsTendCountsIt() async {
+        let board = #"{"hosts":[{"alias":"here","local":true}],"decision_hosts":[{"alias":"here","local":true}],"counts":{"your_turn":3,"actionable":1,"cant_answer":0,"in_progress":4,"finished":2,"reviewed":1,"coverage":"partial"},"reviewed_marks":true,"lanes":{"needs_you":{"groups":[{"items":[{"kind":"human_request","request_id":"r1","body":"Ship?","from_session_id":"s","from_pane":"%1","created_at":"2026-11-16T10:00:00Z","host":"here","actionable":true}]}]}}}"#
+        StubProtocol.on("/api/device", .init(status: 200, body: Self.homeDevice))
+        StubProtocol.on("/api/device/fleet", .init(status: 200, body: Self.fleetJSON))
+        StubProtocol.on("/api/device/home", .init(status: 200, body: board))
+        let history = #"{"hosts":[{"alias":"here","local":true,"history":{"items":[{"kind":"human_answer","request_id":"r0","body":"Ship?","from_session_id":"s","from_pane":"%1","created_at":"2026-11-16T00:00:00Z","status":"completed","answer":"yes","answered_at":"\#(ISO8601DateFormatter().string(from: Date()))"}]}}]}"#
+        StubProtocol.on("/api/decisions/history", .init(status: 200, body: history))
+        let model = operateModel()
+        await model.refreshDevice()
+        await model.refresh()
+        await model.refreshHistory()
+        XCTAssertEqual(model.badgeCount, 3)
+        XCTAssertEqual(model.count(.yourTurn), 3)
+        XCTAssertEqual(model.actionableCount, 1, "to decide here, not the badge")
+        XCTAssertEqual(model.count(.inProgress), 4)
+        XCTAssertEqual(model.count(.finished), 2, "never the decided history")
+        XCTAssertEqual(model.recentPast.count, 1)
+        XCTAssertTrue(model.yourTurnMayBeMore)
     }
 }
 

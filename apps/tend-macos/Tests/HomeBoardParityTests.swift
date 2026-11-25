@@ -9,7 +9,10 @@ import Testing
 // summary (UPDATE_FIXTURES=1). A rule changed here or there fails one side
 // until the other follows. The units come from Home's own path: the agents
 // Home lists, the Work groups from the snapshot and the pipeline runs,
-// FleetBoard.works, Your turn's order and the project groups.
+// FleetBoard.works, Your turn's order and the project groups. The counts
+// come from FleetBoard.counts, the function Home's lane headers and the
+// rail's badge show (apps/shared/Design/COUNTS.md); the cases hold no
+// decisions, so Your turn is its units.
 
 private let fixtures = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent()
@@ -108,6 +111,20 @@ private func lanes(_ works: [FleetWork], reviewed: Set<String>) -> [String: Any]
     return result
 }
 
+/// Home's numbers in the contract's terms (`counts_json`, less what the
+/// cases do not cover: decisions and coverage).
+private func counts(_ works: [FleetWork], reviewed: Set<String>) -> [String: Any] {
+    var marks = FleetReviewMarks()
+    marks.recorded = reviewed
+    let counts = FleetBoard.counts(works: works, decisions: [], marks: marks)
+    return [
+        "your_turn": counts.yourTurn,
+        "in_progress": counts.inProgress,
+        "finished": counts.finished,
+        "reviewed": counts.reviewed,
+    ]
+}
+
 /// JSON values compared as the parsed fixture holds them.
 private func normalized(_ value: Any) throws -> NSObject {
     let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
@@ -138,7 +155,11 @@ private func normalized(_ value: Any) throws -> NSObject {
             let snapshot = TendExecutionSnapshot(hosts: hosts)
             let agents = FleetBoard.homeAgents(snapshot, now: now)
             let works = FleetBoard.works(groups: snapshot.workGroups(pipelineRuns: runs), agents: agents, now: now)
-            let built: [String: Any] = ["name": name, "lanes": lanes(works, reviewed: reviewed)]
+            let built: [String: Any] = [
+                "name": name,
+                "lanes": lanes(works, reviewed: reviewed),
+                "counts": counts(works, reviewed: reviewed),
+            ]
             let want = expected[index]
             #expect(want["name"] as? String == name)
             let builtJSON = try normalized(built)

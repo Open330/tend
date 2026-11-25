@@ -333,6 +333,41 @@ struct BoardGroup: Hashable, Sendable, Identifiable {
     var id: String { system ? "\u{0}system" : project ?? "" }
 }
 
+/// Home's numbers as tendd counts them (`counts`, apps/shared/Design/
+/// COUNTS.md): shown as given. Read field by field, so a field this app
+/// cannot read falls back to its own count of what is listed.
+struct BoardCounts: Decodable, Hashable, Sendable {
+    let yourTurn: Int?
+    let actionable: Int?
+    let cantAnswer: Int?
+    let inProgress: Int?
+    let finished: Int?
+    let reviewed: Int?
+    /// `complete` or `partial`, about the decision queues only.
+    let coverage: String?
+
+    enum CodingKeys: String, CodingKey {
+        case actionable, finished, reviewed, coverage
+        case yourTurn = "your_turn"
+        case cantAnswer = "cant_answer"
+        case inProgress = "in_progress"
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        func number(_ key: CodingKeys) -> Int? {
+            ((try? values.decodeIfPresent(Int.self, forKey: key)) ?? nil).flatMap { $0 >= 0 ? $0 : nil }
+        }
+        yourTurn = number(.yourTurn)
+        actionable = number(.actionable)
+        cantAnswer = number(.cantAnswer)
+        inProgress = number(.inProgress)
+        finished = number(.finished)
+        reviewed = number(.reviewed)
+        coverage = (try? values.decodeIfPresent(String.self, forKey: .coverage)) ?? nil
+    }
+}
+
 /// `GET /api/device/home`.
 struct DeviceHome: Decodable, Hashable, Sendable {
     let hosts: [BoardHost]
@@ -345,10 +380,16 @@ struct DeviceHome: Decodable, Hashable, Sendable {
     /// Whether every host's queue coverage was read: false when the board
     /// sent none, or a record this app could not read.
     let coverageKnown: Bool
+    /// tendd's own counts; nil from an older tendd, which leaves the
+    /// counting to this app by the same rules.
+    let counts: BoardCounts?
+    /// Whether Looks Good marks were read: only then is `reviewed` told.
+    let reviewedMarks: Bool
 
     enum CodingKeys: String, CodingKey {
-        case hosts, lanes, backlog
+        case hosts, lanes, backlog, counts
         case decisionHosts = "decision_hosts"
+        case reviewedMarks = "reviewed_marks"
     }
 
     private struct RawLane: Decodable { let groups: [RawGroup]? }
@@ -400,8 +441,11 @@ struct DeviceHome: Decodable, Hashable, Sendable {
         let coverage = (try? values.decodeIfPresent([TendLenient<BoardDecisionHost>].self, forKey: .decisionHosts)) ?? nil
         let readHosts = coverage?.compactMap(\.value) ?? []
         decisionHosts = readHosts
-        coverageKnown = coverage.map { $0.count == readHosts.count } ?? false
+        // No host's queue at all says nothing about what is waiting.
+        coverageKnown = coverage.map { !$0.isEmpty && $0.count == readHosts.count } ?? false
         backlog = ((try? values.decodeIfPresent([TendLenient<BacklogRecord>].self, forKey: .backlog)) ?? nil)?.compactMap(\.value) ?? []
+        counts = (try? values.decodeIfPresent(BoardCounts.self, forKey: .counts)) ?? nil
+        reviewedMarks = (try? values.decodeIfPresent(Bool.self, forKey: .reviewedMarks)) ?? nil ?? false
         // The lanes are the board: without them this is not a board.
         let raw = try values.decode(RawLanes.self, forKey: .lanes)
         let local = Dictionary(decisionHosts.map { ($0.alias, $0.local) }, uniquingKeysWith: { first, _ in first })
@@ -444,10 +488,68 @@ struct DeviceHome: Decodable, Hashable, Sendable {
     /// Your turn's Can't be answered group, in the queue's order.
     let cantAnswer: [PendingDecision]
 
-    /// Its count: every host's exact count, never less than listed.
+    /// Its count: tendd's, or every host's exact count, never less than
+    /// listed.
     var cantAnswerCount: Int {
-        max(cantAnswer.count, decisionHosts.reduce(0) { $0 + $1.unanswerableCount })
+        counts?.cantAnswer ?? Self.cantAnswerFloor(
+            listed: cantAnswer.map(\.host),
+            exact: decisionHosts.map { ($0.alias, $0.unanswerableCount) }
+        )
     }
+
+    /// Per host, its exact count but never less than it lists; summed. A
+    /// host's exact count speaks only for that host.
+    static func cantAnswerFloor(listed: [String], exact: [(String, Int)]) -> Int {
+        var listedBy: [String: Int] = [:]
+        for host in listed { listedBy[host, default: 0] += 1 }
+        var exactBy: [String: Int] = [:]
+        for (host, count) in exact { exactBy[host] = max(exactBy[host] ?? 0, count) }
+        return Set(listedBy.keys).union(exactBy.keys).reduce(0) { sum, host in
+            sum + max(listedBy[host] ?? 0, exactBy[host] ?? 0)
+        }
+    }
+
+    /// A lane's number (COUNTS.md): tendd's `counts` as given; without
+    /// them, what the lane lists, folded units included and reviewed ones
+    /// left out. Decided history is never counted.
+    func count(_ lane: Lane) -> Int {
+        switch lane {
+        case .backlog: backlog.count
+        case .yourTurn: counts?.yourTurn ?? listedCount(.yourTurn)
+        case .inProgress: counts?.inProgress ?? listedCount(.inProgress)
+        case .finished: counts?.finished ?? listedCount(.finished)
+        }
+    }
+
+    /// What a lane lists, the folded units included, the reviewed left out
+    /// (Your turn never folds). Can't be answered is never in it.
+    func listedCount(_ lane: Lane) -> Int {
+        items(lane).filter { item in
+            if lane != .yourTurn, case .unit(let unit) = item { return !unit.reviewed }
+            return true
+        }.count
+    }
+
+    /// "Show N reviewed": tendd's count when it read the Looks Good marks,
+    /// otherwise the reviewed units listed.
+    func reviewedCount(_ lane: Lane) -> Int {
+        let listed = items(lane).filter { if case .unit(let unit) = $0 { unit.reviewed } else { false } }.count
+        guard lane == .finished, reviewedMarks, let told = counts?.reviewed else { return listed }
+        return told
+    }
+
+    /// Whether more may need the person than Your turn's number says:
+    /// partial when either tendd (`coverage`) or this app says so. This
+    /// app says so for a queue not read whole or an entry it could not
+    /// read, whatever tendd's coverage is.
+    var yourTurnMayBeMore: Bool {
+        let client = !coverageKnown || (undecoded[.yourTurn] ?? 0) > 0
+            || decisionHosts.contains { $0.truncated || !$0.unavailable.isEmpty }
+        return serverPartial || client
+    }
+
+    /// tendd said its decision queues were not all read whole.
+    var serverPartial: Bool { counts?.coverage.map { $0 != "complete" } ?? false }
 
     /// Every item in a lane, in order.
     func items(_ lane: Lane) -> [BoardItem] { (lanes[lane] ?? []).flatMap(\.items) }
@@ -456,11 +558,12 @@ struct DeviceHome: Decodable, Hashable, Sendable {
         items(.yourTurn).compactMap { if case .decision(let d) = $0 { d } else { nil } }
     }
 
-    /// "Nothing needs you" only when every host's queue was read in full,
-    /// every entry decoded, and none is waiting.
+    /// "Nothing needs you" only when nothing is listed, Your turn's
+    /// number is 0, and coverage is complete by tendd's word and this
+    /// app's own reading: every host's queue read in full, every entry
+    /// decoded.
     var allClear: Bool {
-        coverageKnown && items(.yourTurn).isEmpty && (undecoded[.yourTurn] ?? 0) == 0
-            && decisionHosts.allSatisfy { !$0.truncated && $0.unavailable.isEmpty }
+        items(.yourTurn).isEmpty && count(.yourTurn) == 0 && !yourTurnMayBeMore
     }
 }
 
@@ -473,7 +576,8 @@ struct FoldedLane: Sendable {
     var empty: [BoardUnit] = []
     var older: [BoardUnit] = []
     var reviewed: [BoardUnit] = []
-    /// What the lane counts: everything but the reviewed.
+    /// What the lane lists: everything but the reviewed, folded units
+    /// included (`DeviceHome.listedCount`).
     var count = 0
 
     init(_ board: DeviceHome, lane: Lane) {
@@ -492,6 +596,6 @@ struct FoldedLane: Sendable {
             }
             if !shown.isEmpty { groups.append(BoardGroup(project: group.project, system: group.system, items: shown)) }
         }
-        count = board.items(lane).count - reviewed.count
+        count = board.listedCount(lane)
     }
 }

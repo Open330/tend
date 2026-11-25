@@ -91,7 +91,11 @@ struct TendSidebarInputs: Equatable {
 
     var isListCollapsed = false
     var mode: TendSidebarMode = .watch
+    /// Your turn's number (`FleetCounts.yourTurn`), never narrowed by
+    /// Home's filter.
     var homeNeedsYou = 0
+    /// A decision queue was not read whole, so the badge may leave some out.
+    var homePartial = false
     var workAttention = 0
     var askRunning = 0
     var attention = TendAttentionSummary()
@@ -107,7 +111,9 @@ struct TendSidebarInputs: Equatable {
     init(_ model: AppModel) {
         isListCollapsed = model.isSidebarListCollapsed
         mode = model.sidebarMode
-        homeNeedsYou = model.homeWorks.lazy.filter { $0.lane == .needsYou }.count
+        let feed = model.homeBoard.decisionFeed
+        homeNeedsYou = FleetBoard.counts(works: model.homeWorks, decisions: feed.decisions(model), marks: FleetReviewMarks()).yourTurn
+        homePartial = feed.isPartial(host: nil, localHost: model.homeBoard.localHostAlias)
         workAttention = model.workGroups.lazy.filter { $0.attentionCount > 0 }.count
         askRunning = model.askEntries.lazy.filter { $0.status == "running" }.count
         attention = model.attention.summary
@@ -227,6 +233,9 @@ final class TendWindowChrome: TendWindowVisibilityTracking {
 
     /// Whether any workbench window is on screen.
     private(set) var isVisible = false
+    /// Sends `isVisible` on each change (the board reads the decisions for
+    /// the rail's badge only while it is on screen).
+    let visibilityChanged = PassthroughSubject<Bool, Never>()
     /// The time-dependent part of the status bar (a cap lifting, a window
     /// rolling over, "resets at") is read again this often while shown.
     static let clockPeriod: TimeInterval = 30
@@ -258,6 +267,8 @@ final class TendWindowChrome: TendWindowVisibilityTracking {
         subscriptions = [
             model.objectWillChange.sink { [weak self] _ in self?.queueRefresh() },
             model.attention.objectWillChange.sink { [weak self] _ in self?.queueRefresh() },
+            // The Home badge counts the decisions too.
+            model.homeBoard.decisionFeed.objectWillChange.sink { [weak self] _ in self?.queueRefresh() },
             model.$workspaceRevision.dropFirst().receive(on: DispatchQueue.main)
                 .sink { [weak self] _ in self?.workspaceRevised.send() },
             Timer.publish(every: Self.clockPeriod, tolerance: 5, on: .main, in: .common).autoconnect()
@@ -303,6 +314,7 @@ final class TendWindowChrome: TendWindowVisibilityTracking {
         let visible = readers.values.contains(true)
         guard visible != isVisible else { return }
         isVisible = visible
+        visibilityChanged.send(visible)
         TendPerf.count(visible ? "chrome.shown" : "chrome.hidden")
         // Shown again: catch up at once, time-only changes (a cap lifting,
         // a reset passing) included.

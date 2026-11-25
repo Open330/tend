@@ -988,6 +988,7 @@ private struct SidebarActivityRail: View {
                 title: String(localized: "Home"),
                 active: inputs.isListCollapsed,
                 badge: inputs.homeNeedsYou,
+                badgePartial: inputs.homePartial,
                 select: { model.showHome() }
             )
             TendTheme.border(colorScheme)
@@ -1038,6 +1039,9 @@ private struct ActivityRailItem: View {
     let title: String
     let active: Bool
     let badge: Int
+    /// The count may leave some out (a decision queue not read whole):
+    /// the badge reads "3+".
+    var badgePartial = false
     let select: () -> Void
     @State private var hovering = false
     @Environment(\.colorScheme) private var colorScheme
@@ -1062,10 +1066,10 @@ private struct ActivityRailItem: View {
                 }
                 .overlay(alignment: .topTrailing) {
                     if badge > 0 {
-                        Text(verbatim: badge > 99 ? "99+" : "\(badge)")
+                        Text(verbatim: badge > 99 ? "99+" : badgePartial ? "\(badge)+" : "\(badge)")
                             .font(TendType.glyph.monospacedDigit())
                             .foregroundStyle(.white)
-                            .padding(.horizontal, badge > 9 ? 4 : 0)
+                            .padding(.horizontal, badge > 9 || badgePartial ? 4 : 0)
                             .frame(minWidth: 15, minHeight: 15)
                             .background(TendInk.accentFill(colorScheme), in: Capsule())
                             .offset(x: 5, y: -4)

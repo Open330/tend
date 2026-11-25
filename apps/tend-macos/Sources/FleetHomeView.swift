@@ -22,8 +22,9 @@ struct FleetHomeView: View {
     @State private var quickLook: FleetQuickLookTarget?
     @State private var showsReview = false
     @State private var showsLeftovers = false
-    /// The daemon's decision queue, read while Home is on screen.
-    @StateObject private var decisionFeed = FleetDecisionFeed()
+    /// The daemon's decision queue, read while Home is on screen. The
+    /// board keeps it, so the rail's badge counts the same decisions.
+    @ObservedObject private var decisionFeed: FleetDecisionFeed
     /// Planned Work not started yet (`work_backlog_v1`).
     @StateObject private var backlogFeed = FleetBacklogFeed()
     /// Prompts and Work tendd sends when ready (`work_queue_v1`).
@@ -45,6 +46,7 @@ struct FleetHomeView: View {
     init(model: AppModel, homeBoard: FleetHomeBoard, presentsReview: Bool = false) {
         self.model = model
         self.homeBoard = homeBoard
+        _decisionFeed = ObservedObject(wrappedValue: homeBoard.decisionFeed)
         _showsReview = State(initialValue: presentsReview)
     }
 
@@ -124,26 +126,10 @@ struct FleetHomeView: View {
         .sheet(item: $revisionTarget) { target in
             ChangesRevisionView(repo: target.repo, revision: target.revision)
         }
-        // Both polls pause while the window is off screen and restart, with
+        // The decisions are read by the board (`FleetDecisionPoller`), one
+        // schedule for every Home and the rail's badge. The backlog and
+        // the queue pause while the window is off screen and restart, with
         // a read at once, when it is shown again.
-        .task(id: homeBoard.isVisible) {
-            // Decisions made elsewhere (the CLI, an agent, another window)
-            // leave the queue while Home stays open.
-            guard homeBoard.isVisible else { return }
-            while !Task.isCancelled {
-                await decisionFeed.load(model.client, works: allWorks)
-                try? await Task.sleep(for: FleetDecisionFeed.refreshEvery)
-            }
-        }
-        .task(id: homeBoard.isVisible) {
-            // Other hosts' review items, on their own loop: a slow host never
-            // holds up this Mac's decisions.
-            guard homeBoard.isVisible else { return }
-            while !Task.isCancelled {
-                await decisionFeed.loadRemote(model.client, hosts: model.fleetHosts)
-                try? await Task.sleep(for: FleetDecisionFeed.remoteEvery)
-            }
-        }
         .task(id: homeBoard.isVisible) {
             // Work planned with `tend work plan` shows up while Home is open.
             guard homeBoard.isVisible else { return }
@@ -398,11 +384,25 @@ struct FleetHomeView: View {
         let all = FleetBoard.filter(allWorks, host: hostFilter, project: projectFilter)
         let decisions = decisions
         let marks = marks
-        // One pass: whether a unit is hidden decides both the list and the
-        // "reviewed" count.
         let hidden = Set(all.lazy.filter { marks.hides($0) }.map(\.id))
         let works = showsReviewed ? all : all.filter { !hidden.contains($0.id) }
-        let hiddenCount = hidden.count
+        // The headers' numbers (COUNTS.md): what the filter leaves, and,
+        // while one is set, the whole board's beside it. A reviewed unit
+        // shown again never counts in Finished.
+        let shownCounts = FleetBoard.counts(works: all, decisions: decisions, marks: marks)
+        let filtered = hostFilter != nil || projectFilter != nil
+        let totals = filtered
+            ? FleetBoard.counts(works: allWorks, decisions: decisionFeed.decisions(model), marks: marks)
+            : shownCounts
+        let partial = decisionFeed.isPartial(host: hostFilter, localHost: homeBoard.localHostAlias)
+        let numbers = Dictionary(uniqueKeysWithValues: FleetLane.allCases.map { lane in
+            (lane, FleetLaneNumber(
+                shown: shownCounts.count(lane),
+                total: filtered ? totals.count(lane) : nil,
+                partial: lane == .needsYou && partial
+            ))
+        })
+        let hiddenCount = shownCounts.reviewed
         // A unit, or (picked from the compact list) a decision.
         let selected = all.first { $0.id == selectedID }
         let selectedDecision = selected == nil
@@ -415,7 +415,7 @@ struct FleetHomeView: View {
             let floats = geometry.size.width < 1040
             ZStack(alignment: .trailing) {
                 HStack(spacing: 0) {
-                    lanes(works, decisions: decisions, reviewedCount: hiddenCount)
+                    lanes(works, decisions: decisions, numbers: numbers, reviewedCount: hiddenCount)
                     if shownID != nil, !floats {
                         Divider()
                         detailPanel(work: selected, decision: selectedDecision)
@@ -562,7 +562,7 @@ struct FleetHomeView: View {
     }
 
     @ViewBuilder
-    private func lanes(_ works: [FleetWork], decisions: [FleetDecision], reviewedCount: Int) -> some View {
+    private func lanes(_ works: [FleetWork], decisions: [FleetDecision], numbers: [FleetLane: FleetLaneNumber], reviewedCount: Int) -> some View {
         Group {
             // A decision read that failed keeps the lanes, so its warning
             // shows instead of an ordinary empty Home.
@@ -570,7 +570,12 @@ struct FleetHomeView: View {
             let queueIsShown = hostFilter == nil || hostFilter == homeBoard.localHostAlias
             let queued = queueIsShown ? queueFeed.shown : []
             let queueProblem = queueIsShown ? queueFeed.problem : nil
-            let problem = decisionFeed.problem == nil && backlogFeed.problem == nil && queueProblem == nil ? 0 : 1
+            // A decision queue not read whole is never an all-clear either:
+            // Your turn says so where it would say nothing needs you.
+            let decisionNote = decisionFeed.problem
+                ?? (decisionFeed.isPartial(host: hostFilter, localHost: homeBoard.localHostAlias)
+                    ? String(localized: "Some decisions could not be read, so there may be more.") : nil)
+            let problem = decisionNote == nil && backlogFeed.problem == nil && queueProblem == nil ? 0 : 1
             let backlog = backlog
             let cantAnswer = cantAnswerGroup
             if FleetBoard.showsEmptyBoard(visible: works.count + decisions.count + backlog.count + queued.count + problem + (cantAnswer == nil ? 0 : 1), reviewed: reviewedCount) {
@@ -598,8 +603,9 @@ struct FleetHomeView: View {
                             lane: lane,
                             works: works.filter { $0.lane == lane },
                             decisions: lane == .needsYou ? decisions : [],
+                            number: numbers[lane],
                             decisionCard: { decisionCard($0) { revisionTarget = $0 } },
-                            decisionProblem: lane == .needsYou ? decisionFeed.problem : nil,
+                            decisionProblem: lane == .needsYou ? decisionNote : nil,
                             cantAnswer: lane == .needsYou ? cantAnswer : nil,
                             selectedID: selectedID,
                             select: { id in selectedID = selectedID == id ? nil : id },
@@ -665,6 +671,9 @@ struct FleetLaneColumn: View {
     /// The daemon's decisions, in Your turn only, among the Work cards by
     /// how long each waits.
     var decisions: [FleetDecision] = []
+    /// The header's number (`FleetBoard.counts`); without one, the cards
+    /// given.
+    var number: FleetLaneNumber?
     var decisionCard: ((FleetDecision) -> FleetDecisionCard)?
     /// Why the decisions may be incomplete (a source tendd could not read).
     var decisionProblem: String?
@@ -715,6 +724,17 @@ struct FleetLaneColumn: View {
 
     private var title: String { lane.title }
 
+    private var headerNumber: FleetLaneNumber {
+        number ?? FleetLaneNumber(shown: works.count + decisions.count)
+    }
+
+    /// The hint, and what the number leaves out: the filter's narrowing is
+    /// in the number itself, a partial read is said here.
+    private var headerHelp: String {
+        guard headerNumber.partial else { return subtitle }
+        return subtitle + "\n" + String(localized: "Some decisions could not be read, so there may be more.")
+    }
+
     private var subtitle: String {
         switch lane {
         case .needsYou: String(localized: "Decide or review")
@@ -744,15 +764,15 @@ struct FleetLaneColumn: View {
                 Text(title)
                     .font(TendType.section)
                     .foregroundStyle(TendInk.label(colorScheme))
-                Text("\(works.count + decisions.count)")
+                Text(verbatim: headerNumber.text)
                     .font(TendType.detail.weight(.medium))
                     .monospacedDigit()
                     .foregroundStyle(TendInk.secondary(colorScheme))
                 Spacer(minLength: 4)
             }
-            .help(subtitle)
+            .help(headerHelp)
             .accessibilityElement(children: .combine)
-            .accessibilityHint(subtitle)
+            .accessibilityHint(headerHelp)
             .padding(.horizontal, 12)
             .padding(.top, 10)
             .padding(.bottom, 8)
