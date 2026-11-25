@@ -14,9 +14,6 @@
 
 import { checksOf, decidedCard, isSystemAsk, safeHref } from "./needs-model.mjs";
 
-/// A question whose asker tendd does not name; the page says it in its
-/// language (`anAgent`).
-export const UNKNOWN_ASKER = "an agent";
 
 export const FINISHED_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const LANES = ["needsYou", "running", "finished"];
@@ -210,7 +207,9 @@ function decisionUnit(item, host, index) {
       remote,
       actionable: !remote || control,
       system,
-      asker: item.from_alias ? `@${item.from_alias}` : item.from_pane || (system ? "tend" : UNKNOWN_ASKER),
+      asker: item.from_alias ? `@${item.from_alias}` : item.from_pane || (system ? "tend" : null),
+      // tendd names nobody: the page says "an agent" in its language.
+      askerMissing: !item.from_alias && !item.from_pane && !system,
       action: item.action || null,
       title: needed || String(item.body || ""),
       detail: needed ? String(item.body || "") : "",

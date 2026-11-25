@@ -226,3 +226,22 @@ test("a registry row without a pane is headless", () => {
   assert.equal(isPaneless({}), true);
   assert.equal(isPaneless(null), true);
 });
+
+test("an asker tendd does not name is marked, not named", () => {
+  const queue = {
+    hosts: [{
+      alias: "local", local: true, control: true, decides_reviews: true,
+      queue: { items: [
+        { kind: "human_request", request_id: "anon", body: "who asks?", created_at: at(3) },
+        { kind: "review", id: "rv_alias", summary: "named", requested_at: at(2), target: { kind: "session", session_id: "x", alias: "an agent" } },
+      ] },
+    }],
+  };
+  const units = buildBoard({ decisions: queue, fleet, now: NOW }).lanes.needsYou.groups.flatMap((g) => g.units);
+  const anon = units.find((u) => u.id === "anon");
+  assert.equal(anon.asker, null);
+  assert.equal(anon.askerMissing, true, "the page says \"an agent\" in its language");
+  const named = units.find((u) => u.id === "rv_alias");
+  assert.equal(named.asker, "an agent", "a real alias is kept as written");
+  assert.ok(!named.askerMissing);
+});

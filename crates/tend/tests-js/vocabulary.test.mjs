@@ -89,3 +89,10 @@ for (const rule of glossary.ko_rules) {
     assert.deepEqual(broken, []);
   });
 }
+
+test("a host state is always said in words, never its raw name", () => {
+  assert.equal(web.ko.hostState("version_skew"), "버전 불일치");
+  assert.equal(web.en.hostState("auth_failed"), "Authentication failed");
+  assert.equal(web.ko.hostState("unknown"), "알 수 없음");
+  assert.equal(web.en.hostState(undefined), "Unknown");
+});

@@ -5,7 +5,7 @@
 // Windows app, in which case the page never sees it) or the OIDC operator
 // session cookie. Everything an agent wrote is set with textContent only.
 
-import { boardAttention, buildBoard, byProject, digest, fromServerBoard, hostHue, keepPayload, LANES, productOf, replyTarget, reviewQueue, sameTarget, TEND_PROJECT, UNKNOWN_ASKER, withLater } from "./home-board.mjs";
+import { boardAttention, buildBoard, byProject, digest, fromServerBoard, hostHue, keepPayload, LANES, productOf, replyTarget, reviewQueue, sameTarget, TEND_PROJECT, withLater } from "./home-board.mjs";
 import { languageOf, relativeTime, stringsFor, textOf } from "./home-strings.mjs";
 import { itemHash, linkedHostOf, linkedItemOf } from "./needs-model.mjs";
 import { mountExplore } from "./explore.mjs";
@@ -182,7 +182,7 @@ function hostBadge(alias, local) {
 
 /// Who asked, in the page's language when tendd does not name them.
 function askerOf(unit) {
-  return unit.asker === UNKNOWN_ASKER ? S.anAgent : unit.asker;
+  return unit.asker || (unit.askerMissing ? S.anAgent : "");
 }
 
 function when(iso) {
@@ -471,7 +471,7 @@ function decisionCard(unit, emphasis = state.layout === "emphasis") {
     const result = resultLine(key);
     if (result) card.append(result);
     card.append(metaLine(null, [
-      unit.asker ? el("span", "who", askerOf(unit)) : null,
+      askerOf(unit) ? el("span", "who", askerOf(unit)) : null,
       el("span", null, unit.host),
       unit.project && unit.project !== TEND_PROJECT ? el("span", "repo", `· ${unit.project}`) : null,
       el("span", "when", when(unit.since)),
@@ -480,7 +480,7 @@ function decisionCard(unit, emphasis = state.layout === "emphasis") {
   }
   const head = el("div", "d-head");
   head.append(icon(question ? "question" : "checklist", "kind-icon"), el("span", "kind", question ? S.question : S.review));
-  if (unit.asker) head.append(el("span", "who", askerOf(unit)));
+  if (askerOf(unit)) head.append(el("span", "who", askerOf(unit)));
   if (unit.remote) head.append(el("span", "who", unit.host));
   head.append(el("span", "when", busy ? S.sending : when(unit.since)));
   const menu = decisionMenu(unit);
@@ -613,7 +613,7 @@ const LANE_WORDS = {
 function noteText(note) {
   if (note.key === "observeOnly") return `${note.host}: ${S.observeOnly}`;
   if (note.key === "unavailable") return `${note.host}: ${S.unavailable(note.what)}`;
-  if (note.key === "hostState") return `${note.host}: ${note.state}${note.error ? ` · ${note.error}` : ""}`;
+  if (note.key === "hostState") return `${note.host}: ${S.hostState(note.state)}${note.error ? ` · ${note.error}` : ""}`;
   if (note.key === "more") return `${note.host}: …`;
   return String(note.text || "");
 }
@@ -760,7 +760,7 @@ function cantAnswerRow(unit) {
   const cause = S.causes[unit.unanswerable.cause] || S.causes.other;
   why.append(icon("exclaim"), el("span", null, unit.unanswerable.since ? `${cause} · ${S.since(when(unit.unanswerable.since))}` : cause));
   card.append(why);
-  const meta = [unit.asker ? el("span", "who", askerOf(unit)) : null, el("span", null, unit.host), el("span", "when", when(unit.since))];
+  const meta = [askerOf(unit) ? el("span", "who", askerOf(unit)) : null, el("span", null, unit.host), el("span", "when", when(unit.since))];
   const row = metaLine(null, meta);
   if (unit.keepable && unit.actionable !== false && canDecide()) {
     const keep = button(S.keep, () => decide(unit, "/api/decisions/keep", keepPayload(unit), S.kept), "btn ghost small");
@@ -1781,7 +1781,7 @@ function renderHeader(board) {
       ? hosts.map((host) => {
           const li = el("li");
           li.append(el("span", `dot${host.state === "online" ? "" : host.state === "auth_failed" ? " bad" : host.state === "connecting" ? " connecting" : host.state === "degraded" || host.state === "version_skew" ? " warn" : " off"}`));
-          li.append(el("span", "name", host.alias), el("span", "state", S.hostStates[host.state] || host.state));
+          li.append(el("span", "name", host.alias), el("span", "state", S.hostState(host.state)));
           if (host.error) li.title = host.error;
           return li;
         })

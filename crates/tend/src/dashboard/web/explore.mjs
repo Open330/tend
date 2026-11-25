@@ -308,7 +308,7 @@ export function mountExplore(root, deps) {
             if (!closed) nodes.push(...window.rows.map(row));
           }
         }
-        if (!section.rows.length) nodes.push(el("div", "ex-empty", section.state === "online" ? S.noPanes : section.state));
+        if (!section.rows.length) nodes.push(el("div", "ex-empty", section.state === "online" ? S.noPanes : S.hostState(section.state)));
       } else {
         nodes.push(el("div", `ex-group ${section.key}`, `${S.statusGroups[section.key] || section.key} · ${section.rows.length}`));
         nodes.push(...section.rows.map(row));

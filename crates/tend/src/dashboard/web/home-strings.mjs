@@ -103,6 +103,8 @@ const EN = {
     online: "Online", offline: "Offline", connecting: "Connecting", degraded: "Degraded",
     version_skew: "Version skew", auth_failed: "Authentication failed", disabled: "Disabled",
   },
+  // A host's state in words; never the raw name (Mac `FleetHostState`).
+  hostState: (state) => EN.hostStates[state] || "Unknown",
   checksFailed: "Checks failed",
   rateLimited: "Rate limited",
   observeOnly: "Observe only: answer on that host",
@@ -498,6 +500,7 @@ const KO = {
     online: "온라인", offline: "오프라인", connecting: "연결 중", degraded: "성능 저하",
     version_skew: "버전 불일치", auth_failed: "인증 실패", disabled: "비활성",
   },
+  hostState: (state) => KO.hostStates[state] || "알 수 없음",
   closedCount: (n) => `질문 ${n}개를 닫았습니다.`,
   skippedCount: (n) => `${n}개는 건너뛰었습니다`,
   closedByTend: "tend가 닫음",
