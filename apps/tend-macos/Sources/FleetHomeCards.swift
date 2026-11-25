@@ -76,26 +76,38 @@ extension FleetBoard {
 
 /// Draws a card (docs/proposals/MAC_DESIGN.md): one container, lifted off
 /// its lane by the card fill and a hairline. A card that waits for the
-/// person carries a 3pt orange bar at its leading edge (its status word
-/// says so too); no tinted border or fill. Selected: an accent border.
+/// person carries the attention mark (apps/shared/Design/CARDS.md): a
+/// `stripeWidth` bar in the orange state colour at its leading edge and the
+/// `cardYourTurn` fill. Selected: an accent border.
 struct FleetEmphasisCardFrame: ViewModifier {
     let lane: FleetLane
     var isSelected = false
     @Environment(\.colorScheme) private var colorScheme
 
+    static let stripeWidth = CGFloat(TendDesignTokens.Metric.stripeWidth)
+
+    /// The card's fill: tinted in Your turn.
+    static func fill(_ lane: FleetLane, _ scheme: ColorScheme) -> Color {
+        lane == .needsYou ? TendTheme.token(TendDesignTokens.cardYourTurn, scheme) : TendSurface.card(scheme)
+    }
+
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: TendRadius.card, style: .continuous)
+        let marked = lane == .needsYou
         content
-            .padding(.leading, lane == .needsYou ? 4 : 0)
-            .background(TendSurface.card(colorScheme), in: shape)
-            .overlay(alignment: .leading) {
-                if lane == .needsYou {
-                    Capsule()
-                        .fill(lane.tint)
-                        .frame(width: 3)
-                        .padding(.vertical, TendSpace.m)
-                        .padding(.leading, 5)
-                        .allowsHitTesting(false)
+            .padding(.leading, marked ? 4 : 0)
+            .background(Self.fill(lane, colorScheme), in: shape)
+            .overlay {
+                if marked {
+                    // Flush with the leading edge, cut by the card's corners.
+                    HStack(spacing: 0) {
+                        Rectangle()
+                            .fill(TendTheme.token(TendDesignTokens.orange, colorScheme))
+                            .frame(width: Self.stripeWidth)
+                        Spacer(minLength: 0)
+                    }
+                    .clipShape(shape)
+                    .allowsHitTesting(false)
                 }
             }
             .overlay(

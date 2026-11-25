@@ -27,12 +27,16 @@ A new concept that two surfaces show belongs here first. See
 | Checks tend ran | tend ran N checks: P passed | tend가 검사 N개를 실행했고 P개가 통과했습니다 | |
 | Unnamed asker | an agent | 에이전트 | |
 
-## Coming next
+## Decisions (P2)
 
-These two decisions are not checked yet. PARITY P2 aligns the cards first.
+| Concept | English | Korean | Notes |
+|---|---|---|---|
+| Close a live question without answering | Decline… → Decline | 거절… → 거절 | The one verb on every surface. The reason is optional; with none, tendd sends the asker its standard text. |
+| Decline's field | Reason (optional) | 이유 (선택) | |
+| Return's field | Note for the asker (optional) | 요청자에게 남길 메모 (선택) | Return needs no note. |
+| A decision this surface cannot take | Decide this on %@. | %@에서 결정하세요. | |
+| In flight | Sending… | 보내는 중… | |
 
-- **Close a live question without answering** is one action, **Decline /
-  거절**, on every surface. The reason is optional. The Mac's "Dismiss" on a
-  live question becomes Decline.
-- A question that can't be answered keeps **Keep / 유지** and **Close all /
-  모두 닫기**.
+"Dismiss / 닫기" closes a report only. A question that can't be answered keeps
+**Keep / 유지** and **Close all / 모두 닫기**. The card itself:
+`../Design/CARDS.md`.

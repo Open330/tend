@@ -338,10 +338,10 @@ final class FleetDecisionFeed: ObservableObject {
     }
 
     /// Declines a human request without an answer: the asker, if it is
-    /// still there, reads that the person dismissed it; tendd's own items
-    /// record it as their decision. Either way it leaves every client's
-    /// queue, on the host that holds it.
-    func dismiss(_ decision: FleetDecision, model: AppModel) async -> Bool {
+    /// still there, reads the person's reason, or that they declined it
+    /// when they gave none; tendd's own items record it as their decision.
+    /// Either way it leaves every client's queue, on the host that holds it.
+    func decline(_ decision: FleetDecision, reason: String, model: AppModel) async -> Bool {
         guard case .humanRequest(let requestID) = decision.source else { return false }
         guard let route = model.consoleRoute(hostAlias: decision.host.alias) else {
             failures[decision.id] = String(localized: "\(decision.host.alias) is not connected.")
@@ -350,7 +350,7 @@ final class FleetDecisionFeed: ObservableObject {
         return await record(decision, model: model) {
             try await model.client.replyCollaboration(
                 host: route.host, pane: route.pane, requestID: requestID, status: "declined",
-                body: FleetDecisions.dismissedBody
+                body: FleetDecisions.declineBody(reason)
             )
             await model.refreshOperatorInbox(force: false, hostAliases: [decision.host.alias])
         }
@@ -435,9 +435,17 @@ final class FleetDecisionFeed: ObservableObject {
     }
 }
 
-/// One decision's answer: open or not, and the text typed so far, which a
-/// closed answer keeps for when it is reopened. Each card watches only its
-/// own, so typing redraws one card.
+/// What a decision card's composer is for (apps/shared/Design/CARDS.md).
+enum FleetComposerMode: Sendable, Equatable {
+    /// A question's answer, or a review accepted with the option chosen.
+    case answer
+    /// A question declined, or a review returned; the text is optional.
+    case decline
+}
+
+/// One decision's answer: open or not, what it is for, and the text typed
+/// so far, which a closed answer keeps for when it is reopened. Each card
+/// watches only its own, so typing redraws one card.
 @MainActor
 final class FleetDecisionDraft: ObservableObject {
     /// For cards with no shared draft (previews, tests): never changes.
@@ -447,6 +455,10 @@ final class FleetDecisionDraft: ObservableObject {
     fileprivate weak var owner: FleetDecisionDrafts?
     @Published fileprivate(set) var isOpen = false
     @Published fileprivate(set) var text: String?
+    @Published fileprivate(set) var mode: FleetComposerMode = .answer
+    /// The review option the person chose, apart from their note: Accept
+    /// sends it as the option, never as text they can edit.
+    @Published fileprivate(set) var option: String?
 
     fileprivate init(id: String, owner: FleetDecisionDrafts?) {
         self.id = id
@@ -456,8 +468,16 @@ final class FleetDecisionDraft: ObservableObject {
     /// The answer field's text, nil while it is closed.
     var value: String? { isOpen ? (text ?? "") : nil }
 
-    func update(_ value: String?) {
-        owner?.set(value, for: id)
+    /// Opens, types into or (nil) closes the composer. A `mode` other
+    /// than the one it is in starts it afresh with `value`; nil keeps it.
+    func update(_ value: String?, mode: FleetComposerMode? = nil) {
+        owner?.set(value, mode: mode, for: id)
+    }
+
+    /// Opens the Accept composer for a review with `option` chosen and an
+    /// empty, optional note.
+    func choose(_ option: String) {
+        owner?.choose(option, for: id)
     }
 }
 
@@ -475,9 +495,9 @@ final class FleetDecisionDrafts {
         return row
     }
 
-    func binding(for id: String) -> Binding<String?> {
+    func binding(for id: String, mode: FleetComposerMode? = nil) -> Binding<String?> {
         let row = row(for: id)
-        return Binding(get: { row.value }, set: { row.update($0) })
+        return Binding(get: { row.value }, set: { row.update($0, mode: mode) })
     }
 
     /// The decisions with a row, for tests.
@@ -492,15 +512,22 @@ final class FleetDecisionDrafts {
         rows = rows.filter { ids.contains($0.key) || $0.key == openID }
     }
 
-    fileprivate func set(_ value: String?, for id: String) {
+    fileprivate func set(_ value: String?, mode: FleetComposerMode?, for id: String) {
         let row = row(for: id)
         if let value {
+            // Another purpose starts afresh: an answer typed earlier is not
+            // a reason to decline with, nor the other way round.
+            let switching = mode.map { $0 != row.mode } ?? false
             // Reopening keeps what was typed before; an option (a non-empty
             // value) replaces it on purpose.
-            let reopening = openID != id && value.isEmpty
+            let reopening = openID != id && value.isEmpty && !switching
             if openID != id {
                 if let openID, let open = rows[openID], open.isOpen { open.isOpen = false }
                 openID = id
+            }
+            if let mode, row.mode != mode {
+                row.mode = mode
+                if row.option != nil { row.option = nil }
             }
             if !(reopening && row.text != nil), row.text != value { row.text = value }
             if !row.isOpen { row.isOpen = true }
@@ -508,6 +535,18 @@ final class FleetDecisionDrafts {
             openID = nil
             if row.isOpen { row.isOpen = false }
             if row.text != nil { row.text = nil }
+            if row.mode != .answer { row.mode = .answer }
+            if row.option != nil { row.option = nil }
+        }
+    }
+
+    fileprivate func choose(_ option: String, for id: String) {
+        let row = row(for: id)
+        set("", mode: .answer, for: id)
+        // Another option is a new decision: the note starts afresh.
+        if row.option != option {
+            row.option = option
+            if row.text != "" { row.text = "" }
         }
     }
 }
@@ -523,9 +562,50 @@ extension FleetDecisions {
         return closed + " " + String(localized: "Skipped \(outcome.skipped.count): \(reasons)")
     }
 
-    /// The reply a dismissed question gets. In English: it is read by the
-    /// asking agent, not shown to the person.
-    static let dismissedBody = "The person dismissed this question from Tend Home without answering it. Do not wait for an answer to it; ask again only if it still matters."
+    /// The reply a question declined without a reason gets. In English: it
+    /// is read by the asking agent, not shown to the person.
+    static let declinedBody = "The person declined this question from Tend without answering it. Do not wait for an answer to it; ask again only if it still matters."
+
+    /// What the asker reads when the person declines: their reason, or the
+    /// standard text when they gave none (CARDS.md: the reason is optional).
+    static func declineBody(_ reason: String) -> String {
+        let trimmed = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? declinedBody : trimmed
+    }
+
+    /// A review's note: nil when the person typed none, so Accept and
+    /// Return go without one (CARDS.md: the note is optional).
+    static func reviewNote(_ text: String) -> String? {
+        decisionNote(option: nil, note: text)
+    }
+
+    /// The note an Accept with a chosen option records, as tendd's
+    /// `review::decision_note` writes it for the dashboard and the Fleet
+    /// relay: `chose: X`, then the person's own words. This Mac's
+    /// `review_dispose` carries no option field, so the option goes in
+    /// the note in tendd's own format.
+    static func decisionNote(option: String?, note: String) -> String? {
+        let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch (option, trimmed.isEmpty) {
+        case (let option?, false): return "chose: \(option)\n\(trimmed)"
+        case (let option?, true): return "chose: \(option)"
+        case (nil, false): return trimmed
+        case (nil, true): return nil
+        }
+    }
+
+    /// A decision card's meta line: asker · host · project. The host is
+    /// always named, as on a work unit's card.
+    static func metaLine(_ decision: FleetDecision) -> String {
+        [decision.asker, decision.host.alias, decision.repo].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    /// Whether a composer's primary button can send `text`: only a
+    /// question's answer needs some; a reason or a note is optional.
+    static func canSend(_ mode: FleetComposerMode, isQuestion: Bool, text: String) -> Bool {
+        guard mode == .answer, isQuestion else { return true }
+        return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     /// Fills in each decision's asking agent (its checkout and repository)
     /// from the agents Home sees on the same host.
@@ -758,18 +838,25 @@ struct FleetDecisionCard: View {
     /// Disposes a review item; true when it was recorded.
     let decide: (TendReviewDisposition, String?) async -> Bool
     var openAsker: (() -> Void)?
-    /// Declines a human request without an answer; true when it was recorded.
-    var dismiss: (() async -> Bool)?
+    /// Declines a human request without an answer, with the person's
+    /// reason (empty when they gave none); true when it was recorded.
+    var decline: ((String) async -> Bool)?
     /// The dashboard tendd named: another host's review item is decided
     /// there (`FleetDecision.decidedOnDashboard`).
     var dashboard: URL?
     /// Opens with the answer field showing, for previews and tests.
     var initialAnswer: String?
+    /// What that field is for, for previews and tests.
+    var initialMode: FleetComposerMode
+    /// The review option chosen with it, for previews and tests.
+    var initialOption: String?
     /// The open answer, shared by every card so only one composer (and one
     /// ⌘↩ Send) exists at a time; a card without one keeps its own.
     @ObservedObject private var draft: FleetDecisionDraft
     private let sharesDraft: Bool
     @State private var localDraft: String?
+    @State private var localMode: FleetComposerMode = .answer
+    @State private var localOption: String?
 
     init(
         decision: FleetDecision,
@@ -779,9 +866,11 @@ struct FleetDecisionCard: View {
         answer: @escaping (String) async -> Bool,
         decide: @escaping (TendReviewDisposition, String?) async -> Bool,
         openAsker: (() -> Void)? = nil,
-        dismiss: (() async -> Bool)? = nil,
+        decline: ((String) async -> Bool)? = nil,
         dashboard: URL? = nil,
         initialAnswer: String? = nil,
+        initialMode: FleetComposerMode = .answer,
+        initialOption: String? = nil,
         draft: FleetDecisionDraft? = nil
     ) {
         self.decision = decision
@@ -791,9 +880,11 @@ struct FleetDecisionCard: View {
         self.answer = answer
         self.decide = decide
         self.openAsker = openAsker
-        self.dismiss = dismiss
+        self.decline = decline
         self.dashboard = dashboard
         self.initialAnswer = initialAnswer
+        self.initialMode = initialMode
+        self.initialOption = initialOption
         _draft = ObservedObject(wrappedValue: draft ?? .detached)
         sharesDraft = draft != nil
     }
@@ -801,13 +892,63 @@ struct FleetDecisionCard: View {
     private var composing: String? {
         get { sharesDraft ? draft.value : localDraft }
         nonmutating set {
-            if sharesDraft { draft.update(newValue) } else { localDraft = newValue }
+            if sharesDraft {
+                draft.update(newValue)
+            } else {
+                localDraft = newValue
+                if newValue == nil { localOption = nil }
+            }
         }
     }
     @Environment(\.colorScheme) private var colorScheme
 
     private var answerText: String { composing ?? initialAnswer ?? "" }
     private var isComposing: Bool { composing != nil || initialAnswer != nil }
+
+    /// What the open composer is for.
+    private var composerMode: FleetComposerMode {
+        if composing == nil, initialAnswer != nil { return initialMode }
+        return sharesDraft ? draft.mode : localMode
+    }
+
+    /// The review option chosen in the open composer.
+    private var chosenOption: String? {
+        if composing == nil, initialAnswer != nil { return initialOption }
+        return sharesDraft ? draft.option : localOption
+    }
+
+    /// A review's option: the Accept composer with it shown apart from
+    /// the note, which stays empty and optional.
+    private func choose(_ option: String) {
+        if sharesDraft {
+            draft.choose(option)
+        } else {
+            let kept = localMode == .answer && localOption == option ? localDraft : nil
+            localMode = .answer
+            localOption = option
+            localDraft = kept ?? ""
+        }
+    }
+
+    /// Opens the composer for `mode`, filled with `text`.
+    private func compose(_ mode: FleetComposerMode, _ text: String = "") {
+        if sharesDraft {
+            draft.update(text, mode: mode)
+        } else {
+            // As the shared draft does: reopening keeps the text, another
+            // purpose starts afresh.
+            let kept = localMode == mode && text.isEmpty ? localDraft : nil
+            if localMode != mode { localOption = nil }
+            localMode = mode
+            localDraft = kept ?? text
+        }
+    }
+
+    /// Withdraw: only a review this Mac decides.
+    private var canWithdraw: Bool {
+        if case .review = decision.source { return !decision.decidedOnDashboard }
+        return false
+    }
 
     @Environment(\.fleetCardEmphasis) private var emphasis
 
@@ -825,13 +966,45 @@ struct FleetDecisionCard: View {
                 Button("Open Agent", action: openAsker)
             }
             if let link = dashboardLink {
-                Button("Decide on the Dashboard") { NSWorkspace.shared.open(link) }
-            } else if case .review = decision.source, !decision.decidedOnDashboard {
+                Button("Open on the Dashboard") { NSWorkspace.shared.open(link) }
+            } else if canWithdraw {
                 Button("Withdraw") { Task { _ = await decide(.withdrawn, nil) } }
             }
-            if let dismiss {
-                Button("Dismiss Question") { Task { _ = await dismiss() } }
+            if decline != nil {
+                Button("Decline Question…") { compose(.decline) }
             }
+        }
+    }
+
+    /// The ⋯ at the right end of the kind row (CARDS.md): Withdraw for a
+    /// review this Mac decides, and the asker to open. The context menu
+    /// holds the same and more.
+    @ViewBuilder
+    private var overflow: some View {
+        if canWithdraw || openAsker != nil {
+            Menu {
+                if let openAsker {
+                    Button("Open Agent", action: openAsker)
+                }
+                if canWithdraw {
+                    Button("Withdraw") { Task { _ = await decide(.withdrawn, nil) } }
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help(String(localized: "More"))
+            .accessibilityLabel(Text("More"))
+        }
+    }
+
+    /// The kind row's in-flight mark.
+    private var sending: some View {
+        HStack(spacing: 4) {
+            ProgressView().controlSize(.mini)
+            Text("Sending…")
         }
     }
 
@@ -867,8 +1040,9 @@ struct FleetDecisionCard: View {
             HStack(spacing: 5) {
                 Image(systemName: decision.isHumanRequest ? "questionmark.bubble.fill" : "checklist")
                 Text(decision.isHumanRequest ? String(localized: "Question") : String(localized: "Review"))
+                if busy { sending }
                 Spacer(minLength: 4)
-                if busy { ProgressView().controlSize(.mini) }
+                overflow
             }
             .font(TendType.label)
             .foregroundStyle(TendInk.state(.orange, colorScheme))
@@ -886,18 +1060,11 @@ struct FleetDecisionCard: View {
                 answering
             }
             failureLabel
+            // Asker · host · project, the time at the right end (CARDS.md).
             HStack(spacing: 6) {
-                if let asker = decision.asker {
-                    Text(verbatim: asker)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                Text(verbatim: decision.host.alias)
+                Text(verbatim: FleetDecisions.metaLine(decision))
                     .lineLimit(1)
-                if let repo = decision.repo {
-                    Text(verbatim: "· \(repo)")
-                        .lineLimit(1)
-                }
+                    .truncationMode(.middle)
                 if decision.asksUnlisted(at: Date()) {
                     Text("Asker not listed")
                         .foregroundStyle(TendInk.state(.orange, colorScheme))
@@ -978,10 +1145,8 @@ struct FleetDecisionCard: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
-            if !decision.host.local {
-                Text(verbatim: decision.host.alias)
-                    .lineLimit(1)
-            }
+            Text(verbatim: decision.host.alias)
+                .lineLimit(1)
             if decision.asksUnlisted(at: Date()) {
                 Text("Asker not listed")
                     .foregroundStyle(.orange)
@@ -990,11 +1155,12 @@ struct FleetDecisionCard: View {
             }
             Spacer(minLength: 4)
             if busy {
-                ProgressView().controlSize(.mini)
+                sending
             } else if let since = decision.since {
                 Text(since, format: .relative(presentation: .numeric, unitsStyle: .abbreviated))
                     .monospacedDigit()
             }
+            overflow
         }
         .font(TendType.meta)
         .foregroundStyle(.secondary)
@@ -1007,19 +1173,20 @@ struct FleetDecisionCard: View {
         return TendDashboardLink.item(item.id, host: decision.host.alias, on: dashboard)
     }
 
-    /// Another host's review item: the person decides it on the dashboard,
-    /// under its sign-in. This app never decides it itself.
-    @ViewBuilder
+    /// Another host's review item: the person decides it on that host, or
+    /// on the dashboard under its sign-in. This app never decides it
+    /// itself; one line says where, with the dashboard when tendd names one.
     private var dashboardAction: some View {
-        if let link = dashboardLink {
-            Button("Decide on the Dashboard") { NSWorkspace.shared.open(link) }
-                .buttonStyle(.tendSecondary)
-                .help(String(localized: "Open this result on the dashboard's Needs you page, and decide it there"))
-        } else {
-            Text("tendd names no dashboard, so this result is decided on \(decision.host.alias). Turn on tend's dashboard to decide it from here.")
-                .font(.caption)
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Decide this on \(decision.host.alias).")
+                .font(TendType.detail)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if let link = dashboardLink {
+                Button("Open on the Dashboard") { NSWorkspace.shared.open(link) }
+                    .buttonStyle(.tendSecondary)
+                    .help(String(localized: "Open this result on the dashboard's Needs you page, and decide it there"))
+            }
         }
     }
 
@@ -1039,7 +1206,11 @@ struct FleetDecisionCard: View {
                 // wraps under its own number instead of being cut off.
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(Array(decision.options.enumerated()), id: \.offset) { index, option in
-                        FleetDecisionOptionRow(number: index + 1, text: option) { composing = option }
+                        FleetDecisionOptionRow(number: index + 1, text: option) {
+                            // A question's option fills its answer; a
+                            // review's is chosen apart from the note.
+                            if decision.isHumanRequest { compose(.answer, option) } else { choose(option) }
+                        }
                     }
                 }
             }
@@ -1047,51 +1218,79 @@ struct FleetDecisionCard: View {
         }
     }
 
+    /// CARDS.md's action row: Answer… (or Other… under the options) then
+    /// Decline… for a question; Accept then Return… for a review.
     private var otherActions: some View {
         PipelineFlowLayout(spacing: 6) {
             switch decision.source {
             case .humanRequest:
                 Button(decision.options.isEmpty ? String(localized: "Answer…") : String(localized: "Other…")) {
-                    composing = ""
+                    compose(.answer)
                 }
                 .buttonStyle(decision.options.isEmpty ? TendButtonStyle.tendSecondary : TendButtonStyle.tendGhost)
-                if let dismiss {
-                    Button("Dismiss") { Task { _ = await dismiss() } }
+                if decline != nil {
+                    Button("Decline…") { compose(.decline) }
                         .buttonStyle(decision.asksUnlisted(at: Date()) ? TendButtonStyle.tendSecondary : TendButtonStyle.tendGhost)
                         .help(String(localized: "Close this question without answering it"))
                 }
             case .review:
                 Button("Accept") { Task { _ = await decide(.accepted, nil) } }
                     .buttonStyle(.tendSecondary)
-                Button("Return…") { composing = "" }
+                Button("Return…") { compose(.decline) }
                     .buttonStyle(.tendGhost)
             }
         }
     }
 
+    private var composerPlaceholder: String {
+        switch (decision.isHumanRequest, composerMode) {
+        case (true, .answer): String(localized: "Your answer")
+        case (true, .decline): String(localized: "Reason (optional)")
+        case (false, _): String(localized: "Note for the asker (optional)")
+        }
+    }
+
     private var composer: some View {
         let text = Binding(get: { answerText }, set: { composing = $0 })
-        let empty = answerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let mode = composerMode
+        let canSend = FleetDecisions.canSend(mode, isQuestion: decision.isHumanRequest, text: answerText)
         return VStack(alignment: .leading, spacing: 6) {
-            TextField(decision.isHumanRequest ? String(localized: "Your answer") : String(localized: "Note for the asker"), text: text, axis: .vertical)
+            if !decision.isHumanRequest, mode == .answer, let chosenOption {
+                Label {
+                    Text("Accept with: \(chosenOption)")
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "checkmark.circle")
+                }
+                .font(TendType.body)
+                .foregroundStyle(TendInk.label(colorScheme))
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            TextField(composerPlaceholder, text: text, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(1...5)
             HStack(spacing: 6) {
                 Spacer(minLength: 0)
                 Button("Cancel") { composing = nil }
                     .buttonStyle(.tendGhost)
-                switch decision.source {
-                case .humanRequest:
+                switch (decision.source, mode) {
+                case (.humanRequest, .answer):
                     Button("Send") { submit { await answer(answerText) } }
                         .buttonStyle(.tendPrimary)
-                        .disabled(empty)
+                        .disabled(!canSend)
                         .keyboardShortcut(.return, modifiers: .command)
-                case .review:
-                    Button("Accept") { submit { await decide(.accepted, empty ? nil : answerText) } }
-                        .buttonStyle(.tendSecondary)
-                    Button("Return") { submit { await decide(.returned, answerText) } }
+                case (.humanRequest, .decline):
+                    Button("Decline") { submit { await decline?(answerText) ?? false } }
                         .buttonStyle(.tendPrimary)
-                        .disabled(empty)
+                        .keyboardShortcut(.return, modifiers: .command)
+                case (.review, .answer):
+                    Button("Accept") { submit { await decide(.accepted, FleetDecisions.decisionNote(option: chosenOption, note: answerText)) } }
+                        .buttonStyle(.tendPrimary)
+                        .keyboardShortcut(.return, modifiers: .command)
+                case (.review, .decline):
+                    Button("Return") { submit { await decide(.returned, FleetDecisions.reviewNote(answerText)) } }
+                        .buttonStyle(.tendPrimary)
+                        .keyboardShortcut(.return, modifiers: .command)
                 }
             }
         }

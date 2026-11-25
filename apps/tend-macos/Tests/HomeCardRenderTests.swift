@@ -314,3 +314,14 @@ private extension FleetDecision {
         #expect(height(nil, false) == height(.running, false), "row: \(title)")
     }
 }
+
+@Test func aYourTurnCardCarriesTheSharedAttentionMark() {
+    // CARDS.md: a stripe-width bar and the card-your-turn fill, on decision
+    // and work unit cards alike; other lanes keep the plain card fill.
+    #expect(FleetEmphasisCardFrame.stripeWidth == 5)
+    for scheme in [ColorScheme.light, .dark] {
+        #expect(FleetEmphasisCardFrame.fill(.needsYou, scheme) == TendTheme.token(TendDesignTokens.cardYourTurn, scheme))
+        #expect(FleetEmphasisCardFrame.fill(.running, scheme) == TendSurface.card(scheme))
+        #expect(FleetEmphasisCardFrame.fill(.finished, scheme) == TendSurface.card(scheme))
+    }
+}

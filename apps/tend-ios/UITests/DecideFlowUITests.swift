@@ -75,6 +75,8 @@ final class DecideFlowUITests: XCTestCase {
         let answer = app.buttons["answerButton"].firstMatch
         XCTAssertTrue(answer.waitForExistence(timeout: 15), "the question never showed")
         XCTAssertTrue(app.buttons["acceptButton"].firstMatch.exists, "the result never showed")
+        // A question closes without an answer only through Decline…, beside Answer….
+        XCTAssertTrue(app.buttons["declineButton"].firstMatch.exists, "Decline… is not in the question's action row")
         XCTAssertTrue(app.staticTexts["Merge the retry path now?"].firstMatch.exists)
         XCTAssertTrue(app.staticTexts["merge now: the perf run only covers reads"].firstMatch.exists)
         attach(app, "needs-you")

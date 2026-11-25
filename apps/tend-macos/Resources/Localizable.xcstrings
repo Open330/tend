@@ -23693,16 +23693,6 @@
         }
       }
     },
-    "Note for the asker" : {
-      "localizations" : {
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "요청자에게 남길 메모"
-          }
-        }
-      }
-    },
     "%@ is not a commit in this checkout" : {
       "localizations" : {
         "ko" : {
@@ -24089,16 +24079,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "닫기"
-          }
-        }
-      }
-    },
-    "Dismiss Question" : {
-      "localizations" : {
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "질문 닫기"
           }
         }
       }
@@ -24753,16 +24733,6 @@
         }
       }
     },
-    "Decide on the Dashboard" : {
-      "localizations" : {
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "대시보드에서 결정"
-          }
-        }
-      }
-    },
     "Open this result on the dashboard's Needs you page, and decide it there" : {
       "localizations" : {
         "ko" : {
@@ -24779,16 +24749,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "이 결과는 대시보드에서 결정하세요."
-          }
-        }
-      }
-    },
-    "tendd names no dashboard, so this result is decided on %@. Turn on tend's dashboard to decide it from here." : {
-      "localizations" : {
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "tendd에 대시보드가 없어서 이 결과는 %@에서 결정합니다. 여기서 결정하려면 tend의 대시보드를 켜세요."
           }
         }
       }
@@ -24839,6 +24799,86 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "실패"
+          }
+        }
+      }
+    },
+    "Decline…" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "거절…"
+          }
+        }
+      }
+    },
+    "Decline" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "거절"
+          }
+        }
+      }
+    },
+    "Decline Question…" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "질문 거절…"
+          }
+        }
+      }
+    },
+    "Reason (optional)" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이유 (선택)"
+          }
+        }
+      }
+    },
+    "Note for the asker (optional)" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "요청자에게 남길 메모 (선택)"
+          }
+        }
+      }
+    },
+    "Decide this on %@." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@에서 결정하세요."
+          }
+        }
+      }
+    },
+    "Sending…" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "보내는 중…"
+          }
+        }
+      }
+    },
+    "Accept with: %@" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다음으로 수락: %@"
           }
         }
       }

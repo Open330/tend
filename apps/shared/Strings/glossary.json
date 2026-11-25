@@ -16,6 +16,12 @@
     { "id": "unit.looksGood", "en": "Looks Good", "ko": "확인 완료", "mac": "Looks Good", "web": "looksGood" },
     { "id": "unit.sendBack", "en": "Send Back", "ko": "다시 시키기", "mac": "Send Back", "web": "sendBack" },
 
+    { "id": "question.declineEllipsis", "en": "Decline…", "ko": "거절…", "mac": "Decline…", "ios": "Decline…" },
+    { "id": "question.decline", "en": "Decline", "ko": "거절", "mac": "Decline", "ios": "Decline", "web": "decline" },
+    { "id": "question.reasonOptional", "en": "Reason (optional)", "ko": "이유 (선택)", "mac": "Reason (optional)", "ios": "Reason (optional)", "web": "reasonOptional" },
+    { "id": "review.noteOptional", "en": "Note for the asker (optional)", "ko": "요청자에게 남길 메모 (선택)", "mac": "Note for the asker (optional)", "ios": "Note for the asker (optional)", "web": "noteOptional" },
+    { "id": "decision.decideOn", "en": "Decide this on %@.", "ko": "%@에서 결정하세요.", "mac": "Decide this on %@.", "ios": "Decide this on %@." },
+    { "id": "decision.sending", "en": "Sending…", "ko": "보내는 중…", "mac": "Sending…", "ios": "Sending…", "web": "sending" },
     { "id": "answer.placeholder", "en": "Your answer", "ko": "답변", "mac": "Your answer", "ios": "Your answer", "web": "yourAnswer" },
     { "id": "report.dismiss", "en": "Dismiss", "ko": "닫기", "mac": "Dismiss", "ios": "Dismiss", "web": "dismissReport" },
 

@@ -402,7 +402,7 @@ struct WorkCard: View {
             }
             meta
         }
-        .tendCard(stroke: unit.lane == .yourTurn ? TendPalette.orange.opacity(0.45) : TendSurface.border)
+        .tendCard(attention: unit.lane == .yourTurn)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("workCard")

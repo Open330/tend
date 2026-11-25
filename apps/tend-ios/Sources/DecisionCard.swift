@@ -1,18 +1,36 @@
-// One decision card, in the order Tend for Mac draws it: what tend checked
-// itself, the question or result, the asker's recommendation and evidence,
-// then the actions. Every string here is the asker's declaration, shown as
-// recorded; evidence links open in Safari, which never gets the key.
+// One decision card, in the order apps/shared/Design/CARDS.md gives for
+// every surface: the kind row, the title, the inset box (what tend checked
+// itself, the detail, the asker's recommendation and evidence, the
+// options, then the actions or a composer), a failure, and the meta row.
+// Every string here is the asker's declaration, shown as recorded;
+// evidence links open in Safari, which never gets the key.
 import SwiftUI
 import UIKit
 
 struct DecisionCard: View {
     let decision: PendingDecision
+    /// The project the board grouped it under, for the meta row.
+    var project: String?
     @Environment(AppModel.self) private var model
     @Environment(\.openURL) private var openURL
-    /// The open composer's text; nil while the actions show.
-    @State private var composing: String?
-    /// Set when an option was picked: sent with Accept as the chosen option.
+    /// The open composer; nil while the action row shows.
+    @State private var composer: Composer?
+    /// The open composer's text.
+    @State private var text = ""
+    /// Set when a review option was picked: sent with Accept.
     @State private var chosenOption: String?
+
+    /// What a composer sends.
+    enum Composer: Hashable {
+        /// A question's answer: Send needs text.
+        case answer
+        /// A question declined: the reason is optional.
+        case decline
+        /// A result returned: the note is optional.
+        case returnNote
+        /// A result accepted with the option picked.
+        case accept
+    }
 
     private var focused: Bool { model.focusedDecision == decision.id }
 
@@ -20,42 +38,45 @@ struct DecisionCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
-            header
-            if let verification = decision.verification, !verification.checks.isEmpty {
-                VerificationChecks(verification: verification)
-            }
+            kindRow
             Text(verbatim: decision.title)
                 .font(TendType.cardTitle)
-                .lineLimit(composing == nil ? 6 : nil)
+                .lineLimit(composer == nil ? 6 : nil)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
                 .accessibilityIdentifier("cardTitle")
-            if let detail = decision.detail {
-                Text(verbatim: detail)
-                    .font(TendType.body)
-                    .foregroundStyle(TendInk.secondary)
-                    .lineLimit(5)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            if let recommendation = decision.recommendation {
-                Label {
-                    Text(verbatim: recommendation).foregroundStyle(.primary)
-                } icon: {
-                    Image(systemName: "lightbulb.fill").foregroundStyle(TendPalette.orange)
+            InsetBox {
+                if let verification = decision.verification, !verification.checks.isEmpty {
+                    VerificationChecks(verification: verification)
                 }
-                .font(TendType.detail)
-            }
-            if !decision.evidence.isEmpty {
-                EvidenceList(evidence: decision.evidence, open: { openURL($0) })
-            }
-            if !decision.decidable {
-                Label(notHere, systemImage: "desktopcomputer")
-                    .font(TendType.meta)
-                    .foregroundStyle(TendInk.secondary)
-            } else if composing != nil {
-                composer
-            } else {
-                actions
+                if let detail = decision.detail {
+                    Text(verbatim: detail)
+                        .font(TendType.body)
+                        .foregroundStyle(TendInk.secondary)
+                        .lineLimit(5)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if let recommendation = decision.recommendation {
+                    Label {
+                        Text(verbatim: recommendation).foregroundStyle(.primary)
+                    } icon: {
+                        Image(systemName: "lightbulb.fill").foregroundStyle(TendPalette.orange)
+                    }
+                    .font(TendType.detail)
+                }
+                if !decision.evidence.isEmpty {
+                    EvidenceList(evidence: decision.evidence, open: { openURL($0) })
+                }
+                if !decision.decidable {
+                    Label(notHere, systemImage: "desktopcomputer")
+                        .font(TendType.meta)
+                        .foregroundStyle(TendInk.secondary)
+                        .accessibilityIdentifier("notDecidable")
+                } else if let composer {
+                    composerView(composer)
+                } else {
+                    actions
+                }
             }
             if let failure = model.failures[decision.id] {
                 Label(failure, systemImage: "exclamationmark.circle")
@@ -63,8 +84,9 @@ struct DecisionCard: View {
                     .foregroundStyle(TendPalette.red)
                     .accessibilityIdentifier("cardFailure")
             }
+            meta
         }
-        .tendCard(stroke: focused ? TendPalette.orange : TendPalette.orange.opacity(decision.decidable ? 0.45 : 0.2))
+        .tendCard(attention: true)
         .overlay {
             // The item a notification named.
             if focused {
@@ -81,54 +103,123 @@ struct DecisionCard: View {
     private var notHere: String {
         switch decision.kind {
         case .waiting: String(localized: "Waiting in its pane; answer it on a computer.")
-        default: String(localized: "Decide this on \(decision.host); its tend cannot take decisions from here.")
+        default: String(localized: "Decide this on \(decision.host).")
         }
     }
 
-    private var header: some View {
-        HStack(spacing: 6) {
-            switch decision.kind {
-            case .question:
-                Label(String(localized: "Question"), systemImage: "questionmark.bubble.fill")
-                    .foregroundStyle(TendPalette.orange)
-            case .result:
-                Label(String(localized: "Review"), systemImage: "checklist")
-                    .foregroundStyle(TendPalette.orange)
-            case .waiting:
-                Label(String(localized: "Waiting"), systemImage: "hand.raised.fill")
-                    .foregroundStyle(TendPalette.orange)
+    /// The kind's icon and word, "Sending…" while a decision is in flight,
+    /// and ⋯ at the end.
+    private var kindRow: some View {
+        HStack(spacing: 8) {
+            Group {
+                switch decision.kind {
+                case .question:
+                    Label(String(localized: "Question"), systemImage: "questionmark.bubble.fill")
+                case .result:
+                    Label(String(localized: "Review"), systemImage: "checklist")
+                case .waiting:
+                    Label(String(localized: "Waiting"), systemImage: "hand.raised.fill")
+                }
             }
-            if let asker = decision.asker {
-                Text(verbatim: "·")
-                Text(verbatim: asker).lineLimit(1).truncationMode(.middle)
-            }
-            if !decision.hostIsLocal {
-                HostBadge(alias: decision.host, local: false, state: "online", size: 16, showsState: false)
-                Text(verbatim: decision.host).lineLimit(1)
+            .font(TendType.meta.weight(.semibold))
+            .foregroundStyle(TendPalette.orange)
+            .labelStyle(.titleAndIcon)
+            .lineLimit(1)
+            if busy {
+                HStack(spacing: 4) {
+                    ProgressView().controlSize(.mini)
+                    Text("Sending…")
+                }
+                .font(TendType.meta)
+                .foregroundStyle(TendInk.secondary)
+                .lineLimit(1)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("sending")
             }
             Spacer(minLength: 4)
-            if busy {
-                ProgressView().controlSize(.small)
-            } else if let since = decision.since {
-                Text(since, format: .relative(presentation: .numeric, unitsStyle: .abbreviated))
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .fixedSize()
+            if case .result = decision.kind, decision.decidable {
+                Menu {
+                    Button("Withdraw", role: .destructive) { Task { await model.review(decision, .withdrawn) } }
+                        .accessibilityIdentifier("withdrawButton")
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(TendType.body.weight(.semibold))
+                        .foregroundStyle(TendInk.secondary)
+                        .frame(width: 44, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityLabel(String(localized: "More"))
+                .accessibilityIdentifier("moreButton")
+                // The 44 pt target without making the row taller.
+                .padding(.vertical, -6)
+                .padding(.trailing, -10)
             }
         }
-        .font(TendType.meta.weight(.medium))
-        .foregroundStyle(TendInk.secondary)
-        .labelStyle(.titleAndIcon)
-        .lineLimit(1)
     }
 
+    /// Asker · host · project, then the time; at a narrow width the time
+    /// moves under.
+    private var meta: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 6) { who; Spacer(minLength: 4); time }
+            VStack(alignment: .leading, spacing: 3) { who; time }
+        }
+        .font(TendType.meta)
+        .foregroundStyle(TendSurface.metaText)
+        .lineLimit(1)
+        .accessibilityIdentifier("cardMeta")
+    }
+
+    private var who: some View {
+        HStack(spacing: 6) {
+            if let asker = decision.asker {
+                Text(verbatim: asker).truncationMode(.middle)
+                Text(verbatim: "·")
+            }
+            HStack(spacing: 4) {
+                HostBadge(alias: decision.host, local: decision.hostIsLocal, state: "online", size: 16, showsState: false)
+                Text(verbatim: decision.host)
+            }
+            if let project {
+                Text(verbatim: "·")
+                Text(verbatim: project)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private var time: some View {
+        if let since = decision.since {
+            Text(since, format: .relative(presentation: .numeric, unitsStyle: .abbreviated))
+                .monospacedDigit()
+                .fixedSize()
+        }
+    }
+
+    private func open(_ next: Composer, text start: String = "", option: String? = nil) {
+        composer = next
+        text = start
+        chosenOption = option
+    }
+
+    private func close() {
+        composer = nil
+        text = ""
+        chosenOption = nil
+    }
+
+    /// The option rows, then the kind's actions.
     @ViewBuilder
     private var actions: some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(decision.options.enumerated()), id: \.offset) { index, option in
                 Button {
-                    chosenOption = option
-                    composing = decision.isQuestion ? option : ""
+                    if decision.isQuestion {
+                        open(.answer, text: option)
+                    } else {
+                        open(.accept, option: option)
+                    }
                 } label: {
                     OptionRow(number: index + 1, text: option)
                 }
@@ -140,30 +231,20 @@ struct DecisionCard: View {
                 switch decision.kind {
                 case .question:
                     Button(decision.options.isEmpty ? String(localized: "Answer…") : String(localized: "Other…")) {
-                        chosenOption = nil
-                        composing = ""
+                        open(.answer)
                     }
                     .buttonStyle(.card)
                     .accessibilityIdentifier("answerButton")
+                    Button(String(localized: "Decline…")) { open(.decline) }
+                        .buttonStyle(.card)
+                        .accessibilityIdentifier("declineButton")
                 case .result:
                     Button("Accept") { Task { await model.review(decision, .accepted) } }
                         .buttonStyle(.card)
                         .accessibilityIdentifier("acceptButton")
-                    Button("Return…") {
-                        chosenOption = nil
-                        composing = ""
-                    }
-                    .buttonStyle(.card)
-                    .accessibilityIdentifier("returnButton")
-                    Spacer(minLength: 0)
-                    Menu {
-                        Button("Withdraw", role: .destructive) { Task { await model.review(decision, .withdrawn) } }
-                    } label: {
-                        Image(systemName: "ellipsis")
-                            .frame(width: 20)
-                    }
-                    .buttonStyle(.card)
-                    .accessibilityLabel(String(localized: "More"))
+                    Button("Return…") { open(.returnNote) }
+                        .buttonStyle(.card)
+                        .accessibilityIdentifier("returnButton")
                 case .waiting:
                     EmptyView()
                 }
@@ -171,60 +252,57 @@ struct DecisionCard: View {
         }
     }
 
-    private var composer: some View {
-        let text = Binding(get: { composing ?? "" }, set: { composing = $0 })
-        let empty = (composing ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    private func composerView(_ kind: Composer) -> some View {
+        let empty = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let placeholder = switch kind {
+        case .answer: String(localized: "Your answer")
+        case .decline: String(localized: "Reason (optional)")
+        case .returnNote, .accept: String(localized: "Note for the asker (optional)")
+        }
         return VStack(alignment: .leading, spacing: 8) {
-            if let chosenOption, !decision.isQuestion {
+            if kind == .accept, let chosenOption {
                 Label(String(localized: "Accept with: \(chosenOption)"), systemImage: "checkmark.circle")
                     .font(TendType.body)
+                    .accessibilityIdentifier("chosenOption")
             }
-            TextField(
-                decision.isQuestion ? String(localized: "Your answer") : String(localized: "Note for the asker"),
-                text: text,
-                axis: .vertical
-            )
-            .font(TendType.body)
-            .lineLimit(1...6)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(TendSurface.inputBackground, in: RoundedRectangle(cornerRadius: TendSurface.controlRadius, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: TendSurface.controlRadius, style: .continuous)
-                    .strokeBorder(TendSurface.inputBorder, lineWidth: 1)
-            )
-            .accessibilityIdentifier("composer")
+            TextField(placeholder, text: $text, axis: .vertical)
+                .font(TendType.body)
+                .lineLimit(1...6)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(TendSurface.inputBackground, in: RoundedRectangle(cornerRadius: TendSurface.controlRadius, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: TendSurface.controlRadius, style: .continuous)
+                        .strokeBorder(TendSurface.inputBorder, lineWidth: 1)
+                )
+                .accessibilityIdentifier("composer")
             HStack(spacing: 8) {
-                Button("Cancel") {
-                    composing = nil
-                    chosenOption = nil
-                }
-                .buttonStyle(.card)
+                Button("Cancel") { close() }
+                    .buttonStyle(.card)
+                    .accessibilityIdentifier("cancelComposer")
                 Spacer(minLength: 0)
-                switch decision.kind {
-                case .question:
-                    Button("Decline") { submit { await model.answer(decision, text: text.wrappedValue, declined: true) } }
-                        .buttonStyle(.card)
-                        .disabled(empty)
-                        .accessibilityIdentifier("declineButton")
-                    Button("Send") { submit { await model.answer(decision, text: text.wrappedValue) } }
+                switch kind {
+                case .answer:
+                    Button("Send") { submit { await model.answer(decision, text: text) } }
                         .buttonStyle(.cardPrimary)
                         .disabled(empty)
                         .accessibilityIdentifier("sendButton")
-                case .result:
-                    if chosenOption == nil {
-                        Button("Return") { submit { await model.review(decision, .returned, note: text.wrappedValue) } }
-                            .buttonStyle(.card)
-                            .disabled(empty)
-                            .accessibilityIdentifier("confirmReturn")
-                    }
+                case .decline:
+                    // An empty reason is sent empty: tendd gives the asker
+                    // its standard "declined without an answer" text.
+                    Button("Decline") { submit { await model.answer(decision, text: empty ? "" : text, declined: true) } }
+                        .buttonStyle(.cardPrimary)
+                        .accessibilityIdentifier("confirmDecline")
+                case .returnNote:
+                    Button("Return") { submit { await model.review(decision, .returned, note: empty ? nil : text) } }
+                        .buttonStyle(.cardPrimary)
+                        .accessibilityIdentifier("confirmReturn")
+                case .accept:
                     Button("Accept") {
-                        submit { await model.review(decision, .accepted, note: empty ? nil : text.wrappedValue, option: chosenOption) }
+                        submit { await model.review(decision, .accepted, note: empty ? nil : text, option: chosenOption) }
                     }
                     .buttonStyle(.cardPrimary)
                     .accessibilityIdentifier("confirmAccept")
-                case .waiting:
-                    EmptyView()
                 }
             }
         }
@@ -232,10 +310,7 @@ struct DecisionCard: View {
 
     private func submit(_ send: @escaping () async -> Bool) {
         Task {
-            if await send() {
-                composing = nil
-                chosenOption = nil
-            }
+            if await send() { close() }
         }
     }
 }
