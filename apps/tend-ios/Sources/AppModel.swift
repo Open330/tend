@@ -1039,6 +1039,44 @@ final class AppModel {
         }
     }
 
+    // MARK: Looks Good
+
+    /// Looks Good is offered on a finished unit not yet set aside, with
+    /// the key of the result shown, on a device that reads the board.
+    func canMarkReviewed(_ unit: BoardUnit) -> Bool {
+        readsBoard && unit.lane == .finished && !unit.reviewed && unit.reviewKey != nil
+    }
+
+    /// The busy and failure key of a unit's Looks Good.
+    static func reviewSlot(_ unit: BoardUnit) -> String { "unit/" + unit.id }
+
+    /// Looks Good: set this result aside until it changes again. On
+    /// success the board is read again and the unit folds under "Show N
+    /// reviewed". When it changed since it was shown, that is said and the
+    /// board is read again; on any other failure nothing is marked.
+    func markReviewed(_ unit: BoardUnit) async -> Bool {
+        guard canMarkReviewed(unit), let key = unit.reviewKey, let client else { return false }
+        let slot = Self.reviewSlot(unit)
+        guard !busy.contains(slot) else { return false }
+        let mine = session
+        busy.insert(slot)
+        failures[slot] = nil
+        defer { busy.remove(slot) }
+        do {
+            try await client.markReviewed(id: unit.id, reviewKey: key)
+            guard session == mine else { return false }
+            await refresh()
+            return true
+        } catch {
+            guard session == mine else { return false }
+            let message = handle(error, session: mine)
+            guard session == mine else { return false }
+            failures[slot] = message
+            if case DashboardError.resultChanged = error { await refresh() }
+            return false
+        }
+    }
+
     /// Keep: back in Your turn until its asker is seen again and gone again.
     func keep(_ decision: PendingDecision) async -> Bool {
         guard case .question(let entry) = decision.kind, let unanswerable = entry.unanswerable else { return false }

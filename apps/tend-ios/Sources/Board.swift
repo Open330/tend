@@ -169,9 +169,13 @@ struct BoardUnit: Decodable, Hashable, Sendable, Identifiable {
     let recent: Bool
     let reviewed: Bool
     let requestedByPerson: Bool
+    /// The result on screen, for Looks Good (finished units only): tendd
+    /// refuses a mark whose key no longer names the unit's result.
+    let reviewKey: String?
 
     enum CodingKeys: String, CodingKey {
         case id, lane, title, headline, stages, repo, agents, helpers, focus, since, recent, reviewed
+        case reviewKey = "review_key"
         case hostAliases = "host_aliases"
         case agentKinds = "agent_kinds"
         case shownTime = "shown_time"
@@ -217,6 +221,7 @@ struct BoardUnit: Decodable, Hashable, Sendable, Identifiable {
         recent = flag(.recent, true)
         reviewed = flag(.reviewed)
         requestedByPerson = flag(.requestedByPerson)
+        reviewKey = ((try? values.decodeIfPresent(String.self, forKey: .reviewKey)) ?? nil).flatMap { $0.isEmpty ? nil : $0 }
     }
 
     /// The title in words; a key this app does not know falls back to the

@@ -47,15 +47,66 @@ struct UnitLink: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        Group {
-            if unit.agents.count == 1, unit.helpers.isEmpty, unit.stages.count <= 1,
-               let agent = model.laneAgent(unit.agents[0]) {
-                NavigationLink(value: agent) { WorkCard(unit: unit) }
-            } else {
-                NavigationLink(value: unit) { WorkCard(unit: unit) }
+        VStack(alignment: .trailing, spacing: 6) {
+            Group {
+                if unit.agents.count == 1, unit.helpers.isEmpty, unit.stages.count <= 1,
+                   let agent = model.laneAgent(unit.agents[0]) {
+                    NavigationLink(value: agent) { WorkCard(unit: unit) }
+                } else {
+                    NavigationLink(value: unit) { WorkCard(unit: unit) }
+                }
+            }
+            .buttonStyle(.plain)
+            LooksGoodButton(unit: unit)
+        }
+    }
+}
+
+/// Looks Good on a finished unit (the Mac's and the web's): sets the
+/// result aside until it changes again. Shown only where it can be
+/// recorded: a device that reads the board, a finished unit not yet set
+/// aside, with the key of the result shown.
+struct LooksGoodButton: View {
+    let unit: BoardUnit
+    var prominent = false
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        if model.canMarkReviewed(unit) {
+            let slot = AppModel.reviewSlot(unit)
+            let busy = model.busy.contains(slot)
+            VStack(alignment: .trailing, spacing: 4) {
+                Group {
+                    if prominent {
+                        button(busy).buttonStyle(.borderedProminent)
+                    } else {
+                        button(busy).buttonStyle(.bordered).font(TendType.meta.weight(.medium))
+                    }
+                }
+                .disabled(busy)
+                .accessibilityHint(String(localized: "Set this aside until it changes again"))
+                .accessibilityIdentifier("looksGoodButton")
+                if let failure = model.failures[slot] {
+                    Label(failure, systemImage: "exclamationmark.circle")
+                        .font(TendType.meta)
+                        .foregroundStyle(TendPalette.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("looksGoodProblem")
+                }
             }
         }
-        .buttonStyle(.plain)
+    }
+
+    private func button(_ busy: Bool) -> some View {
+        Button {
+            Task { await model.markReviewed(unit) }
+        } label: {
+            HStack(spacing: 6) {
+                if busy { ProgressView().controlSize(.small) }
+                Label(String(localized: "Looks Good"), systemImage: "checkmark")
+            }
+        }
+        .help(String(localized: "Set this aside until it changes again"))
     }
 }
 
@@ -209,6 +260,10 @@ struct WorkDetailView: View {
                                 .font(TendType.meta).monospacedDigit().foregroundStyle(TendInk.tertiary)
                         }
                     }
+                }
+                if model.canMarkReviewed(u) {
+                    LooksGoodButton(unit: u, prominent: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 if let headline = u.headlineText {
                     InsetBox {
