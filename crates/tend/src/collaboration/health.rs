@@ -109,6 +109,118 @@ pub struct WorkerDeliveryOutcome {
     pub slow_claim_early_evidence: usize,
     pub slow_claim_late_evidence: usize,
     pub slow_claim_no_evidence: usize,
+    #[serde(default, skip_serializing_if = "WorkerDeliveryTimings::is_empty")]
+    pub timings: WorkerDeliveryTimings,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkerDeliveryTimings {
+    /// Counts and percentiles are per stage because recording coverage differs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_to_evidence: Option<DeliveryPercentiles>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_to_provider_prompt: Option<DeliveryPercentiles>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_to_claim: Option<DeliveryPercentiles>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claim_to_reply: Option<DeliveryPercentiles>,
+}
+
+impl WorkerDeliveryTimings {
+    fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeliveryPercentiles {
+    pub samples: usize,
+    pub p50_ms: u64,
+    pub p95_ms: u64,
+}
+
+#[derive(Default)]
+struct WorkerTimingSamples {
+    evidence: Vec<u64>,
+    provider: Vec<u64>,
+    claim: Vec<u64>,
+    reply: Vec<u64>,
+}
+
+impl WorkerTimingSamples {
+    fn record(&mut self, request: &CollaborationRequest, now: OffsetDateTime) {
+        let start = request.created_at;
+        let claim = request.claimed_at;
+        collect_duration(
+            &mut self.evidence,
+            start,
+            first_delivery_evidence(request, now),
+        );
+        collect_duration(
+            &mut self.provider,
+            start,
+            request.wake_prompt_observed_at.filter(|at| *at <= now),
+        );
+        collect_duration(&mut self.claim, start, claim.filter(|at| *at <= now));
+        if let Some(claim) = claim.filter(|at| start <= *at && *at <= now) {
+            collect_duration(
+                &mut self.reply,
+                claim,
+                request.reply.as_ref().map(|r| r.at).filter(|at| *at <= now),
+            );
+        }
+    }
+
+    fn summarize(self) -> WorkerDeliveryTimings {
+        WorkerDeliveryTimings {
+            created_to_evidence: percentiles(self.evidence),
+            created_to_provider_prompt: percentiles(self.provider),
+            created_to_claim: percentiles(self.claim),
+            claim_to_reply: percentiles(self.reply),
+        }
+    }
+}
+
+fn collect_duration(samples: &mut Vec<u64>, start: OffsetDateTime, end: Option<OffsetDateTime>) {
+    if let Some(ms) = end
+        .filter(|end| start <= *end)
+        .and_then(|end| u64::try_from((end - start).whole_milliseconds()).ok())
+    {
+        samples.push(ms);
+    }
+}
+
+fn percentiles(mut samples: Vec<u64>) -> Option<DeliveryPercentiles> {
+    if samples.is_empty() {
+        return None;
+    }
+    samples.sort_unstable();
+    let count = samples.len();
+    Some(DeliveryPercentiles {
+        samples: count,
+        p50_ms: samples[count.div_ceil(2) - 1],
+        p95_ms: samples[count - (count / 20) - 1],
+    })
+}
+
+fn first_delivery_evidence(
+    request: &CollaborationRequest,
+    cutoff: OffsetDateTime,
+) -> Option<OffsetDateTime> {
+    let offer = request.turn_offer.as_ref();
+    // These indicate Tend attempted transport, including when a provider
+    // prompt observation is the only retained evidence.
+    [
+        request.notified_at,
+        request.wake_prompt_observed_at,
+        offer.and_then(|offer| offer.first_offer_at),
+        offer.and_then(|offer| offer.last_stop_offer_at),
+        offer.and_then(|offer| offer.last_prompt_offer_at),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|at| request.created_at <= *at && *at <= cutoff)
+    .min()
 }
 
 impl WorkerDeliveryOutcome {
@@ -124,18 +236,7 @@ impl WorkerDeliveryOutcome {
         if claimed_at - request.created_at <= THRESHOLD {
             return;
         }
-        // Hook fields keep the latest offer per event. These are retained
-        // transport markers, not proof of a provider turn or a first attempt.
-        let offer = request.turn_offer.as_ref();
-        let earliest = [
-            request.notified_at,
-            offer.and_then(|offer| offer.last_stop_offer_at),
-            offer.and_then(|offer| offer.last_prompt_offer_at),
-        ]
-        .into_iter()
-        .flatten()
-        .filter(|at| request.created_at <= *at && *at <= claimed_at)
-        .min();
+        let earliest = first_delivery_evidence(request, claimed_at);
         match earliest {
             Some(at) if at - request.created_at <= THRESHOLD => self.slow_claim_early_evidence += 1,
             Some(_) => self.slow_claim_late_evidence += 1,
@@ -160,6 +261,9 @@ fn weekly_outcomes<'a>(
             ..WeeklyOutcome::default()
         })
         .collect();
+    let mut timings: Vec<WorkerTimingSamples> = (0..OUTCOME_WEEKS)
+        .map(|_| WorkerTimingSamples::default())
+        .collect();
     for request in requests {
         if !request.expects_reply
             || request.kind == RequestKind::Notice
@@ -181,6 +285,7 @@ fn weekly_outcomes<'a>(
             continue;
         };
         if request.to.launch_purpose == LaunchPurpose::Worker {
+            timings[week].record(request, now);
             bucket
                 .worker_delivery
                 .get_or_insert_with(WorkerDeliveryOutcome::default)
@@ -205,6 +310,11 @@ fn weekly_outcomes<'a>(
             Some("wake_unsubmitted") => bucket.wake_unsubmitted += 1,
             Some(_) => bucket.other_interruptions += 1,
             None => {}
+        }
+    }
+    for (week, timings) in weeks.iter_mut().zip(timings) {
+        if let Some(worker) = &mut week.worker_delivery {
+            worker.timings = timings.summarize();
         }
     }
     weeks
@@ -319,7 +429,16 @@ mod tests {
         request.turn_offer = None;
         rows.push(request.clone()); // Only late evidence.
         request.notified_at = Some(after(11));
-        rows.push(request.clone()); // Post-claim evidence does not count.
+        request.wake_prompt_observed_at = Some(after(11));
+        request.reply = Some(super::super::CollaborationReply {
+            status: RequestStatus::Completed,
+            body: String::new(),
+            report: None,
+            operator_approval: None,
+            artifacts: Vec::new(),
+            at: after(12),
+        });
+        rows.push(request.clone()); // Post-claim evidence contributes to timing only.
         request.to.launch_purpose = LaunchPurpose::Primary;
         rows.push(request); // Primary is excluded from worker diagnostics.
         let weeks = weekly_outcomes(rows.iter(), after(12));
@@ -331,6 +450,28 @@ mod tests {
                 slow_claim_early_evidence: 1,
                 slow_claim_late_evidence: 1,
                 slow_claim_no_evidence: 1,
+                timings: WorkerDeliveryTimings {
+                    created_to_evidence: Some(DeliveryPercentiles {
+                        samples: 3,
+                        p50_ms: 480_000,
+                        p95_ms: 660_000,
+                    }),
+                    created_to_provider_prompt: Some(DeliveryPercentiles {
+                        samples: 1,
+                        p50_ms: 660_000,
+                        p95_ms: 660_000,
+                    }),
+                    created_to_claim: Some(DeliveryPercentiles {
+                        samples: 4,
+                        p50_ms: 600_000,
+                        p95_ms: 600_000,
+                    }),
+                    claim_to_reply: Some(DeliveryPercentiles {
+                        samples: 1,
+                        p50_ms: 120_000,
+                        p95_ms: 120_000,
+                    }),
+                },
             })
         );
     }

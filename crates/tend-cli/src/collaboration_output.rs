@@ -144,7 +144,9 @@ pub(crate) fn delivery_diagnostics(request: &CollaborationRequest) -> Value {
         ("wake_prompt_observed", "The provider reported the wake prompt. Wait for the recipient to claim this request ID.")
     } else if request.notified_at.is_some()
         || request.turn_offer.as_ref().is_some_and(|offer| {
-            offer.last_stop_offer_at.is_some() || offer.last_prompt_offer_at.is_some()
+            offer.first_offer_at.is_some()
+                || offer.last_stop_offer_at.is_some()
+                || offer.last_prompt_offer_at.is_some()
         })
     {
         (
@@ -168,6 +170,10 @@ pub(crate) fn delivery_diagnostics(request: &CollaborationRequest) -> Value {
                 .map(|retry| retry.attempt_started_at),
         ),
         ("wake_notified_at", request.notified_at),
+        (
+            "first_hook_offer_at",
+            offer.and_then(|offer| offer.first_offer_at),
+        ),
         (
             "latest_prompt_hook_offer_at",
             offer.and_then(|offer| offer.last_prompt_offer_at),

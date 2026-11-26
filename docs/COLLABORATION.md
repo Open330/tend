@@ -64,9 +64,11 @@ tendd and run `tend doctor`; existing eligible workers can still be reused.
 For Worker requests that took over five minutes to claim, `tend doctor`
 groups the earliest retained wake or hook-offer marker as within five minutes,
 later, or absent before claim. It also counts requests still queued over five
-minutes. A marker records a transport action, and later hook offers can replace
-older timestamps, so the report cannot establish when a model first saw the
-request or whether a missing marker was a delivery failure.
+minutes. Each rolling week shows p50, p95 and the sample count for send to
+first recorded wake or offer, send to matching provider prompt, send to claim,
+and claim to reply. The first hook-offer timestamp survives retries for new
+records. Older rows contribute the timestamps they still retain. A transport
+marker alone cannot establish when the model first saw a request.
 
 For one request, `tend msg list --request-id ID` shows its current stage,
 the next action, and any linked recovery request. The compact JSON and wait

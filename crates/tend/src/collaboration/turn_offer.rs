@@ -67,6 +67,13 @@ pub enum TurnBoundaryEvent {
 /// backoff. Attempts prove nothing about delivery.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TurnOffer {
+    /// Earliest retained offer. The per-event fields below still drive backoff.
+    #[serde(
+        default,
+        with = "time::serde::rfc3339::option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub first_offer_at: Option<OffsetDateTime>,
     #[serde(default)]
     pub stop_offers: u32,
     #[serde(
@@ -189,6 +196,17 @@ impl TurnOffer {
     }
 
     fn record(&mut self, event: TurnBoundaryEvent, now: OffsetDateTime) {
+        if !matches!(event, TurnBoundaryEvent::SessionStart) {
+            self.first_offer_at = [
+                self.first_offer_at,
+                self.last_stop_offer_at,
+                self.last_prompt_offer_at,
+                Some(now),
+            ]
+            .into_iter()
+            .flatten()
+            .min();
+        }
         match event {
             TurnBoundaryEvent::Stop => {
                 self.stop_offers += 1;
@@ -646,6 +664,7 @@ mod tests {
         let mut requests = store.requests.write().await;
         for request in requests.values_mut() {
             if let Some(offer) = request.turn_offer.as_mut() {
+                offer.first_offer_at = offer.first_offer_at.map(|at| at - by);
                 offer.last_stop_offer_at = offer.last_stop_offer_at.map(|at| at - by);
                 offer.last_prompt_offer_at = offer.last_prompt_offer_at.map(|at| at - by);
                 offer.last_reply_reminder_at = offer.last_reply_reminder_at.map(|at| at - by);

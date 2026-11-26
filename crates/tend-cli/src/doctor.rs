@@ -847,6 +847,32 @@ fn health_verdicts(health: &tend::collaboration::CollaborationHealth) -> Vec<Che
                 worker.slow_claim_early_evidence, worker.slow_claim_late_evidence,
                 worker.slow_claim_no_evidence,
             )));
+            let timings = &worker.timings;
+            let stages: Vec<_> = [
+                ("send to recorded wake/offer", &timings.created_to_evidence),
+                (
+                    "send to provider prompt",
+                    &timings.created_to_provider_prompt,
+                ),
+                ("send to claim", &timings.created_to_claim),
+                ("claim to reply", &timings.claim_to_reply),
+            ]
+            .into_iter()
+            .filter_map(|(label, stage)| {
+                stage.as_ref().map(|stage| {
+                    format!(
+                        "{} {}/{} ms (n={})",
+                        label, stage.p50_ms, stage.p95_ms, stage.samples
+                    )
+                })
+            })
+            .collect();
+            if !stages.is_empty() {
+                results.push(CheckResult::Ok(format!(
+                    "worker latency p50/p95: {}",
+                    stages.join(", ")
+                )));
+            }
         }
     }
     results
