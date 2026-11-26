@@ -838,17 +838,7 @@ struct FleetLaneColumn: View {
                             }
                         }
                     }
-                    if emptyCount > 0 {
-                        Button(showsEmpty
-                            ? String(localized: "Hide empty sessions")
-                            : String(localized: "\(emptyCount) empty sessions")) {
-                            showsEmpty.toggle()
-                        }
-                        .buttonStyle(.tendGhost)
-                        .controlSize(.small)
-                        .padding(.top, 2)
-                        .help("Agents that were opened but never given a task")
-                    }
+                    // The rows in fold order, as on the web and iOS.
                     if probableCount > 0 {
                         Button(showsProbable
                             ? String(localized: "Hide possible helpers")
@@ -859,6 +849,17 @@ struct FleetLaneColumn: View {
                         .controlSize(.small)
                         .padding(.top, 2)
                         .help("Sessions whose prompt hands over a tend request; who asked is not confirmed")
+                    }
+                    if emptyCount > 0 {
+                        Button(showsEmpty
+                            ? String(localized: "Hide empty sessions")
+                            : String(localized: "\(emptyCount) empty sessions")) {
+                            showsEmpty.toggle()
+                        }
+                        .buttonStyle(.tendGhost)
+                        .controlSize(.small)
+                        .padding(.top, 2)
+                        .help("Agents that were opened but never given a task")
                     }
                     if olderCount > 0 {
                         Button(showsOlder ? String(localized: "Hide older") : String(localized: "\(olderCount) older")) {

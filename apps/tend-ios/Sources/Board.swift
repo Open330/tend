@@ -604,16 +604,24 @@ struct DeviceHome: Decodable, Hashable, Sendable {
         guard !marks.isEmpty else { return self }
         var copy = self
         var moved = 0
+        // The row each held unit leaves, in FoldedLane's precedence.
+        var (shown, older, stale) = (0, 0, 0)
         copy.lanes[.finished] = (lanes[.finished] ?? []).map { group in
             BoardGroup(project: group.project, system: group.system, items: group.items.map { item in
                 guard case .unit(var unit) = item, !unit.reviewed, let key = unit.reviewKey, marks[unit.id] == key else { return item }
                 unit.reviewed = true
                 moved += 1
+                if !unit.probableHelper, !unit.emptySession {
+                    if unit.ageGroup == "stale" { stale += 1 } else if !unit.recent { older += 1 } else { shown += 1 }
+                }
                 return .unit(unit)
             })
         }
         if moved > 0, var counts = copy.counts {
             counts.finished = counts.finished.map { max(0, $0 - moved) }
+            counts.finishedShown = counts.finishedShown.map { max(0, $0 - shown) }
+            counts.finishedOlder = counts.finishedOlder.map { max(0, $0 - older) }
+            counts.finishedStale = counts.finishedStale.map { max(0, $0 - stale) }
             counts.reviewed = counts.reviewed.map { $0 + moved }
             copy.counts = counts
         }

@@ -921,6 +921,11 @@ final class AppModel {
     var visibleFleet: FleetSnapshot? { operates ? fleet : nil }
     var inProgress: [LaneAgent] { visibleFleet.map(FleetLanes.inProgress) ?? [] }
     var finishedAgents: [LaneAgent] { visibleFleet.map { FleetLanes.finished($0) } ?? [] }
+    /// Finished's folds without tendd's board: idle a day to a week, and
+    /// over a week.
+    var foldedFinishedAgents: (older: [LaneAgent], stale: [LaneAgent]) {
+        visibleFleet.map { FleetLanes.folded($0) } ?? ([], [])
+    }
 
     /// Home's lanes: the backlog first when there is planned Work.
     var lanes: [Lane] {

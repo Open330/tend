@@ -239,6 +239,8 @@ struct LaneContent: View {
     var showsSubtitle = true
     @Environment(AppModel.self) private var model
     @State private var showsOlder = false
+    @State private var showsOlderAgents = false
+    @State private var showsStaleAgents = false
 
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 10) {
@@ -417,6 +419,26 @@ struct LaneContent: View {
 
     // MARK: Finished
 
+    /// One of Finished's agent folds: a button with its count, then the
+    /// agents once opened.
+    @ViewBuilder
+    private func agentFold(_ agents: [LaneAgent], shown: Binding<Bool>, show: String, hide: String, id: String) -> some View {
+        if !agents.isEmpty {
+            Button(shown.wrappedValue ? hide : show) {
+                withAnimation { shown.wrappedValue.toggle() }
+            }
+            .font(TendType.meta.weight(.medium))
+            .buttonStyle(.borderless)
+            .accessibilityIdentifier(id)
+            if shown.wrappedValue {
+                ForEach(agents) { agent in
+                    NavigationLink(value: agent) { AgentCard(agent: agent, lane: .finished) }
+                        .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
 
     @ViewBuilder
     private var finished: some View {
@@ -424,11 +446,12 @@ struct LaneContent: View {
         let recent = model.recentPast
         let older = decided.count - recent.count
         let agents = model.finishedAgents
+        let folded = model.foldedFinishedAgents
         let items: [FinishedItem] = (recent.map(FinishedItem.decided) + agents.map(FinishedItem.agent))
             .sorted { ($0.at ?? .distantPast) > ($1.at ?? .distantPast) }
         if !model.historyLoaded {
             ProgressView().frame(maxWidth: .infinity).padding(.top, 32)
-        } else if items.isEmpty, older == 0 {
+        } else if items.isEmpty, older == 0, folded.older.isEmpty, folded.stale.isEmpty {
             Empty(text: lane.empty)
         }
         ForEach(model.history.filter { !$0.history.isComplete || !$0.unavailable.isEmpty }) { section in
@@ -458,8 +481,12 @@ struct LaneContent: View {
                 }
             }
         }
+        // The agents' folds, as tendd's board folds its units.
+        agentFold(folded.older, shown: $showsOlderAgents, show: String(localized: "\(folded.older.count) older"), hide: String(localized: "Hide older"), id: "foldOlder")
+        agentFold(folded.stale, shown: $showsStaleAgents, show: String(localized: "\(folded.stale.count) idle over a week"), hide: String(localized: "Hide idle over a week"), id: "foldStale")
+        // Decided history, apart from the agents' rows.
         if older > 0 {
-            Button(showsOlder ? String(localized: "Hide older") : String(localized: "\(older) older")) {
+            Button(showsOlder ? String(localized: "Hide older") : String(localized: "\(older) older decided")) {
                 withAnimation { showsOlder.toggle() }
             }
             .font(TendType.meta.weight(.medium))

@@ -62,7 +62,7 @@ final class BoardTests: XCTestCase {
             #"{"kind": "unit", "id": "\#(id)", "lane": "\#(lane)", "title": "\#(id)", \#(flags)}"#
         }
         let lanes = #""lanes": {"needs_you": {"groups": [{"items": [\#(unit("w", "needs_you", #""recent": true"#))]}]}, "finished": {"groups": [{"items": [\#(unit("a", "finished", #""reviewed": true"#)), \#(unit("b", "finished", #""recent": true"#))]}]}}"#
-        let counts = #""counts": {"your_turn": 5, "actionable": 1, "cant_answer": 3, "in_progress": 7, "finished": 4, "reviewed": 6, "coverage": "partial"}"#
+        let counts = #""counts": {"your_turn": 5, "actionable": 1, "cant_answer": 3, "in_progress": 7, "finished": 4, "finished_shown": 4, "reviewed": 6, "coverage": "partial"}"#
         let b = try board(#"{\#(lanes), \#(counts), "reviewed_marks": true, "decision_hosts": [{"alias": "a", "local": true}]}"#)
         XCTAssertEqual(Lane.board.map(b.count), [5, 7, 4])
         XCTAssertEqual(b.cantAnswerCount, 3)
@@ -73,8 +73,10 @@ final class BoardTests: XCTestCase {
         XCTAssertFalse(unmarked.reviewedMarks)
         XCTAssertEqual(unmarked.reviewedCount(.finished), 1)
         // A counts object this app cannot read in part: those fields fall back.
+        // Finished's header is `finished_shown`; without it, the main list
+        // counted here.
         let odd = try board(#"{\#(lanes), "counts": {"your_turn": "many", "finished": 9}, "decision_hosts": [{"alias": "a", "local": true}]}"#)
-        XCTAssertEqual(Lane.board.map(odd.count), [1, 0, 9])
+        XCTAssertEqual(Lane.board.map(odd.count), [1, 0, 1])
         XCTAssertFalse(odd.yourTurnMayBeMore)
         // Not an object at all: the board still reads, counted here.
         let older = try board(#"{\#(lanes), "counts": [1, 2], "decision_hosts": [{"alias": "a", "local": true}]}"#)
@@ -82,9 +84,34 @@ final class BoardTests: XCTestCase {
         XCTAssertEqual(Lane.board.map(older.count), [1, 0, 1])
     }
 
+    /// Finished folds by tendd's `age_group`; a held Looks Good mark moves
+    /// a unit out of the row it was counted in.
+    func testFinishedFoldsByAgeGroupAndAHeldMarkLeavesItsRow() throws {
+        let unit = { (id: String, flags: String) in
+            #"{"kind": "unit", "id": "\#(id)", "lane": "finished", "title": "\#(id)", "review_key": "k-\#(id)", \#(flags)}"#
+        }
+        let items = [
+            unit("now", #""recent": true, "age_group": "recent""#),
+            unit("days", #""recent": false, "age_group": "older""#),
+            unit("weeks", #""recent": false, "age_group": "stale""#),
+        ].joined(separator: ",")
+        let counts = #""counts": {"finished": 3, "finished_shown": 1, "finished_older": 1, "finished_stale": 1, "reviewed": 0}"#
+        let b = try board(#"{"lanes": {"finished": {"groups": [{"items": [\#(items)]}]}}, \#(counts), "reviewed_marks": true}"#)
+        let folded = FoldedLane(b, lane: .finished)
+        XCTAssertEqual(folded.groups.flatMap(\.items).map(\.id), ["u:now"])
+        XCTAssertEqual(folded.older.map(\.id), ["days"])
+        XCTAssertEqual(folded.stale.map(\.id), ["weeks"])
+        XCTAssertEqual(b.count(.finished), 1, "the header counts the main list")
+        let held = b.holding(["now": "k-now", "weeks": "k-weeks"])
+        XCTAssertEqual(held.count(.finished), 0)
+        XCTAssertEqual(held.counts?.finishedStale, 0)
+        XCTAssertEqual(held.counts?.finishedOlder, 1)
+        XCTAssertEqual(held.counts?.reviewed, 2)
+    }
+
     /// An older tendd sends no counts: the same rules, counted here. Your
-    /// turn is every listed card; In progress and Finished count their
-    /// folded units, Finished not the reviewed ones.
+    /// turn is every listed card; In progress counts its folded units;
+    /// Finished counts its main list only (not older, not reviewed).
     func testWithoutCountsTheLanesAreCountedByTheSameRules() throws {
         let unit = { (id: String, lane: String, flags: String) in
             #"{"kind": "unit", "id": "\#(id)", "lane": "\#(lane)", "title": "\#(id)", \#(flags)}"#
@@ -103,7 +130,7 @@ final class BoardTests: XCTestCase {
         let question = #"{"kind": "human_request", "request_id": "r1", "body": "Ship?", "from_session_id": "s1", "from_pane": "%1", "created_at": "2026-11-16T09:59:14Z", "host": "a", "actionable": false}"#
         let b = try board(#"{"decision_hosts": [{"alias": "a", "local": true, "truncated": true}], "lanes": {"needs_you": {"groups": [{"items": [\#(question), \#(unit("w", "needs_you", #""recent": true"#))]}]}, "running": {"groups": [{"items": [\#(running)]}]}, "finished": {"groups": [{"items": [\#(finished)]}]}}}"#)
         XCTAssertNil(b.counts)
-        XCTAssertEqual(Lane.board.map(b.count), [2, 4, 2])
+        XCTAssertEqual(Lane.board.map(b.count), [2, 4, 1])
         XCTAssertEqual(b.reviewedCount(.finished), 1)
         XCTAssertTrue(b.yourTurnMayBeMore, "a cut queue: maybe more")
     }

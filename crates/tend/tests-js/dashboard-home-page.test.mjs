@@ -293,6 +293,27 @@ test("the daemon's board, when it has one, is what the page draws", async () => 
   await home.refresh();
 });
 
+test("a Finished lane of only folded units is not empty; its header counts the main list", async () => {
+  const stale = (id) => ({ type: "unit", id, lane: "finished", title: `old ${id}`, repo: "tend", headline: "Done.",
+    stages: [{ name: "claude", state: "done" }], shown_time: recent, agents: [], helpers: [], focus: { host: "mba", local: true },
+    host_aliases: ["mba"], agent_kinds: ["claude_code"], recent: false, age_group: "stale" });
+  serverBoard = {
+    hosts: [{ alias: "mba", local: true, state: "online" }],
+    decision_hosts: [{ alias: "mba", local: true, control: true }],
+    lanes: { needs_you: { groups: [] }, running: { groups: [] }, finished: { groups: [{ project: "tend", system: false, items: [stale("a"), stale("b")] }] } },
+    counts: { your_turn: 0, in_progress: 0, finished: 2, finished_shown: 0, finished_older: 0, finished_stale: 2, reviewed: 0, coverage: "complete" },
+  };
+  status.home = 200;
+  await home.refresh();
+  const text = lanes().text;
+  assert.match(text, /2 idle over a week/);
+  assert.doesNotMatch(text, /Nothing finished yet/, "folded units are still there");
+  assert.doesNotMatch(text, /old a/, "folded until opened");
+  status.home = 404;
+  serverBoard = null;
+  await home.refresh();
+});
+
 test("without /api/access (the Windows app), the board alone offers Looks Good and nothing more", async () => {
   serverBoard = {
     hosts: [{ alias: "mba", local: true, state: "online" }],

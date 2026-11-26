@@ -235,6 +235,28 @@ enum FleetLanes {
         }
     }
 
+    /// Idle longer than this, a finished agent folds into "N idle over a
+    /// week" (tendd's STALE_FINISH).
+    static let staleWindow: TimeInterval = 7 * 24 * 3600
+
+    /// The agents half of Finished's folds: idle agents whose last turn is
+    /// past the window, `older` up to a week, `stale` after; newest first.
+    /// Not in Finished's number, which counts its main list.
+    static func folded(_ fleet: FleetSnapshot, now: Date = Date(), window: TimeInterval = finishedWindow) -> (older: [LaneAgent], stale: [LaneAgent]) {
+        var older: [LaneAgent] = []
+        var stale: [LaneAgent] = []
+        for host in fleet.ordered {
+            for agent in host.liveAgents.sorted(by: newestFirst)
+            where agent.state == "idle" && !agent.awaitingReply && (agent.lastResponse != nil || agent.lastPrompt != nil) {
+                guard let at = agent.lastTurn else { continue }
+                let age = now.timeIntervalSince(at)
+                let lane = LaneAgent(agent: agent, host: host.alias, hostIsLocal: host.local)
+                if age > staleWindow { stale.append(lane) } else if age > window { older.append(lane) }
+            }
+        }
+        return (older, stale)
+    }
+
     private static func newestFirst(_ left: FleetAgent, _ right: FleetAgent) -> Bool {
         (left.since ?? .distantPast) > (right.since ?? .distantPast)
     }

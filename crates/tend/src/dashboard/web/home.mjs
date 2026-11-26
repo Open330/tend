@@ -651,7 +651,11 @@ function noteText(note) {
 
 function renderLane(lane, data) {
   const [title, sub, empty] = LANE_WORDS[lane];
-  const section = el("section", `lane ${lane}${data.count ? " has-items" : ""} ${state.layout}`);
+  // Anything to show, folded or not: Finished's count is its main list
+  // only, so a lane of folded units is not empty.
+  const folded = [data.older, data.stale, ...Object.values(data.folds || {})].some((list) => list?.length);
+  const any = Boolean(data.count || data.groups.length || folded);
+  const section = el("section", `lane ${lane}${any ? " has-items" : ""} ${state.layout}`);
   section.setAttribute("aria-label", S[title]);
   const head = el("header", "lane-head");
   const count = laneCountText(lane, data);
@@ -679,7 +683,7 @@ function renderLane(lane, data) {
     for (const unit of group.units) body.append(unitCard(unit));
   }
   // "Nothing needs you" only when every queue was read whole.
-  if (!data.count && !error && !(lane === "needsYou" && state.board?.partial)) body.append(el("div", "lane-empty", S[empty]));
+  if (!any && !error && !(lane === "needsYou" && state.board?.partial)) body.append(el("div", "lane-empty", S[empty]));
   // The group, or only what the last Close all did once it emptied the
   // group: that report stays until the person dismisses it.
   if (data.cantAnswer?.count) body.append(cantAnswerSection(data.cantAnswer));
@@ -698,6 +702,8 @@ function renderLane(lane, data) {
   fold(data.folds?.empty, open.empty, S.foldEmpty, S.hideEmpty, () => (open.empty = !open.empty));
   fold(data.older, open.older, S.olderCount, S.hideOlder, () => (open.older = !open.older));
   fold(data.folds?.stale || data.stale, open.stale, S.staleCount, S.hideStale, () => (open.stale = !open.stale));
+  // Decided history, apart from the work units' rows.
+  fold(data.folds?.olderDecided || data.olderDecided, open.olderDecided, S.olderDecidedCount, S.hideOlderDecided, () => (open.olderDecided = !open.olderDecided));
   if (lane === "finished" && data.folds?.reviewed?.length) {
     body.append(button(S.showReviewed(data.folds.reviewed.length), () => {
       state.folds.reviewed = true;
@@ -1425,6 +1431,7 @@ function findWhere(board, match) {
     for (const group of data.groups) for (const unit of group.units) if (match(unit)) return unit;
     for (const unit of data.older) if (match(unit)) return unit;
     for (const unit of data.stale || []) if (match(unit)) return unit;
+    for (const unit of data.olderDecided || []) if (match(unit)) return unit;
     for (const list of Object.values(data.folds || {})) for (const unit of list) if (match(unit)) return unit;
     for (const unit of data.cantAnswer?.units || []) if (match(unit)) return unit;
   }

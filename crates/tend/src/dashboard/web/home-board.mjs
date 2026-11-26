@@ -492,8 +492,9 @@ export function buildBoard({ decisions = null, history = null, fleet = null, now
     result[lane] = {
       count: counted.length,
       groups: groupByProject(visible.filter((u) => !u.older)),
-      older: visible.filter((u) => u.older && !u.stale),
+      older: visible.filter((u) => u.older && !u.stale && u.type !== "decided"),
       stale: visible.filter((u) => u.stale),
+      olderDecided: visible.filter((u) => u.older && u.type === "decided"),
       notes: notes[lane],
     };
     if (lane === "needsYou") result[lane].cantAnswer = cantAnswerGroup(all, queueHosts, filter);
@@ -669,13 +670,14 @@ export function fromServerBoard(server, { history = null, filter = {}, now = Dat
     // The Mac's folds, outside Your turn: possible helpers, empty
     // sessions, then older than a day; reviewed units hide behind
     // "Show N reviewed".
-    const folds = { helpers: [], empty: [], older: [], stale: [], reviewed: [] };
+    const folds = { helpers: [], empty: [], older: [], stale: [], olderDecided: [], reviewed: [] };
     const shown = [];
     for (const unit of visible) {
       if (lane === "needsYou") shown.push(unit);
       else if (unit.reviewed && !showReviewed) folds.reviewed.push(unit);
       else if (unit.probableHelper) folds.helpers.push(unit);
       else if (unit.emptySession) folds.empty.push(unit);
+      else if (unit.type === "decided" && unit.older) folds.olderDecided.push(unit);
       else if (unit.ageGroup === "stale") folds.stale.push(unit);
       else if (unit.recent === false || unit.older) folds.older.push(unit);
       else shown.push(unit);
@@ -736,6 +738,7 @@ export function reviewQueue(board, scope = "day", now = Date.now()) {
     ...board.lanes.finished.groups.flatMap((g) => g.units),
     ...board.lanes.finished.older,
     ...(board.lanes.finished.stale || []),
+    ...(board.lanes.finished.olderDecided || []),
     ...Object.values(board.lanes.finished.folds || {}).flat(),
   ];
   const seen = new Set();
