@@ -776,14 +776,19 @@ allow_content = false           # default false
 - Every 15 s, while push is on and a phone is registered, tendd reads the
   same queue Your turn shows (500 entries per host) and alerts each phone
   about what is new: at most one alert every 30 s, one per host, saying
-  "Tend: <host> needs you" and how many are new, with the total as the
-  badge, the registration's `channel`, the host, and `ref` (the first 16
+  "Tend: <host> needs you" and how many are new, with Your turn's number
+  as the badge, as that device's own tab says it: Home's count for an
+  `operate` device (counted per host from the same queue read; the
+  queue's until the first board read), the rows of its own 100-row page without
+  questions nobody can answer for a `decide` one, as its tab counts them, each host's part kept while it
+  cannot be read, and the scope read again at send time), the registration's `channel`, the host, and `ref` (the first 16
   bytes of HMAC-SHA256(ref_key, host NUL kind NUL id), hex). The item's
   text (its canonical line, with the asking agent as subtitle, and a
   category with buttons) is sent only when `allow_content` is on and the
   phone registered with `"content": true`. What is there when tendd starts,
-  or when a host is first read, is not announced. When the total falls, a
-  badge-only update follows (at most once a minute, never stored by Apple).
+  or when a host is first read, is not announced. When Your turn's number
+  changes with nothing new to announce, a silent badge-only update follows
+  (at most once a minute, never stored by Apple).
 - Apple's `410`, `BadDeviceToken` and `DeviceTokenNotForTopic` drop the
   registration (only the one the send used) and are audited as
   `push_dropped`; registrations are audited as `push_register` and

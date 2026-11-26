@@ -28,7 +28,7 @@ use crate::home_board::{self, BoardHost};
 /// Tend for Mac reads other hosts' queues with the same limit
 /// (`FleetDecisions.dashboardQueueLimit`), so it never links to an item
 /// this page leaves out.
-const DEFAULT_LIMIT: usize = 100;
+pub(in crate::dashboard) const DEFAULT_LIMIT: usize = 100;
 const MAX_SUMMARY_BYTES: usize = 1024;
 
 #[derive(Debug, Deserialize)]
@@ -87,6 +87,57 @@ pub(in crate::dashboard) async fn board(state: &AppState, limit: usize) -> Value
     let keys = home_board::finished_keys(&home_board::build(&input));
     input.reviewed = home_board::accepted(&state.reviews, keys).await;
     home_board::build(&input)
+}
+
+/// Your turn's number per host, as Home counts it (`counts.your_turn`,
+/// apps/shared/Design/COUNTS.md), from decision sections already read (the
+/// push sender's, each cut to Home's page) and the hosts read now. A
+/// decision counts on its host, a Work unit on its first host; a question
+/// nobody can answer never counts. Reviewed marks do not change it, so
+/// none are looked up.
+pub(in crate::dashboard) async fn your_turn_by_host(
+    state: &AppState,
+    sections: &[Value],
+) -> std::collections::BTreeMap<String, usize> {
+    let sections: Vec<Value> = sections
+        .iter()
+        .map(|section| {
+            let mut section = section.clone();
+            if let Some(items) = section
+                .pointer_mut("/queue/items")
+                .and_then(Value::as_array_mut)
+            {
+                if items.len() > DEFAULT_LIMIT {
+                    items.truncate(DEFAULT_LIMIT);
+                    section["queue"]["truncated"] = json!(true);
+                }
+            }
+            section
+        })
+        .collect();
+    let hosts = board_hosts(state).await;
+    let input = state.home_sources.gather(hosts, sections).await;
+    let board = home_board::build(&input);
+    let mut by_host = std::collections::BTreeMap::new();
+    for group in board
+        .pointer("/lanes/needs_you/groups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        for item in group["items"].as_array().into_iter().flatten() {
+            if item.pointer("/entry/unanswerable").is_some() {
+                continue;
+            }
+            let host = item["host"]
+                .as_str()
+                .or_else(|| item.pointer("/host_aliases/0").and_then(Value::as_str))
+                .unwrap_or("")
+                .to_owned();
+            *by_host.entry(host).or_insert(0) += 1;
+        }
+    }
+    by_host
 }
 
 /// The board for a read: the one built in the last

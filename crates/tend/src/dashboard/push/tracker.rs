@@ -13,9 +13,15 @@
 //!   ones dropped and only counted). At most one alert per device every
 //!   [`ALERT_EVERY`], one per host per send; only Apple's `200` clears what
 //!   an alert announced.
-//! - **Badge.** When the total changes without an alert to carry it, a
-//!   badge-only update, at most once every [`BADGE_EVERY`] and never while
-//!   an alert is pending, until Apple has accepted the current total.
+//! - **Badge.** The app icon shows Your turn's number as that device's own
+//!   tab does (apps/shared/Design/COUNTS.md): Home's count for an
+//!   `operate` device (once read; until then the queue's), the queue's
+//!   rows without questions nobody can answer for a `decide` one. Each
+//!   host's part is its latest readable read, kept while it cannot be read,
+//!   so a host timing out never clears the icon. When it changes without an
+//!   alert to carry it, a silent badge-only update, at most once every
+//!   [`BADGE_EVERY`] and never while an alert is pending, until Apple has
+//!   accepted the current number.
 //! - **Back-off** per device on `429`/`5xx`, doubling from
 //!   [`BACKOFF_FIRST`] to [`BACKOFF_MAX`], and for the whole sender on
 //!   `TooManyProviderTokenUpdates`.
@@ -50,6 +56,8 @@ pub(super) struct HostRead {
     pub readable: bool,
     pub complete: bool,
     pub entries: Vec<Entry>,
+    /// Entries in the page a decide-only device reads (its tab's number).
+    pub page: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -71,6 +79,8 @@ pub(super) struct Target {
     /// The row's `content` (the host's `allow_content` is passed to
     /// [`Tracker::plan`]).
     pub content: bool,
+    /// The device may operate: its badge is Home's Your turn.
+    pub operate: bool,
 }
 
 /// One send the tracker wants.
@@ -153,6 +163,8 @@ struct HostState {
     complete: bool,
     /// Entries in the latest readable read (kept while unreadable).
     present: usize,
+    /// Of those, the ones in a decide-only device's page (kept likewise).
+    page: usize,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -196,8 +208,8 @@ struct DeviceState {
     last_alert: Option<Duration>,
     last_badge: Option<Duration>,
     /// The last badge Apple accepted. `None` until the first plan, which
-    /// takes the current total: a phone registers when the app opens, and
-    /// the app sets its badge from its own count then.
+    /// takes the current number: a phone registers when the app opens, and
+    /// the app sets its icon from the same number (Your turn) then.
     accepted_badge: Option<usize>,
     backoff: Backoff,
 }
@@ -225,6 +237,12 @@ pub(super) struct Tracker {
     hosts: BTreeMap<String, HostState>,
     devices: BTreeMap<String, DeviceState>,
     backoff: Backoff,
+    /// Home's Your turn per host, each from that host's latest readable
+    /// read; `None` until the first board read.
+    home_turn: Option<BTreeMap<String, usize>>,
+    /// The hosts the latest queue read listed: a host removed from the
+    /// fleet no longer counts toward a badge.
+    roster: std::collections::BTreeSet<String>,
 }
 
 impl Tracker {
@@ -255,6 +273,7 @@ impl Tracker {
     /// Take one read of the queue at `now`.
     pub(super) fn observe(&mut self, now: Duration, reads: &[HostRead], targets: &[Target]) {
         self.sync(targets);
+        self.roster = reads.iter().map(|read| read.host.clone()).collect();
         for read in reads {
             let host = self.hosts.entry(read.host.clone()).or_default();
             if !read.readable {
@@ -306,6 +325,7 @@ impl Tracker {
             host.complete = read.complete;
             host.last_complete = read.complete.then_some(now);
             host.present = read.entries.len();
+            host.page = read.page;
             // Newest last.
             new.sort_by_key(|entry| entry.since);
             for device in self.devices.values_mut() {
@@ -328,7 +348,51 @@ impl Tracker {
         }
     }
 
+    /// Home's Your turn per host from a board read. A host whose decision
+    /// read is `readable` takes its number now (0 when nothing of it is in
+    /// Your turn); a host with no decision section takes it too; a host
+    /// whose decisions could not be read keeps its last number.
+    pub(super) fn observe_home(&mut self, by_host: &BTreeMap<String, usize>, reads: &[HostRead]) {
+        let turn = self.home_turn.get_or_insert_with(BTreeMap::new);
+        // A host gone from both the queue and the board no longer counts.
+        turn.retain(|host, _| {
+            by_host.contains_key(host) || reads.iter().any(|read| &read.host == host)
+        });
+        for read in reads {
+            // A readable read counts as it reads now (an older relay never
+            // covers every kind, so "complete" cannot gate it); only an
+            // unreadable one keeps the last part.
+            if read.readable {
+                turn.insert(
+                    read.host.clone(),
+                    by_host.get(&read.host).copied().unwrap_or(0),
+                );
+            }
+        }
+        for (host, count) in by_host {
+            if !reads.iter().any(|read| &read.host == host) {
+                turn.insert(host.clone(), *count);
+            }
+        }
+    }
+
+    /// The app icon's number for a device: Home's Your turn for one that
+    /// may operate (the queue's until the board was read), the queue's
+    /// rows for one that may only decide.
+    pub(super) fn badge_for(&self, operate: bool) -> usize {
+        match (&self.home_turn, operate) {
+            (Some(turn), true) => turn.values().sum(),
+            _ => self
+                .hosts
+                .iter()
+                .filter(|(host, _)| self.roster.contains(*host))
+                .map(|(_, state)| state.page)
+                .sum(),
+        }
+    }
+
     /// What is waiting across hosts: each host's latest readable read.
+    #[cfg(test)]
     pub(super) fn total(&self) -> usize {
         self.hosts.values().map(|host| host.present).sum()
     }
@@ -356,7 +420,6 @@ impl Tracker {
         if self.backoff.active(now) {
             return Vec::new();
         }
-        let total = self.total();
         // Rebuild every pending set against what is known now.
         let gone: Vec<(String, String, Key)> = self
             .devices
@@ -381,7 +444,13 @@ impl Tracker {
             }
         }
         let mut sends = Vec::new();
+        let (operate_badge, decide_badge) = (self.badge_for(true), self.badge_for(false));
         for target in targets {
+            let total = if target.operate {
+                operate_badge
+            } else {
+                decide_badge
+            };
             let Some(state) = self.devices.get_mut(&target.device) else {
                 continue;
             };
@@ -546,6 +615,7 @@ mod tests {
             readable: true,
             complete: true,
             entries: ids.iter().map(|id| entry(Kind::Request, id)).collect(),
+            page: ids.len(),
         }
     }
 
@@ -562,6 +632,7 @@ mod tests {
             readable: false,
             complete: false,
             entries: Vec::new(),
+            page: 0,
         }
     }
 
@@ -571,6 +642,7 @@ mod tests {
             registration: "reg_a".into(),
             generation: 1,
             content: false,
+            operate: false,
         }]
     }
 
@@ -786,6 +858,88 @@ mod tests {
         );
     }
 
+    /// The icon says Your turn's number as the device's own tab does:
+    /// Home's for an `operate` device, the queue's rows for a `decide` one.
+    /// A silent badge-only update when it changes; a host that cannot be
+    /// read keeps its last part, so a timeout never clears the icon.
+    #[test]
+    fn the_badge_is_your_turn_for_the_devices_scope() {
+        let mut t = Tracker::default();
+        let mut targets = phone();
+        targets[0].operate = true;
+        let reads = |items: &[&str]| vec![read("mini", items), read("mba", &["m1"])];
+        t.observe(s(0), &reads(&["a", "b", "c"]), &targets);
+        assert_eq!(
+            t.badge_for(true),
+            4,
+            "before any board read: what is waiting"
+        );
+        // Home groups mini's three rows into two cards.
+        let home = BTreeMap::from([("mini".to_owned(), 2), ("mba".to_owned(), 1)]);
+        t.observe_home(&home, &reads(&["a", "b", "c"]));
+        assert_eq!(t.badge_for(true), 3);
+        assert_eq!(t.badge_for(false), 4, "a decide-only device counts rows");
+        // The first plan takes the number: the app set it on open.
+        assert!(t.plan(s(0), &targets, false).is_empty());
+        // mini times out: its part stays; mba's moves to zero.
+        let timed_out = vec![unreadable("mini"), read("mba", &[])];
+        t.observe(s(75), &timed_out, &targets);
+        t.observe_home(&BTreeMap::new(), &timed_out);
+        assert_eq!(
+            t.badge_for(true),
+            2,
+            "mini keeps its 2, never cleared by a timeout"
+        );
+        assert_eq!(badges(&t.plan(s(75), &targets, false)), vec![2]);
+    }
+
+    /// A decide-only device's icon counts its tab's page (100 rows), while
+    /// alerts still see the wider read; an operate device's counts Home.
+    #[test]
+    fn a_decide_only_icon_counts_its_page_across_the_boundary() {
+        let mut t = Tracker::default();
+        let targets = phone();
+        let ids: Vec<String> = (0..150).map(|i| format!("r{i}")).collect();
+        let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+        let mut wide = read("mini", &ids);
+        wide.page = 100;
+        t.observe(s(0), &[wide.clone()], &targets);
+        assert_eq!(t.total(), 150, "alerts see all 150");
+        assert_eq!(t.badge_for(false), 100, "the tab reads 100 rows");
+        t.observe_home(&BTreeMap::from([("mini".to_owned(), 90)]), &[wide]);
+        assert_eq!(t.badge_for(true), 90, "Home's count for an operate device");
+    }
+
+    /// A host gone from the roster stops counting, for both scopes; a
+    /// readable read always counts as it reads now, so an older relay that
+    /// never covers every kind is not pinned to its old number.
+    #[test]
+    fn badge_parts_follow_the_roster_and_readable_reads() {
+        let mut t = Tracker::default();
+        let targets = phone();
+        let both = [read("mini", &["a"]), read("mba", &["b"])];
+        t.observe(s(0), &both, &targets);
+        t.observe_home(
+            &BTreeMap::from([("mini".to_owned(), 1), ("mba".to_owned(), 1)]),
+            &both,
+        );
+        assert_eq!((t.badge_for(true), t.badge_for(false)), (2, 2));
+        // mini, an older relay, reads partially but successfully: 1, then 0.
+        let legacy = |ids: &[&str]| [partial("mini", ids), read("mba", &["b"])];
+        t.observe(s(15), &legacy(&["a"]), &targets);
+        t.observe_home(
+            &BTreeMap::from([("mini".to_owned(), 1), ("mba".to_owned(), 1)]),
+            &legacy(&["a"]),
+        );
+        t.observe(s(30), &legacy(&[]), &targets);
+        t.observe_home(&BTreeMap::from([("mba".to_owned(), 1)]), &legacy(&[]));
+        assert_eq!(t.badge_for(true), 1, "answered: mini goes to 0");
+        // mba removed from the fleet: only mini counts, for both scopes.
+        t.observe(s(45), &[read("mini", &[])], &targets);
+        t.observe_home(&BTreeMap::new(), &[read("mini", &[])]);
+        assert_eq!((t.badge_for(true), t.badge_for(false)), (0, 0));
+    }
+
     #[test]
     fn the_badge_goes_down_to_zero_waits_for_alerts_and_is_retried_until_accepted() {
         let mut t = Tracker::default();
@@ -967,12 +1121,14 @@ mod tests {
                 registration: "reg_a".into(),
                 generation: 1,
                 content: false,
+                operate: false,
             },
             Target {
                 device: "dev_b".into(),
                 registration: "reg_b".into(),
                 generation: 1,
                 content: false,
+                operate: false,
             },
         ];
         t.observe(s(0), &[read("mini", &[])], &targets);

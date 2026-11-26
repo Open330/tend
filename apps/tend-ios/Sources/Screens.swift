@@ -228,9 +228,11 @@ struct TendApp: App {
                 // the environment itself (`@EnvironmentObject`).
                 RootView()
                     .environment(model)
-                    // The badge follows what the app read itself, too: APNs
-                    // may drop or reorder the host's updates.
-                    .onChange(of: model.actionableCount) { _, count in
+                    // The icon says Your turn's number, as the tab and every
+                    // other client do (COUNTS.md); tendd's pushes carry the
+                    // same number, and the app sets it from its own read
+                    // too, since APNs may drop or reorder updates.
+                    .onChange(of: model.badgeCount) { _, count in
                         if model.notificationsWanted {
                             UNUserNotificationCenter.current().setBadgeCount(count)
                         }
