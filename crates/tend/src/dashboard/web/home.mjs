@@ -653,7 +653,7 @@ function renderLane(lane, data) {
   const [title, sub, empty] = LANE_WORDS[lane];
   // Anything to show, folded or not: Finished's count is its main list
   // only, so a lane of folded units is not empty.
-  const folded = [data.older, data.stale, ...Object.values(data.folds || {})].some((list) => list?.length);
+  const folded = [data.older, data.stale, data.olderDecided, ...Object.values(data.folds || {})].some((list) => list?.length);
   const any = Boolean(data.count || data.groups.length || folded);
   const section = el("section", `lane ${lane}${any ? " has-items" : ""} ${state.layout}`);
   section.setAttribute("aria-label", S[title]);

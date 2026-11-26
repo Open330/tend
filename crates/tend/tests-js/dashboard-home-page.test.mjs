@@ -101,6 +101,7 @@ const fleet = { hosts: [{ alias: "mba", local: true, state: "online", remote: { 
 // the page lays out the queue and the Fleet snapshot itself.
 const status = { home: 404, decisions: 200, fleet: 200, history: 200, access: 200 };
 let serverBoard = null;
+let historyBody = { hosts: [] };
 const posts = [];
 let postGate = null;
 globalThis.fetch = async (path, init = {}) => {
@@ -116,7 +117,7 @@ globalThis.fetch = async (path, init = {}) => {
   }
   const name = path.includes("/api/home") ? "home" : path.includes("history") ? "history" : path.includes("decisions") ? "decisions" : path.includes("fleet") ? "fleet" : "access";
   const code = status[name];
-  const body = { home: serverBoard, decisions: queue, fleet, history: { hosts: [] }, access: { mode: "token", write_authorized: true, capabilities: { work_start: false }, login: { role: "operator" } } }[name];
+  const body = { home: serverBoard, decisions: queue, fleet, history: historyBody, access: { mode: "token", write_authorized: true, capabilities: { work_start: false }, login: { role: "operator" } } }[name];
   return { ok: code === 200, status: code, json: async () => body };
 };
 
@@ -311,6 +312,20 @@ test("a Finished lane of only folded units is not empty; its header counts the m
   assert.doesNotMatch(text, /old a/, "folded until opened");
   status.home = 404;
   serverBoard = null;
+  await home.refresh();
+});
+
+test("without the daemon's board, older decided history alone is not an empty Finished", async () => {
+  const sixDays = new Date(Date.now() - 6 * 86400_000).toISOString();
+  historyBody = { hosts: [{ alias: "mba", local: true, history: { items: [
+    { kind: "human_answer", request_id: "r_old", body: "Ship?", from_session_id: "s", from_pane: "%1", created_at: sixDays, status: "completed", answer: "yes", answered_at: sixDays },
+  ] } }] };
+  status.home = 404;
+  await home.refresh();
+  const text = lanes().text;
+  assert.match(text, /1 older decided/);
+  assert.doesNotMatch(text, /Nothing finished yet/);
+  historyBody = { hosts: [] };
   await home.refresh();
 });
 
