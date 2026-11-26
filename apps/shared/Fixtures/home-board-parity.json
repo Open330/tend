@@ -3,6 +3,9 @@
     {
       "counts": {
         "finished": 1,
+        "finished_older": 0,
+        "finished_shown": 1,
+        "finished_stale": 0,
         "in_progress": 1,
         "reviewed": 0,
         "your_turn": 1
@@ -10,6 +13,7 @@
       "lanes": {
         "finished": [
           {
+            "age_group": "recent",
             "agents": [
               "mba:d"
             ],
@@ -46,6 +50,7 @@
         ],
         "needs_you": [
           {
+            "age_group": null,
             "agents": [
               "mba:q"
             ],
@@ -82,6 +87,7 @@
         ],
         "running": [
           {
+            "age_group": null,
             "agents": [
               "mba:w"
             ],
@@ -122,6 +128,9 @@
     {
       "counts": {
         "finished": 0,
+        "finished_older": 0,
+        "finished_shown": 0,
+        "finished_stale": 0,
         "in_progress": 1,
         "reviewed": 0,
         "your_turn": 0
@@ -131,6 +140,7 @@
         "needs_you": [],
         "running": [
           {
+            "age_group": null,
             "agents": [
               "mba:r",
               "mba:i"
@@ -176,6 +186,9 @@
     {
       "counts": {
         "finished": 1,
+        "finished_older": 0,
+        "finished_shown": 1,
+        "finished_stale": 0,
         "in_progress": 1,
         "reviewed": 0,
         "your_turn": 0
@@ -183,6 +196,7 @@
       "lanes": {
         "finished": [
           {
+            "age_group": "recent",
             "agents": [
               "mba:orphan"
             ],
@@ -220,6 +234,7 @@
         "needs_you": [],
         "running": [
           {
+            "age_group": null,
             "agents": [
               "mba:lead"
             ],
@@ -262,6 +277,9 @@
     {
       "counts": {
         "finished": 1,
+        "finished_older": 0,
+        "finished_shown": 1,
+        "finished_stale": 0,
         "in_progress": 1,
         "reviewed": 0,
         "your_turn": 0
@@ -269,6 +287,7 @@
       "lanes": {
         "finished": [
           {
+            "age_group": "recent",
             "agents": [
               "mba:same"
             ],
@@ -306,6 +325,7 @@
         "needs_you": [],
         "running": [
           {
+            "age_group": null,
             "agents": [
               "mini:same"
             ],
@@ -346,6 +366,9 @@
     {
       "counts": {
         "finished": 4,
+        "finished_older": 0,
+        "finished_shown": 3,
+        "finished_stale": 0,
         "in_progress": 0,
         "reviewed": 0,
         "your_turn": 0
@@ -353,6 +376,7 @@
       "lanes": {
         "finished": [
           {
+            "age_group": "recent",
             "agents": [
               "mba:empty"
             ],
@@ -387,6 +411,7 @@
             "title": "claude on mba"
           },
           {
+            "age_group": "recent",
             "agents": [
               "mba:note"
             ],
@@ -421,6 +446,7 @@
             "title": "⟳ Background task"
           },
           {
+            "age_group": "recent",
             "agents": [
               "mba:peer"
             ],
@@ -455,6 +481,7 @@
             "title": "Check the lockfile"
           },
           {
+            "age_group": "recent",
             "agents": [
               "mba:p"
             ],
@@ -497,6 +524,9 @@
     {
       "counts": {
         "finished": 1,
+        "finished_older": 0,
+        "finished_shown": 1,
+        "finished_stale": 0,
         "in_progress": 0,
         "reviewed": 1,
         "your_turn": 2
@@ -504,6 +534,7 @@
       "lanes": {
         "finished": [
           {
+            "age_group": "recent",
             "agents": [
               "mba:changed"
             ],
@@ -538,6 +569,7 @@
             "title": "Tidy the README"
           },
           {
+            "age_group": "recent",
             "agents": [
               "mba:seen"
             ],
@@ -574,6 +606,7 @@
         ],
         "needs_you": [
           {
+            "age_group": null,
             "agents": [
               "mba:cap"
             ],
@@ -608,6 +641,7 @@
             "title": "Port the parser"
           },
           {
+            "age_group": null,
             "agents": [
               "mba:ask"
             ],
@@ -645,6 +679,164 @@
         "running": []
       },
       "name": "a reviewed result hides until it changes; a usage cap with no policy needs you"
+    },
+    {
+      "counts": {
+        "finished": 4,
+        "finished_older": 1,
+        "finished_shown": 1,
+        "finished_stale": 2,
+        "in_progress": 0,
+        "reviewed": 0,
+        "your_turn": 0
+      },
+      "lanes": {
+        "finished": [
+          {
+            "age_group": "older",
+            "agents": [
+              "mba:days"
+            ],
+            "empty_session": false,
+            "focus": {
+              "agent": "mba:days",
+              "state": "idle"
+            },
+            "handled_limit": false,
+            "helpers": [],
+            "id": "agent:mba:days",
+            "lane": "finished",
+            "orphan_helper": false,
+            "probable_helper": false,
+            "repo": "tend",
+            "requested_by_person": true,
+            "review_key": "home:c5f825e94f5c10e45e1a41eecb8b20fd2b7f24ef0b3f8c3385dc5d8eae9b0283",
+            "reviewed": false,
+            "revision": "mba:days|idle|2026-11-16T08:59:00Z",
+            "since": "2026-11-16T08:59:00Z",
+            "source": {
+              "host": "mba",
+              "kind": "agent",
+              "session_id": "days"
+            },
+            "stages": [
+              {
+                "name": "claude",
+                "state": "done"
+              }
+            ],
+            "title": "Port the board"
+          },
+          {
+            "age_group": "recent",
+            "agents": [
+              "mba:fresh"
+            ],
+            "empty_session": false,
+            "focus": {
+              "agent": "mba:fresh",
+              "state": "idle"
+            },
+            "handled_limit": false,
+            "helpers": [],
+            "id": "agent:mba:fresh",
+            "lane": "finished",
+            "orphan_helper": false,
+            "probable_helper": false,
+            "repo": "tend",
+            "requested_by_person": true,
+            "review_key": "home:ddf93731fcdbd7d381659350246b248d7f5aa6be28a3c4acd12dc342f7b05ceb",
+            "reviewed": false,
+            "revision": "mba:fresh|idle|2026-11-16T08:59:00Z",
+            "since": "2026-11-16T08:59:00Z",
+            "source": {
+              "host": "mba",
+              "kind": "agent",
+              "session_id": "fresh"
+            },
+            "stages": [
+              {
+                "name": "claude",
+                "state": "done"
+              }
+            ],
+            "title": "Fix the toast"
+          },
+          {
+            "age_group": "stale",
+            "agents": [
+              "mba:unprompted"
+            ],
+            "empty_session": false,
+            "focus": {
+              "agent": "mba:unprompted",
+              "state": "idle"
+            },
+            "handled_limit": false,
+            "helpers": [],
+            "id": "agent:mba:unprompted",
+            "lane": "finished",
+            "orphan_helper": false,
+            "probable_helper": false,
+            "repo": "tend",
+            "requested_by_person": true,
+            "review_key": "home:3db82c1e73897b990d3b338c410b5e287930dbda6897f4771694b18001d7b516",
+            "reviewed": false,
+            "revision": "mba:unprompted|idle|2026-11-16T08:59:00Z",
+            "since": "2026-11-16T08:59:00Z",
+            "source": {
+              "host": "mba",
+              "kind": "agent",
+              "session_id": "unprompted"
+            },
+            "stages": [
+              {
+                "name": "claude",
+                "state": "done"
+              }
+            ],
+            "title": "Look at it"
+          },
+          {
+            "age_group": "stale",
+            "agents": [
+              "mba:weeks"
+            ],
+            "empty_session": false,
+            "focus": {
+              "agent": "mba:weeks",
+              "state": "idle"
+            },
+            "handled_limit": false,
+            "helpers": [],
+            "id": "agent:mba:weeks",
+            "lane": "finished",
+            "orphan_helper": false,
+            "probable_helper": false,
+            "repo": "tend",
+            "requested_by_person": true,
+            "review_key": "home:9578c056088afbd097942dca9ff1a77b07d9e4b61da584abb0d02525aa27dbe2",
+            "reviewed": false,
+            "revision": "mba:weeks|idle|2026-11-16T08:59:00Z",
+            "since": "2026-11-16T08:59:00Z",
+            "source": {
+              "host": "mba",
+              "kind": "agent",
+              "session_id": "weeks"
+            },
+            "stages": [
+              {
+                "name": "claude",
+                "state": "done"
+              }
+            ],
+            "title": "Ship the site"
+          }
+        ],
+        "needs_you": [],
+        "running": []
+      },
+      "name": "finished folds by the last turn, not a state change a hook reset"
     }
   ],
   "schema": 1

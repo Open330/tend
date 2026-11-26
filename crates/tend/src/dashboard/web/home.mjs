@@ -697,6 +697,7 @@ function renderLane(lane, data) {
   fold(data.folds?.helpers, open.helpers, S.foldHelpers, S.hideHelpers, () => (open.helpers = !open.helpers));
   fold(data.folds?.empty, open.empty, S.foldEmpty, S.hideEmpty, () => (open.empty = !open.empty));
   fold(data.older, open.older, S.olderCount, S.hideOlder, () => (open.older = !open.older));
+  fold(data.folds?.stale || data.stale, open.stale, S.staleCount, S.hideStale, () => (open.stale = !open.stale));
   if (lane === "finished" && data.folds?.reviewed?.length) {
     body.append(button(S.showReviewed(data.folds.reviewed.length), () => {
       state.folds.reviewed = true;
@@ -1423,6 +1424,7 @@ function findWhere(board, match) {
     const data = board.lanes[lane];
     for (const group of data.groups) for (const unit of group.units) if (match(unit)) return unit;
     for (const unit of data.older) if (match(unit)) return unit;
+    for (const unit of data.stale || []) if (match(unit)) return unit;
     for (const list of Object.values(data.folds || {})) for (const unit of list) if (match(unit)) return unit;
     for (const unit of data.cantAnswer?.units || []) if (match(unit)) return unit;
   }

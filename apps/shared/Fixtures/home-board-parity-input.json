@@ -613,6 +613,115 @@
         "home:830790619aeeca3676643a1e8318291efff4bdeffe716260a28b5fe9709ce621",
         "home:00362a51f6b547461a991239d7f8ff9e56787537e6b8ce40e09d8ad1b76878d6"
       ]
+    },
+    {
+      "name": "finished folds by the last turn, not a state change a hook reset",
+      "hosts": [
+        {
+          "alias": "mba",
+          "local": true,
+          "mode": "control",
+          "state": "online",
+          "remote": {
+            "agents": [
+              {
+                "agent_session_id": "fresh",
+                "kind": "claude_code",
+                "pane": "%1",
+                "tmux_socket": "s",
+                "cwd": "/w/tend",
+                "state": "idle",
+                "last_prompt": "Fix the toast",
+                "last_response": "Done",
+                "state_entered_at": "2026-11-16T08:59:00Z",
+                "last_prompt_at": "2026-11-16T07:00:00Z",
+                "last_response_at": "2026-11-16T07:30:00Z",
+                "started_at": "2026-11-01T00:00:00Z"
+              },
+              {
+                "agent_session_id": "days",
+                "kind": "claude_code",
+                "pane": "%2",
+                "tmux_socket": "s",
+                "cwd": "/w/tend",
+                "state": "idle",
+                "last_prompt": "Port the board",
+                "last_response": "Done",
+                "state_entered_at": "2026-11-16T08:59:00Z",
+                "last_prompt_at": "2026-11-13T07:00:00Z",
+                "last_response_at": "2026-11-13T07:30:00Z",
+                "started_at": "2026-11-01T00:00:00Z"
+              },
+              {
+                "agent_session_id": "weeks",
+                "kind": "claude_code",
+                "pane": "%3",
+                "tmux_socket": "s",
+                "cwd": "/w/tend",
+                "state": "idle",
+                "last_prompt": "Ship the site",
+                "last_response": "Done",
+                "state_entered_at": "2026-11-16T08:59:00Z",
+                "last_prompt_at": "2026-10-27T07:00:00Z",
+                "last_response_at": "2026-10-27T07:20:00Z",
+                "started_at": "2026-11-01T00:00:00Z"
+              },
+              {
+                "agent_session_id": "unprompted",
+                "kind": "claude_code",
+                "pane": "%4",
+                "tmux_socket": "s",
+                "cwd": "/w/tend",
+                "state": "idle",
+                "last_prompt": "Look at it",
+                "last_response": "Done",
+                "state_entered_at": "2026-11-16T08:59:00Z",
+                "started_at": "2026-11-05T00:00:00Z"
+              }
+            ],
+            "panes": [
+              {
+                "pane_id": "%1",
+                "socket": "s",
+                "session": "w",
+                "window_id": "@1",
+                "window_index": "0",
+                "window_name": "a",
+                "current_path": "/w/tend"
+              },
+              {
+                "pane_id": "%2",
+                "socket": "s",
+                "session": "w",
+                "window_id": "@1",
+                "window_index": "0",
+                "window_name": "a",
+                "current_path": "/w/tend"
+              },
+              {
+                "pane_id": "%3",
+                "socket": "s",
+                "session": "w",
+                "window_id": "@1",
+                "window_index": "0",
+                "window_name": "a",
+                "current_path": "/w/tend"
+              },
+              {
+                "pane_id": "%4",
+                "socket": "s",
+                "session": "w",
+                "window_id": "@1",
+                "window_index": "0",
+                "window_name": "a",
+                "current_path": "/w/tend"
+              }
+            ]
+          }
+        }
+      ],
+      "runs": [],
+      "reviewed": []
     }
   ]
 }

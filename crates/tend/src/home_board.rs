@@ -25,8 +25,42 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use time::{format_description::well_known::Rfc3339, Duration, OffsetDateTime};
 
-/// Finished units changed within this long stay in the lane's main list.
+/// Finished units whose last turn is within this long stay in the lane's
+/// main list.
 pub const RECENT_FINISH: Duration = Duration::hours(24);
+/// Finished units idle longer than this fold into their own row, after the
+/// "older" one.
+pub const STALE_FINISH: Duration = Duration::days(7);
+
+/// Where a Finished unit sits by the age of its last turn
+/// (`apps/shared/Design/COUNTS.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgeGroup {
+    /// Within [`RECENT_FINISH`], or no known time: the main list.
+    Recent,
+    /// Up to [`STALE_FINISH`]: the "N older" row.
+    Older,
+    /// Idle longer: the "N idle over a week" row.
+    Stale,
+}
+
+impl AgeGroup {
+    fn of(last_turn: Option<OffsetDateTime>, now: OffsetDateTime) -> Self {
+        match last_turn.map(|at| now - at) {
+            Some(age) if age > STALE_FINISH => Self::Stale,
+            Some(age) if age > RECENT_FINISH => Self::Older,
+            _ => Self::Recent,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Recent => "recent",
+            Self::Older => "older",
+            Self::Stale => "stale",
+        }
+    }
+}
 
 /// Capability a daemon advertises once it answers the board read.
 pub const HOME_BOARD_CAPABILITY: &str = "home_board_v1";
@@ -481,6 +515,16 @@ impl Hosted<'_> {
                 .or_else(|| str_of(self.agent, "last_activity_at")),
         )
     }
+    /// The agent's last turn: its last prompt or response, whichever is
+    /// later, else when it started. Not `state_entered_at`, which hooks
+    /// reset on agents that have done nothing for days.
+    fn turn_time(&self) -> Option<OffsetDateTime> {
+        let prompt = parse_time(str_of(self.agent, "last_prompt_at"));
+        let response = parse_time(str_of(self.agent, "last_response_at"));
+        prompt
+            .max(response)
+            .or_else(|| parse_time(str_of(self.agent, "started_at")))
+    }
     fn reference(&self) -> Value {
         json!({
             "id": self.id,
@@ -762,6 +806,8 @@ struct Unit {
     handled_limit: bool,
     revision: String,
     last_change: Option<OffsetDateTime>,
+    /// The newest last turn of its agents and helpers ([`Hosted::turn_time`]).
+    last_turn: Option<OffsetDateTime>,
     orphan_helper: bool,
     probable_helper: bool,
     empty_session: bool,
@@ -798,6 +844,10 @@ fn revision(agents: &[&Hosted], run: Option<&Value>) -> String {
 
 fn latest_change(agents: &[&Hosted]) -> Option<OffsetDateTime> {
     agents.iter().filter_map(|h| h.time()).max()
+}
+
+fn latest_turn(agents: &[&Hosted]) -> Option<OffsetDateTime> {
+    agents.iter().filter_map(|h| h.turn_time()).max()
 }
 
 fn ad_hoc_stage(hosted: &Hosted) -> Stage {
@@ -986,6 +1036,7 @@ fn managed_unit(group: &Group, agents: &[Hosted]) -> Unit {
             .any(|p| p.status == Status::Limited { covered: true }),
         revision: revision(&participants, group.run),
         last_change: latest_change(&participants),
+        last_turn: latest_turn(&participants),
         orphan_helper: false,
         probable_helper: false,
         empty_session: false,
@@ -1037,6 +1088,7 @@ fn solo_unit(index: usize, agents: &[Hosted]) -> Unit {
         handled_limit: hosted.status == Status::Limited { covered: true },
         revision: revision(&[hosted], None),
         last_change: hosted.time(),
+        last_turn: hosted.turn_time(),
         orphan_helper: false,
         probable_helper: false,
         empty_session: false,
@@ -1265,6 +1317,7 @@ fn attach(unit: &mut Unit, helpers: &[usize], agents: &[Hosted]) {
     let refs: Vec<&Hosted> = helpers.iter().map(|i| &agents[*i]).collect();
     unit.revision = format!("{};{}", unit.revision, revision(&refs, None));
     unit.last_change = unit.last_change.max(latest_change(&refs));
+    unit.last_turn = unit.last_turn.max(latest_turn(&refs));
     unit.handled_limit |= refs
         .iter()
         .any(|h| h.status == Status::Limited { covered: true });
@@ -1523,7 +1576,10 @@ fn unit_json(
         "orphan_helper": unit.orphan_helper,
         "probable_helper": unit.probable_helper,
         "empty_session": unit.empty_session,
-        "recent": unit.lane != Lane::Finished || shown.is_none_or(|t| now - t <= RECENT_FINISH),
+        // By the last turn, not the last state change.
+        "last_turn": format_time(unit.last_turn),
+        "age_group": (unit.lane == Lane::Finished).then(|| AgeGroup::of(unit.last_turn, now).as_str()),
+        "recent": unit.lane != Lane::Finished || AgeGroup::of(unit.last_turn, now) == AgeGroup::Recent,
         "revision": unit.revision,
         "review_key": key,
         "reviewed": is_reviewed,
@@ -1636,6 +1692,10 @@ fn decision_json(decision: &Decision) -> Value {
 /// - `finished`: Finished's units not set aside with Looks Good, folded
 ///   ones included; `reviewed` counts the ones set aside. Decided history
 ///   is never counted.
+/// - `finished_shown`: of `finished`, the ones in the lane's main list
+///   (recent, not an empty session or a possible helper): Finished's
+///   header. `finished_older` and `finished_stale` are its "N older" and
+///   "N idle over a week" rows, by [`AgeGroup`].
 /// - `coverage`: of the decision queues only: `complete` when every host has
 ///   a queue read whole for every kind, else `partial`, so a client never
 ///   shows a partial Your turn as all. Whether Looks Good marks were read is
@@ -1647,6 +1707,7 @@ fn counts_json(
     units: &[Unit],
     reviewed: Option<&HashSet<String>>,
     input: &BoardInput,
+    now: OffsetDateTime,
 ) -> Value {
     const KINDS: [&str; 3] = ["questions", "waiting agents", "review items"];
     let unanswerable = |item: &Value| item.pointer("/entry/unanswerable").is_some();
@@ -1681,6 +1742,22 @@ fn counts_json(
     }
     let in_progress = units.iter().filter(|u| u.lane == Lane::Running).count();
     let finished_total = units.iter().filter(|u| u.lane == Lane::Finished).count();
+    // Finished's rows, each unit in exactly one, in the order the clients
+    // fold: a possible helper, an empty session, then by age.
+    let (mut shown, mut older, mut stale) = (0, 0, 0);
+    for unit in units.iter().filter(|u| u.lane == Lane::Finished) {
+        if reviewed.is_some_and(|set| set.contains(&review_key(&unit.id, &unit.revision)))
+            || unit.probable_helper
+            || unit.empty_session
+        {
+            continue;
+        }
+        match AgeGroup::of(unit.last_turn, now) {
+            AgeGroup::Recent => shown += 1,
+            AgeGroup::Older => older += 1,
+            AgeGroup::Stale => stale += 1,
+        }
+    }
     let set_aside = reviewed.map_or(0, |set| {
         units
             .iter()
@@ -1723,6 +1800,9 @@ fn counts_json(
         "cant_answer": cant_answer,
         "in_progress": in_progress,
         "finished": finished_total - set_aside,
+        "finished_shown": shown,
+        "finished_older": older,
+        "finished_stale": stale,
         "reviewed": set_aside,
         "coverage": if partial { "partial" } else { "complete" },
     })
@@ -1910,7 +1990,7 @@ pub fn build(input: &BoardInput) -> Value {
         .iter()
         .filter(|entry| entry.4.pointer("/entry/unanswerable").is_none())
         .count();
-    let counts = counts_json(&turn, &units, reviewed, input);
+    let counts = counts_json(&turn, &units, reviewed, input, now);
     let needs_you = grouped(
         turn.into_iter()
             .map(|(system, _, _, repo, item)| (repo, system, item))

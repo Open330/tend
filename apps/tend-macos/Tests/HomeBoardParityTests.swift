@@ -57,7 +57,7 @@ private func laneName(_ lane: FleetLane) -> String {
 }
 
 /// One unit in the contract's terms (parity.rs `summary`).
-private func summary(_ work: FleetWork, reviewed: Set<String>) -> [String: Any] {
+private func summary(_ work: FleetWork, reviewed: Set<String>, now: Date) -> [String: Any] {
     let source: [String: Any]
     switch work.source {
     case .work(let identity):
@@ -88,12 +88,21 @@ private func summary(_ work: FleetWork, reviewed: Set<String>) -> [String: Any] 
         "probable_helper": work.isProbableHelper,
         "orphan_helper": work.isOrphanHelper,
         "empty_session": work.isEmptySession,
+        "age_group": work.lane == .finished ? ageGroupName(FleetBoard.ageGroup(work, now: now)) : NSNull(),
     ]
+}
+
+private func ageGroupName(_ group: FleetAgeGroup) -> String {
+    switch group {
+    case .recent: "recent"
+    case .older: "older"
+    case .stale: "stale"
+    }
 }
 
 /// Each lane's units as Home lists them: Your turn by how long each waits,
 /// every lane in project groups.
-private func lanes(_ works: [FleetWork], reviewed: Set<String>) -> [String: Any] {
+private func lanes(_ works: [FleetWork], reviewed: Set<String>, now: Date) -> [String: Any] {
     var result: [String: Any] = [:]
     for lane in FleetLane.allCases {
         let mine = works.filter { $0.lane == lane }
@@ -106,21 +115,24 @@ private func lanes(_ works: [FleetWork], reviewed: Set<String>) -> [String: Any]
         } else {
             ordered = FleetBoard.byProject(mine).flatMap(\.works)
         }
-        result[laneName(lane)] = ordered.map { summary($0, reviewed: reviewed) }
+        result[laneName(lane)] = ordered.map { summary($0, reviewed: reviewed, now: now) }
     }
     return result
 }
 
 /// Home's numbers in the contract's terms (`counts_json`, less what the
 /// cases do not cover: decisions and coverage).
-private func counts(_ works: [FleetWork], reviewed: Set<String>) -> [String: Any] {
+private func counts(_ works: [FleetWork], reviewed: Set<String>, now: Date) -> [String: Any] {
     var marks = FleetReviewMarks()
     marks.recorded = reviewed
-    let counts = FleetBoard.counts(works: works, decisions: [], marks: marks)
+    let counts = FleetBoard.counts(works: works, decisions: [], marks: marks, now: now)
     return [
         "your_turn": counts.yourTurn,
         "in_progress": counts.inProgress,
         "finished": counts.finished,
+        "finished_shown": counts.finishedShown,
+        "finished_older": counts.finishedOlder,
+        "finished_stale": counts.finishedStale,
         "reviewed": counts.reviewed,
     ]
 }
@@ -157,8 +169,8 @@ private func normalized(_ value: Any) throws -> NSObject {
             let works = FleetBoard.works(groups: snapshot.workGroups(pipelineRuns: runs), agents: agents, now: now)
             let built: [String: Any] = [
                 "name": name,
-                "lanes": lanes(works, reviewed: reviewed),
-                "counts": counts(works, reviewed: reviewed),
+                "lanes": lanes(works, reviewed: reviewed, now: now),
+                "counts": counts(works, reviewed: reviewed, now: now),
             ]
             let want = expected[index]
             #expect(want["name"] as? String == name)

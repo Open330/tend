@@ -46,7 +46,10 @@ final class BoardTests: XCTestCase {
         XCTAssertEqual(counts.reviewed, 0)
         XCTAssertEqual(counts.coverage, "complete")
         XCTAssertTrue(board.reviewedMarks)
-        XCTAssertEqual(Lane.board.map(board.count), [2, 2, 2])
+        // Finished's header counts its main list: this recorded board is
+        // from a tendd without `finished_shown`, so the app counts it, and
+        // the empty session folded away is not in it.
+        XCTAssertEqual(Lane.board.map(board.count), [2, 2, 1])
         XCTAssertEqual(Lane.board.map(board.listedCount), [2, 2, 2])
         XCTAssertEqual(board.cantAnswerCount, 0)
         XCTAssertFalse(board.yourTurnMayBeMore)

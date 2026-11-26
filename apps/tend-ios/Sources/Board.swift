@@ -167,6 +167,9 @@ struct BoardUnit: Decodable, Hashable, Sendable, Identifiable {
     let probableHelper: Bool
     let emptySession: Bool
     let recent: Bool
+    /// `recent`, `older` or `stale` by the last turn (Finished only); an
+    /// older tendd sends only `recent`.
+    let ageGroup: String
     /// Set aside with Looks Good; also set here for a mark this device
     /// made that the board has not confirmed yet (`DeviceHome.holding`).
     var reviewed: Bool
@@ -186,6 +189,7 @@ struct BoardUnit: Decodable, Hashable, Sendable, Identifiable {
         case probableHelper = "probable_helper"
         case emptySession = "empty_session"
         case requestedByPerson = "requested_by_person"
+        case ageGroup = "age_group"
     }
 
     init(from decoder: Decoder) throws {
@@ -221,6 +225,7 @@ struct BoardUnit: Decodable, Hashable, Sendable, Identifiable {
         probableHelper = flag(.probableHelper)
         emptySession = flag(.emptySession)
         recent = flag(.recent, true)
+        ageGroup = ((try? values.decodeIfPresent(String.self, forKey: .ageGroup)) ?? nil) ?? (recent ? "recent" : "older")
         reviewed = flag(.reviewed)
         requestedByPerson = flag(.requestedByPerson)
         reviewKey = ((try? values.decodeIfPresent(String.self, forKey: .reviewKey)) ?? nil).flatMap { $0.isEmpty ? nil : $0 }
@@ -349,6 +354,11 @@ struct BoardCounts: Decodable, Hashable, Sendable {
     let cantAnswer: Int?
     let inProgress: Int?
     var finished: Int?
+    /// Of `finished`, the main list: Finished's header. Its "N older" and
+    /// "N idle over a week" rows count their own.
+    var finishedShown: Int?
+    var finishedOlder: Int?
+    var finishedStale: Int?
     var reviewed: Int?
     /// `complete` or `partial`, about the decision queues only.
     let coverage: String?
@@ -358,6 +368,9 @@ struct BoardCounts: Decodable, Hashable, Sendable {
         case yourTurn = "your_turn"
         case cantAnswer = "cant_answer"
         case inProgress = "in_progress"
+        case finishedShown = "finished_shown"
+        case finishedOlder = "finished_older"
+        case finishedStale = "finished_stale"
     }
 
     init(from decoder: Decoder) throws {
@@ -370,6 +383,9 @@ struct BoardCounts: Decodable, Hashable, Sendable {
         cantAnswer = number(.cantAnswer)
         inProgress = number(.inProgress)
         finished = number(.finished)
+        finishedShown = number(.finishedShown)
+        finishedOlder = number(.finishedOlder)
+        finishedStale = number(.finishedStale)
         reviewed = number(.reviewed)
         coverage = (try? values.decodeIfPresent(String.self, forKey: .coverage)) ?? nil
     }
@@ -524,7 +540,19 @@ struct DeviceHome: Decodable, Hashable, Sendable {
         case .backlog: backlog.count
         case .yourTurn: counts?.yourTurn ?? listedCount(.yourTurn)
         case .inProgress: counts?.inProgress ?? listedCount(.inProgress)
-        case .finished: counts?.finished ?? listedCount(.finished)
+        // Finished's header counts only its main list (COUNTS.md).
+        case .finished: counts?.finishedShown ?? mainCount(.finished)
+        }
+    }
+
+    /// What a lane's main list shows: what `FoldedLane` leaves outside its
+    /// fold rows.
+    func mainCount(_ lane: Lane) -> Int {
+        FoldedLane(self, lane: lane).groups.reduce(0) { sum, group in
+            sum + group.items.filter { item in
+                if case .unit = item { return true }
+                return false
+            }.count
         }
     }
 
@@ -616,6 +644,8 @@ struct FoldedLane: Sendable {
     var helpers: [BoardUnit] = []
     var empty: [BoardUnit] = []
     var older: [BoardUnit] = []
+    /// Idle over a week, after `older`.
+    var stale: [BoardUnit] = []
     var reviewed: [BoardUnit] = []
     /// What the lane lists: everything but the reviewed, folded units
     /// included (`DeviceHome.listedCount`).
@@ -632,6 +662,7 @@ struct FoldedLane: Sendable {
                 if unit.reviewed { reviewed.append(unit) }
                 else if unit.probableHelper { helpers.append(unit) }
                 else if unit.emptySession { empty.append(unit) }
+                else if unit.ageGroup == "stale" { stale.append(unit) }
                 else if !unit.recent { older.append(unit) }
                 else { shown.append(item) }
             }

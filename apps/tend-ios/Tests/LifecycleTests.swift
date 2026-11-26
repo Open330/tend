@@ -318,7 +318,7 @@ extension LifecycleTests {
     }
 
     func testTheBadgeIsYourTurnAsTendCountsIt() async {
-        let board = #"{"hosts":[{"alias":"here","local":true}],"decision_hosts":[{"alias":"here","local":true}],"counts":{"your_turn":3,"actionable":1,"cant_answer":0,"in_progress":4,"finished":2,"reviewed":1,"coverage":"partial"},"reviewed_marks":true,"lanes":{"needs_you":{"groups":[{"items":[{"kind":"human_request","request_id":"r1","body":"Ship?","from_session_id":"s","from_pane":"%1","created_at":"2026-11-16T10:00:00Z","host":"here","actionable":true}]}]}}}"#
+        let board = #"{"hosts":[{"alias":"here","local":true}],"decision_hosts":[{"alias":"here","local":true}],"counts":{"your_turn":3,"actionable":1,"cant_answer":0,"in_progress":4,"finished":2,"finished_shown":2,"reviewed":1,"coverage":"partial"},"reviewed_marks":true,"lanes":{"needs_you":{"groups":[{"items":[{"kind":"human_request","request_id":"r1","body":"Ship?","from_session_id":"s","from_pane":"%1","created_at":"2026-11-16T10:00:00Z","host":"here","actionable":true}]}]}}}"#
         StubProtocol.on("/api/device", .init(status: 200, body: Self.homeDevice))
         StubProtocol.on("/api/device/fleet", .init(status: 200, body: Self.fleetJSON))
         StubProtocol.on("/api/device/home", .init(status: 200, body: board))

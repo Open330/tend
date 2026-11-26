@@ -690,20 +690,28 @@ struct FleetLaneColumn: View {
     var movedFrom: [String: FleetLane] = [:]
     var layout: FleetCardLayout = .emphasis
     @State private var showsOlder = false
+    @State private var showsStale = false
     @State private var showsProbable = false
     @State private var showsEmpty = false
     @Environment(\.colorScheme) private var colorScheme
 
     /// Where a card folds outside Your turn, each in exactly one row, so a
     /// row's count is what opening it shows: a possible helper first, then
-    /// an empty session, then (in Finished) anything older than a day.
-    private enum Fold { case probable, empty, older }
+    /// an empty session, then (in Finished) by the last turn: older than a
+    /// day, then idle over a week.
+    private enum Fold { case probable, empty, older, stale }
 
     private func fold(_ work: FleetWork) -> Fold? {
         guard lane != .needsYou else { return nil }
         if work.isProbableHelper { return .probable }
         if work.isEmptySession { return .empty }
-        if lane == .finished, !FleetBoard.isRecent(work) { return .older }
+        if lane == .finished {
+            switch FleetBoard.ageGroup(work) {
+            case .recent: break
+            case .older: return .older
+            case .stale: return .stale
+            }
+        }
         return nil
     }
 
@@ -713,6 +721,7 @@ struct FleetLaneColumn: View {
             case .probable: showsProbable
             case .empty: showsEmpty
             case .older: showsOlder
+            case .stale: showsStale
             case nil: true
             }
         }
@@ -721,6 +730,7 @@ struct FleetLaneColumn: View {
     private var emptyCount: Int { works.filter { fold($0) == .empty }.count }
     private var probableCount: Int { works.filter { fold($0) == .probable }.count }
     private var olderCount: Int { works.filter { fold($0) == .older }.count }
+    private var staleCount: Int { works.filter { fold($0) == .stale }.count }
 
     private var title: String { lane.title }
 
@@ -857,6 +867,17 @@ struct FleetLaneColumn: View {
                         .buttonStyle(.tendGhost)
                         .controlSize(.small)
                         .padding(.top, 2)
+                    }
+                    if staleCount > 0 {
+                        Button(showsStale
+                            ? String(localized: "Hide idle over a week")
+                            : String(localized: "\(staleCount) idle over a week")) {
+                            showsStale.toggle()
+                        }
+                        .buttonStyle(.tendGhost)
+                        .controlSize(.small)
+                        .padding(.top, 2)
+                        .help("Agents whose last turn was more than a week ago")
                     }
                     if reviewedCount > 0 || (lane == .finished && showsReviewed) {
                         Button(showsReviewed ? String(localized: "Hide reviewed") : String(localized: "Show \(reviewedCount) reviewed")) {

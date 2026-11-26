@@ -315,6 +315,9 @@ struct TendAgent: Decodable, Hashable, Identifiable, Sendable {
     let lastPromptOrigin: String?
     let lastPromptAt: String?
     let lastResponse: String?
+    /// When the last response was captured: with `lastPromptAt`, the agent's
+    /// last turn, which Home's Finished lane ages by.
+    let lastResponseAt: String?
     let recap: String?
     let aiTitle: String?
     let lastNotification: String?
@@ -353,6 +356,7 @@ struct TendAgent: Decodable, Hashable, Identifiable, Sendable {
         case lastPromptOrigin = "last_prompt_origin"
         case lastPromptAt = "last_prompt_at"
         case lastResponse = "last_response"
+        case lastResponseAt = "last_response_at"
         case aiTitle = "ai_title"
         case lastNotification = "last_notification"
         case contextUsedPercent = "context_used_pct"

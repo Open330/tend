@@ -555,7 +555,9 @@ Home's lanes are computed in tendd, once for every client
   and the badge, without questions nobody can answer), `actionable`,
   `cant_answer` (at least as many as listed, a host's exact count when it
   has one), `in_progress`, `finished` (not set aside with Looks Good),
-  `reviewed`, and `coverage` (of the decision queues: `complete` only when
+  `finished_shown` (Finished's header: its main list only),
+  `finished_older` and `finished_stale` (its "N older" and "N idle over a
+  week" rows, by each unit's `age_group` from its last turn), `reviewed`, and `coverage` (of the decision queues: `complete` only when
   every host has a queue read whole for every kind). All are totals before
   a client's own filter. `/api/device/home` carries the same `counts`,
   uncut, and `reviewed_marks`. A lane's own `count` stays as before for older clients.

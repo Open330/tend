@@ -168,7 +168,7 @@ enum TendProjectionEquality {
         return lhs.source == rhs.source && lhs.title == rhs.title && lhs.repo == rhs.repo
             && lhs.lane == rhs.lane && lhs.stages == rhs.stages && lhs.headline == rhs.headline
             && lhs.since == rhs.since && lhs.handledLimit == rhs.handledLimit
-            && lhs.revision == rhs.revision && lhs.lastChange == rhs.lastChange
+            && lhs.revision == rhs.revision && lhs.lastChange == rhs.lastChange && lhs.lastTurn == rhs.lastTurn
             && lhs.isOrphanHelper == rhs.isOrphanHelper && lhs.isProbableHelper == rhs.isProbableHelper
             && lhs.isEmptySession == rhs.isEmptySession
             && sameFocus(lhs.focus, rhs.focus)
@@ -184,7 +184,7 @@ extension TendAgent {
         TendAgent(
             kind: kind, agentSessionID: agentSessionID, pane: pane, tmuxSocket: tmuxSocket,
             tmuxSession: tmuxSession, cwd: cwd, state: state, lastPrompt: lastPrompt,
-            lastPromptOrigin: lastPromptOrigin, lastPromptAt: lastPromptAt, lastResponse: lastResponse,
+            lastPromptOrigin: lastPromptOrigin, lastPromptAt: lastPromptAt, lastResponse: lastResponse, lastResponseAt: lastResponseAt,
             recap: recap, aiTitle: aiTitle, lastNotification: lastNotification, model: model,
             contextUsedPercent: contextUsedPercent, costUSD: costUSD,
             rateLimit5hPercent: rateLimit5hPercent, rateLimit5hResetsAt: rateLimit5hResetsAt,
