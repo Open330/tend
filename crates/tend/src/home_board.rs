@@ -2037,6 +2037,7 @@ pub fn build(input: &BoardInput) -> Value {
             "local": section.get("local"),
             "control": section.get("control"),
             "decides_reviews": section.get("decides_reviews"),
+            "approval_dashboard": section.get("approval_dashboard"),
             "covers": section.get("covers"),
             "truncated": section.pointer("/queue/truncated"),
             "unavailable": section.get("unavailable"),

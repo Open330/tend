@@ -222,6 +222,7 @@ function decisionUnit(item, host, index) {
       // tendd names nobody: the page says "an agent" in its language.
       askerMissing: !item.from_alias && !item.from_pane && !system,
       action: item.action || null,
+      approvalDashboard: remote ? host.approval_dashboard || null : null,
       title: needed || String(item.body || ""),
       detail: needed ? String(item.body || "") : "",
       since: item.created_at || null,
@@ -613,6 +614,7 @@ function serverDecision(item, sections) {
     local: item.local === true,
     control: section.control !== false,
     decides_reviews: section.decides_reviews === true,
+    approval_dashboard: section.approval_dashboard,
     subject_check: section.subject_check === true,
     close_unanswerable: section.close_unanswerable === true,
   };
