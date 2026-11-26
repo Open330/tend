@@ -241,19 +241,9 @@ impl HookAdapter for ClaudeAdapter {
                     .as_deref()
                     .and_then(transcript::last_turn_outcome);
                 match stop_outcome(input.last_assistant_message, outcome) {
-                    Some(transcript::TurnOutcome::RateLimited(text)) => AgentEvent::RateLimited {
-                        id,
-                        scope: RateLimitScope::Unknown,
-                        source: RateLimitSource::Transcript,
-                        // No reset timestamp: parsing "resets 2:40pm
-                        // (Asia/Seoul)" reliably is fragile (locale,
-                        // 12-hour ambiguity, whitespace). The watch UI
-                        // renders the message verbatim until a richer
-                        // signal lands.
-                        resets_at: None,
-                        message: Some(truncate(text, 4_000)),
-                        at,
-                    },
+                    Some(transcript::TurnOutcome::RateLimited(text)) => {
+                        rate_limited(id, RateLimitSource::Transcript, Some(text), at)
+                    }
                     Some(transcript::TurnOutcome::Response(text)) => AgentEvent::TurnStopped {
                         id,
                         response: Some(super::hook::truncate_response(text)),
@@ -275,24 +265,16 @@ impl HookAdapter for ClaudeAdapter {
             Event::StopFailure => {
                 let error_kind = input.error.as_deref().unwrap_or("unknown");
                 if error_kind == "rate_limit" {
-                    AgentEvent::RateLimited {
+                    rate_limited(
                         id,
-                        // The hook payload doesn't tell us which window
-                        // tripped — that's only on the statusline / per-
-                        // request response headers.
-                        scope: RateLimitScope::Unknown,
-                        source: RateLimitSource::StopFailure,
-                        // Same reason — no reset timestamp from this
-                        // signal alone. The store keeps any prior
-                        // `rate_limited_until` it learned from a richer
-                        // source.
-                        resets_at: None,
-                        message: input
-                            .last_assistant_message
-                            .or(input.error_details)
-                            .map(|m| truncate(m, 4_000)),
+                        RateLimitSource::StopFailure,
+                        failure_limit_message(
+                            input.last_assistant_message,
+                            input.error_details,
+                            at,
+                        ),
                         at,
-                    }
+                    )
                 } else {
                     // Non-rate-limit StopFailures (auth, billing, server
                     // error, …) flip the row to Error so the user can't
@@ -477,6 +459,52 @@ pub fn statusline_heartbeat(input: StatusLineInput, pane: Option<String>) -> Age
     }
 }
 
+fn rate_limited(
+    id: AgentId,
+    source: RateLimitSource,
+    message: Option<String>,
+    at: OffsetDateTime,
+) -> AgentEvent {
+    let resets_at = message
+        .as_deref()
+        .and_then(|message| crate::claude_limit::reset_at(message, at));
+    let scope = if message
+        .as_deref()
+        .is_some_and(crate::claude_limit::is_weekly)
+    {
+        RateLimitScope::SevenDay
+    } else {
+        RateLimitScope::Unknown
+    };
+    AgentEvent::RateLimited {
+        id,
+        scope,
+        source,
+        resets_at,
+        message: message.map(|message| truncate(message, 4_000)),
+        at,
+    }
+}
+
+fn failure_limit_message(
+    assistant: Option<String>,
+    details: Option<String>,
+    at: OffsetDateTime,
+) -> Option<String> {
+    if details
+        .as_deref()
+        .is_some_and(crate::claude_limit::is_weekly)
+        && assistant
+            .as_deref()
+            .and_then(|text| crate::claude_limit::reset_at(text, at))
+            .is_none()
+    {
+        details
+    } else {
+        assistant.or(details)
+    }
+}
+
 /// The outcome a `Stop` hook reports. The payload's
 /// `last_assistant_message` is the turn's final text; the transcript tail
 /// can lag behind it (the hook may run before Claude Code flushes the last
@@ -505,6 +533,33 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::NamedTempFile;
+    use time::macros::datetime;
+
+    #[test]
+    fn weekly_stop_failure_prefers_the_notice_over_generic_assistant_text() {
+        let at = datetime!(2026-11-26 11:00 +09:00);
+        let message = failure_limit_message(
+            Some("Usage limit reached again".into()),
+            Some("You've hit your weekly limit · resets 4pm (Asia/Seoul)".into()),
+            at,
+        );
+        let event = rate_limited(
+            AgentId {
+                kind: AgentKind::ClaudeCode,
+                session_id: "weekly-fixture".into(),
+                surface: None,
+                pane: None,
+                tmux_socket: None,
+                cwd: None,
+            },
+            RateLimitSource::StopFailure,
+            message,
+            at,
+        );
+        assert!(
+            matches!(event, AgentEvent::RateLimited { scope: RateLimitScope::SevenDay, resets_at: Some(reset), .. } if reset == datetime!(2026-11-26 07:00 UTC))
+        );
+    }
 
     #[test]
     fn bash_pre_tool_use_carries_its_command() {

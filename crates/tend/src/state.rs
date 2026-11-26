@@ -1403,6 +1403,15 @@ fn apply_heartbeat(agent: &mut Agent, ev: &AgentEvent) {
 
     let five_hour_saturated = rate_limit_5h_pct.is_some_and(|p| p >= 100.0);
     let seven_day_saturated = rate_limit_7d_pct.is_some_and(|p| p >= 100.0);
+    if agent.kind == AgentKind::ClaudeCode
+        && agent.rate_limit_scope == Some(RateLimitScope::SevenDay)
+        && is_hard_source(agent.rate_limit_source)
+    {
+        if seven_day_saturated {
+            agent.rate_limited_until = agent.rate_limited_until.max(*rate_limit_7d_resets_at);
+        }
+        return;
+    }
     if five_hour_saturated || seven_day_saturated {
         let (scope, until) = if five_hour_saturated {
             (RateLimitScope::FiveHour, *rate_limit_5h_resets_at)
@@ -1464,6 +1473,7 @@ fn apply_rate_limited(agent: &mut Agent, ev: &AgentEvent) {
         source,
         resets_at,
         message,
+        at,
         ..
     } = ev
     else {
@@ -1478,6 +1488,14 @@ fn apply_rate_limited(agent: &mut Agent, ev: &AgentEvent) {
             agent.rate_limit_scope,
             Some(RateLimitScope::FiveHour | RateLimitScope::SevenDay)
         );
+    if *scope == RateLimitScope::SevenDay
+        && agent.rate_limit_scope != Some(RateLimitScope::SevenDay)
+    {
+        // A previous five-hour deadline cannot authorize a weekly resume.
+        agent.rate_limited_until = agent.rate_limit_7d_resets_at.filter(|reset| {
+            *reset >= *at && agent.rate_limit_7d_pct.is_some_and(|pct| pct >= 100.0)
+        });
+    }
     if !regressing_scope {
         agent.rate_limit_scope = Some(*scope);
     }
@@ -1491,7 +1509,9 @@ fn apply_rate_limited(agent: &mut Agent, ev: &AgentEvent) {
     if !is_hard_source(agent.rate_limit_source) || new_is_hard {
         agent.rate_limit_source = Some(*source);
     }
-    if resets_at.is_some() {
+    if *scope == RateLimitScope::SevenDay && agent.kind == AgentKind::ClaudeCode {
+        agent.rate_limited_until = agent.rate_limited_until.max(*resets_at);
+    } else if resets_at.is_some() {
         agent.rate_limited_until = *resets_at;
     }
     if let Some(m) = message {
@@ -5925,6 +5945,54 @@ mod tests {
             store.by_session("s").await.unwrap().state,
             AgentState::Stopped
         );
+    }
+
+    #[tokio::test]
+    async fn weekly_cap_does_not_reuse_or_get_overwritten_by_the_five_hour_reset() {
+        let store = Store::shared();
+        let now = datetime!(2026-11-26 11:00 +09:00);
+        let short_reset = now + time::Duration::minutes(15);
+        let weekly_reset = now + time::Duration::hours(5);
+        store
+            .apply(&AgentEvent::RateLimited {
+                id: id("weekly"),
+                scope: RateLimitScope::FiveHour,
+                source: RateLimitSource::Statusline,
+                resets_at: Some(short_reset),
+                message: None,
+                at: now,
+            })
+            .await;
+        store
+            .apply(&AgentEvent::RateLimited {
+                id: id("weekly"),
+                scope: RateLimitScope::SevenDay,
+                source: RateLimitSource::StopFailure,
+                resets_at: None,
+                message: Some("You've hit your weekly limit".into()),
+                at: now,
+            })
+            .await;
+        assert_eq!(
+            store.by_session("weekly").await.unwrap().rate_limited_until,
+            None
+        );
+        store
+            .apply(&AgentEvent::Heartbeat {
+                id: id("weekly"),
+                model: None,
+                context_used_pct: None,
+                cost_usd: None,
+                rate_limit_5h_pct: Some(100.0),
+                rate_limit_5h_resets_at: Some(short_reset),
+                rate_limit_7d_pct: Some(100.0),
+                rate_limit_7d_resets_at: Some(weekly_reset),
+                at: now,
+            })
+            .await;
+        let agent = store.by_session("weekly").await.unwrap();
+        assert_eq!(agent.rate_limit_scope, Some(RateLimitScope::SevenDay));
+        assert_eq!(agent.rate_limited_until, Some(weekly_reset));
     }
 
     /// End-to-end composition: walk the full rate-limit lifecycle the
