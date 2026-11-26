@@ -3730,6 +3730,18 @@ mod tests {
             )
             .await
             .unwrap();
+        let approval = remote
+            .create(
+                agent.clone(),
+                Participant::console(agent.room.clone()),
+                NewRequest {
+                    body: "Approve the bounded change?".into(),
+                    human_action: Some(HumanAction::Approval),
+                    ..NewRequest::default()
+                },
+            )
+            .await
+            .unwrap();
         let between_agents = remote
             .create(
                 agent,
@@ -3746,6 +3758,10 @@ mod tests {
         here.local = true;
         let mut mini = fleet_host("mini", "dev");
         mini.mode = HostAccessMode::Control;
+        mini.annotations.insert(
+            "tend.dashboard_url".into(),
+            "https://mini.example.invalid/".into(),
+        );
         let observe = fleet_host("obs", "dev");
         let mut offline = fleet_host("off", "dev");
         offline.state = FleetHostState::Offline;
@@ -3760,7 +3776,7 @@ mod tests {
         let (runtime, mut commands) = FleetRuntime::new(store);
         let replies = Arc::new(std::sync::Mutex::new(Vec::new()));
         let seen = replies.clone();
-        let (q, a) = (question.clone(), between_agents.clone());
+        let (q, a, approval_request) = (question.clone(), between_agents.clone(), approval.clone());
         tokio::spawn(async move {
             while let Some(command) = commands.recv().await {
                 let result = match command.operation {
@@ -3790,6 +3806,8 @@ mod tests {
                     FleetOperation::CollaborationGet { request_id, .. } => {
                         let request = if request_id == q.id {
                             q.clone()
+                        } else if request_id == approval_request.id {
+                            approval_request.clone()
                         } else {
                             a.clone()
                         };
@@ -3846,6 +3864,10 @@ mod tests {
             .unwrap()
             .starts_with("older questions"));
         let hosts: Vec<Value> = ["here", "mini", "obs", "off"].map(section).to_vec();
+        assert_eq!(
+            hosts[1]["approval_dashboard"],
+            "https://mini.example.invalid/needs"
+        );
         assert_eq!(hosts[1]["covers"], json!(["questions", "waiting agents"]));
         assert_eq!(
             hosts[1]["unavailable"],
@@ -3865,6 +3887,12 @@ mod tests {
                 Some(json!({ "answer": "yes", "host": host })),
             )
         };
+        let response = answer("mini", &approval.id).await;
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert!(body_json(response).await["error"]
+            .as_str()
+            .unwrap()
+            .contains(&approval.id));
         // Refused before anything is sent: an observe-only host, an unknown
         // host, a request between agents on a control host.
         assert_eq!(

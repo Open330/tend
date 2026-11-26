@@ -434,6 +434,25 @@ function account(unit) {
 function answering(unit) {
   const key = cardKey(unit);
   const nodes = [];
+  if (unit.remote && unit.action === "approval") {
+    const dashboard = unit.approvalDashboard;
+    if (dashboard && canDecide()) {
+      try {
+        const url = new URL(dashboard);
+        if (url.protocol === "https:" && !url.username && !url.password) {
+          url.hash = itemHash(unit.id);
+          const link = el("a", "btn", S.openApproval(unit.host));
+          link.href = url.href;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          return [link];
+        }
+      } catch {
+        // An unusable dashboard link falls back to the exact request ID.
+      }
+    }
+    return [el("div", "flag", S.approvalOn(unit.host, unit.id))];
+  }
   if (unit.actionable === false) {
     nodes.push(el("div", "flag", S.decideOn(unit.host)));
     return nodes;

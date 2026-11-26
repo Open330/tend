@@ -134,6 +134,23 @@ fn state_label(state: crate::fleet::FleetHostState) -> String {
         .unwrap_or_else(|| "unknown".into())
 }
 
+/// Read only controller-configured Fleet annotations. Relay data cannot
+/// choose the origin where the operator is asked to sign in.
+fn approval_dashboard_url(value: &str) -> Option<url::Url> {
+    let mut url = url::Url::parse(value).ok()?;
+    if url.scheme() != "https"
+        || !url.has_host()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return None;
+    }
+    url.set_path(&format!("{}/needs", url.path().trim_end_matches('/')));
+    Some(url)
+}
+
 /// One Fleet host's part of the queue.
 async fn remote_section(
     fleet: &crate::fleet::FleetRuntime,
@@ -273,13 +290,21 @@ pub(super) async fn queue_sections(state: &AppState, limit: usize) -> Vec<serde_
         "unavailable": local.unavailable.clone(), "queue": local,
     })];
     if let Some(fleet) = &state.fleet {
-        let sections = futures::future::join_all(
-            fleet_hosts
-                .into_iter()
-                .filter(|host| !host.local)
-                .map(|host| remote_section(fleet, host, limit)),
-        )
-        .await;
+        let sections =
+            futures::future::join_all(fleet_hosts.into_iter().filter(|host| !host.local).map(
+                |host| async move {
+                    let dashboard = host
+                        .annotations
+                        .get("tend.dashboard_url")
+                        .and_then(|value| approval_dashboard_url(value));
+                    let mut section = remote_section(fleet, host, limit).await;
+                    if let Some(dashboard) = dashboard {
+                        section["approval_dashboard"] = json!(dashboard.as_str());
+                    }
+                    section
+                },
+            ))
+            .await;
         hosts.extend(sections);
     }
     hosts
@@ -1003,6 +1028,12 @@ async fn answer_remote(
         return (
             StatusCode::FORBIDDEN,
             "that request is not addressed to you".into(),
+        );
+    }
+    if stored.human_action == Some(crate::collaboration::HumanAction::Approval) {
+        return (
+            StatusCode::CONFLICT,
+            format!("open the authenticated dashboard on {alias} for approval {id}"),
         );
     }
     if stored.status.is_terminal() {

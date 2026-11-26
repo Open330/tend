@@ -439,6 +439,36 @@ test("a reply goes only to the agent and question it was written for", async () 
   await home.refresh();
 });
 
+test("a Fleet approval opens the exact request on its own authenticated dashboard", async () => {
+  const host = "mini";
+  const request = "req_approval";
+  const item = {
+    type: "decision", id: `question:${host}:${request}`, host, local: false, actionable: true, since: recent,
+    entry: { kind: "human_request", request_id: request, action: "approval", body: "Change the config?", created_at: recent },
+  };
+  const section = { alias: host, local: false, control: true, approval_dashboard: "https://mini.example.invalid/needs" };
+  serverBoard = {
+    hosts: [{ alias: host, local: false, state: "online" }], decision_hosts: [section], backlog: [],
+    lanes: { needs_you: { count: 1, groups: [{ project: null, items: [item] }] }, running: { groups: [] }, finished: { groups: [] } },
+  };
+  status.home = 200;
+  layoutButtons[1].click();
+  window.location.hash = "#item=req_approval&host=mini";
+  await home.refresh();
+  const inspector = document.getElementById("inspector");
+  const link = find(inspector, (n) => n.tag === "a" && /Open approval on mini/.test(n.text));
+  assert.equal(link?.href, "https://mini.example.invalid/needs#item=req_approval");
+  assert.equal(link?.rel, "noopener noreferrer");
+  assert.equal(find(inspector, (n) => n.tag === "button" && /^Answer|^Decline/.test(n.text)), null);
+  section.approval_dashboard = "javascript:alert(1)";
+  await home.refresh();
+  assert.match(inspector.text, /authenticated dashboard on mini to decide req_approval/);
+  status.home = 404;
+  serverBoard = null;
+  window.location.hash = "";
+  await home.refresh();
+});
+
 test("one review id on two hosts: a link and a click open the named host's, and decide it there", async () => {
   const review = (host, local) => ({
     type: "decision", id: local ? "review:rv_same" : `review:${host}:rv_same`, host, local, actionable: true, since: recent,

@@ -305,7 +305,17 @@ and put the exact operation and its limits in the body. The operator can use
 **Approve** or **Decline** in the dashboard's **Your turn** card on the request's
 host. The daemon records the decision, credential type and operator label with
 the reply. The operator can use any authenticated browser that can open that
-host's dashboard.
+host's dashboard. To link directly from a Fleet dashboard to the approval
+card, add the request host's HTTPS dashboard base URL to the controller's
+local Fleet configuration.
+
+```toml
+[fleet.hosts.build.annotations]
+"tend.dashboard_url" = "https://tend-build.example.com"
+```
+
+The operator authenticates on the request host. Without a configured URL the
+Fleet card shows the host and request ID.
 
 Give the other participant in the parent request the approval request ID. They
 can read the exact result with `tend_wait(id=...)` across windows, then check
