@@ -96,7 +96,7 @@ final class BoardTests: XCTestCase {
             unit("weeks", #""recent": false, "age_group": "stale""#),
         ].joined(separator: ",")
         let counts = #""counts": {"finished": 3, "finished_shown": 1, "finished_older": 1, "finished_stale": 1, "reviewed": 0}"#
-        let b = try board(#"{"lanes": {"finished": {"groups": [{"items": [\#(items)]}]}}, \#(counts), "reviewed_marks": true}"#)
+        let b = try board(#"{"lanes": {"needs_you": {"groups": []}, "finished": {"groups": [{"items": [\#(items)]}]}}, \#(counts), "reviewed_marks": true}"#)
         let folded = FoldedLane(b, lane: .finished)
         XCTAssertEqual(folded.groups.flatMap(\.items).map(\.id), ["u:now"])
         XCTAssertEqual(folded.older.map(\.id), ["days"])
