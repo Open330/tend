@@ -658,6 +658,7 @@ mod tests {
             claimed_at: None,
             wake_delivery: None,
             notified_at: None,
+            wake_prompt_observed_at: None,
             reply_notified_at: None,
             reply_read_at: None,
             reply_wake: None,

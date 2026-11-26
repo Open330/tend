@@ -136,7 +136,7 @@ async fn a_role_addressed_request_follows_a_replaced_reviewer() {
 }
 
 async fn deliver_quiet_progress_burst(
-    mailbox: &CollaborationStore,
+    mailbox: &Arc<CollaborationStore>,
     store: &tend::SharedStore,
     backends: &[tend::SharedBackend],
     payload: CollaborationWakePayload,
@@ -1080,6 +1080,71 @@ async fn a_request_offered_at_the_turn_boundary_is_not_also_typed() {
         sends.lock().unwrap().is_empty(),
         "nothing typed from the stale scan"
     );
+}
+
+#[tokio::test]
+async fn a_mailbox_wake_records_the_matching_provider_prompt_without_claiming() {
+    let store = tend::Store::shared();
+    add_agent(&store, "%1", "sender", AgentKind::Codex).await;
+    add_agent(&store, "%2", "recipient", AgentKind::Codex).await;
+    let panes = vec![collaboration_pane("%1", "0"), collaboration_pane("%2", "1")];
+    let participants = worker_participants(&store.snapshot().await, &panes);
+    let find = |pane: &str| {
+        participants
+            .iter()
+            .find(|p| p.pane == pane)
+            .unwrap()
+            .clone()
+    };
+    let recipient = find("%2");
+    let mailbox = CollaborationStore::in_memory(CollaborationOptions::default());
+    authorize_test_workers(&mailbox, &participants).await;
+    let request = mailbox
+        .create(
+            find("%1"),
+            recipient.clone(),
+            NewRequest {
+                body: "a review request".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let backend: tend::SharedBackend = Arc::new(CollaborationWakeBackend {
+        panes,
+        sends: Arc::new(Mutex::new(Vec::new())),
+    });
+    let prompt = mailbox_collaboration_request_prompt(&request);
+    assert!(send_mailbox_wake(&mailbox, &recipient, &request, &prompt, &[backend], &store).await);
+    let at = OffsetDateTime::now_utc();
+    store
+        .apply(&AgentEvent::PromptSubmitted {
+            id: AgentId {
+                kind: AgentKind::Codex,
+                session_id: recipient.agent_session_id.clone(),
+                pane: Some(recipient.pane.clone()),
+                tmux_socket: recipient.socket.clone(),
+                cwd: Some(TEST_REPO.into()),
+                surface: None,
+            },
+            prompt,
+            at,
+        })
+        .await;
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let row = mailbox.peek_for(&recipient, &request.id).await.unwrap();
+            if let Some(observed_at) = row.wake_prompt_observed_at {
+                assert_eq!(observed_at, at);
+                assert_eq!(row.status, RequestStatus::Queued);
+                assert!(row.claimed_at.is_none());
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("matching provider prompt must be recorded");
 }
 
 /// A typed wake the backend refused typed nothing: its reservation is

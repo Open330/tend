@@ -209,6 +209,7 @@ fn recovery_action(
     action.created_at = now;
     action.claimed_at = None;
     action.notified_at = None;
+    action.wake_prompt_observed_at = None;
     action.reply_notified_at = None;
     action.reply_read_at = None;
     action.reply_wake = None;

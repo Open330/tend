@@ -1,6 +1,7 @@
 //! Operator diagnostics over the existing memory projection; never copies bodies.
 use super::{
-    CollaborationError, CollaborationRequest, CollaborationStore, RequestKind, RequestStatus,
+    CollaborationError, CollaborationRequest, CollaborationStore, LaunchPurpose, RequestKind,
+    RequestStatus,
 };
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -96,6 +97,152 @@ pub struct WeeklyOutcome {
     pub reply_overdue: usize,
     pub wake_unsubmitted: usize,
     pub other_interruptions: usize,
+    /// Omitted when the bucket has no Worker requests or on older daemons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_delivery: Option<WorkerDeliveryOutcome>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkerDeliveryOutcome {
+    pub requests: usize,
+    pub still_queued_over_5m: usize,
+    pub slow_claim_early_evidence: usize,
+    pub slow_claim_late_evidence: usize,
+    pub slow_claim_no_evidence: usize,
+    #[serde(default, skip_serializing_if = "WorkerDeliveryTimings::is_empty")]
+    pub timings: WorkerDeliveryTimings,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkerDeliveryTimings {
+    /// Counts and percentiles are per stage because recording coverage differs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_to_evidence: Option<DeliveryPercentiles>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_to_provider_prompt: Option<DeliveryPercentiles>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_to_claim: Option<DeliveryPercentiles>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claim_to_reply: Option<DeliveryPercentiles>,
+}
+
+impl WorkerDeliveryTimings {
+    fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeliveryPercentiles {
+    pub samples: usize,
+    pub p50_ms: u64,
+    pub p95_ms: u64,
+}
+
+#[derive(Default)]
+struct WorkerTimingSamples {
+    evidence: Vec<u64>,
+    provider: Vec<u64>,
+    claim: Vec<u64>,
+    reply: Vec<u64>,
+}
+
+impl WorkerTimingSamples {
+    fn record(&mut self, request: &CollaborationRequest, now: OffsetDateTime) {
+        let start = request.created_at;
+        let claim = request.claimed_at;
+        collect_duration(
+            &mut self.evidence,
+            start,
+            first_delivery_evidence(request, now),
+        );
+        collect_duration(
+            &mut self.provider,
+            start,
+            request.wake_prompt_observed_at.filter(|at| *at <= now),
+        );
+        collect_duration(&mut self.claim, start, claim.filter(|at| *at <= now));
+        if let Some(claim) = claim.filter(|at| start <= *at && *at <= now) {
+            collect_duration(
+                &mut self.reply,
+                claim,
+                request.reply.as_ref().map(|r| r.at).filter(|at| *at <= now),
+            );
+        }
+    }
+
+    fn summarize(self) -> WorkerDeliveryTimings {
+        WorkerDeliveryTimings {
+            created_to_evidence: percentiles(self.evidence),
+            created_to_provider_prompt: percentiles(self.provider),
+            created_to_claim: percentiles(self.claim),
+            claim_to_reply: percentiles(self.reply),
+        }
+    }
+}
+
+fn collect_duration(samples: &mut Vec<u64>, start: OffsetDateTime, end: Option<OffsetDateTime>) {
+    if let Some(ms) = end
+        .filter(|end| start <= *end)
+        .and_then(|end| u64::try_from((end - start).whole_milliseconds()).ok())
+    {
+        samples.push(ms);
+    }
+}
+
+fn percentiles(mut samples: Vec<u64>) -> Option<DeliveryPercentiles> {
+    if samples.is_empty() {
+        return None;
+    }
+    samples.sort_unstable();
+    let count = samples.len();
+    Some(DeliveryPercentiles {
+        samples: count,
+        p50_ms: samples[count.div_ceil(2) - 1],
+        p95_ms: samples[count - (count / 20) - 1],
+    })
+}
+
+fn first_delivery_evidence(
+    request: &CollaborationRequest,
+    cutoff: OffsetDateTime,
+) -> Option<OffsetDateTime> {
+    let offer = request.turn_offer.as_ref();
+    // These indicate Tend attempted transport, including when a provider
+    // prompt observation is the only retained evidence.
+    [
+        request.notified_at,
+        request.wake_prompt_observed_at,
+        offer.and_then(|offer| offer.first_offer_at),
+        offer.and_then(|offer| offer.last_stop_offer_at),
+        offer.and_then(|offer| offer.last_prompt_offer_at),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|at| request.created_at <= *at && *at <= cutoff)
+    .min()
+}
+
+impl WorkerDeliveryOutcome {
+    fn record(&mut self, request: &CollaborationRequest, now: OffsetDateTime) {
+        const THRESHOLD: time::Duration = time::Duration::minutes(5);
+        self.requests += 1;
+        let Some(claimed_at) = request.claimed_at else {
+            if request.status == RequestStatus::Queued && now - request.created_at > THRESHOLD {
+                self.still_queued_over_5m += 1;
+            }
+            return;
+        };
+        if claimed_at - request.created_at <= THRESHOLD {
+            return;
+        }
+        let earliest = first_delivery_evidence(request, claimed_at);
+        match earliest {
+            Some(at) if at - request.created_at <= THRESHOLD => self.slow_claim_early_evidence += 1,
+            Some(_) => self.slow_claim_late_evidence += 1,
+            None => self.slow_claim_no_evidence += 1,
+        }
+    }
 }
 
 /// Buckets reported by [`CollaborationStore::health`].
@@ -113,6 +260,9 @@ fn weekly_outcomes<'a>(
             until: (now - time::Duration::days(7 * week)).date().to_string(),
             ..WeeklyOutcome::default()
         })
+        .collect();
+    let mut timings: Vec<WorkerTimingSamples> = (0..OUTCOME_WEEKS)
+        .map(|_| WorkerTimingSamples::default())
         .collect();
     for request in requests {
         if !request.expects_reply
@@ -134,6 +284,13 @@ fn weekly_outcomes<'a>(
         let Some(bucket) = weeks.get_mut(week) else {
             continue;
         };
+        if request.to.launch_purpose == LaunchPurpose::Worker {
+            timings[week].record(request, now);
+            bucket
+                .worker_delivery
+                .get_or_insert_with(WorkerDeliveryOutcome::default)
+                .record(request, now);
+        }
         bucket.requests += 1;
         if request.reply.is_some() {
             bucket.replied += 1;
@@ -153,6 +310,11 @@ fn weekly_outcomes<'a>(
             Some("wake_unsubmitted") => bucket.wake_unsubmitted += 1,
             Some(_) => bucket.other_interruptions += 1,
             None => {}
+        }
+    }
+    for (week, timings) in weeks.iter_mut().zip(timings) {
+        if let Some(worker) = &mut week.worker_delivery {
+            worker.timings = timings.summarize();
         }
     }
     weeks
@@ -233,6 +395,85 @@ mod tests {
             "pane":"%1","room":{"host":"tmux","window_id":"@1"},"state":"idle"}),
         )
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn worker_delivery_counts_slow_claims_by_retained_pre_claim_evidence() {
+        let store = CollaborationStore::in_memory(CollaborationOptions::default());
+        let mut worker = participant("worker");
+        worker.launch_purpose = LaunchPurpose::Worker;
+        let mut request = store
+            .create(
+                participant("sender"),
+                worker,
+                NewRequest {
+                    body: "worker delivery test".into(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        request.to.launch_purpose = LaunchPurpose::Worker;
+        let sent = request.created_at;
+        let after = |minutes| sent + time::Duration::minutes(minutes);
+        let mut rows = vec![request.clone()]; // Still queued.
+        request.claimed_at = Some(after(5));
+        rows.push(request.clone()); // Exact threshold is not slow.
+        request.claimed_at = Some(after(10));
+        request.notified_at = Some(after(8));
+        request.turn_offer = Some(super::super::turn_offer::TurnOffer {
+            last_stop_offer_at: Some(after(4)),
+            ..Default::default()
+        });
+        rows.push(request.clone()); // Earlier retained hook marker wins.
+        request.turn_offer = None;
+        rows.push(request.clone()); // Only late evidence.
+        request.notified_at = Some(after(11));
+        request.wake_prompt_observed_at = Some(after(11));
+        request.reply = Some(super::super::CollaborationReply {
+            status: RequestStatus::Completed,
+            body: String::new(),
+            report: None,
+            operator_approval: None,
+            artifacts: Vec::new(),
+            at: after(12),
+        });
+        rows.push(request.clone()); // Post-claim evidence contributes to timing only.
+        request.to.launch_purpose = LaunchPurpose::Primary;
+        rows.push(request); // Primary is excluded from worker diagnostics.
+        let weeks = weekly_outcomes(rows.iter(), after(12));
+        assert_eq!(
+            weeks[0].worker_delivery,
+            Some(WorkerDeliveryOutcome {
+                requests: 5,
+                still_queued_over_5m: 1,
+                slow_claim_early_evidence: 1,
+                slow_claim_late_evidence: 1,
+                slow_claim_no_evidence: 1,
+                timings: WorkerDeliveryTimings {
+                    created_to_evidence: Some(DeliveryPercentiles {
+                        samples: 3,
+                        p50_ms: 480_000,
+                        p95_ms: 660_000,
+                    }),
+                    created_to_provider_prompt: Some(DeliveryPercentiles {
+                        samples: 1,
+                        p50_ms: 660_000,
+                        p95_ms: 660_000,
+                    }),
+                    created_to_claim: Some(DeliveryPercentiles {
+                        samples: 4,
+                        p50_ms: 600_000,
+                        p95_ms: 600_000,
+                    }),
+                    claim_to_reply: Some(DeliveryPercentiles {
+                        samples: 1,
+                        p50_ms: 120_000,
+                        p95_ms: 120_000,
+                    }),
+                },
+            })
+        );
     }
 
     #[tokio::test]

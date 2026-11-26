@@ -61,6 +61,24 @@ reusable; this does not add caller affinity or change logical-recipient routing.
 Older daemons without this capability refuse automatic creation. Upgrade/restart
 tendd and run `tend doctor`; existing eligible workers can still be reused.
 
+For Worker requests that took over five minutes to claim, `tend doctor`
+groups the earliest retained wake or hook-offer marker as within five minutes,
+later, or absent before claim. It also counts requests still queued over five
+minutes. Each rolling week shows p50, p95 and the sample count for send to
+first recorded wake or offer, send to matching provider prompt, send to claim,
+and claim to reply. The first hook-offer timestamp survives retries for new
+records. Older rows contribute the timestamps they still retain. A transport
+marker alone cannot establish when the model first saw a request.
+
+For one request, `tend msg list --request-id ID` shows its current stage,
+the next action, and any linked recovery request. The compact JSON and wait
+outcome expose these as `delivery_diagnostics`. Wake attempts and hook offers
+are separate from a matching provider prompt hook and from the mailbox's
+claim timestamp. A matching prompt is recorded only when Tend can correlate
+the mailbox wake with the exact provider session. Inline delivery may reserve
+a claim before the provider receives the prompt. Missing timestamps mean
+evidence was unavailable.
+
 The launch UUID is persisted before creation, stamped on the new pane, and reused
 for the process-fenced worker grant. A renewable lease covers startup. Expiry
 after creation has been authorized is uncertain, not permission to spawn again.
