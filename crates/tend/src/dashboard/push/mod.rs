@@ -332,23 +332,20 @@ impl Push {
             .targets(state)
             .iter()
             .map(|row| tracker::Target {
+                operate: operates(state, &row.device),
                 device: row.device.clone(),
                 registration: row.registration(),
                 generation: row.generation,
                 content: row.content,
             })
             .collect();
-        // The badge every client shows (`counts.your_turn`), from the board
-        // the clients read, so the icon and the app agree.
-        let your_turn = super::home::board(state, super::home::DEFAULT_LIMIT)
-            .await
-            .pointer("/counts/your_turn")
-            .and_then(Value::as_u64)
-            .and_then(|n| usize::try_from(n).ok());
+        // Home's Your turn per host, from this same queue read: the badge
+        // of a device that may operate (apps/shared/Design/COUNTS.md).
+        let home_turn = super::home::your_turn_by_host(state, &sections).await;
         let sends = {
             let mut tracker = self.tracker();
-            tracker.set_your_turn(your_turn);
             tracker.observe(now, &reads, &targets);
+            tracker.observe_home(&home_turn, &reads);
             tracker.plan(now, &targets, self.allow_content)
         };
         for send in sends {
@@ -394,6 +391,7 @@ impl Push {
                 *content = (self.allow_content && row.content)
                     .then(|| tracker.content(host, newest))
                     .flatten();
+                *badge = tracker.badge_for(operates(state, &row.device));
                 let item = payload::item_ref(&row.ref_key, host, newest.kind, &newest.id);
                 (
                     payload::alert(host, *count, *badge, &row.channel, &item, content.as_ref()),
@@ -401,7 +399,12 @@ impl Push {
                     true,
                 )
             }
-            tracker::Send::Badge { badge, .. } => (payload::badge(*badge), None, false),
+            tracker::Send::Badge { badge, .. } => {
+                // The scope as it is now: a device narrowed to deciding
+                // keeps its registration, and its tab counts queue rows.
+                *badge = tracker.badge_for(operates(state, &row.device));
+                (payload::badge(*badge), None, false)
+            }
         };
         drop(tracker);
         let request = apns::Request {
@@ -537,6 +540,15 @@ fn entry(item: &Value) -> Option<tracker::Entry> {
 /// A host's section of `queue_sections` as the tracker reads it: readable
 /// when a source answered (`covers` is not empty), complete when also not
 /// truncated and nothing was unavailable.
+/// Whether the device may operate now (its badge is Home's Your turn).
+fn operates(state: &AppState, device: &str) -> bool {
+    state
+        .devices
+        .list()
+        .iter()
+        .any(|d| d.id == device && d.scope == super::devices::Scope::Operate)
+}
+
 fn host_read(section: &Value) -> tracker::HostRead {
     let readable = section["covers"]
         .as_array()

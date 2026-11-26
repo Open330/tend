@@ -13,12 +13,15 @@
 //!   ones dropped and only counted). At most one alert per device every
 //!   [`ALERT_EVERY`], one per host per send; only Apple's `200` clears what
 //!   an alert announced.
-//! - **Badge.** The app icon shows Your turn's number, the one every
-//!   client's badge shows (`counts.your_turn`, apps/shared/Design/
-//!   COUNTS.md), once the sender has read it; until then, what is waiting
-//!   in the queue. When it changes without an alert to carry it, a silent
-//!   badge-only update, at most once every [`BADGE_EVERY`] and never while
-//!   an alert is pending, until Apple has accepted the current number.
+//! - **Badge.** The app icon shows Your turn's number as that device's own
+//!   tab does (apps/shared/Design/COUNTS.md): Home's count for an
+//!   `operate` device (once read; until then the queue's), the queue's
+//!   rows without questions nobody can answer for a `decide` one. Each
+//!   host's part is its latest readable read, kept while it cannot be read,
+//!   so a host timing out never clears the icon. When it changes without an
+//!   alert to carry it, a silent badge-only update, at most once every
+//!   [`BADGE_EVERY`] and never while an alert is pending, until Apple has
+//!   accepted the current number.
 //! - **Back-off** per device on `429`/`5xx`, doubling from
 //!   [`BACKOFF_FIRST`] to [`BACKOFF_MAX`], and for the whole sender on
 //!   `TooManyProviderTokenUpdates`.
@@ -74,6 +77,8 @@ pub(super) struct Target {
     /// The row's `content` (the host's `allow_content` is passed to
     /// [`Tracker::plan`]).
     pub content: bool,
+    /// The device may operate: its badge is Home's Your turn.
+    pub operate: bool,
 }
 
 /// One send the tracker wants.
@@ -199,8 +204,8 @@ struct DeviceState {
     last_alert: Option<Duration>,
     last_badge: Option<Duration>,
     /// The last badge Apple accepted. `None` until the first plan, which
-    /// takes the current total: a phone registers when the app opens, and
-    /// the app sets its badge from its own count then.
+    /// takes the current number: a phone registers when the app opens, and
+    /// the app sets its icon from the same number (Your turn) then.
     accepted_badge: Option<usize>,
     backoff: Backoff,
 }
@@ -228,8 +233,9 @@ pub(super) struct Tracker {
     hosts: BTreeMap<String, HostState>,
     devices: BTreeMap<String, DeviceState>,
     backoff: Backoff,
-    /// Your turn's number from the last board read (`counts.your_turn`).
-    your_turn: Option<usize>,
+    /// Home's Your turn per host, each from that host's latest readable
+    /// read; `None` until the first board read.
+    home_turn: Option<BTreeMap<String, usize>>,
 }
 
 impl Tracker {
@@ -333,17 +339,35 @@ impl Tracker {
         }
     }
 
-    /// Your turn's number, as every client's badge says it, from the board
-    /// the sender read. A board read that failed keeps the last one.
-    pub(super) fn set_your_turn(&mut self, your_turn: Option<usize>) {
-        if your_turn.is_some() {
-            self.your_turn = your_turn;
+    /// Home's Your turn per host from a board read. A host whose decision
+    /// read is `readable` takes its number now (0 when nothing of it is in
+    /// Your turn); a host with no decision section takes it too; a host
+    /// whose decisions could not be read keeps its last number.
+    pub(super) fn observe_home(&mut self, by_host: &BTreeMap<String, usize>, reads: &[HostRead]) {
+        let turn = self.home_turn.get_or_insert_with(BTreeMap::new);
+        for read in reads {
+            if read.readable {
+                turn.insert(
+                    read.host.clone(),
+                    by_host.get(&read.host).copied().unwrap_or(0),
+                );
+            }
+        }
+        for (host, count) in by_host {
+            if !reads.iter().any(|read| &read.host == host) {
+                turn.insert(host.clone(), *count);
+            }
         }
     }
 
-    /// The app icon's number: Your turn once known, else what is waiting.
-    pub(super) fn badge(&self) -> usize {
-        self.your_turn.unwrap_or_else(|| self.total())
+    /// The app icon's number for a device: Home's Your turn for one that
+    /// may operate (the queue's until the board was read), the queue's
+    /// rows for one that may only decide.
+    pub(super) fn badge_for(&self, operate: bool) -> usize {
+        match (&self.home_turn, operate) {
+            (Some(turn), true) => turn.values().sum(),
+            _ => self.total(),
+        }
     }
 
     /// What is waiting across hosts: each host's latest readable read.
@@ -374,7 +398,6 @@ impl Tracker {
         if self.backoff.active(now) {
             return Vec::new();
         }
-        let total = self.badge();
         // Rebuild every pending set against what is known now.
         let gone: Vec<(String, String, Key)> = self
             .devices
@@ -399,7 +422,13 @@ impl Tracker {
             }
         }
         let mut sends = Vec::new();
+        let (operate_badge, decide_badge) = (self.badge_for(true), self.badge_for(false));
         for target in targets {
+            let total = if target.operate {
+                operate_badge
+            } else {
+                decide_badge
+            };
             let Some(state) = self.devices.get_mut(&target.device) else {
                 continue;
             };
@@ -589,6 +618,7 @@ mod tests {
             registration: "reg_a".into(),
             generation: 1,
             content: false,
+            operate: false,
         }]
     }
 
@@ -804,34 +834,39 @@ mod tests {
         );
     }
 
-    /// The icon says Your turn's number, as every client's badge does: a
-    /// question nobody can answer is in the queue but not in Your turn, a
-    /// waiting Work unit is in Your turn. A silent badge-only update when
-    /// it changes; a board read that failed keeps the last number.
+    /// The icon says Your turn's number as the device's own tab does:
+    /// Home's for an `operate` device, the queue's rows for a `decide` one.
+    /// A silent badge-only update when it changes; a host that cannot be
+    /// read keeps its last part, so a timeout never clears the icon.
     #[test]
-    fn the_badge_is_your_turn_once_the_board_says_it() {
+    fn the_badge_is_your_turn_for_the_devices_scope() {
         let mut t = Tracker::default();
-        let targets = phone();
-        t.observe(s(0), &[read("mini", &["a", "b", "c"])], &targets);
-        assert_eq!(t.badge(), 3, "before any board read: what is waiting");
-        t.set_your_turn(Some(2));
-        assert_eq!(t.badge(), 2);
-        assert!(
-            t.plan(s(0), &targets, false).is_empty(),
-            "the phone set its own"
+        let mut targets = phone();
+        targets[0].operate = true;
+        let reads = |items: &[&str]| vec![read("mini", items), read("mba", &["m1"])];
+        t.observe(s(0), &reads(&["a", "b", "c"]), &targets);
+        assert_eq!(
+            t.badge_for(true),
+            4,
+            "before any board read: what is waiting"
         );
-        // Your turn moves with nothing new in the queue: a silent update.
-        t.set_your_turn(Some(1));
-        t.observe(s(15), &[read("mini", &["a", "b", "c"])], &targets);
-        let sends = t.plan(s(15), &targets, false);
-        assert_eq!(badges(&sends), vec![1]);
-        assert!(alerts(&sends).is_empty());
-        t.record(s(15), &sends[0], Result::Accepted);
-        // A failed board read changes nothing.
-        t.set_your_turn(None);
-        t.observe(s(90), &[read("mini", &["a", "b", "c"])], &targets);
-        assert!(t.plan(s(90), &targets, false).is_empty());
-        assert_eq!(t.badge(), 1);
+        // Home groups mini's three rows into two cards.
+        let home = BTreeMap::from([("mini".to_owned(), 2), ("mba".to_owned(), 1)]);
+        t.observe_home(&home, &reads(&["a", "b", "c"]));
+        assert_eq!(t.badge_for(true), 3);
+        assert_eq!(t.badge_for(false), 4, "a decide-only device counts rows");
+        // The first plan takes the number: the app set it on open.
+        assert!(t.plan(s(0), &targets, false).is_empty());
+        // mini times out: its part stays; mba's moves to zero.
+        let timed_out = vec![unreadable("mini"), read("mba", &[])];
+        t.observe(s(75), &timed_out, &targets);
+        t.observe_home(&BTreeMap::new(), &timed_out);
+        assert_eq!(
+            t.badge_for(true),
+            2,
+            "mini keeps its 2, never cleared by a timeout"
+        );
+        assert_eq!(badges(&t.plan(s(75), &targets, false)), vec![2]);
     }
 
     #[test]
@@ -1015,12 +1050,14 @@ mod tests {
                 registration: "reg_a".into(),
                 generation: 1,
                 content: false,
+                operate: false,
             },
             Target {
                 device: "dev_b".into(),
                 registration: "reg_b".into(),
                 generation: 1,
                 content: false,
+                operate: false,
             },
         ];
         t.observe(s(0), &[read("mini", &[])], &targets);
