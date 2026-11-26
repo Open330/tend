@@ -687,7 +687,11 @@
                 "window_id": "@1",
                 "window_index": "0",
                 "window_name": "a",
-                "current_path": "/w/tend"
+                "current_path": "/w/tend",
+                "pane_index": "0",
+                "current_command": "claude",
+                "session_id": "$1",
+                "title": ""
               },
               {
                 "pane_id": "%2",
@@ -696,7 +700,11 @@
                 "window_id": "@1",
                 "window_index": "0",
                 "window_name": "a",
-                "current_path": "/w/tend"
+                "current_path": "/w/tend",
+                "pane_index": "1",
+                "current_command": "claude",
+                "session_id": "$1",
+                "title": ""
               },
               {
                 "pane_id": "%3",
@@ -705,7 +713,11 @@
                 "window_id": "@1",
                 "window_index": "0",
                 "window_name": "a",
-                "current_path": "/w/tend"
+                "current_path": "/w/tend",
+                "pane_index": "2",
+                "current_command": "claude",
+                "session_id": "$1",
+                "title": ""
               },
               {
                 "pane_id": "%4",
@@ -714,7 +726,11 @@
                 "window_id": "@1",
                 "window_index": "0",
                 "window_name": "a",
-                "current_path": "/w/tend"
+                "current_path": "/w/tend",
+                "pane_index": "3",
+                "current_command": "claude",
+                "session_id": "$1",
+                "title": ""
               }
             ]
           }

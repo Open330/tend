@@ -137,7 +137,7 @@ enum TendProjectionEquality {
 
     /// Every stored property of `FleetWork`; a test counts them, so a new
     /// one cannot be left out unnoticed.
-    static let fleetWorkFields = 16
+    static let fleetWorkFields = 17
 
     static func same(_ lhs: FleetWork, _ rhs: FleetWork) -> Bool {
         same(lhs, rhs, agents: same)
