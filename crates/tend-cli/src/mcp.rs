@@ -2469,8 +2469,8 @@ fn collaboration_guide(
                 "request": { "action": "choice" },
                 "actions": ["approval", "choice", "information"],
                 "context": "Include the exact decision, why required, options and recommendation. Include parent_request_id only for an existing request you participate in; inherit its thread and preserve known work identity.",
-                "wait": "Retain the returned request_id; its answer arrives as a wake (tend_wait(id) to block). Continue independent work; never treat a timeout as consent or create duplicate questions. Keep the original peer request open while waiting.",
-                "answer": "The human answers in Need you (watch: e). Read status and body; completed is not necessarily approval. Honor refusal/cancellation and complete the original peer request after authorized work.",
+                "wait": "Retain the returned request_id; its answer arrives as a wake (tend_wait(id) to block). Continue independent work; never treat a timeout as consent or create duplicate questions. For a recorded approval, share its exact request_id with the other participant in the linked parent request so they can read the same decision.",
+                "answer": "For a shareable approval, have the operator use Approve or Decline in the dashboard's Need you card on the request's host. Check reply.operator_approval.decision and approval_scope against the exact work; reuse this record instead of asking again. A free-form answer or a report from another agent carries no recorded operator approval.",
                 "identity": "Never use console=true or claim/answer the operator inbox as an agent.",
                 "fallback": "If capabilities.human_actions is false or tend_request_attention is not installed, ask in the existing user conversation. Do not silently drop the question or redirect it to a peer."
             },
@@ -6699,6 +6699,7 @@ mod tests {
         let mut request = crate::collaboration_output::fixture();
         request.status = RequestStatus::Completed;
         request.reply = Some(tend::collaboration::CollaborationReply {
+            operator_approval: None,
             report: None,
             status: RequestStatus::Completed,
             body: "large final reply".repeat(4096),
@@ -8616,6 +8617,7 @@ mod tests {
         let mut newer = crate::collaboration_output::fixture();
         newer.status = RequestStatus::Completed;
         newer.reply = Some(tend::collaboration::CollaborationReply {
+            operator_approval: None,
             report: None,
             status: RequestStatus::Completed,
             body: "review result".into(),

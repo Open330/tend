@@ -829,6 +829,7 @@ mod tests {
         first.created_at = now - time::Duration::minutes(5);
         first.status = RequestStatus::Completed;
         first.reply = Some(CollaborationReply {
+            operator_approval: None,
             report: None,
             status: RequestStatus::Completed,
             body: "changes required".into(),

@@ -110,6 +110,13 @@ its id; if the guide reports `capabilities.human_actions=false` or the tool is
 missing, ask in the existing user conversation instead. Its answer arrives as a wake. Timeout is never consent; an answer
 may be a refusal. Never answer a human request as an agent.
 
+For a linked approval recorded from the dashboard, share only its exact
+approval request ID with the other participant in the parent request. Read it
+with `tend_wait`; verify `reply.operator_approval`, the reply note and
+`approval_scope` before reusing the decision. The credential says whether this
+was an operator session, paired device or operator token. Plain chat relays
+do not carry this record. Reuse the decision for its exact scope.
+
 ## Authority
 
 Existing user authorization stays valid within its scope; do not ask again.

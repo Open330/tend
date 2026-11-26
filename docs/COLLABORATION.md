@@ -280,6 +280,23 @@ operator dialled from, so the audit trail still says where it came from. Wake
 prompts make the same distinction explicit: a recipient sees `from console via
 tend watch (caller %N, pid …)`.
 
+### Share an operator approval across sessions
+
+Ask with `tend_request_attention(action="approval", parent_request_id=...)`
+and put the exact operation and its limits in the body. The operator can use
+**Approve** or **Decline** in the dashboard's **Your turn** card on the request's
+host. The daemon records the decision, credential type and operator label with
+the reply. The operator can use any authenticated browser that can open that
+host's dashboard.
+
+Give the other participant in the parent request the approval request ID. They
+can read the exact result with `tend_wait(id=...)` across windows, then check
+`reply.operator_approval.decision`, `approval_scope.body` and
+`approval_scope.parent_request_id` and the reply note against the work. A token
+or paired-device record identifies that credential. Free-form replies and
+relayed chat text carry no recorded approval. Reuse the original record for
+the same operation. Changes in scope require a decision on the new scope.
+
 ## Enable
 
 The standard init preset also installs global entry points, a shared

@@ -447,6 +447,7 @@ fn legacy_rows_derive_their_release_from_timestamps() {
     let now = OffsetDateTime::now_utc();
     let mut request = CollaborationRequest {
         reply: Some(CollaborationReply {
+            operator_approval: None,
             report: None,
             status: RequestStatus::Completed,
             body: "done".into(),

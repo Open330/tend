@@ -287,7 +287,8 @@ function composer(unit) {
   area.rows = 2;
   area.dataset.key = key;
   area.maxLength = unit.decision === "question" ? 16384 : 1024;
-  area.placeholder = mode === "decline" ? S.reasonOptional : unit.decision === "question" ? S.yourAnswer : S.noteOptional;
+  const sharedApproval = unit.action === "approval" && !unit.remote;
+  area.placeholder = mode === "decline" ? S.reasonOptional : mode === "approve" ? S.noteOptional : unit.decision === "question" ? S.yourAnswer : S.noteOptional;
   const drafted = draftKey(key, mode, option);
   area.value = state.drafts.get(drafted) || "";
   if (option && unit.decision !== "question") box.append(el("div", "chosen", S.acceptWith(option)));
@@ -300,7 +301,10 @@ function composer(unit) {
   const reviewPath = `/api/decisions/reviews/${encodeURIComponent(unit.id)}`;
   let primary;
   if (unit.decision === "question" && mode === "decline") {
-    primary = button(S.decline, () => decide(unit, questionPath, { answer: area.value, declined: true }, S.declined), "btn primary");
+    primary = button(S.decline, () => decide(unit, questionPath, { answer: area.value, declined: true, ...(sharedApproval ? { approval: "declined" } : {}) }, S.declined), "btn primary");
+    row.append(cancel, primary);
+  } else if (mode === "approve") {
+    primary = button(S.approve, () => decide(unit, questionPath, { answer: area.value, approval: "approved" }, S.approved), "btn primary");
     row.append(cancel, primary);
   } else if (unit.decision === "question") {
     primary = button(S.send, () => decide(unit, questionPath, { answer: area.value }, S.answered), "btn primary");
@@ -323,7 +327,7 @@ function composer(unit) {
     row.append(cancel, primary);
   }
   // Only an answer needs text: a reason or a note is optional.
-  const needsText = unit.decision === "question" && mode !== "decline";
+  const needsText = unit.decision === "question" && mode === "answer";
   const sync = () => {
     primary.disabled = needsText && !area.value.trim();
   };
@@ -435,14 +439,17 @@ function answering(unit) {
     return nodes;
   }
   if (!canDecide()) return nodes;
+  const sharedApproval = unit.action === "approval" && !unit.remote;
   if (unit.options.length) {
     const list = el("div", "options");
     unit.options.forEach((option, index) => {
-      const row = el("button", "option");
-      row.type = "button";
-      row.title = S.optionHelp;
+      const row = el(sharedApproval ? "div" : "button", "option");
       row.append(el("span", "n", String(index + 1)), el("span", "t", option));
-      row.addEventListener("click", () => (unit.decision === "question" ? openComposer(unit, "answer", option) : openComposer(unit, "accept", null, option)));
+      if (!sharedApproval) {
+        row.type = "button";
+        row.title = S.optionHelp;
+        row.addEventListener("click", () => (unit.decision === "question" ? openComposer(unit, "answer", option) : openComposer(unit, "accept", null, option)));
+      }
       list.append(row);
     });
     nodes.push(list);
@@ -452,7 +459,9 @@ function answering(unit) {
   } else if (unit.decision === "question") {
     const row = el("div", "row");
     row.append(
-      unit.options.length
+      sharedApproval
+        ? button(`${S.approve}…`, () => openComposer(unit, "approve"), "btn")
+        : unit.options.length
         ? button(S.other, () => openComposer(unit, "answer"), "btn ghost")
         : button(S.answer, () => openComposer(unit, "answer"), "btn"),
       button(`${S.decline}…`, () => openComposer(unit, "decline"), "btn ghost"),

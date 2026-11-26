@@ -175,6 +175,7 @@ fn reply_output_preserves_json_escapes_and_direct_body() {
     let body = "pending\nquote: \" \\ path\n한글";
     request.status = RequestStatus::Failed;
     request.reply = Some(tend::collaboration::CollaborationReply {
+        operator_approval: None,
         report: None,
         status: RequestStatus::Failed,
         body: body.into(),
