@@ -8,7 +8,7 @@ and holds to the same rules. Plan: `docs/proposals/PARITY.md` P3 and P4.
 
 | Field | What it counts | Shown as |
 |---|---|---|
-| `your_turn` | Your turn's cards, decisions and work units together. A question nobody can answer is not one of them. Your turn never folds, so this is every card the lane shows. | Your turn's header, **and the badge**: the Mac rail's Home badge, the web's rail badge and `(N)` tab title, the iPhone tab and the iPad sidebar. |
+| `your_turn` | Your turn's cards, decisions and work units together. A question nobody can answer is not one of them. Your turn never folds, so this is every card the lane shows. | Your turn's header, **and the badge**: the Mac rail's Home badge, the web's rail badge and `(N)` tab title, the iPhone tab, the iPad sidebar, and the iOS app icon (tendd's pushes carry it; silent badge updates when it changes). |
 | `actionable` | Of `your_turn`, the decisions the viewer can decide from here. A review on a host that does not take review decisions from here is not one. A work unit waiting in its pane is never one: it is answered in the pane. | Optional. A surface may say "N to decide here", but the badge stays `your_turn`. |
 | `cant_answer` | Questions nobody can answer. This is at least the number listed: a host's exact count when it reports one. | The "Can't be answered (N)" group, outside Your turn's number. |
 | `in_progress` | In progress's work units, including the ones folded behind "empty sessions", "possible helpers" or "older". | In progress's header. |

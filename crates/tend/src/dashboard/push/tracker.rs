@@ -13,9 +13,12 @@
 //!   ones dropped and only counted). At most one alert per device every
 //!   [`ALERT_EVERY`], one per host per send; only Apple's `200` clears what
 //!   an alert announced.
-//! - **Badge.** When the total changes without an alert to carry it, a
+//! - **Badge.** The app icon shows Your turn's number, the one every
+//!   client's badge shows (`counts.your_turn`, apps/shared/Design/
+//!   COUNTS.md), once the sender has read it; until then, what is waiting
+//!   in the queue. When it changes without an alert to carry it, a silent
 //!   badge-only update, at most once every [`BADGE_EVERY`] and never while
-//!   an alert is pending, until Apple has accepted the current total.
+//!   an alert is pending, until Apple has accepted the current number.
 //! - **Back-off** per device on `429`/`5xx`, doubling from
 //!   [`BACKOFF_FIRST`] to [`BACKOFF_MAX`], and for the whole sender on
 //!   `TooManyProviderTokenUpdates`.
@@ -225,6 +228,8 @@ pub(super) struct Tracker {
     hosts: BTreeMap<String, HostState>,
     devices: BTreeMap<String, DeviceState>,
     backoff: Backoff,
+    /// Your turn's number from the last board read (`counts.your_turn`).
+    your_turn: Option<usize>,
 }
 
 impl Tracker {
@@ -328,6 +333,19 @@ impl Tracker {
         }
     }
 
+    /// Your turn's number, as every client's badge says it, from the board
+    /// the sender read. A board read that failed keeps the last one.
+    pub(super) fn set_your_turn(&mut self, your_turn: Option<usize>) {
+        if your_turn.is_some() {
+            self.your_turn = your_turn;
+        }
+    }
+
+    /// The app icon's number: Your turn once known, else what is waiting.
+    pub(super) fn badge(&self) -> usize {
+        self.your_turn.unwrap_or_else(|| self.total())
+    }
+
     /// What is waiting across hosts: each host's latest readable read.
     pub(super) fn total(&self) -> usize {
         self.hosts.values().map(|host| host.present).sum()
@@ -356,7 +374,7 @@ impl Tracker {
         if self.backoff.active(now) {
             return Vec::new();
         }
-        let total = self.total();
+        let total = self.badge();
         // Rebuild every pending set against what is known now.
         let gone: Vec<(String, String, Key)> = self
             .devices
@@ -784,6 +802,36 @@ mod tests {
             alerts(&t.plan(s(50), &targets, false)),
             vec![("mini".into(), 1, "a".into())]
         );
+    }
+
+    /// The icon says Your turn's number, as every client's badge does: a
+    /// question nobody can answer is in the queue but not in Your turn, a
+    /// waiting Work unit is in Your turn. A silent badge-only update when
+    /// it changes; a board read that failed keeps the last number.
+    #[test]
+    fn the_badge_is_your_turn_once_the_board_says_it() {
+        let mut t = Tracker::default();
+        let targets = phone();
+        t.observe(s(0), &[read("mini", &["a", "b", "c"])], &targets);
+        assert_eq!(t.badge(), 3, "before any board read: what is waiting");
+        t.set_your_turn(Some(2));
+        assert_eq!(t.badge(), 2);
+        assert!(
+            t.plan(s(0), &targets, false).is_empty(),
+            "the phone set its own"
+        );
+        // Your turn moves with nothing new in the queue: a silent update.
+        t.set_your_turn(Some(1));
+        t.observe(s(15), &[read("mini", &["a", "b", "c"])], &targets);
+        let sends = t.plan(s(15), &targets, false);
+        assert_eq!(badges(&sends), vec![1]);
+        assert!(alerts(&sends).is_empty());
+        t.record(s(15), &sends[0], Result::Accepted);
+        // A failed board read changes nothing.
+        t.set_your_turn(None);
+        t.observe(s(90), &[read("mini", &["a", "b", "c"])], &targets);
+        assert!(t.plan(s(90), &targets, false).is_empty());
+        assert_eq!(t.badge(), 1);
     }
 
     #[test]

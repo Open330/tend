@@ -338,8 +338,16 @@ impl Push {
                 content: row.content,
             })
             .collect();
+        // The badge every client shows (`counts.your_turn`), from the board
+        // the clients read, so the icon and the app agree.
+        let your_turn = super::home::board(state, super::home::DEFAULT_LIMIT)
+            .await
+            .pointer("/counts/your_turn")
+            .and_then(Value::as_u64)
+            .and_then(|n| usize::try_from(n).ok());
         let sends = {
             let mut tracker = self.tracker();
+            tracker.set_your_turn(your_turn);
             tracker.observe(now, &reads, &targets);
             tracker.plan(now, &targets, self.allow_content)
         };
