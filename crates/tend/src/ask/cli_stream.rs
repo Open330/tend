@@ -479,8 +479,13 @@ printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"D
         let started = state.path().join("provider.started");
         std::fs::File::create(&gate).unwrap();
         let lock = std::fs::File::create(&lock_path).unwrap();
-        let mut command =
-            super::super::headless_review_command(&lock_path, &gate, "/bin/sh").unwrap();
+        let mut command = super::super::headless_review_command(
+            &lock_path,
+            &gate,
+            "/bin/sh",
+            Duration::from_secs(5),
+        )
+        .unwrap();
         // The launcher exits while a descendant still owns the lock and pipes.
         command
             .kill_on_drop(true)

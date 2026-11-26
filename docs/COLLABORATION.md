@@ -927,7 +927,8 @@ additional context or JSON escaping can still hit the 2048-byte document cap.
 
 ### Headless review pilot
 
-On Linux with `/usr/bin/flock` and a daemon that owns its default local SQLite mailbox, set
+On Linux with `/usr/bin/flock`, `/bin/sh`, `/bin/sleep`, and a daemon that owns
+its default local SQLite mailbox, set
 `[collaboration] headless_reviews = true` to enable the explicit
 `headless:codex` target. This does not change ordinary peer routing.
 From a tracked agent, use:
@@ -951,9 +952,12 @@ request ID. The provider holds a process lock across daemon restarts, and
 the daemon revokes the previous generation's launch permit during recovery.
 The next request waits until that lock is released. On timeout or orderly
 daemon shutdown, Tend stops the review's process group before releasing the
-slot. After a forced daemon kill, the replacement still waits for the old
-provider to exit. Custom Codex launchers must preserve inherited file
-descriptors and keep their provider in the launch process group.
+slot. An independent watchdog in the review process group enforces a
+620-second limit from launch even if the daemon or launcher exits. A replacement
+daemon waits for the old process lock to clear before continuing. Custom Codex
+launchers must preserve inherited file descriptors and keep their provider in
+the launch process group. A descendant outside the group can keep the queue
+paused if it retains the lock.
 
 The daemon saves the result to a local journal before committing it to SQLite.
 After a restart it can finish the commit for the matching request and generation

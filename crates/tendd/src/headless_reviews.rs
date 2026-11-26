@@ -16,8 +16,11 @@ pub(super) fn start(
     shutdown: &broadcast::Sender<()>,
 ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
     anyhow::ensure!(
-        cfg!(target_os = "linux") && Path::new("/usr/bin/flock").is_file(),
-        "headless reviews require a Linux provider lifetime lock"
+        cfg!(target_os = "linux")
+            && ["/usr/bin/flock", "/bin/sh", "/bin/sleep"]
+                .into_iter()
+                .all(|path| Path::new(path).is_file()),
+        "headless reviews require a Linux provider lifetime lock and process-group watchdog"
     );
     let path = tend::paths::default_collaboration_file()
         .ok_or_else(|| anyhow::anyhow!("headless review mailbox directory is unavailable"))?;

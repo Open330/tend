@@ -1413,6 +1413,10 @@ pub enum HeadlessReviewEvent {
     ProviderTurnStarted(time::OffsetDateTime),
 }
 
+const HEADLESS_REVIEW_TIMEOUT: Duration = Duration::from_secs(600);
+// The daemon gets the first chance to stop and reap a timed-out attempt.
+const HEADLESS_GROUP_DEADLINE: Duration = Duration::from_secs(620);
+
 /// Drive one independent Codex process. Reuse the Ask argv/parser, but never
 /// inherit an interactive session, provider options, or bypass permissions.
 pub async fn run_headless_review(
@@ -1453,7 +1457,7 @@ pub async fn run_headless_review(
             "shell_environment_policy.inherit=\"none\"".into(),
         ],
     );
-    let mut cmd = headless_review_command(process_lock, launch_gate, bin)?;
+    let mut cmd = headless_review_command(process_lock, launch_gate, bin, HEADLESS_GROUP_DEADLINE)?;
     cmd.args(args)
         .current_dir(cwd)
         .env_clear()
@@ -1481,7 +1485,7 @@ pub async fn run_headless_review(
         cmd,
         engine,
         bin,
-        Duration::from_secs(600),
+        HEADLESS_REVIEW_TIMEOUT,
         None,
         None,
         Some((&events, prompt)),
@@ -1493,19 +1497,31 @@ pub async fn run_headless_review(
 /// launcher, gate check, and provider share one PID and the provider inherits
 /// the exclusive lock. The daemon never owns this lock on the child's behalf:
 /// a SIGKILL of the daemon does not release a running provider's slot.
+/// The watchdog starts before opening the lock. It shares the new process
+/// group and can signal its own group without looking up a stored PID, even
+/// when the original launcher or daemon has already exited.
 #[cfg(target_os = "linux")]
 fn headless_review_command(
     process_lock: &Path,
     launch_gate: &Path,
     bin: &str,
+    deadline: Duration,
 ) -> Result<tokio::process::Command, String> {
-    let flock = Path::new("/usr/bin/flock");
-    if !flock.is_file() {
-        return Err("headless reviews require /usr/bin/flock".into());
+    if !Path::new("/usr/bin/flock").is_file() || !Path::new("/bin/sleep").is_file() {
+        return Err("headless reviews require Linux flock and sleep".into());
     }
-    let mut command = tokio::process::Command::new(flock);
+    let mut command = tokio::process::Command::new("/bin/sh");
     command
-        .args(["--exclusive", "--no-fork", "--"])
+        .process_group(0)
+        .args([
+            "-c",
+            r#"delay=$1; shift
+(/bin/sleep "$delay" && kill -KILL 0) </dev/null >/dev/null 2>&1 &
+exec "$@""#,
+            "tend-headless-watchdog",
+        ])
+        .arg(deadline.as_secs().to_string())
+        .args(["/usr/bin/flock", "--exclusive", "--no-fork", "--"])
         .arg(process_lock)
         // Check the generation only after acquiring the process lock. The
         // daemon revokes obsolete gates while holding the same lock.
@@ -1525,6 +1541,7 @@ fn headless_review_command(
     _process_lock: &Path,
     _launch_gate: &Path,
     _bin: &str,
+    _deadline: Duration,
 ) -> Result<tokio::process::Command, String> {
     Err("headless reviews require Linux process lifetime fencing".into())
 }
@@ -3196,14 +3213,19 @@ mod tests {
         std::fs::File::create(&launch_gate).unwrap();
         let process = std::fs::File::create(&process_lock).unwrap();
 
-        let mut child = headless_review_command(&process_lock, &launch_gate, "/bin/sh")
-            .unwrap()
-            .args(["-c", "printf '%s\n' \"$$\"; read -r done"])
-            .kill_on_drop(true)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .spawn()
-            .unwrap();
+        let mut child = headless_review_command(
+            &process_lock,
+            &launch_gate,
+            "/bin/sh",
+            Duration::from_secs(5),
+        )
+        .unwrap()
+        .args(["-c", "printf '%s\n' \"$$\"; read -r done"])
+        .kill_on_drop(true)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
 
         tokio::time::timeout(Duration::from_secs(5), async {
             let mut stdout = BufReader::new(child.stdout.take().unwrap());
@@ -3237,13 +3259,18 @@ mod tests {
         std::fs::File::create(&launch_gate).unwrap();
         let process = std::fs::File::create(&process_lock).unwrap();
         process.try_lock().unwrap();
-        let delayed = headless_review_command(&process_lock, &launch_gate, "/bin/sh")
-            .unwrap()
-            .args(["-c", "echo old-provider-must-not-run"])
-            .kill_on_drop(true)
-            .stdout(std::process::Stdio::piped())
-            .spawn()
-            .unwrap();
+        let delayed = headless_review_command(
+            &process_lock,
+            &launch_gate,
+            "/bin/sh",
+            Duration::from_secs(5),
+        )
+        .unwrap()
+        .args(["-c", "echo old-provider-must-not-run"])
+        .kill_on_drop(true)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
         std::fs::remove_file(&launch_gate).unwrap();
         drop(process);
         let delayed = tokio::time::timeout(Duration::from_secs(5), delayed.wait_with_output())
@@ -3252,6 +3279,48 @@ mod tests {
             .unwrap();
         assert_eq!(delayed.status.code(), Some(75));
         assert!(delayed.stdout.is_empty());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn headless_watchdog_releases_lock_after_launcher_exits_with_live_descendant() {
+        let state = tempfile::tempdir().unwrap();
+        let process_lock = state.path().join("process.lock");
+        let launch_gate = state.path().join("attempt");
+        std::fs::File::create(&launch_gate).unwrap();
+        let process = std::fs::File::create(&process_lock).unwrap();
+
+        let mut launcher = headless_review_command(
+            &process_lock,
+            &launch_gate,
+            "/bin/sh",
+            Duration::from_secs(2),
+        )
+        .unwrap()
+        // Background the lock inheritor and let its parent exit.
+        .args(["-c", "/bin/sleep 60 </dev/null >/dev/null 2>&1 &"])
+        .spawn()
+        .unwrap();
+
+        tokio::time::timeout(Duration::from_secs(8), async {
+            assert!(launcher.wait().await.unwrap().success());
+            assert!(matches!(
+                process.try_lock(),
+                Err(std::fs::TryLockError::WouldBlock)
+            ));
+            // No daemon task kills or tracks the group after wait() above.
+            loop {
+                match process.try_lock() {
+                    Ok(()) => break,
+                    Err(std::fs::TryLockError::WouldBlock) => {
+                        tokio::time::sleep(Duration::from_millis(25)).await;
+                    }
+                    Err(error) => panic!("unexpected lock error: {error}"),
+                }
+            }
+        })
+        .await
+        .unwrap();
     }
 
     #[test]
