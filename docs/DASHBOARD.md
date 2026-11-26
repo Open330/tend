@@ -777,8 +777,8 @@ allow_content = false           # default false
   "Tend: <host> needs you" and how many are new, with Your turn's number
   as the badge, as that device's own tab says it: Home's count for an
   `operate` device (counted per host from the same queue read; the
-  queue's until the first board read), the queue's rows without questions
-  nobody can answer for a `decide` one, each host's part kept while it
+  queue's until the first board read), the rows of its own 100-row page without
+  questions nobody can answer for a `decide` one, as its tab counts them, each host's part kept while it
   cannot be read, and the scope read again at send time), the registration's `channel`, the host, and `ref` (the first 16
   bytes of HMAC-SHA256(ref_key, host NUL kind NUL id), hex). The item's
   text (its canonical line, with the asking agent as subtitle, and a

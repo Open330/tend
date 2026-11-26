@@ -36,6 +36,9 @@ use std::time::{Duration, Instant};
 pub(in crate::dashboard) const TICK: Duration = Duration::from_secs(15);
 /// The queue limit the sender reads with, as Your turn's sources do.
 const QUEUE_LIMIT: usize = 500;
+/// The page a decide-only device reads (the app's `queue(limit: 100)`):
+/// its icon counts what its tab can, not the wider read alerts use.
+const DEVICE_PAGE: usize = 100;
 const DEFAULT_TOPIC: &str = "dev.tend.ios";
 
 /// An APNs environment.
@@ -560,10 +563,18 @@ fn host_read(section: &Value) -> tracker::HostRead {
             .as_array()
             .is_some_and(|list| !list.is_empty());
     let complete = readable && !unavailable && section["queue"]["truncated"] != json!(true);
+    let page = if readable {
+        section["queue"]["items"].as_array().map_or(0, |items| {
+            items.iter().take(DEVICE_PAGE).filter_map(entry).count()
+        })
+    } else {
+        0
+    };
     tracker::HostRead {
         host: section["alias"].as_str().unwrap_or("this host").to_owned(),
         readable,
         complete,
+        page,
         entries: if readable {
             section["queue"]["items"]
                 .as_array()

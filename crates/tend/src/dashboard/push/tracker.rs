@@ -56,6 +56,8 @@ pub(super) struct HostRead {
     pub readable: bool,
     pub complete: bool,
     pub entries: Vec<Entry>,
+    /// Entries in the page a decide-only device reads (its tab's number).
+    pub page: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -161,6 +163,8 @@ struct HostState {
     complete: bool,
     /// Entries in the latest readable read (kept while unreadable).
     present: usize,
+    /// Of those, the ones in a decide-only device's page (kept likewise).
+    page: usize,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -317,6 +321,7 @@ impl Tracker {
             host.complete = read.complete;
             host.last_complete = read.complete.then_some(now);
             host.present = read.entries.len();
+            host.page = read.page;
             // Newest last.
             new.sort_by_key(|entry| entry.since);
             for device in self.devices.values_mut() {
@@ -345,12 +350,18 @@ impl Tracker {
     /// whose decisions could not be read keeps its last number.
     pub(super) fn observe_home(&mut self, by_host: &BTreeMap<String, usize>, reads: &[HostRead]) {
         let turn = self.home_turn.get_or_insert_with(BTreeMap::new);
+        // A host gone from both the queue and the board no longer counts.
+        turn.retain(|host, _| {
+            by_host.contains_key(host) || reads.iter().any(|read| &read.host == host)
+        });
         for read in reads {
-            if read.readable {
-                turn.insert(
-                    read.host.clone(),
-                    by_host.get(&read.host).copied().unwrap_or(0),
-                );
+            let now = by_host.get(&read.host).copied().unwrap_or(0);
+            if read.complete {
+                turn.insert(read.host.clone(), now);
+            } else if read.readable {
+                // Cut or partly unread: what it shows, never less than before.
+                let last = turn.get(&read.host).copied().unwrap_or(0);
+                turn.insert(read.host.clone(), now.max(last));
             }
         }
         for (host, count) in by_host {
@@ -366,11 +377,12 @@ impl Tracker {
     pub(super) fn badge_for(&self, operate: bool) -> usize {
         match (&self.home_turn, operate) {
             (Some(turn), true) => turn.values().sum(),
-            _ => self.total(),
+            _ => self.hosts.values().map(|host| host.page).sum(),
         }
     }
 
     /// What is waiting across hosts: each host's latest readable read.
+    #[cfg(test)]
     pub(super) fn total(&self) -> usize {
         self.hosts.values().map(|host| host.present).sum()
     }
@@ -593,6 +605,7 @@ mod tests {
             readable: true,
             complete: true,
             entries: ids.iter().map(|id| entry(Kind::Request, id)).collect(),
+            page: ids.len(),
         }
     }
 
@@ -609,6 +622,7 @@ mod tests {
             readable: false,
             complete: false,
             entries: Vec::new(),
+            page: 0,
         }
     }
 
@@ -867,6 +881,48 @@ mod tests {
             "mini keeps its 2, never cleared by a timeout"
         );
         assert_eq!(badges(&t.plan(s(75), &targets, false)), vec![2]);
+    }
+
+    /// A decide-only device's icon counts its tab's page (100 rows), while
+    /// alerts still see the wider read; an operate device's counts Home.
+    #[test]
+    fn a_decide_only_icon_counts_its_page_across_the_boundary() {
+        let mut t = Tracker::default();
+        let targets = phone();
+        let ids: Vec<String> = (0..150).map(|i| format!("r{i}")).collect();
+        let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+        let mut wide = read("mini", &ids);
+        wide.page = 100;
+        t.observe(s(0), &[wide.clone()], &targets);
+        assert_eq!(t.total(), 150, "alerts see all 150");
+        assert_eq!(t.badge_for(false), 100, "the tab reads 100 rows");
+        t.observe_home(&BTreeMap::from([("mini".to_owned(), 90)]), &[wide]);
+        assert_eq!(t.badge_for(true), 90, "Home's count for an operate device");
+    }
+
+    /// A host gone from the roster stops counting; a cut read never lowers
+    /// a host's part.
+    #[test]
+    fn home_parts_follow_the_roster_and_hold_on_partial_reads() {
+        let mut t = Tracker::default();
+        let both = [read("mini", &["a"]), read("mba", &["b"])];
+        t.observe_home(
+            &BTreeMap::from([("mini".to_owned(), 3), ("mba".to_owned(), 1)]),
+            &both,
+        );
+        assert_eq!(t.badge_for(true), 4);
+        // mini cut short shows 1: it keeps 3.
+        t.observe_home(
+            &BTreeMap::from([("mini".to_owned(), 1), ("mba".to_owned(), 1)]),
+            &[partial("mini", &["a"]), read("mba", &["b"])],
+        );
+        assert_eq!(t.badge_for(true), 4);
+        // mba removed from the fleet: only mini counts.
+        t.observe_home(
+            &BTreeMap::from([("mini".to_owned(), 2)]),
+            &[read("mini", &["a"])],
+        );
+        assert_eq!(t.badge_for(true), 2);
     }
 
     #[test]
