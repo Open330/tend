@@ -5368,6 +5368,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "jiff",
  "libc",
  "nix 0.29.0",
  "notify-rust",

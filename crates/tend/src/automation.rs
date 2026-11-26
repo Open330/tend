@@ -1266,6 +1266,10 @@ pub enum SkipReason {
     PaneGone,
     /// The backend refused the injection.
     ActionFailed,
+    /// The weekly limit has no trustworthy reset time yet.
+    WeeklyResetUnknown,
+    /// The weekly reset or the configured post-reset delay has not elapsed.
+    WeeklyResetPending,
 }
 
 /// The guard state the scheduler needs, read off the ledger by the caller
@@ -1394,7 +1398,11 @@ impl Scheduler {
             return Decision::Skip(reason);
         }
 
-        let fire_at = Self::fire_at(rule, subject, now, jitter_ratio);
+        let weekly_reset = match Self::weekly_resume_reset(rule, subject) {
+            Ok(reset) => reset,
+            Err(reason) => return Decision::Skip(reason),
+        };
+        let fire_at = Self::fire_at(rule, subject, now, jitter_ratio, weekly_reset);
         Decision::Fire(Box::new(PlannedFiring {
             rule: rule.name.clone(),
             pane,
@@ -1461,7 +1469,54 @@ impl Scheduler {
         if let Some(reason) = Self::guard_breach(rule, guards, now) {
             return Decision::Skip(reason);
         }
+        match Self::weekly_resume_reset(rule, subject) {
+            Ok(Some(reset)) if now < Self::weekly_resume_not_before(rule, reset) => {
+                return Decision::Skip(SkipReason::WeeklyResetPending);
+            }
+            Err(reason) => return Decision::Skip(reason),
+            Ok(_) => {}
+        }
         Decision::Fire(Box::new(firing.clone()))
+    }
+
+    fn weekly_resume_reset(
+        rule: &AutomationRule,
+        subject: &AutomationSubject,
+    ) -> Result<Option<OffsetDateTime>, SkipReason> {
+        if rule.action != AutomationAction::SendPrompt
+            || subject.current_event() != Some(AutomationEvent::RateLimited)
+        {
+            return Ok(None);
+        }
+        let weekly_scope = subject.rate_limit_scope == Some(RateLimitScope::SevenDay);
+        let notice = subject.last_notification.as_deref().filter(|message| {
+            subject.kind == AgentKind::ClaudeCode && crate::claude_limit::is_weekly(message)
+        });
+        if !weekly_scope && notice.is_none() {
+            return Ok(None);
+        }
+        let stated = notice
+            .and_then(|message| crate::claude_limit::reset_at(message, subject.state_entered_at));
+        let stored = if weekly_scope {
+            subject.rate_limited_until
+        } else {
+            None
+        };
+        stated
+            .into_iter()
+            .chain(stored)
+            .max()
+            .map(Some)
+            .ok_or(SkipReason::WeeklyResetUnknown)
+    }
+
+    fn weekly_resume_not_before(rule: &AutomationRule, reset: OffsetDateTime) -> OffsetDateTime {
+        let wait = rule.wait();
+        if wait.anchor == WaitAnchor::Reset {
+            reset + wait.offset.max(time::Duration::ZERO)
+        } else {
+            reset
+        }
     }
 
     fn guard_breach(
@@ -1490,6 +1545,7 @@ impl Scheduler {
         subject: &AutomationSubject,
         now: OffsetDateTime,
         jitter_ratio: f64,
+        weekly_reset: Option<OffsetDateTime>,
     ) -> OffsetDateTime {
         let jitter = jitter_offset(rule.jitter(), jitter_ratio);
         let base = match rule.on {
@@ -1503,7 +1559,7 @@ impl Scheduler {
             }
             _ => match rule.wait().anchor {
                 WaitAnchor::Event => now + rule.wait().offset,
-                WaitAnchor::Reset => match subject.rate_limited_until {
+                WaitAnchor::Reset => match weekly_reset.or(subject.rate_limited_until) {
                     Some(reset) => reset + rule.wait().offset,
                     // No reset time on this cap (a `StopFailure` 429 carries
                     // none): the offset had nothing to anchor to, so the
@@ -1512,12 +1568,10 @@ impl Scheduler {
                 },
             },
         };
-        let planned = base + jitter;
-        if planned < now {
-            now
-        } else {
-            planned
-        }
+        let planned = (base + jitter).max(now);
+        weekly_reset.map_or(planned, |reset| {
+            planned.max(Self::weekly_resume_not_before(rule, reset))
+        })
     }
 }
 
@@ -2939,6 +2993,63 @@ waaait = "5m"
         assert_eq!(
             decision.firing().unwrap().fire_at,
             NOW + time::Duration::minutes(32)
+        );
+    }
+
+    #[test]
+    fn weekly_resume_waits_for_the_live_deadline_instead_of_the_fallback() {
+        let mut subject = capped_subject();
+        subject.rate_limit_scope = Some(RateLimitScope::Unknown);
+        subject.state_entered_at = datetime!(2026-11-26 11:00 +09:00);
+        subject.rate_limited_until = None;
+        subject.last_notification =
+            Some("You've hit your weekly limit · resets 4pm (Asia/Seoul)".into());
+        let config = AutomationConfig::default();
+        let rule = resume_rule();
+        let guards = GuardState::default();
+        let armed = Scheduler::arm(
+            &config,
+            &rule,
+            &subject,
+            guards,
+            subject.state_entered_at,
+            0.0,
+        );
+        let firing = armed.firing().unwrap();
+        assert_eq!(firing.fire_at, datetime!(2026-11-26 16:02 +09:00));
+        assert_eq!(
+            Scheduler::confirm(
+                &config,
+                &rule,
+                firing,
+                Some(&subject),
+                guards,
+                firing.fire_at
+            )
+            .skip_reason(),
+            None
+        );
+
+        subject.rate_limit_scope = Some(RateLimitScope::SevenDay);
+        subject.rate_limited_until = Some(datetime!(2026-11-26 18:00 +09:00));
+        assert_eq!(
+            Scheduler::confirm(
+                &config,
+                &rule,
+                firing,
+                Some(&subject),
+                guards,
+                firing.fire_at
+            )
+            .skip_reason(),
+            Some(SkipReason::WeeklyResetPending)
+        );
+
+        subject.rate_limited_until = None;
+        subject.last_notification = Some("You've hit your weekly limit".into());
+        assert_eq!(
+            Scheduler::arm(&config, &rule, &subject, guards, firing.fire_at, 0.0).skip_reason(),
+            Some(SkipReason::WeeklyResetUnknown)
         );
     }
 

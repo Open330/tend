@@ -195,7 +195,9 @@ fn classify_transcript_line(line: &str) -> Option<TurnOutcome> {
                     .join("\n"),
                 _ => continue,
             };
-            if text.contains("You've hit your limit") || text.contains("Claude usage limit reached")
+            if text.contains("You've hit your limit")
+                || text.contains("Claude usage limit reached")
+                || crate::claude_limit::is_weekly(&text)
             {
                 return Some(TurnOutcome::RateLimited(text));
             }

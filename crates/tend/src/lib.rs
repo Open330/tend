@@ -52,6 +52,7 @@ pub mod awaiting_reply;
 pub mod backend;
 pub mod binary_upgrade;
 pub mod child_env;
+mod claude_limit;
 mod codex_binding;
 pub mod codex_launch;
 pub mod collaboration;

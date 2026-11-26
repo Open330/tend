@@ -20,7 +20,7 @@ The engine is enabled by default, but new rules do nothing until you enable them
 | Rule | Action | Timing |
 | ---- | ------ | ------ |
 | `resume-codex-capacity` | Send `continue` for the specific Codex capacity error | 2m + up to 15s jitter; at most 6/hour/pane |
-| `resume-after-limit` | Send `continue` after a usage cap resets | Reset + 2m; 20m fallback without a reset time |
+| `resume-after-limit` | Send `continue` after a usage cap resets | Reset + 2m; 20m fallback for caps without a reset time except known weekly caps |
 | `notify-waiting-input` | Record an input-wait notice | 5m + jitter |
 | `notify-persistent-error` | Record a non-quota error notice | 5m + jitter |
 | `confirm-selected-yes` | Press Enter on the selected Yes/Proceed option | 5s; at most 10/hour/pane |
@@ -290,10 +290,13 @@ anchored on the cap's own reset time (`{{reset}}`, `{{reset}}+2m`,
 A `reset` anchor only makes sense for `on = "rate_limited"` — nothing else
 carries a reset time — and is refused elsewhere.
 
-Not every cap names its reset time. The Claude statusline and the Codex
-rollout do; a `StopFailure` 429 and the transcript scan do not. When the
-anchor has nothing to anchor to, `fallback` (default 15m) replaces the
-whole expression.
+The Claude statusline and the Codex rollout can supply a reset timestamp.
+Tend also reads the date, time and timezone from Claude's weekly-limit notice
+when its hook or transcript carries the text. A prompt rule waits for a known
+weekly reset and checks it again before sending. A weekly cap whose reset
+cannot be determined stays pending until Tend receives a usable deadline.
+For other limits without a timestamp, `fallback` (default 15m) replaces the
+whole reset expression.
 
 `jitter` adds a random `0..jitter` to every fire time, so a dozen agents
 capped in the same window do not all resume on the same second. Default
