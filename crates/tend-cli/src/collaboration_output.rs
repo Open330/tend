@@ -51,7 +51,11 @@ pub(crate) fn receipt(request: &CollaborationRequest) -> Value {
     if let Some(parent) = &request.delegation_parent {
         value["delegation_parent"] = json!(parent);
     }
-    if request.status == RequestStatus::Queued
+    if request.status == RequestStatus::Queued && request.awaits_turn_boundary(&request.to) {
+        value["deferred"] = json!("awaiting_primary_turn");
+        value["next_step"] =
+            json!("The recipient hook can offer this request at its next turn. Do not resend it.");
+    } else if request.status == RequestStatus::Queued
         && !request.bypasses_primary_protection()
         && !request.to.accepts_peer_work()
     {
