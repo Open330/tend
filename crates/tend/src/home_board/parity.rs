@@ -73,6 +73,7 @@ pub(super) fn summary(item: &Value, lane: &str) -> Value {
         "probable_helper": item["probable_helper"],
         "orphan_helper": item["orphan_helper"],
         "empty_session": item["empty_session"],
+        "age_group": item["age_group"],
     })
 }
 
@@ -113,6 +114,9 @@ fn build_case(case: &Value, now: OffsetDateTime) -> Value {
             "your_turn": counts["your_turn"],
             "in_progress": counts["in_progress"],
             "finished": counts["finished"],
+            "finished_shown": counts["finished_shown"],
+            "finished_older": counts["finished_older"],
+            "finished_stale": counts["finished_stale"],
             "reviewed": counts["reviewed"],
         },
     })

@@ -16,6 +16,17 @@ import { checksOf, decidedCard, isSystemAsk, safeHref } from "./needs-model.mjs"
 
 
 export const FINISHED_WINDOW_MS = 24 * 60 * 60 * 1000;
+/// Finished units idle longer than this fold into their own row, after
+/// "older" (tendd's STALE_FINISH).
+export const STALE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+/// An agent's last turn: its last prompt or response, whichever is later,
+/// else its start. Not `state_entered_at`, which hooks reset on agents
+/// idle for days (tendd's `turn_time`).
+export function lastTurn(agent) {
+  const turn = Math.max(instant(agent.last_prompt_at) || 0, instant(agent.last_response_at) || 0);
+  return turn || instant(agent.started_at) || instant(agent.state_entered_at || agent.last_activity_at) || 0;
+}
 export const LANES = ["needsYou", "running", "finished"];
 const RUNNING = new Set(["working", "starting"]);
 const WAITING = new Set(["waiting_input", "waiting_choice"]);
@@ -443,8 +454,9 @@ export function buildBoard({ decisions = null, history = null, fleet = null, now
       if (RUNNING.has(agent.state) && !needsAttention(agent) && agent.awaiting_reply == null) {
         lanes.running.push(agentUnit(agent, host, "running"));
       } else if (agent.state === "idle" && agent.awaiting_reply == null && (agent.last_response || agent.last_prompt)) {
-        const at = instant(agent.state_entered_at || agent.last_activity_at);
+        const at = lastTurn(agent);
         if (at && now - at <= window && at - now <= 60_000) lanes.finished.push(agentUnit(agent, host, "finished"));
+        else if (at && now - at > STALE_WINDOW_MS) lanes.finished.push({ ...agentUnit(agent, host, "finished"), older: true, stale: true });
         else if (at && now - at > window) lanes.finished.push({ ...agentUnit(agent, host, "finished"), older: true });
       }
     }
@@ -474,12 +486,15 @@ export function buildBoard({ decisions = null, history = null, fleet = null, now
   for (const lane of LANES) {
     const all = lanes[lane].filter(keep);
     const visible = all.filter((u) => !u.unanswerable);
+    // apps/shared/Design/COUNTS.md: decided history never counts, and
+    // Finished's header counts only its main list; its folds count their own.
+    const counted = visible.filter((u) => u.type !== "decided" && (lane !== "finished" || !u.older));
     result[lane] = {
-      // apps/shared/Design/COUNTS.md: folded cards count, decided history
-      // never does.
-      count: visible.filter((u) => u.type !== "decided").length,
+      count: counted.length,
       groups: groupByProject(visible.filter((u) => !u.older)),
-      older: visible.filter((u) => u.older),
+      older: visible.filter((u) => u.older && !u.stale && u.type !== "decided"),
+      stale: visible.filter((u) => u.stale),
+      olderDecided: visible.filter((u) => u.older && u.type === "decided"),
       notes: notes[lane],
     };
     if (lane === "needsYou") result[lane].cantAnswer = cantAnswerGroup(all, queueHosts, filter);
@@ -487,7 +502,7 @@ export function buildBoard({ decisions = null, history = null, fleet = null, now
   const filtered = Boolean(filter.host || filter.project);
   if (filtered) {
     for (const lane of LANES) {
-      result[lane].total = lanes[lane].filter((u) => !u.unanswerable && u.type !== "decided").length;
+      result[lane].total = lanes[lane].filter((u) => !u.unanswerable && u.type !== "decided" && (lane !== "finished" || !u.older)).length;
     }
   }
   return {
@@ -580,6 +595,9 @@ function serverUnit(item) {
     probableHelper: item.probable_helper === true,
     emptySession: item.empty_session === true,
     recent: item.recent !== false,
+    // recent, older or stale by the last turn; an older tendd sends only
+    // `recent`.
+    ageGroup: item.age_group || (item.recent === false ? "older" : "recent"),
     reviewed: item.reviewed === true,
     reviewKey: item.review_key || null,
     requestedByPerson: item.requested_by_person === true,
@@ -652,21 +670,25 @@ export function fromServerBoard(server, { history = null, filter = {}, now = Dat
     // The Mac's folds, outside Your turn: possible helpers, empty
     // sessions, then older than a day; reviewed units hide behind
     // "Show N reviewed".
-    const folds = { helpers: [], empty: [], older: [], reviewed: [] };
+    const folds = { helpers: [], empty: [], older: [], stale: [], olderDecided: [], reviewed: [] };
     const shown = [];
     for (const unit of visible) {
       if (lane === "needsYou") shown.push(unit);
       else if (unit.reviewed && !showReviewed) folds.reviewed.push(unit);
       else if (unit.probableHelper) folds.helpers.push(unit);
       else if (unit.emptySession) folds.empty.push(unit);
+      else if (unit.type === "decided" && unit.older) folds.olderDecided.push(unit);
+      else if (unit.ageGroup === "stale") folds.stale.push(unit);
       else if (unit.recent === false || unit.older) folds.older.push(unit);
       else shown.push(unit);
     }
     // tendd's numbers as given (apps/shared/Design/COUNTS.md); under a
     // filter, the filtered count by the same rule and the total beside it.
-    const own = lane === "needsYou" ? visible.length : visible.filter((u) => u.type !== "decided" && !u.reviewed).length;
-    const unfiltered = lanes[lane].filter((u) => !u.unanswerable && u.type !== "decided" && (lane === "needsYou" || !u.reviewed)).length;
-    const given = server?.counts?.[SERVER_COUNT[lane]];
+    // Finished's header counts only its main list (`finished_shown`).
+    const inMain = (u) => lane !== "finished" || (!u.probableHelper && !u.emptySession && u.recent !== false && !u.older);
+    const own = lane === "needsYou" ? visible.length : visible.filter((u) => u.type !== "decided" && !u.reviewed && inMain(u)).length;
+    const unfiltered = lanes[lane].filter((u) => !u.unanswerable && u.type !== "decided" && (lane === "needsYou" || !u.reviewed) && inMain(u)).length;
+    const given = lane === "finished" ? server?.counts?.finished_shown : server?.counts?.[SERVER_COUNT[lane]];
     const total = Number.isInteger(given) ? given : unfiltered;
     const filtered = Boolean(filter.host || filter.project);
     result[lane] = {
@@ -715,6 +737,8 @@ export function reviewQueue(board, scope = "day", now = Date.now()) {
   const all = [
     ...board.lanes.finished.groups.flatMap((g) => g.units),
     ...board.lanes.finished.older,
+    ...(board.lanes.finished.stale || []),
+    ...(board.lanes.finished.olderDecided || []),
     ...Object.values(board.lanes.finished.folds || {}).flat(),
   ];
   const seen = new Set();

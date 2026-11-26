@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildBoard, cantAnswerGroup, evidenceChip, fromServerBoard, groupByProject, hostHue, isPaneless, needsAttention, productOf, TEND_PROJECT } from "../src/dashboard/web/home-board.mjs";
+import { buildBoard, cantAnswerGroup, evidenceChip, fromServerBoard, groupByProject, hostHue, isPaneless, lastTurn, needsAttention, productOf, TEND_PROJECT } from "../src/dashboard/web/home-board.mjs";
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "../../../apps/shared/Fixtures");
 const load = (name) => JSON.parse(readFileSync(join(fixtures, name), "utf8"));
@@ -49,8 +49,9 @@ test("lanes: the queue in Your turn, working agents in progress, idle ones finis
   assert.deepEqual(finished.map((u) => u.title), ["fix toast"]);
   assert.equal(finished[0].headline.text, "Done: toast fixed", "the last result's first line");
   assert.equal(board.lanes.finished.older.length, 1, "older than a day folds away");
-  // apps/shared/Design/COUNTS.md: a folded card still counts.
-  assert.equal(board.lanes.finished.count, 2);
+  // apps/shared/Design/COUNTS.md: Finished's header counts only its main
+  // list; the older row counts its own.
+  assert.equal(board.lanes.finished.count, 1);
   assert.equal(board.yourTurn, yourTurn.length, "the badge is Your turn's number");
 });
 
@@ -302,4 +303,32 @@ test("an older daemon's board still says N of M under a filter, and partial from
   assert.equal(board.lanes.running.count, 1);
   assert.equal(board.lanes.running.total, 2);
   assert.equal(board.partial, true, "a cut queue: not all there is");
+});
+
+test("finished: age is the last turn, and over a week folds into its own row", () => {
+  const now = Date.parse("2026-11-26T09:00:00Z");
+  const ago = (h) => new Date(now - h * 3600_000).toISOString();
+  const idle = (id, turnHoursAgo) => ({
+    agent_session_id: id, kind: "claude_code", pane: `%${id}`, state: "idle", last_prompt: `task ${id}`, last_response: "done",
+    // Reset a minute ago by an unrelated hook.
+    state_entered_at: ago(0.02), last_prompt_at: ago(turnHoursAgo + 0.1), last_response_at: ago(turnHoursAgo), started_at: ago(turnHoursAgo + 2),
+  });
+  const fleet = { hosts: [{ alias: "mba", local: true, remote: { agents: [idle("1", 1), idle("2", 72), idle("3", 24 * 20)], panes: [] } }] };
+  const board = buildBoard({ fleet, now });
+  assert.deepEqual(board.lanes.finished.groups.flatMap((g) => g.units).map((u) => u.title), ["task 1"]);
+  assert.equal(board.lanes.finished.older.length, 1);
+  assert.equal(board.lanes.finished.stale.length, 1);
+  assert.equal(board.lanes.finished.count, 1, "the header counts the main list");
+  assert.equal(lastTurn(idle("x", 5)), now - 5 * 3600_000);
+
+  // tendd's board: its age_group and finished_shown, as given.
+  const unit = (id, group) => ({ type: "unit", id, title: id, lane: "finished", stages: [], agents: [], age_group: group, recent: group === "recent" });
+  const server = {
+    lanes: { finished: { groups: [{ items: [unit("a", "recent"), unit("b", "older"), unit("c", "stale"), unit("d", "stale")] }] } },
+    counts: { finished: 4, finished_shown: 1, finished_older: 1, finished_stale: 2 },
+  };
+  const fromServer = fromServerBoard(server, { now });
+  assert.equal(fromServer.lanes.finished.count, 1);
+  assert.deepEqual(fromServer.lanes.finished.folds.older.map((u) => u.id), ["b"]);
+  assert.deepEqual(fromServer.lanes.finished.folds.stale.map((u) => u.id), ["c", "d"]);
 });

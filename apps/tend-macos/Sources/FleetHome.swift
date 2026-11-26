@@ -90,6 +90,9 @@ struct FleetWork: Identifiable, Sendable {
     /// The latest moment any of the unit's agents changed state: when a
     /// finished unit finished, whichever agent the card names.
     var lastChange: Date?
+    /// The newest last turn of its agents and helpers
+    /// (`FleetBoard.lastTurn`): what Finished ages a unit by.
+    var lastTurn: Date?
     /// Sessions other agents started to help with this unit (peer
     /// requests), folded under it rather than shown as units of their own.
     var helpers: [TendHostedAgent] = []
@@ -347,6 +350,7 @@ enum FleetBoard {
         unit.helpers = helpers
         unit.revision += ";" + revision(agents: helpers, run: nil)
         unit.lastChange = [work.lastChange, latestChange(helpers)].compactMap { $0 }.max()
+        unit.lastTurn = [work.lastTurn, latestTurn(helpers)].compactMap { $0 }.max()
         unit.handledLimit = work.handledLimit || helpers.contains { isHandledLimit($0.agent, now: now) }
         if unit.lane != .needsYou,
            let asking = helpers
@@ -440,7 +444,8 @@ enum FleetBoard {
             focus: focus,
             handledLimit: group.participants.contains { isHandledLimit($0.agent, now: now) },
             revision: revision(agents: group.participants, run: group.pipelineRun),
-            lastChange: latestChange(group.participants)
+            lastChange: latestChange(group.participants),
+            lastTurn: latestTurn(group.participants)
         )
     }
 
@@ -541,12 +546,25 @@ enum FleetBoard {
             focus: hosted,
             handledLimit: isHandledLimit(agent, now: now),
             revision: revision(agents: [hosted], run: nil),
-            lastChange: latestChange([hosted])
+            lastChange: latestChange([hosted]),
+            lastTurn: latestTurn([hosted])
         )
     }
 
     static func latestChange(_ agents: [TendHostedAgent]) -> Date? {
         agents.compactMap { TendUsageTimestamp.parse($0.agent.stateEnteredAt ?? $0.agent.lastActivityAt) }.max()
+    }
+
+    /// An agent's last turn: its last prompt or response, whichever is
+    /// later, else when it started. Not `stateEnteredAt`, which hooks reset
+    /// on agents idle for days (tendd's `turn_time`).
+    static func lastTurn(_ agent: TendAgent) -> Date? {
+        let turn = [agent.lastPromptAt, agent.lastResponseAt].compactMap(TendUsageTimestamp.parse).max()
+        return turn ?? TendUsageTimestamp.parse(agent.startedAt)
+    }
+
+    static func latestTurn(_ agents: [TendHostedAgent]) -> Date? {
+        agents.compactMap { lastTurn($0.agent) }.max()
     }
 
     /// Every agent's session, state and state entry, plus the pipeline's
@@ -710,16 +728,29 @@ struct FleetCounts: Equatable, Sendable {
     var yourTurn = 0
     var inProgress = 0
     var finished = 0
+    /// Of `finished`, the main list: recent, not an empty session or a
+    /// possible helper. Finished's header.
+    var finishedShown = 0
+    /// Of `finished`, the "N older" and "N idle over a week" rows.
+    var finishedOlder = 0
+    var finishedStale = 0
     var reviewed = 0
 
-    /// The number a lane's header shows.
+    /// The number a lane's header shows: Finished's counts only its main
+    /// list, each fold row says its own.
     func count(_ lane: FleetLane) -> Int {
         switch lane {
         case .needsYou: yourTurn
         case .running: inProgress
-        case .finished: finished
+        case .finished: finishedShown
         }
     }
+}
+
+/// Where a Finished unit sits by the age of its last turn (tendd's
+/// `AgeGroup`).
+enum FleetAgeGroup: Sendable {
+    case recent, older, stale
 }
 
 /// A lane header's number: what the lane shows, the unfiltered total
@@ -756,6 +787,9 @@ struct FleetTurnGroup: Identifiable, Sendable {
 extension FleetBoard {
     /// How long a finished unit stays in the Finished lane's main list.
     static let recentFinish: TimeInterval = 24 * 3600
+    /// Idle longer than this, a finished unit folds into "N idle over a
+    /// week", after "N older".
+    static let staleFinish: TimeInterval = 7 * 24 * 3600
 
     /// Units grouped by project, a project placed where its first unit
     /// is, so the lane's order (the longest wait, the latest change) still
@@ -803,18 +837,26 @@ extension FleetBoard {
         }.map(\.element)
     }
 
-    /// A finished unit that changed within `recentFinish`, or one with no
-    /// known time.
+    /// A finished unit whose last turn is within `recentFinish`, or one
+    /// with no known time.
     static func isRecent(_ work: FleetWork, now: Date = .now) -> Bool {
-        guard let changed = work.lastChange ?? work.since else { return true }
-        return now.timeIntervalSince(changed) <= recentFinish
+        ageGroup(work, now: now) == .recent
+    }
+
+    /// By the unit's last turn, else (no turn known) its last change.
+    static func ageGroup(_ work: FleetWork, now: Date = .now) -> FleetAgeGroup {
+        guard let turn = work.lastTurn ?? work.lastChange ?? work.since else { return .recent }
+        let age = now.timeIntervalSince(turn)
+        if age > staleFinish { return .stale }
+        if age > recentFinish { return .older }
+        return .recent
     }
 
     /// Home's numbers (apps/shared/Design/COUNTS.md), the ones the lane
     /// headers and the rail's badge show, from the units and decisions
     /// given: the whole board for the totals, the filtered one for what a
     /// filter leaves.
-    static func counts(works: [FleetWork], decisions: [FleetDecision], marks: FleetReviewMarks) -> FleetCounts {
+    static func counts(works: [FleetWork], decisions: [FleetDecision], marks: FleetReviewMarks, now: Date = .now) -> FleetCounts {
         var counts = FleetCounts()
         counts.yourTurn = decisions.lazy.filter { !$0.isUnanswerable }.count
         for work in works {
@@ -822,7 +864,18 @@ extension FleetBoard {
             case .needsYou: counts.yourTurn += 1
             case .running: counts.inProgress += 1
             case .finished:
-                if marks.hides(work) { counts.reviewed += 1 } else { counts.finished += 1 }
+                if marks.hides(work) {
+                    counts.reviewed += 1
+                    continue
+                }
+                counts.finished += 1
+                // Each in exactly one row, folded in the lane's order.
+                guard !work.isProbableHelper, !work.isEmptySession else { continue }
+                switch ageGroup(work, now: now) {
+                case .recent: counts.finishedShown += 1
+                case .older: counts.finishedOlder += 1
+                case .stale: counts.finishedStale += 1
+                }
             }
         }
         return counts

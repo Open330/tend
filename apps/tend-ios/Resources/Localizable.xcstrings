@@ -141,6 +141,16 @@
         }
       }
     },
+    "%lld idle over a week": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "일주일 넘게 쉬는 항목 %lld개"
+          }
+        }
+      }
+    },
     "%lld more need you in a form this app cannot show yet. Open the dashboard in a browser, or update the app.": {
       "localizations": {
         "ko": {
@@ -1167,6 +1177,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "빈 세션 숨기기"
+          }
+        }
+      }
+    },
+    "Hide idle over a week": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "일주일 넘게 쉬는 항목 숨기기"
           }
         }
       }

@@ -165,11 +165,12 @@ struct BoardLaneItems: View {
     @State private var showsHelpers = false
     @State private var showsEmpty = false
     @State private var showsOlder = false
+    @State private var showsStale = false
     @State private var showsReviewed = false
 
     var body: some View {
         let folded = FoldedLane(board, lane: lane)
-        if folded.groups.isEmpty, lane == .inProgress, folded.helpers.isEmpty, folded.empty.isEmpty, folded.older.isEmpty {
+        if folded.groups.isEmpty, lane == .inProgress, folded.helpers.isEmpty, folded.empty.isEmpty, folded.older.isEmpty, folded.stale.isEmpty {
             Empty(text: lane.empty)
         }
         ForEach(folded.groups) { group in
@@ -181,6 +182,7 @@ struct BoardLaneItems: View {
         fold(folded.helpers, shown: $showsHelpers, show: { String(localized: "\($0) possible helper sessions") }, hide: String(localized: "Hide possible helpers"), id: "foldHelpers")
         fold(folded.empty, shown: $showsEmpty, show: { String(localized: "\($0) empty sessions") }, hide: String(localized: "Hide empty sessions"), id: "foldEmpty")
         fold(folded.older, shown: $showsOlder, show: { String(localized: "\($0) older") }, hide: String(localized: "Hide older"), id: "foldOlder")
+        fold(folded.stale, shown: $showsStale, show: { String(localized: "\($0) idle over a week") }, hide: String(localized: "Hide idle over a week"), id: "foldStale")
         // The number tendd counted when it read the Looks Good marks.
         let reviewed = board.reviewedCount(lane)
         fold(folded.reviewed, shown: $showsReviewed, show: { _ in String(localized: "Show \(reviewed) reviewed") }, hide: String(localized: "Hide reviewed"), id: "foldReviewed")

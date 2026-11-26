@@ -162,7 +162,7 @@ final class LooksGoodTests: XCTestCase {
     /// until a board shows the unit reviewed, with another key, or gone.
     func testAConfirmedMarkHoldsUntilABoardSettlesIt() async throws {
         StubProtocol.on("/api/device/home/reviewed", .init(status: 200, body: #"{"review":{"id":"rv_1"},"review_key":"home:k1"}"#))
-        let counted = Self.board(reviewed: false).replacingOccurrences(of: #""reviewed_marks":true"#, with: #""reviewed_marks":true,"counts":{"your_turn":0,"finished":1,"reviewed":0,"coverage":"complete"}"#)
+        let counted = Self.board(reviewed: false).replacingOccurrences(of: #""reviewed_marks":true"#, with: #""reviewed_marks":true,"counts":{"your_turn":0,"finished":1,"finished_shown":1,"finished_older":0,"finished_stale":0,"reviewed":0,"coverage":"complete"}"#)
         StubProtocol.on("/api/device", .init(status: 200, body: Self.homeDevice))
         StubProtocol.on("/api/device/fleet", .init(status: 200, body: Self.fleetJSON))
         StubProtocol.on("/api/device/home",

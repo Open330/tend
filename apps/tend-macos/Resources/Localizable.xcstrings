@@ -71,6 +71,16 @@
         }
       }
     },
+    "%lld idle over a week" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "일주일 넘게 쉬는 항목 %lld개"
+          }
+        }
+      }
+    },
     "%lld in the last hour" : {
       "localizations" : {
         "ko" : {
@@ -297,6 +307,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "열렸지만 아무 일도 받지 않은 에이전트입니다"
+          }
+        }
+      }
+    },
+    "Agents whose last turn was more than a week ago" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "마지막 턴이 일주일보다 오래된 에이전트"
           }
         }
       }
@@ -2895,6 +2915,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@에서 옴"
+          }
+        }
+      }
+    },
+    "Hide idle over a week" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "일주일 넘게 쉬는 항목 숨기기"
           }
         }
       }

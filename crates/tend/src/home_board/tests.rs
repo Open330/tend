@@ -754,3 +754,55 @@ fn cant_answer_takes_each_hosts_larger_of_listed_and_exact() {
     });
     assert_eq!(b["counts"]["cant_answer"], 7);
 }
+
+/// Finished's age is the last turn, not `state_entered_at` (which hooks
+/// reset on agents idle for days), and its header counts only the main
+/// list: the "N older" and "N idle over a week" rows count their own.
+#[test]
+fn finished_folds_by_the_last_turn_and_its_header_counts_what_it_shows() {
+    let idle = |session: &str, pane: &str, turn_minutes_ago: i64| {
+        json!({"agent_session_id": session, "kind": "claude_code", "pane": pane, "state": "idle",
+               "last_prompt": "fix toast", "last_response": "done",
+               // Reset a minute ago by an unrelated hook.
+               "state_entered_at": at(1),
+               "last_prompt_at": at(turn_minutes_ago + 5),
+               "last_response_at": at(turn_minutes_ago),
+               "started_at": at(turn_minutes_ago + 60)})
+    };
+    let day = 24 * 60;
+    let hosts = vec![host(
+        "mba",
+        true,
+        vec![
+            idle("fresh", "%1", 30),
+            idle("days", "%2", 3 * day),
+            idle("weeks", "%3", 20 * day),
+            idle("weeks2", "%4", 8 * day),
+            // Never prompted: its start is its last turn.
+            json!({"agent_session_id": "new", "kind": "claude_code", "pane": "%5", "state": "idle",
+                   "last_prompt": "look at x", "state_entered_at": at(1), "started_at": at(2 * day)}),
+        ],
+        vec![],
+    )];
+    let b = board(BoardInput {
+        hosts,
+        ..Default::default()
+    });
+    let finished = items(&b, "finished");
+    let group = |session: &str| {
+        finished
+            .iter()
+            .find(|u| u["focus"]["session_id"] == session)
+            .map(|u| (u["age_group"].clone(), u["recent"].clone()))
+            .unwrap()
+    };
+    assert_eq!(group("fresh"), (json!("recent"), json!(true)));
+    assert_eq!(group("days"), (json!("older"), json!(false)));
+    assert_eq!(group("new"), (json!("older"), json!(false)));
+    assert_eq!(group("weeks"), (json!("stale"), json!(false)));
+    let counts = &b["counts"];
+    assert_eq!(counts["finished"], 5, "{counts}");
+    assert_eq!(counts["finished_shown"], 1);
+    assert_eq!(counts["finished_older"], 2);
+    assert_eq!(counts["finished_stale"], 2);
+}

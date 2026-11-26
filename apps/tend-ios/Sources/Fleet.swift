@@ -93,6 +93,9 @@ struct FleetAgent: Decodable, Sendable, Equatable, Hashable, Identifiable {
     let model: String?
     let stateEnteredAt: Date?
     let lastActivityAt: Date?
+    let lastPromptAt: Date?
+    let lastResponseAt: Date?
+    let startedAt: Date?
 
     var id: String { sessionID.isEmpty ? (pane ?? "") : sessionID }
 
@@ -108,6 +111,9 @@ struct FleetAgent: Decodable, Sendable, Equatable, Hashable, Identifiable {
         case aiTitle = "ai_title"
         case stateEnteredAt = "state_entered_at"
         case lastActivityAt = "last_activity_at"
+        case lastPromptAt = "last_prompt_at"
+        case lastResponseAt = "last_response_at"
+        case startedAt = "started_at"
     }
 
     init(from decoder: Decoder) throws {
@@ -133,11 +139,18 @@ struct FleetAgent: Decodable, Sendable, Equatable, Hashable, Identifiable {
         model = text(.model)
         stateEnteredAt = text(.stateEnteredAt).flatMap(Timestamp.parse)
         lastActivityAt = text(.lastActivityAt).flatMap(Timestamp.parse)
+        lastPromptAt = text(.lastPromptAt).flatMap(Timestamp.parse)
+        lastResponseAt = text(.lastResponseAt).flatMap(Timestamp.parse)
+        startedAt = text(.startedAt).flatMap(Timestamp.parse)
     }
 
     var status: AgentStatus { AgentStatus(state: state, awaitingReply: awaitingReply) }
     var running: Bool { state == "working" || state == "starting" }
     var since: Date? { stateEnteredAt ?? lastActivityAt }
+    /// Its last turn: the last prompt or response, whichever is later, else
+    /// its start (tendd's `turn_time`). Not `stateEnteredAt`, which hooks
+    /// reset on agents idle for days.
+    var lastTurn: Date? { [lastPromptAt, lastResponseAt].compactMap { $0 }.max() ?? startedAt ?? since }
 
     /// What it is on: its title, recap, prompt or notification.
     var title: String {
@@ -214,12 +227,34 @@ enum FleetLanes {
             host.liveAgents
                 .filter { $0.state == "idle" && !$0.awaitingReply && ($0.lastResponse != nil || $0.lastPrompt != nil) }
                 .filter { agent in
-                    guard let at = agent.since else { return false }
+                    guard let at = agent.lastTurn else { return false }
                     return now.timeIntervalSince(at) <= window && at.timeIntervalSince(now) <= 60
                 }
                 .sorted(by: newestFirst)
                 .map { LaneAgent(agent: $0, host: host.alias, hostIsLocal: host.local) }
         }
+    }
+
+    /// Idle longer than this, a finished agent folds into "N idle over a
+    /// week" (tendd's STALE_FINISH).
+    static let staleWindow: TimeInterval = 7 * 24 * 3600
+
+    /// The agents half of Finished's folds: idle agents whose last turn is
+    /// past the window, `older` up to a week, `stale` after; newest first.
+    /// Not in Finished's number, which counts its main list.
+    static func folded(_ fleet: FleetSnapshot, now: Date = Date(), window: TimeInterval = finishedWindow) -> (older: [LaneAgent], stale: [LaneAgent]) {
+        var older: [LaneAgent] = []
+        var stale: [LaneAgent] = []
+        for host in fleet.ordered {
+            for agent in host.liveAgents.sorted(by: newestFirst)
+            where agent.state == "idle" && !agent.awaitingReply && (agent.lastResponse != nil || agent.lastPrompt != nil) {
+                guard let at = agent.lastTurn else { continue }
+                let age = now.timeIntervalSince(at)
+                let lane = LaneAgent(agent: agent, host: host.alias, hostIsLocal: host.local)
+                if age > staleWindow { stale.append(lane) } else if age > window { older.append(lane) }
+            }
+        }
+        return (older, stale)
     }
 
     private static func newestFirst(_ left: FleetAgent, _ right: FleetAgent) -> Bool {
