@@ -484,6 +484,7 @@ mod tests {
             };
             requests.get_mut(&ids[0]).unwrap().reply =
                 Some(crate::collaboration::CollaborationReply {
+                    operator_approval: None,
                     status: RequestStatus::Completed,
                     body: "ok".into(),
                     artifacts: vec![],

@@ -1463,6 +1463,7 @@ impl CollaborationStore {
             let mut row = request.clone();
             row.status = RequestStatus::Declined;
             row.reply = Some(CollaborationReply {
+                operator_approval: None,
                 status: RequestStatus::Declined,
                 body: DISMISSED_BODY.to_owned(),
                 report: None,

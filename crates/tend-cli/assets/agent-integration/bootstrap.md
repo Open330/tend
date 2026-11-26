@@ -27,6 +27,9 @@ for blockers, decisions, conflicts and handoffs.
 
 For a required human approval, choice or missing information, call
 `tend_request_attention` and keep its id; read the actual answer before acting.
+When another session shares a linked approval id, read it with `tend_wait`.
+Use the recorded operator decision, credential, exact scope and reply note
+for the same operation. Do not open a second approval for that decision.
 When you finish a result someone must look at, file one record:
 `tend work done --summary "..."` in a managed pipeline, otherwise
 `tend_file_result` (commits, `test-pass:CMD` evidence, and decision_needed /

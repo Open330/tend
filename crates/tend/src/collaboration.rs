@@ -754,11 +754,36 @@ impl RequestStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OperatorApproval {
+    pub decision: ApprovalDecision,
+    pub recorded_by: String,
+    pub credential: ApprovalCredential,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalDecision {
+    Approved,
+    Declined,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalCredential {
+    OperatorSession,
+    PairedDevice,
+    OperatorToken,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CollaborationReply {
     pub status: RequestStatus,
     pub body: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub report: Option<TaskReport>,
+    /// Issued only by the authenticated operator decision route.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator_approval: Option<OperatorApproval>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub artifacts: Vec<String>,
     #[serde(with = "time::serde::rfc3339")]
@@ -1458,8 +1483,15 @@ impl CollaborationReadView {
             }
             Self::Outcome => {
                 let reply = request.reply.take();
+                let approval_scope = reply
+                    .as_ref()
+                    .filter(|reply| reply.operator_approval.is_some())
+                    .map(|_| std::mem::take(&mut request.body));
                 let late_replies = std::mem::take(&mut request.late_replies);
                 request.omit_list_bodies();
+                if let Some(scope) = approval_scope {
+                    request.body = scope;
+                }
                 request.reply = reply;
                 request.late_replies = late_replies;
             }
@@ -1599,6 +1631,8 @@ pub enum CollaborationError {
     InvalidDispatch(String),
     #[error("invalid decision fields: {0}")]
     InvalidDecision(String),
+    #[error("request {0} does not accept a recorded operator approval")]
+    InvalidOperatorApproval(String),
     #[error(
         "execute paths overlap open execute request {request_id} held by another agent at {path}; narrow paths, wait for it, use a separate worktree, or set allow_path_overlap"
     )]
@@ -3829,6 +3863,45 @@ impl CollaborationStore {
         artifacts: Vec<String>,
         report: Option<TaskReport>,
     ) -> Result<CollaborationRequest, CollaborationError> {
+        self.reply_with_provenance(caller, request_id, status, body, artifacts, report, None)
+            .await
+    }
+
+    #[cfg(feature = "dashboard")]
+    pub(crate) async fn reply_with_operator_approval(
+        &self,
+        caller: &Participant,
+        request_id: &str,
+        body: String,
+        approval: OperatorApproval,
+    ) -> Result<CollaborationRequest, CollaborationError> {
+        let status = match approval.decision {
+            ApprovalDecision::Approved => RequestStatus::Completed,
+            ApprovalDecision::Declined => RequestStatus::Declined,
+        };
+        self.reply_with_provenance(
+            caller,
+            request_id,
+            status,
+            body,
+            Vec::new(),
+            None,
+            Some(approval),
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)] // Reply and retired notices share one atomic persistence boundary.
+    async fn reply_with_provenance(
+        &self,
+        caller: &Participant,
+        request_id: &str,
+        status: RequestStatus,
+        body: String,
+        artifacts: Vec<String>,
+        report: Option<TaskReport>,
+        operator_approval: Option<OperatorApproval>,
+    ) -> Result<CollaborationRequest, CollaborationError> {
         self.ensure_enabled()?;
         if !matches!(
             status,
@@ -3884,11 +3957,21 @@ impl CollaborationStore {
             if !addresses(&request.to, caller) {
                 return Err(CollaborationError::NotParticipant(request_id.to_string()));
             }
+            if operator_approval.is_some()
+                && (!caller.console
+                    || !request.to.console
+                    || request.human_action != Some(HumanAction::Approval))
+            {
+                return Err(CollaborationError::InvalidOperatorApproval(
+                    request_id.to_string(),
+                ));
+            }
             let identical = |previous: &CollaborationReply| {
                 previous.status == status
                     && previous.body == body
                     && previous.artifacts == artifacts
                     && previous.report == report
+                    && previous.operator_approval == operator_approval
             };
             if request.reply.as_ref().is_some_and(identical) {
                 return Ok(request.clone());
@@ -3903,6 +3986,11 @@ impl CollaborationStore {
                 && request.reply.is_none();
             if request.status.is_terminal() && !late {
                 return Err(CollaborationError::AlreadyTerminal(request_id.to_string()));
+            }
+            if operator_approval.is_some() && !request.needs_human_response() {
+                return Err(CollaborationError::InvalidOperatorApproval(
+                    request_id.to_string(),
+                ));
             }
             if !late {
                 contract::validate_report(request, status, report.as_ref())?;
@@ -3921,6 +4009,7 @@ impl CollaborationStore {
             }
             let reply = CollaborationReply {
                 report,
+                operator_approval,
                 status,
                 body,
                 artifacts,
@@ -4021,6 +4110,28 @@ impl CollaborationStore {
                         .is_some_and(|i| i.action_request_id.as_deref() == Some(request_id))
                         && (addresses(&parent.from, caller) || addresses(&parent.to, caller))
                 });
+            let approval_observer = requests.get(request_id).is_some_and(|request| {
+                request.to.console
+                    && request.human_action == Some(HumanAction::Approval)
+                    && request
+                        .reply
+                        .as_ref()
+                        .is_some_and(|reply| reply.operator_approval.is_some())
+                    && request
+                        .parent_request_id
+                        .as_ref()
+                        .and_then(|id| requests.get(id))
+                        .is_some_and(|parent| {
+                            parent.superseded_by.is_none()
+                                && parent.retirement.is_none()
+                                && !matches!(
+                                    parent.status,
+                                    RequestStatus::Cancelled | RequestStatus::Expired
+                                )
+                                && (addresses(&parent.from, caller)
+                                    || addresses(&parent.to, caller))
+                        })
+            });
             let request = requests
                 .get_mut(request_id)
                 .ok_or_else(|| CollaborationError::NotFound(request_id.to_string()))?;
@@ -4029,6 +4140,7 @@ impl CollaborationStore {
                 && !is_sender
                 && !addresses(&request.to, caller)
                 && !recovery_observer
+                && !approval_observer
             {
                 return Err(CollaborationError::NotParticipant(request_id.to_string()));
             }
@@ -10350,6 +10462,7 @@ mod tests {
         unread.created_at = old;
         unread.status = RequestStatus::Completed;
         unread.reply = Some(CollaborationReply {
+            operator_approval: None,
             report: None,
             status: RequestStatus::Completed,
             body: "not read".into(),

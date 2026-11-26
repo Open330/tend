@@ -119,6 +119,10 @@ pub(crate) fn outcome(request: &CollaborationRequest) -> Value {
     let mut value = receipt(request);
     if let Some(reply) = &request.reply {
         value["reply"] = json!(reply);
+        if reply.operator_approval.is_some() {
+            value["approval_scope"] =
+                json!({ "body": request.body, "parent_request_id": request.parent_request_id });
+        }
     }
     if let Some(interruption) = &request.interruption {
         value["interruption"] = json!(interruption);
@@ -368,6 +372,7 @@ mod tests {
             let mut request = fixture();
             request.status = status;
             request.reply = Some(CollaborationReply {
+                operator_approval: None,
                 report: None,
                 status,
                 body: "pending is discussed here; this is a final reply".into(),
@@ -763,6 +768,7 @@ mod tests {
         assert!(first.get("body").is_none());
         assert!(first.get("to").is_some());
         request.reply = Some(CollaborationReply {
+            operator_approval: None,
             status: RequestStatus::Completed,
             body: "reply-body-marker".repeat(512),
             artifacts: vec![],

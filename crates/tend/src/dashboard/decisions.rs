@@ -786,6 +786,33 @@ pub(super) struct HumanAnswer {
     /// `completed` (the default) for an answer, `declined` for a refusal.
     #[serde(default)]
     declined: bool,
+    /// An explicit approval decision rather than a free-form answer.
+    #[serde(default)]
+    approval: Option<crate::collaboration::ApprovalDecision>,
+}
+
+fn operator_approval(
+    state: &AppState,
+    headers: &HeaderMap,
+    device: Option<&super::devices::DeviceAuth>,
+    decision: crate::collaboration::ApprovalDecision,
+    recorded_by: String,
+) -> Option<crate::collaboration::OperatorApproval> {
+    use super::operator::{authenticate, OperatorAuth};
+    use crate::collaboration::{ApprovalCredential, OperatorApproval};
+    let credential = if device.is_some() {
+        ApprovalCredential::PairedDevice
+    } else {
+        match authenticate(state.config.token.as_deref(), &state.operator, headers)? {
+            OperatorAuth::Session => ApprovalCredential::OperatorSession,
+            OperatorAuth::Bearer => ApprovalCredential::OperatorToken,
+        }
+    };
+    Some(OperatorApproval {
+        decision,
+        recorded_by,
+        credential,
+    })
 }
 
 /// `POST /api/decisions/requests/{id}`: answer a human request as the
@@ -797,6 +824,7 @@ pub(super) async fn answer_handler(
     device: Option<axum::Extension<super::devices::DeviceAuth>>,
     Json(mut answer): Json<HumanAnswer>,
 ) -> Response {
+    use crate::collaboration::ApprovalDecision;
     let (by, account) = operator_identity(&state, &headers, device.as_deref());
     if answer.answer.len() > MAX_ANSWER_BYTES {
         return error(
@@ -806,6 +834,27 @@ pub(super) async fn answer_handler(
     }
     // Checked as sent: a decline's standard words replace only an empty
     // reason, never an oversized one.
+    if answer.declined && answer.approval == Some(ApprovalDecision::Approved) {
+        return error(StatusCode::BAD_REQUEST, "approval and decline disagree");
+    }
+    answer.declined |= answer.approval == Some(ApprovalDecision::Declined);
+    let approval = match answer.approval {
+        Some(decision) => {
+            let Some(record) =
+                operator_approval(&state, &headers, device.as_deref(), decision, by.clone())
+            else {
+                return error(
+                    StatusCode::UNAUTHORIZED,
+                    "operator authentication is required",
+                );
+            };
+            Some(record)
+        }
+        None => None,
+    };
+    if answer.approval == Some(ApprovalDecision::Approved) && answer.answer.trim().is_empty() {
+        answer.answer = "Approved.".into();
+    }
     answer.answer = reply_body(answer.answer, answer.declined);
     let status = if answer.declined {
         crate::collaboration::RequestStatus::Declined
@@ -818,6 +867,12 @@ pub(super) async fn answer_handler(
         .as_deref()
         .filter(|alias| *alias != local_alias(&hosts) && *alias != "this host")
     {
+        if approval.is_some() {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "record this approval on the request's host",
+            );
+        }
         let remote = remote.to_owned();
         let (code, outcome) =
             answer_remote(&state, &hosts, &remote, &id, status, &answer.answer).await;
@@ -836,32 +891,25 @@ pub(super) async fn answer_handler(
             error(code, outcome)
         };
     }
-    // The console of any room is the operator: the store checks that the
-    // request is addressed to the console at all.
-    let console = crate::collaboration::Participant::console(crate::collaboration::RoomId {
-        host: "web".into(),
-        socket: None,
-        window_id: "dashboard".into(),
-    });
-    let result = state
-        .collaboration
-        .reply(&console, &id, status, answer.answer, Vec::new())
-        .await;
+    let result = record_local_answer(&state, &id, status, answer.answer, approval).await;
     let (code, outcome) = match &result {
         Ok(_) => (StatusCode::OK, "recorded".to_owned()),
         Err(e @ E::NotFound(_)) => (StatusCode::NOT_FOUND, e.to_string()),
         Err(e @ E::NotParticipant(_)) => (StatusCode::FORBIDDEN, e.to_string()),
         Err(e @ E::AlreadyTerminal(_)) => (StatusCode::CONFLICT, e.to_string()),
-        Err(e @ (E::EmptyMessage | E::MessageTooLarge(_) | E::InvalidReplyStatus)) => {
-            (StatusCode::BAD_REQUEST, e.to_string())
-        }
+        Err(
+            e @ (E::EmptyMessage
+            | E::MessageTooLarge(_)
+            | E::InvalidReplyStatus
+            | E::InvalidOperatorApproval(_)),
+        ) => (StatusCode::BAD_REQUEST, e.to_string()),
         Err(other) => (StatusCode::SERVICE_UNAVAILABLE, other.to_string()),
     };
     audit(
         state.decision_audit.as_ref(),
         json!({
             "at": time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).ok(),
-            "by": by, "account": account, "action": "answer", "id": id, "declined": answer.declined,
+            "by": by, "account": account, "action": "answer", "id": id, "declined": answer.declined, "approval": answer.approval,
             "outcome": outcome, "status": code.as_u16(),
         }).via(&headers),
     )
@@ -873,6 +921,36 @@ pub(super) async fn answer_handler(
         }))
         .into_response(),
         Err(_) => error(code, outcome),
+    }
+}
+
+async fn record_local_answer(
+    state: &AppState,
+    id: &str,
+    status: crate::collaboration::RequestStatus,
+    answer: String,
+    approval: Option<crate::collaboration::OperatorApproval>,
+) -> Result<crate::collaboration::CollaborationRequest, E> {
+    // The console of any room is the operator: the store checks that the
+    // request is addressed to the console at all.
+    let console = crate::collaboration::Participant::console(crate::collaboration::RoomId {
+        host: "web".into(),
+        socket: None,
+        window_id: "dashboard".into(),
+    });
+    match approval {
+        Some(approval) => {
+            state
+                .collaboration
+                .reply_with_operator_approval(&console, id, answer, approval)
+                .await
+        }
+        None => {
+            state
+                .collaboration
+                .reply(&console, id, status, answer, Vec::new())
+                .await
+        }
     }
 }
 

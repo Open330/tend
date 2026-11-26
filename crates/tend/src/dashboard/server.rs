@@ -3578,6 +3578,134 @@ mod tests {
         assert_eq!(body["hosts"][0]["alias"], "prod");
     }
 
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)] // One authenticated decision scenario across a durable reopen.
+    async fn authenticated_approval_can_be_verified_by_the_linked_peer_in_another_window() {
+        use crate::collaboration::{
+            ApprovalCredential, ApprovalDecision, HumanAction, NewRequest, RequestStatus,
+        };
+        let storage = tempfile::tempdir().unwrap();
+        let opts = CollaborationOptions {
+            path: Some(storage.path().join("mailbox.sqlite3")),
+            ..Default::default()
+        };
+        let mailbox = CollaborationStore::load(opts.clone()).await.unwrap();
+        let requester = collaboration_participant("%1", "requester", "@1");
+        let executor = collaboration_participant("%2", "executor", "@1");
+        let moved = collaboration_participant("%3", "requester", "@9");
+        let outsider = collaboration_participant("%4", "outsider", "@9");
+        let console = Participant::console(executor.room.clone());
+        let parent = mailbox
+            .create(
+                requester,
+                executor.clone(),
+                NewRequest {
+                    body: "Apply the exact fixture change once approved".into(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let scope = "Add only the fixture callback; leave other settings intact.";
+        let ask = || {
+            mailbox.create(
+                executor.clone(),
+                console.clone(),
+                NewRequest {
+                    body: scope.into(),
+                    human_action: Some(HumanAction::Approval),
+                    parent_request_id: Some(parent.id.clone()),
+                    ..Default::default()
+                },
+            )
+        };
+        let request = ask().await.unwrap();
+        let legacy = ask().await.unwrap();
+        assert!(mailbox.peek_for(&moved, &request.id).await.is_err());
+        assert!(mailbox
+            .reply(
+                &moved,
+                &request.id,
+                RequestStatus::Completed,
+                "approved".into(),
+                Vec::new()
+            )
+            .await
+            .is_err());
+        mailbox
+            .reply(
+                &console,
+                &legacy.id,
+                RequestStatus::Completed,
+                "approved".into(),
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        assert!(mailbox.peek_for(&moved, &legacy.id).await.is_err());
+
+        let app =
+            router(state_with_token("fixture-token").with_collaboration(Arc::clone(&mailbox)));
+        let submit = |token: Option<&str>, action| {
+            let mut builder = Request::builder()
+                .method("POST")
+                .uri(format!("/api/decisions/requests/{}", request.id))
+                .header(header::CONTENT_TYPE, "application/json");
+            if let Some(token) = token {
+                builder = builder.header(header::AUTHORIZATION, token);
+            }
+            app.clone().oneshot(
+                builder
+                    .body(Body::from(
+                        json!({"answer":"", "approval":action}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+        };
+        assert_eq!(
+            submit(None, "approved").await.unwrap().status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            submit(Some("Bearer fixture-token"), "approved")
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            submit(Some("Bearer fixture-token"), "approved")
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            submit(Some("Bearer fixture-token"), "declined")
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::CONFLICT
+        );
+        assert!(mailbox.peek_for(&outsider, &request.id).await.is_err());
+        drop(app);
+        drop(mailbox);
+        let reopened = CollaborationStore::load(opts).await.unwrap();
+        let mut outcome = reopened
+            .wait_for_terminal(&moved, &request.id, Duration::from_secs(1))
+            .await
+            .unwrap();
+        crate::collaboration::CollaborationReadView::Outcome.apply(&mut outcome);
+        assert_eq!(outcome.body, scope);
+        assert_eq!(
+            outcome.parent_request_id.as_deref(),
+            Some(parent.id.as_str())
+        );
+        let approval = outcome.reply.unwrap().operator_approval.unwrap();
+        assert_eq!(approval.decision, ApprovalDecision::Approved);
+        assert_eq!(approval.credential, ApprovalCredential::OperatorToken);
+    }
+
     /// Fleet hosts in the decision queue: what each covers, a control host's
     /// console question answered over Fleet, and every way a remote answer
     /// is refused before anything is sent.
