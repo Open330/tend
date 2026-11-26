@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.41] - 2026-11-26
+
+### Changed
+
+- One Tend across Mac, iPhone/iPad and the web (PARITY P1–P6): one
+  glossary with a CI vocabulary check and Korean fixes; one decision card
+  (Answer…/Decline… with an optional reason, Accept/Return… with an
+  optional note) on every surface; tendd's board now carries `counts`, and
+  every client's badge is the Your turn number; one contrast target (text
+  at least 4.5:1) and one radius set; Looks Good / 확인 완료 on iPhone and
+  iPad (`POST /api/device/home/reviewed`).
+- `[collaboration] close_unanswerable_after = "7d"` (default): tendd closes
+  an agent's question once its asker has been gone that long, recorded in
+  `tend review history`; `tend review keep` still wins; `"off"` disables.
+- Worker reviews with a bounded contract run inline, without inbox round
+  trips.
+
+### Fixed
+
+- "Gone since" no longer restarts at every tendd restart, so weeks-old
+  questions about a gone session show their real age, and tend closes its
+  own recovery and reply-wake items about a gone session.
+
 ## [0.10.40] - 2026-11-24
 
 ### Changed
