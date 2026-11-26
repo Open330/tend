@@ -240,6 +240,9 @@ pub(super) struct Tracker {
     /// Home's Your turn per host, each from that host's latest readable
     /// read; `None` until the first board read.
     home_turn: Option<BTreeMap<String, usize>>,
+    /// The hosts the latest queue read listed: a host removed from the
+    /// fleet no longer counts toward a badge.
+    roster: std::collections::BTreeSet<String>,
 }
 
 impl Tracker {
@@ -270,6 +273,7 @@ impl Tracker {
     /// Take one read of the queue at `now`.
     pub(super) fn observe(&mut self, now: Duration, reads: &[HostRead], targets: &[Target]) {
         self.sync(targets);
+        self.roster = reads.iter().map(|read| read.host.clone()).collect();
         for read in reads {
             let host = self.hosts.entry(read.host.clone()).or_default();
             if !read.readable {
@@ -355,13 +359,14 @@ impl Tracker {
             by_host.contains_key(host) || reads.iter().any(|read| &read.host == host)
         });
         for read in reads {
-            let now = by_host.get(&read.host).copied().unwrap_or(0);
-            if read.complete {
-                turn.insert(read.host.clone(), now);
-            } else if read.readable {
-                // Cut or partly unread: what it shows, never less than before.
-                let last = turn.get(&read.host).copied().unwrap_or(0);
-                turn.insert(read.host.clone(), now.max(last));
+            // A readable read counts as it reads now (an older relay never
+            // covers every kind, so "complete" cannot gate it); only an
+            // unreadable one keeps the last part.
+            if read.readable {
+                turn.insert(
+                    read.host.clone(),
+                    by_host.get(&read.host).copied().unwrap_or(0),
+                );
             }
         }
         for (host, count) in by_host {
@@ -377,7 +382,12 @@ impl Tracker {
     pub(super) fn badge_for(&self, operate: bool) -> usize {
         match (&self.home_turn, operate) {
             (Some(turn), true) => turn.values().sum(),
-            _ => self.hosts.values().map(|host| host.page).sum(),
+            _ => self
+                .hosts
+                .iter()
+                .filter(|(host, _)| self.roster.contains(*host))
+                .map(|(_, state)| state.page)
+                .sum(),
         }
     }
 
@@ -900,29 +910,34 @@ mod tests {
         assert_eq!(t.badge_for(true), 90, "Home's count for an operate device");
     }
 
-    /// A host gone from the roster stops counting; a cut read never lowers
-    /// a host's part.
+    /// A host gone from the roster stops counting, for both scopes; a
+    /// readable read always counts as it reads now, so an older relay that
+    /// never covers every kind is not pinned to its old number.
     #[test]
-    fn home_parts_follow_the_roster_and_hold_on_partial_reads() {
+    fn badge_parts_follow_the_roster_and_readable_reads() {
         let mut t = Tracker::default();
+        let targets = phone();
         let both = [read("mini", &["a"]), read("mba", &["b"])];
-        t.observe_home(
-            &BTreeMap::from([("mini".to_owned(), 3), ("mba".to_owned(), 1)]),
-            &both,
-        );
-        assert_eq!(t.badge_for(true), 4);
-        // mini cut short shows 1: it keeps 3.
+        t.observe(s(0), &both, &targets);
         t.observe_home(
             &BTreeMap::from([("mini".to_owned(), 1), ("mba".to_owned(), 1)]),
-            &[partial("mini", &["a"]), read("mba", &["b"])],
+            &both,
         );
-        assert_eq!(t.badge_for(true), 4);
-        // mba removed from the fleet: only mini counts.
+        assert_eq!((t.badge_for(true), t.badge_for(false)), (2, 2));
+        // mini, an older relay, reads partially but successfully: 1, then 0.
+        let legacy = |ids: &[&str]| [partial("mini", ids), read("mba", &["b"])];
+        t.observe(s(15), &legacy(&["a"]), &targets);
         t.observe_home(
-            &BTreeMap::from([("mini".to_owned(), 2)]),
-            &[read("mini", &["a"])],
+            &BTreeMap::from([("mini".to_owned(), 1), ("mba".to_owned(), 1)]),
+            &legacy(&["a"]),
         );
-        assert_eq!(t.badge_for(true), 2);
+        t.observe(s(30), &legacy(&[]), &targets);
+        t.observe_home(&BTreeMap::from([("mba".to_owned(), 1)]), &legacy(&[]));
+        assert_eq!(t.badge_for(true), 1, "answered: mini goes to 0");
+        // mba removed from the fleet: only mini counts, for both scopes.
+        t.observe(s(45), &[read("mini", &[])], &targets);
+        t.observe_home(&BTreeMap::new(), &[read("mini", &[])]);
+        assert_eq!((t.badge_for(true), t.badge_for(false)), (0, 0));
     }
 
     #[test]
